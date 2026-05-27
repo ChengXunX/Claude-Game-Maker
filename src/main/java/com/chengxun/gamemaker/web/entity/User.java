@@ -33,9 +33,9 @@ public class User {
     @Size(max = 255)
     private String avatar;
 
-    @Enumerated(EnumType.STRING)
-    @Column(length = 20)
-    private UserRole role = UserRole.USER;
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "role_id")
+    private Role role;
 
     @Enumerated(EnumType.STRING)
     @Column(length = 20)
@@ -46,10 +46,6 @@ public class User {
 
     @Column(name = "updated_at")
     private LocalDateTime updatedAt = LocalDateTime.now();
-
-    public enum UserRole {
-        ADMIN, USER
-    }
 
     public enum UserStatus {
         PENDING, APPROVED, REJECTED, DISABLED
@@ -79,9 +75,6 @@ public class User {
     public String getAvatar() { return avatar; }
     public void setAvatar(String avatar) { this.avatar = avatar; }
 
-    public UserRole getRole() { return role; }
-    public void setRole(UserRole role) { this.role = role; }
-
     public UserStatus getStatus() { return status; }
     public void setStatus(UserStatus status) { this.status = status; }
 
@@ -91,6 +84,13 @@ public class User {
     public LocalDateTime getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
 
-    public boolean isAdmin() { return role == UserRole.ADMIN; }
+    public Role getRole() { return role; }
+    public void setRole(Role role) { this.role = role; }
+
+    public boolean isAdmin() { return role != null && "ADMIN".equals(role.getName()); }
     public boolean isApproved() { return status == UserStatus.APPROVED; }
+
+    public boolean hasPermission(String permission) {
+        return role != null && role.hasPermission(permission);
+    }
 }

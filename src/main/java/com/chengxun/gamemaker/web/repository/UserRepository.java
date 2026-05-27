@@ -1,5 +1,6 @@
 package com.chengxun.gamemaker.web.repository;
 
+import com.chengxun.gamemaker.web.entity.Role;
 import com.chengxun.gamemaker.web.entity.User;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
@@ -16,7 +17,7 @@ public interface UserRepository extends JpaRepository<User, Long> {
 
     List<User> findByStatus(User.UserStatus status);
 
-    List<User> findByRole(User.UserRole role);
+    List<User> findByRole(Role role);
 
     long countByStatus(User.UserStatus status);
 }

@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title th:text="${role != null ? '编辑角色' : '创建角色'}">角色表单</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+</head>
+<body class="bg-dark text-light">
+    <!-- Navbar -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-black border-bottom border-secondary">
+        <div class="container-fluid">
+            <a class="navbar-brand" th:href="@{/}">
+                <i class="bi bi-controller"></i> ChengXun Game Maker
+            </a>
+            <div class="collapse navbar-collapse">
+                <ul class="navbar-nav me-auto">
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/}">
+                            <i class="bi bi-speedometer2"></i> 仪表盘
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/agents}">
+                            <i class="bi bi-robot"></i> Agents
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/projects}">
+                            <i class="bi bi-folder"></i> 项目
+                        </a>
+                    </li>
+                    <li class="nav-item" sec:authorize="hasRole('ADMIN')">
+                        <a class="nav-link" th:href="@{/admin/users}">
+                            <i class="bi bi-people"></i> 用户管理
+                        </a>
+                    </li>
+                    <li class="nav-item" sec:authorize="hasAuthority('PERM_roles:manage')">
+                        <a class="nav-link active" th:href="@{/roles}">
+                            <i class="bi bi-shield-lock"></i> 角色管理
+                        </a>
+                    </li>
+                </ul>
+                <ul class="navbar-nav">
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
+                            <i class="bi bi-person-circle"></i> <span th:text="${username}">Admin</span>
+                        </a>
+                        <ul class="dropdown-menu dropdown-menu-end dropdown-menu-dark">
+                            <li>
+                                <form th:action="@{/logout}" method="post">
+                                    <button class="dropdown-item" type="submit">
+                                        <i class="bi bi-box-arrow-right"></i> 退出登录
+                                    </button>
+                                </form>
+                            </li>
+                        </ul>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid mt-4">
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a th:href="@{/}" class="text-decoration-none">首页</a></li>
+                <li class="breadcrumb-item"><a th:href="@{/roles}" class="text-decoration-none">角色管理</a></li>
+                <li class="breadcrumb-item active" th:text="${role != null ? '编辑角色' : '创建角色'}"></li>
+            </ol>
+        </nav>
+
+        <h2 class="mb-4">
+            <i class="bi bi-shield-lock"></i>
+            <span th:text="${role != null ? '编辑角色: ' + role.displayName : '创建新角色'}"></span>
+        </h2>
+
+        <!-- Alerts -->
+        <div th:if="${error}" class="alert alert-danger alert-dismissible fade show" role="alert">
+            <i class="bi bi-exclamation-circle"></i> <span th:text="${error}"></span>
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+
+        <div class="row">
+            <div class="col-md-8">
+                <div class="card bg-dark border-secondary">
+                    <div class="card-body">
+                        <form th:action="${role != null ? '/roles/' + role.id + '/edit' : '/roles/create'}"
+                              method="post">
+
+                            <div class="mb-3" th:if="${role == null}">
+                                <label class="form-label">角色名称 (英文) *</label>
+                                <input type="text" class="form-control bg-dark text-light border-secondary"
+                                       name="name" required placeholder="如: CONTENT_MANAGER"
+                                       pattern="[A-Z_]+" title="只允许大写字母和下划线">
+                                <div class="form-text">用于系统识别，只允许大写字母和下划线</div>
+                            </div>
+
+                            <div class="mb-3">
+                                <label class="form-label">显示名称 *</label>
+                                <input type="text" class="form-control bg-dark text-light border-secondary"
+                                       name="displayName" required placeholder="如: 内容管理员"
+                                       th:value="${role != null ? role.displayName : ''}">
+                            </div>
+
+                            <div class="mb-3">
+                                <label class="form-label">描述</label>
+                                <textarea class="form-control bg-dark text-light border-secondary"
+                                          name="description" rows="3"
+                                          placeholder="角色描述..."
+                                          th:text="${role != null ? role.description : ''}"></textarea>
+                            </div>
+
+                            <div class="mb-3">
+                                <label class="form-label">权限配置</label>
+                                <div class="row">
+                                    <div th:each="perm : ${allPermissions}" class="col-md-6 mb-2">
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox"
+                                                   name="permissions" th:value="${perm}"
+                                                   th:id="'perm_' + ${perm}"
+                                                   th:checked="${role != null and role.permissions.contains(perm)}">
+                                            <label class="form-check-label" th:for="'perm_' + ${perm}">
+                                                <span th:text="${perm}"></span>
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="d-flex gap-2">
+                                <button type="submit" class="btn btn-primary">
+                                    <i class="bi bi-check-circle"></i>
+                                    <span th:text="${role != null ? '保存修改' : '创建角色'}"></span>
+                                </button>
+                                <a th:href="@{/roles}" class="btn btn-secondary">
+                                    <i class="bi bi-arrow-left"></i> 返回
+                                </a>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-4">
+                <div class="card bg-dark border-secondary">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-info-circle"></i> 权限说明</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-2">
+                            <strong>dashboard:view</strong><br>
+                            <small class="text-muted">查看仪表盘</small>
+                        </div>
+                        <div class="mb-2">
+                            <strong>agents:view</strong><br>
+                            <small class="text-muted">查看 Agent 列表和状态</small>
+                        </div>
+                        <div class="mb-2">
+                            <strong>agents:manage</strong><br>
+                            <small class="text-muted">管理 Agent（创建、删除、配置）</small>
+                        </div>
+                        <div class="mb-2">
+                            <strong>agents:task</strong><br>
+                            <small class="text-muted">发送任务给 Agent</small>
+                        </div>
+                        <div class="mb-2">
+                            <strong>projects:view</strong><br>
+                            <small class="text-muted">查看项目列表</small>
+                        </div>
+                        <div class="mb-2">
+                            <strong>projects:manage</strong><br>
+                            <small class="text-muted">管理项目（创建、删除）</small>
+                        </div>
+                        <div class="mb-2">
+                            <strong>projects:edit</strong><br>
+                            <small class="text-muted">编辑项目配置和规范</small>
+                        </div>
+                        <div class="mb-2">
+                            <strong>skills:view</strong><br>
+                            <small class="text-muted">查看技能列表</small>
+                        </div>
+                        <div class="mb-2">
+                            <strong>skills:manage</strong><br>
+                            <small class="text-muted">管理技能（创建、编辑）</small>
+                        </div>
+                        <div class="mb-2">
+                            <strong>users:view</strong><br>
+                            <small class="text-muted">查看用户列表</small>
+                        </div>
+                        <div class="mb-2">
+                            <strong>users:manage</strong><br>
+                            <small class="text-muted">管理用户（审核、禁用）</small>
+                        </div>
+                        <div class="mb-2">
+                            <strong>roles:manage</strong><br>
+                            <small class="text-muted">管理角色（创建、编辑、删除）</small>
+                        </div>
+                        <div class="mb-2">
+                            <strong>logs:view</strong><br>
+                            <small class="text-muted">查看操作日志</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
