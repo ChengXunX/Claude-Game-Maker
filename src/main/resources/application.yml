@@ -20,6 +20,16 @@ game-maker:
     webhook-url: ${FEISHU_WEBHOOK_URL:}
     enabled: ${FEISHU_ENABLED:false}
 
+  skills:
+    enabled: true
+    auto-learn: true
+    max-skills-per-agent: 50
+
+  context:
+    snapshot-interval-ms: 3600000   # 1 hour
+    max-snapshots: 5
+    recovery-enabled: true
+
   scheduler:
     enabled: true
     producer-interval-ms: 300000    # 5 minutes

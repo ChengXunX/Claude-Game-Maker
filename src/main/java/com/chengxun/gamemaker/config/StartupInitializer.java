@@ -4,6 +4,8 @@ import com.chengxun.gamemaker.agent.Agent;
 import com.chengxun.gamemaker.manager.AgentManager;
 import com.chengxun.gamemaker.manager.ContextManager;
 import com.chengxun.gamemaker.manager.MemoryManager;
+import com.chengxun.gamemaker.manager.SkillManager;
+import com.chengxun.gamemaker.model.AgentContext;
 import com.chengxun.gamemaker.model.AgentDefinition;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -16,37 +18,56 @@ import java.nio.file.Path;
 
 @Component
 public class StartupInitializer {
-    
+
     private static final Logger log = LoggerFactory.getLogger(StartupInitializer.class);
-    
+
     private final AppConfig appConfig;
     private final AgentConfig agentConfig;
     private final AgentManager agentManager;
     private final ContextManager contextManager;
     private final MemoryManager memoryManager;
-    
+    private final SkillManager skillManager;
+
     public StartupInitializer(AppConfig appConfig,
                              AgentConfig agentConfig,
                              AgentManager agentManager,
                              ContextManager contextManager,
-                             MemoryManager memoryManager) {
+                             MemoryManager memoryManager,
+                             SkillManager skillManager) {
         this.appConfig = appConfig;
         this.agentConfig = agentConfig;
         this.agentManager = agentManager;
         this.contextManager = contextManager;
         this.memoryManager = memoryManager;
+        this.skillManager = skillManager;
     }
-    
+
     @EventListener(ApplicationReadyEvent.class)
     public void onApplicationReady() {
         log.info("Game Maker starting up...");
-        
+
+        createDataDirectories();
         createAgents();
         loadAgentsFiles();
-        
-        log.info("Game Maker startup complete. Agents: {}", agentManager.getAllAgents().size());
+        initDefaultSkills();
+
+        log.info("Game Maker startup complete. Agents: {}, Skills: {}",
+            agentManager.getAllAgents().size(),
+            skillManager.getAllSkills().size());
     }
-    
+
+    private void createDataDirectories() {
+        try {
+            Files.createDirectories(Path.of(appConfig.getDataDir()));
+            Files.createDirectories(Path.of(appConfig.getProjectsDir()));
+            Files.createDirectories(Path.of(appConfig.getContextsDir()));
+            Files.createDirectories(Path.of(appConfig.getMemoryDir()));
+            log.info("Data directories created");
+        } catch (Exception e) {
+            log.error("Failed to create data directories", e);
+        }
+    }
+
     private void createAgents() {
         agentConfig.getDefinitions().forEach((key, def) -> {
             AgentDefinition definition = AgentDefinition.builder()
@@ -61,18 +82,20 @@ public class StartupInitializer {
                 .status(AgentDefinition.AgentStatus.IDLE)
                 .parent("producer".equals(def.getRole()))
                 .build();
-            
-            AgentDefinition saved = contextManager.loadContext(key);
-            if (saved != null) {
-                definition.setSessionId(saved.getSessionId());
-                definition.setWorkDir(saved.getWorkDir());
+
+            // 尝试加载保存的上下文
+            AgentContext savedContext = contextManager.loadContext(key);
+            if (savedContext != null) {
+                definition.setSessionId(savedContext.getSessionId());
+                definition.setWorkDir(savedContext.getWorkDir());
+                log.info("Restored context for agent: {}", key);
             }
-            
+
             agentManager.createAgent(definition);
             log.info("Agent created: {} ({})", def.getName(), key);
         });
     }
-    
+
     private void loadAgentsFiles() {
         agentConfig.getDefinitions().forEach((key, def) -> {
             if (def.getAgentsFile() != null && !def.getAgentsFile().isEmpty()) {
@@ -80,7 +103,7 @@ public class StartupInitializer {
                     Path path = Path.of(def.getAgentsFile());
                     if (Files.exists(path)) {
                         String content = Files.readString(path);
-                        memoryManager.saveMemory(key, "agents_file", content);
+                        memoryManager.saveMemory(key, "knowledge", "agents_file", content);
                         log.info("Loaded agents file for {}: {}", key, def.getAgentsFile());
                     }
                 } catch (Exception e) {
@@ -88,5 +111,10 @@ public class StartupInitializer {
                 }
             }
         });
+    }
+
+    private void initDefaultSkills() {
+        // 默认 SKILL 已通过 SkillManager 的 @PostConstruct 自动加载
+        log.info("Default skills initialized: {}", skillManager.getAllSkills().size());
     }
 }
