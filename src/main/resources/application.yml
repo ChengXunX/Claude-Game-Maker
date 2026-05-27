@@ -1,0 +1,41 @@
+server:
+  port: 9922
+
+game-maker:
+  data-dir: data
+  projects-dir: data/projects
+  contexts-dir: data/contexts
+  memory-dir: data/memory
+
+  claude:
+    api-key: ${CLAUDE_API_KEY:}
+    api-url: ${CLAUDE_API_URL:https://token-plan-cn.xiaomimimo.com/anthropic}
+    model: ${CLAUDE_MODEL:mimo-v2.5-pro[1m]}
+    install-path: ${CLAUDE_CLI_PATH:/usr/bin/claude}
+    max-tokens: 4096
+
+  feishu:
+    app-id: ${FEISHU_APP_ID:}
+    app-secret: ${FEISHU_APP_SECRET:}
+    webhook-url: ${FEISHU_WEBHOOK_URL:}
+    enabled: ${FEISHU_ENABLED:false}
+
+  scheduler:
+    enabled: true
+    producer-interval-ms: 300000    # 5 minutes
+    agent-interval-ms: 600000       # 10 minutes
+
+  agents:
+    definitions:
+      producer:
+        name: "制作人"
+        role: "producer"
+        description: "管理整个游戏开发团队，向用户汇报进度"
+        agents-file: "src/main/resources/agents/producer/AGENTS.md"
+        auto-start: true
+      server-dev:
+        name: "服务端开发"
+        role: "server-dev"
+        description: "负责游戏服务端开发，Java 技术栈"
+        agents-file: "src/main/resources/agents/server-dev/AGENTS.md"
+        auto-start: false
