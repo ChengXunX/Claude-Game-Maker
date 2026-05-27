@@ -16,6 +16,8 @@ public class AppConfig {
     private ClaudeConfig claude = new ClaudeConfig();
     private FeishuConfig feishu = new FeishuConfig();
     private SchedulerConfig scheduler = new SchedulerConfig();
+    private SkillsConfig skills = new SkillsConfig();
+    private ContextConfig context = new ContextConfig();
     
     // Getters and Setters
     public String getDataDir() { return dataDir; }
@@ -44,6 +46,12 @@ public class AppConfig {
     
     public SchedulerConfig getScheduler() { return scheduler; }
     public void setScheduler(SchedulerConfig scheduler) { this.scheduler = scheduler; }
+
+    public SkillsConfig getSkills() { return skills; }
+    public void setSkills(SkillsConfig skills) { this.skills = skills; }
+
+    public ContextConfig getContext() { return context; }
+    public void setContext(ContextConfig context) { this.context = context; }
     
     // Convenience methods
     public String getApiKey() { return claude.getApiKey(); }
@@ -106,5 +114,35 @@ public class AppConfig {
         
         public boolean isEnabled() { return enabled; }
         public void setEnabled(boolean enabled) { this.enabled = enabled; }
+    }
+
+    public static class SkillsConfig {
+        private boolean enabled = true;
+        private boolean autoLearn = true;
+        private int maxSkillsPerAgent = 50;
+
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean enabled) { this.enabled = enabled; }
+
+        public boolean isAutoLearn() { return autoLearn; }
+        public void setAutoLearn(boolean autoLearn) { this.autoLearn = autoLearn; }
+
+        public int getMaxSkillsPerAgent() { return maxSkillsPerAgent; }
+        public void setMaxSkillsPerAgent(int maxSkillsPerAgent) { this.maxSkillsPerAgent = maxSkillsPerAgent; }
+    }
+
+    public static class ContextConfig {
+        private long snapshotIntervalMs = 3600000;
+        private int maxSnapshots = 5;
+        private boolean recoveryEnabled = true;
+
+        public long getSnapshotIntervalMs() { return snapshotIntervalMs; }
+        public void setSnapshotIntervalMs(long snapshotIntervalMs) { this.snapshotIntervalMs = snapshotIntervalMs; }
+
+        public int getMaxSnapshots() { return maxSnapshots; }
+        public void setMaxSnapshots(int maxSnapshots) { this.maxSnapshots = maxSnapshots; }
+
+        public boolean isRecoveryEnabled() { return recoveryEnabled; }
+        public void setRecoveryEnabled(boolean recoveryEnabled) { this.recoveryEnabled = recoveryEnabled; }
     }
 }
