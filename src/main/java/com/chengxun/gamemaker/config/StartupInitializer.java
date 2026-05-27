@@ -4,6 +4,7 @@ import com.chengxun.gamemaker.agent.Agent;
 import com.chengxun.gamemaker.manager.AgentManager;
 import com.chengxun.gamemaker.manager.ContextManager;
 import com.chengxun.gamemaker.manager.MemoryManager;
+import com.chengxun.gamemaker.manager.ProjectManager;
 import com.chengxun.gamemaker.manager.SkillManager;
 import com.chengxun.gamemaker.model.AgentContext;
 import com.chengxun.gamemaker.model.AgentDefinition;
@@ -27,19 +28,22 @@ public class StartupInitializer {
     private final ContextManager contextManager;
     private final MemoryManager memoryManager;
     private final SkillManager skillManager;
+    private final ProjectManager projectManager;
 
     public StartupInitializer(AppConfig appConfig,
                              AgentConfig agentConfig,
                              AgentManager agentManager,
                              ContextManager contextManager,
                              MemoryManager memoryManager,
-                             SkillManager skillManager) {
+                             SkillManager skillManager,
+                             ProjectManager projectManager) {
         this.appConfig = appConfig;
         this.agentConfig = agentConfig;
         this.agentManager = agentManager;
         this.contextManager = contextManager;
         this.memoryManager = memoryManager;
         this.skillManager = skillManager;
+        this.projectManager = projectManager;
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -51,9 +55,10 @@ public class StartupInitializer {
         loadAgentsFiles();
         initDefaultSkills();
 
-        log.info("Game Maker startup complete. Agents: {}, Skills: {}",
+        log.info("Game Maker startup complete. Agents: {}, Skills: {}, Projects: {}",
             agentManager.getAllAgents().size(),
-            skillManager.getAllSkills().size());
+            skillManager.getAllGlobalSkills().size(),
+            projectManager.getAllProjects().size());
     }
 
     private void createDataDirectories() {
@@ -76,6 +81,7 @@ public class StartupInitializer {
                 .role(def.getRole())
                 .description(def.getDescription())
                 .agentsFile(def.getAgentsFile())
+                .workDir(appConfig.getDefaultWorkDir())
                 .apiKey(appConfig.getClaude().getApiKey())
                 .apiUrl(appConfig.getClaude().getApiUrl())
                 .model(appConfig.getClaude().getModel())
@@ -83,11 +89,13 @@ public class StartupInitializer {
                 .parent("producer".equals(def.getRole()))
                 .build();
 
-            // 尝试加载保存的上下文
-            AgentContext savedContext = contextManager.loadContext(key);
+            // 尝试加载保存的上下文（全局）
+            AgentContext savedContext = contextManager.loadContext(key, null);
             if (savedContext != null) {
                 definition.setSessionId(savedContext.getSessionId());
-                definition.setWorkDir(savedContext.getWorkDir());
+                if (savedContext.getWorkDir() != null) {
+                    definition.setWorkDir(savedContext.getWorkDir());
+                }
                 log.info("Restored context for agent: {}", key);
             }
 
@@ -114,7 +122,6 @@ public class StartupInitializer {
     }
 
     private void initDefaultSkills() {
-        // 默认 SKILL 已通过 SkillManager 的 @PostConstruct 自动加载
-        log.info("Default skills initialized: {}", skillManager.getAllSkills().size());
+        log.info("Default skills initialized: {}", skillManager.getAllGlobalSkills().size());
     }
 }

@@ -3,10 +3,7 @@ package com.chengxun.gamemaker.agent;
 import com.chengxun.gamemaker.engine.ClaudeCliEngine;
 import com.chengxun.gamemaker.engine.MessageBus;
 import com.chengxun.gamemaker.feishu.FeishuBotService;
-import com.chengxun.gamemaker.manager.AgentManager;
-import com.chengxun.gamemaker.manager.ContextManager;
-import com.chengxun.gamemaker.manager.MemoryManager;
-import com.chengxun.gamemaker.manager.SkillManager;
+import com.chengxun.gamemaker.manager.*;
 import com.chengxun.gamemaker.model.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -27,9 +24,10 @@ public class ProducerAgent extends BaseAgent {
                         ContextManager contextManager,
                         MemoryManager memoryManager,
                         SkillManager skillManager,
+                        ProjectManager projectManager,
                         AgentManager agentManager,
                         FeishuBotService feishuService) {
-        super(definition, cliEngine, messageBus, contextManager, memoryManager, skillManager);
+        super(definition, cliEngine, messageBus, contextManager, memoryManager, skillManager, projectManager);
         this.agentManager = agentManager;
         this.feishuService = feishuService;
     }
@@ -43,7 +41,6 @@ public class ProducerAgent extends BaseAgent {
         generateWorkInstructions();
         reportToUser(teamStatus);
 
-        // 保存项目状态到记忆
         saveProjectStatus(teamStatus);
     }
 
@@ -61,6 +58,11 @@ public class ProducerAgent extends BaseAgent {
     private String getTeamStatus() {
         List<Agent> agents = agentManager.getAllAgents();
         StringBuilder sb = new StringBuilder("**团队状态报告**\n\n");
+
+        if (currentProject != null) {
+            sb.append("**项目**: ").append(currentProject.getName()).append("\n");
+            sb.append("**工作目录**: ").append(currentProject.getWorkDir()).append("\n\n");
+        }
 
         for (Agent agent : agents) {
             sb.append(String.format("- **%s** (%s): %s\n",
@@ -84,7 +86,6 @@ public class ProducerAgent extends BaseAgent {
 
     private void generateWorkInstructions() {
         log.info("Generating work instructions...");
-        // 使用 SKILL 系统生成工作指令
         String skillPrompt = buildSkillPrompt("制定工作计划和任务分配");
         if (!skillPrompt.isEmpty()) {
             String instructions = sendMessage(skillPrompt);
@@ -106,8 +107,6 @@ public class ProducerAgent extends BaseAgent {
     private void handleReport(AgentMessage message) {
         log.info("Received report from {}: {}", message.getFromAgentId(), message.getContent());
         saveMemory("last_report_" + message.getFromAgentId(), message.getContent());
-
-        // 保存到知识库
         saveKnowledge("team_report_" + System.currentTimeMillis(), message.getContent());
     }
 
@@ -137,7 +136,6 @@ public class ProducerAgent extends BaseAgent {
     }
 
     private String processQuery(String query) {
-        // 使用 SKILL 系统处理查询
         String skillPrompt = buildSkillPrompt("回答问题和查询");
         String fullPrompt = skillPrompt + "\n\n请回答以下问题: " + query;
         return sendMessage(fullPrompt);
@@ -153,25 +151,22 @@ public class ProducerAgent extends BaseAgent {
         );
 
         feishuService.sendApprovalRequest(hiringPlan);
-
-        // 保存招聘记录
         saveExperience("hiring_" + role, hiringPlan);
-
         return "招聘请求已发送，等待批准";
     }
 
-    public Agent createAgent(String name, String role, String agentsFile) {
+    public Agent createAgent(String name, String role, String agentsFile, String workDir) {
         AgentDefinition newDef = AgentDefinition.builder()
             .id(role.toLowerCase().replace(" ", "-") + "-" + System.currentTimeMillis())
             .name(name)
             .role(role)
             .agentsFile(agentsFile)
+            .workDir(workDir)
             .status(AgentDefinition.AgentStatus.IDLE)
             .build();
 
-        // 保存创建记录
         saveExperience("create_agent_" + newDef.getId(),
-            String.format("Created agent: %s (%s)", name, role));
+            String.format("Created agent: %s (%s) for workDir: %s", name, role, workDir));
 
         return agentManager.createAgent(newDef);
     }
@@ -179,23 +174,38 @@ public class ProducerAgent extends BaseAgent {
     public void assignApiConfig(String agentId, String apiKey, String apiUrl, String model) {
         Agent agent = agentManager.getAgent(agentId);
         if (agent != null) {
-            // 保存当前上下文快照（API 切换前）
             createSnapshot();
 
             agent.getDefinition().setApiKey(apiKey);
             agent.getDefinition().setApiUrl(apiUrl);
             agent.getDefinition().setModel(model);
 
-            // 记录 API 配置历史
             agentContext.addApiConfig(apiUrl, model);
             agent.saveContext();
 
             log.info("Assigned API config to agent: {}", agentId);
 
-            // 通知 agent 恢复上下文
             if (agent instanceof BaseAgent baseAgent) {
                 baseAgent.recoverContext();
             }
+        }
+    }
+
+    public void assignWorkDir(String agentId, String workDir) {
+        Agent agent = agentManager.getAgent(agentId);
+        if (agent != null) {
+            createSnapshot();
+
+            agent.getDefinition().setWorkDir(workDir);
+
+            if (agent instanceof BaseAgent baseAgent) {
+                baseAgent.initProject();
+                baseAgent.loadProjectSkills();
+                baseAgent.recoverContext();
+            }
+
+            agent.saveContext();
+            log.info("Assigned workDir to agent: {} -> {}", agentId, workDir);
         }
     }
 
@@ -203,8 +213,6 @@ public class ProducerAgent extends BaseAgent {
         feishuService.sendMessage(
             String.format("⚠️ Agent %s 的 API 配额不足，请及时更换或重置。", agentId)
         );
-
-        // 保存配额耗尽记录
         saveExperience("quota_exhausted_" + agentId, "API quota exhausted at " + java.time.LocalDateTime.now());
     }
 }

@@ -4,6 +4,7 @@ import com.chengxun.gamemaker.engine.ClaudeCliEngine;
 import com.chengxun.gamemaker.engine.MessageBus;
 import com.chengxun.gamemaker.manager.ContextManager;
 import com.chengxun.gamemaker.manager.MemoryManager;
+import com.chengxun.gamemaker.manager.ProjectManager;
 import com.chengxun.gamemaker.manager.SkillManager;
 import com.chengxun.gamemaker.model.*;
 import org.slf4j.Logger;
@@ -22,8 +23,10 @@ public abstract class BaseAgent implements Agent {
     protected final ContextManager contextManager;
     protected final MemoryManager memoryManager;
     protected final SkillManager skillManager;
+    protected final ProjectManager projectManager;
 
     protected AgentContext agentContext;
+    protected GameProject currentProject;
     protected String currentConversationId;
 
     protected final ConcurrentLinkedQueue<AgentMessage> pendingMessages = new ConcurrentLinkedQueue<>();
@@ -32,22 +35,20 @@ public abstract class BaseAgent implements Agent {
     protected volatile boolean busy = false;
     protected volatile boolean running = false;
 
-    // Getters for external access
-    public AgentContext getAgentContext() { return agentContext; }
-    public String getCurrentConversationId() { return currentConversationId; }
-
     protected BaseAgent(AgentDefinition definition,
                        ClaudeCliEngine cliEngine,
                        MessageBus messageBus,
                        ContextManager contextManager,
                        MemoryManager memoryManager,
-                       SkillManager skillManager) {
+                       SkillManager skillManager,
+                       ProjectManager projectManager) {
         this.definition = definition;
         this.cliEngine = cliEngine;
         this.messageBus = messageBus;
         this.contextManager = contextManager;
         this.memoryManager = memoryManager;
         this.skillManager = skillManager;
+        this.projectManager = projectManager;
     }
 
     @Override
@@ -70,12 +71,27 @@ public abstract class BaseAgent implements Agent {
         return definition;
     }
 
+    public GameProject getCurrentProject() {
+        return currentProject;
+    }
+
+    public AgentContext getAgentContext() {
+        return agentContext;
+    }
+
+    public String getCurrentConversationId() {
+        return currentConversationId;
+    }
+
     @Override
     public void initialize() {
         log.info("Initializing agent: {} ({})", getName(), getId());
 
+        // 初始化项目
+        initProject();
+
         // 加载或创建上下文
-        agentContext = contextManager.getOrCreateContext(getId());
+        agentContext = contextManager.getOrCreateContext(getId(), currentProject);
         if (agentContext.getSessionId() != null) {
             definition.setSessionId(agentContext.getSessionId());
         }
@@ -89,21 +105,45 @@ public abstract class BaseAgent implements Agent {
         // 加载默认记忆
         loadDefaultMemory();
 
+        // 加载项目级别 SKILL
+        loadProjectSkills();
+
         // 注册到消息总线
         messageBus.registerAgent(this);
 
         // 开始新的对话
         startNewConversation();
 
-        log.info("Agent initialized: {}", getName());
+        log.info("Agent initialized: {} for project: {}", getName(),
+            currentProject != null ? currentProject.getName() : "global");
+    }
+
+    protected void initProject() {
+        String workDir = definition.getWorkDir();
+        if (workDir != null && !workDir.isEmpty()) {
+            currentProject = projectManager.getOrCreateProject(workDir);
+            currentProject.addAgent(getId());
+            projectManager.saveProjectConfig(currentProject);
+        }
     }
 
     protected void initMemoryCategories() {
-        memoryManager.createCategory(getId(), "skills");
-        memoryManager.createCategory(getId(), "knowledge");
-        memoryManager.createCategory(getId(), "experiences");
-        memoryManager.createCategory(getId(), "preferences");
-        memoryManager.createCategory(getId(), "general");
+        String agentId = getId();
+        if (currentProject != null) {
+            // 项目级别记忆目录
+            String projectMemoryDir = currentProject.getMemoryDir() + "/" + agentId;
+            memoryManager.createCategory(projectMemoryDir, "skills");
+            memoryManager.createCategory(projectMemoryDir, "knowledge");
+            memoryManager.createCategory(projectMemoryDir, "experiences");
+            memoryManager.createCategory(projectMemoryDir, "preferences");
+            memoryManager.createCategory(projectMemoryDir, "general");
+        }
+        // 全局记忆目录
+        memoryManager.createCategory(agentId, "skills");
+        memoryManager.createCategory(agentId, "knowledge");
+        memoryManager.createCategory(agentId, "experiences");
+        memoryManager.createCategory(agentId, "preferences");
+        memoryManager.createCategory(agentId, "general");
     }
 
     protected void loadDefaultMemory() {
@@ -114,11 +154,25 @@ public abstract class BaseAgent implements Agent {
                 java.nio.file.Path path = java.nio.file.Path.of(agentsFile);
                 if (java.nio.file.Files.exists(path)) {
                     String content = java.nio.file.Files.readString(path);
-                    memoryManager.saveMemory(getId(), "knowledge", "agents_file", content);
+                    saveKnowledge("agents_file", content);
                 }
             } catch (Exception e) {
                 log.warn("Failed to load agents file for {}: {}", getId(), e.getMessage());
             }
+        }
+
+        // 加载项目规则
+        if (currentProject != null) {
+            String rules = projectManager.loadProjectRules(currentProject.getId());
+            if (rules != null) {
+                saveKnowledge("project_rules", rules);
+            }
+        }
+    }
+
+    protected void loadProjectSkills() {
+        if (currentProject != null) {
+            skillManager.loadProjectSkills(currentProject.getId(), currentProject.getSkillsDir());
         }
     }
 
@@ -140,9 +194,7 @@ public abstract class BaseAgent implements Agent {
     @Override
     public void stop() {
         running = false;
-        // 保存上下文
         saveContext();
-        // 创建快照
         createSnapshot();
         log.info("Agent stopped: {}", getName());
     }
@@ -197,7 +249,6 @@ public abstract class BaseAgent implements Agent {
 
         busy = true;
         try {
-            // 保存用户消息到对话历史
             saveConversationMessage("user", message);
 
             String sessionId = definition.getSessionId();
@@ -215,13 +266,11 @@ public abstract class BaseAgent implements Agent {
             if (newSessionId != null && !newSessionId.equals(sessionId)) {
                 definition.setSessionId(newSessionId);
                 agentContext.setSessionId(newSessionId);
-                contextManager.updateSessionId(getId(), newSessionId);
+                contextManager.updateSessionId(getId(), currentProject, newSessionId);
             }
 
-            // 保存助手回复到对话历史
             saveConversationMessage("assistant", response);
 
-            // 更新工作记忆
             agentContext.addWorkingMemory("last_message", message.length() > 100 ? message.substring(0, 100) : message);
             agentContext.addWorkingMemory("last_response", response.length() > 100 ? response.substring(0, 100) : response);
 
@@ -235,9 +284,9 @@ public abstract class BaseAgent implements Agent {
         ContextManager.ConversationMessage msg = new ContextManager.ConversationMessage(role, content);
         msg.setTaskId(agentContext.getCurrentTaskId());
 
-        List<ContextManager.ConversationMessage> messages = contextManager.loadConversation(getId(), currentConversationId);
+        List<ContextManager.ConversationMessage> messages = contextManager.loadConversation(getId(), currentProject, currentConversationId);
         messages.add(msg);
-        contextManager.saveConversation(getId(), currentConversationId, messages);
+        contextManager.saveConversation(getId(), currentProject, currentConversationId, messages);
     }
 
     @Override
@@ -288,12 +337,12 @@ public abstract class BaseAgent implements Agent {
     public void saveContext() {
         agentContext.setWorkDir(definition.getWorkDir());
         agentContext.setSessionId(definition.getSessionId());
-        contextManager.saveContext(agentContext);
+        contextManager.saveContext(agentContext, currentProject);
     }
 
     @Override
     public void loadContext() {
-        agentContext = contextManager.loadContext(getId());
+        agentContext = contextManager.loadContext(getId(), currentProject);
         if (agentContext != null) {
             definition.setSessionId(agentContext.getSessionId());
             definition.setWorkDir(agentContext.getWorkDir());
@@ -301,38 +350,33 @@ public abstract class BaseAgent implements Agent {
     }
 
     protected void createSnapshot() {
-        List<ContextManager.ConversationMessage> recentMessages = contextManager.getRecentMessages(getId(), 20);
-        contextManager.createSnapshot(getId(), agentContext, recentMessages);
-        contextManager.cleanupOldSnapshots(getId(), 5);
+        List<ContextManager.ConversationMessage> recentMessages = contextManager.getRecentMessages(getId(), currentProject, 20);
+        contextManager.createSnapshot(getId(), currentProject, agentContext, recentMessages);
+        contextManager.cleanupOldSnapshots(getId(), currentProject, 5);
     }
 
     protected void recoverContext() {
-        log.info("Recovering context for agent: {}", getId());
+        log.info("Recovering context for agent: {} in project: {}", getId(),
+            currentProject != null ? currentProject.getName() : "global");
 
-        // 尝试加载最新的快照
-        Map<String, Object> snapshot = contextManager.loadLatestSnapshot(getId());
+        Map<String, Object> snapshot = contextManager.loadLatestSnapshot(getId(), currentProject);
         if (snapshot != null) {
             log.info("Found snapshot, recovering...");
 
-            // 从快照恢复上下文
             if (snapshot.containsKey("context")) {
-                // 重建工作记忆
                 agentContext.addWorkingMemory("recovery_time", java.time.LocalDateTime.now().toString());
                 agentContext.addWorkingMemory("recovery_source", "snapshot");
             }
 
-            // 从快照恢复最近对话摘要
             if (snapshot.containsKey("recentMessages")) {
                 String summary = buildConversationSummary(snapshot);
                 agentContext.addWorkingMemory("conversation_summary", summary);
             }
         }
 
-        // 加载相关记忆
-        Map<String, String> knowledge = memoryManager.getCategoryMemory(getId(), "knowledge");
-        Map<String, String> experiences = memoryManager.getCategoryMemory(getId(), "experiences");
+        Map<String, String> knowledge = loadAllKnowledge();
+        Map<String, String> experiences = loadAllExperiences();
 
-        // 构建恢复 prompt
         String recoveryPrompt = buildRecoveryPrompt(knowledge, experiences);
         if (!recoveryPrompt.isEmpty()) {
             log.info("Sending recovery prompt to rebuild context");
@@ -394,42 +438,90 @@ public abstract class BaseAgent implements Agent {
     @Override
     public void saveMemory(String key, String value) {
         memoryManager.saveMemory(getId(), "general", key, value);
+        if (currentProject != null) {
+            memoryManager.saveMemory(currentProject.getMemoryDir() + "/" + getId(), "general", key, value);
+        }
     }
 
     @Override
     public String loadMemory(String key) {
+        // 先尝试加载项目级别
+        if (currentProject != null) {
+            String value = memoryManager.loadMemory(currentProject.getMemoryDir() + "/" + getId(), "general", key);
+            if (value != null) return value;
+        }
         return memoryManager.loadMemory(getId(), "general", key);
     }
 
     public void saveKnowledge(String key, String value) {
         memoryManager.saveMemory(getId(), "knowledge", key, value);
+        if (currentProject != null) {
+            memoryManager.saveMemory(currentProject.getMemoryDir() + "/" + getId(), "knowledge", key, value);
+        }
     }
 
     public String loadKnowledge(String key) {
+        if (currentProject != null) {
+            String value = memoryManager.loadMemory(currentProject.getMemoryDir() + "/" + getId(), "knowledge", key);
+            if (value != null) return value;
+        }
         return memoryManager.loadMemory(getId(), "knowledge", key);
     }
 
     public void saveExperience(String key, String value) {
         memoryManager.saveMemory(getId(), "experiences", key, value);
+        if (currentProject != null) {
+            memoryManager.saveMemory(currentProject.getMemoryDir() + "/" + getId(), "experiences", key, value);
+        }
         agentContext.addLearnedPattern(key);
     }
 
     public String loadExperience(String key) {
+        if (currentProject != null) {
+            String value = memoryManager.loadMemory(currentProject.getMemoryDir() + "/" + getId(), "experiences", key);
+            if (value != null) return value;
+        }
         return memoryManager.loadMemory(getId(), "experiences", key);
     }
 
     public void saveSkill(String key, String value) {
         memoryManager.saveMemory(getId(), "skills", key, value);
+        if (currentProject != null) {
+            memoryManager.saveMemory(currentProject.getMemoryDir() + "/" + getId(), "skills", key, value);
+        }
     }
 
     public String loadSkill(String key) {
+        if (currentProject != null) {
+            String value = memoryManager.loadMemory(currentProject.getMemoryDir() + "/" + getId(), "skills", key);
+            if (value != null) return value;
+        }
         return memoryManager.loadMemory(getId(), "skills", key);
+    }
+
+    protected Map<String, String> loadAllKnowledge() {
+        Map<String, String> result = new HashMap<>();
+        result.putAll(memoryManager.getCategoryMemory(getId(), "knowledge"));
+        if (currentProject != null) {
+            result.putAll(memoryManager.getCategoryMemory(currentProject.getMemoryDir() + "/" + getId(), "knowledge"));
+        }
+        return result;
+    }
+
+    protected Map<String, String> loadAllExperiences() {
+        Map<String, String> result = new HashMap<>();
+        result.putAll(memoryManager.getCategoryMemory(getId(), "experiences"));
+        if (currentProject != null) {
+            result.putAll(memoryManager.getCategoryMemory(currentProject.getMemoryDir() + "/" + getId(), "experiences"));
+        }
+        return result;
     }
 
     // ===== SKILL 相关 =====
 
     protected String buildSkillPrompt(String taskDescription) {
-        List<Skill> matchedSkills = skillManager.matchSkills(taskDescription);
+        String projectId = currentProject != null ? currentProject.getId() : null;
+        List<Skill> matchedSkills = skillManager.matchSkills(taskDescription, projectId);
         if (matchedSkills.isEmpty()) {
             return "";
         }
@@ -439,14 +531,15 @@ public abstract class BaseAgent implements Agent {
 
         for (Skill skill : matchedSkills) {
             sb.append(skill.toPromptSection()).append("\n");
-            skillManager.recordSkillUsage(skill.getId());
+            skillManager.recordSkillUsage(skill.getId(), projectId);
         }
 
         return sb.toString();
     }
 
     protected void tryLearnSkill(String taskDescription, String result) {
-        // 向 Claude 发送总结 prompt，提取可复用模式
+        if (currentProject == null) return;
+
         String summaryPrompt = String.format(
             "请分析以下任务执行过程，如果发现可复用的模式，请提取为技能。\n\n" +
             "任务描述：%s\n\n" +
@@ -473,7 +566,7 @@ public abstract class BaseAgent implements Agent {
             String trigger = extractField(response, "SKILL_TRIGGER");
             String prompt = extractField(response, "SKILL_PROMPT");
 
-            if (name != null && prompt != null) {
+            if (name != null && prompt != null && currentProject != null) {
                 Skill skill = Skill.builder()
                     .id("learned-" + System.currentTimeMillis())
                     .name(name)
@@ -483,8 +576,8 @@ public abstract class BaseAgent implements Agent {
                     .prompt(prompt)
                     .build();
 
-                skillManager.saveLearnedSkill(skill, getId());
-                log.info("Learned new skill: {}", skill.getId());
+                skillManager.saveLearnedSkill(skill, getId(), currentProject.getId(), currentProject.getSkillsDir());
+                log.info("Learned new skill: {} for project: {}", skill.getId(), currentProject.getId());
             }
         } catch (Exception e) {
             log.debug("Failed to parse learned skill: {}", e.getMessage());

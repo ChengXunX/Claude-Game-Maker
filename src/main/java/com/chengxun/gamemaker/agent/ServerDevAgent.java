@@ -2,9 +2,7 @@ package com.chengxun.gamemaker.agent;
 
 import com.chengxun.gamemaker.engine.ClaudeCliEngine;
 import com.chengxun.gamemaker.engine.MessageBus;
-import com.chengxun.gamemaker.manager.ContextManager;
-import com.chengxun.gamemaker.manager.MemoryManager;
-import com.chengxun.gamemaker.manager.SkillManager;
+import com.chengxun.gamemaker.manager.*;
 import com.chengxun.gamemaker.model.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,8 +20,9 @@ public class ServerDevAgent extends BaseAgent {
                          MessageBus messageBus,
                          ContextManager contextManager,
                          MemoryManager memoryManager,
-                         SkillManager skillManager) {
-        super(definition, cliEngine, messageBus, contextManager, memoryManager, skillManager);
+                         SkillManager skillManager,
+                         ProjectManager projectManager) {
+        super(definition, cliEngine, messageBus, contextManager, memoryManager, skillManager, projectManager);
     }
 
     @Override
@@ -56,13 +55,13 @@ public class ServerDevAgent extends BaseAgent {
     }
 
     private void workOnTask(TaskAssignment task) {
-        log.info("Working on task: {}", task.getTitle());
+        log.info("Working on task: {} in project: {}", task.getTitle(),
+            currentProject != null ? currentProject.getName() : "global");
 
         task.setStatus(TaskAssignment.TaskStatus.IN_PROGRESS);
         task.setUpdatedAt(LocalDateTime.now());
         agentContext.setCurrentTaskId(task.getId());
 
-        // 构建包含 SKILL 的 prompt
         String prompt = buildTaskPrompt(task);
         String result = sendMessage(prompt);
 
@@ -71,10 +70,7 @@ public class ServerDevAgent extends BaseAgent {
         task.setCompletedAt(LocalDateTime.now());
         agentContext.setCurrentTaskId(null);
 
-        // 保存任务完成经验
         saveTaskExperience(task, result);
-
-        // 尝试学习新 SKILL
         tryLearnSkill(task.getTitle() + "\n" + task.getDescription(), result);
 
         reportProgress(task.getId(), "Completed: " + result.substring(0, Math.min(100, result.length())));
@@ -82,6 +78,20 @@ public class ServerDevAgent extends BaseAgent {
 
     private String buildTaskPrompt(TaskAssignment task) {
         StringBuilder sb = new StringBuilder();
+
+        // 添加项目上下文
+        if (currentProject != null) {
+            sb.append("## 项目信息\n\n");
+            sb.append("- 项目名称: ").append(currentProject.getName()).append("\n");
+            sb.append("- 工作目录: ").append(currentProject.getWorkDir()).append("\n");
+            sb.append("- 项目描述: ").append(currentProject.getDescription()).append("\n\n");
+
+            // 加载项目规则
+            String projectRules = projectManager.loadProjectRules(currentProject.getId());
+            if (projectRules != null) {
+                sb.append("## 项目规范\n\n").append(projectRules).append("\n\n");
+            }
+        }
 
         // 加载工作约束
         String agentsContent = loadKnowledge("agents_file");
@@ -119,7 +129,7 @@ public class ServerDevAgent extends BaseAgent {
             sb.append("## 上次工作结果\n\n").append(lastWork).append("\n\n");
         }
 
-        sb.append("请执行以上任务，并报告完成情况。");
+        sb.append("请在工作目录 ").append(definition.getWorkDir()).append(" 中执行以上任务，并报告完成情况。");
 
         return sb.toString();
     }
@@ -127,16 +137,16 @@ public class ServerDevAgent extends BaseAgent {
     private void saveTaskExperience(TaskAssignment task, String result) {
         String experienceKey = "task_" + task.getId();
         String experienceValue = String.format(
-            "任务: %s\n描述: %s\n结果: %s\n完成时间: %s",
+            "任务: %s\n描述: %s\n项目: %s\n结果: %s\n完成时间: %s",
             task.getTitle(),
             task.getDescription(),
+            currentProject != null ? currentProject.getName() : "global",
             result.length() > 500 ? result.substring(0, 500) + "..." : result,
             task.getCompletedAt()
         );
 
         saveExperience(experienceKey, experienceValue);
 
-        // 更新工作记忆
         agentContext.addWorkingMemory("last_task_id", task.getId());
         agentContext.addWorkingMemory("last_task_result", result.length() > 200 ? result.substring(0, 200) + "..." : result);
     }
@@ -156,7 +166,6 @@ public class ServerDevAgent extends BaseAgent {
 
         assignTask(task);
 
-        // 保存任务接收经验
         saveExperience("received_task_" + task.getId(),
             String.format("Received task from %s: %s", message.getFromAgentId(), message.getContent()));
     }
@@ -164,7 +173,6 @@ public class ServerDevAgent extends BaseAgent {
     private void handleQuery(AgentMessage message) {
         log.info("Received query from {}: {}", message.getFromAgentId(), message.getContent());
 
-        // 使用 SKILL 系统处理查询
         String skillPrompt = buildSkillPrompt("回答技术问题");
         String fullPrompt = skillPrompt + "\n\n请回答: " + message.getContent();
         String response = sendMessage(fullPrompt);
@@ -177,7 +185,6 @@ public class ServerDevAgent extends BaseAgent {
             .build();
         sendMessage(responseMsg);
 
-        // 保存查询经验
         saveExperience("query_" + System.currentTimeMillis(),
             String.format("Query from %s: %s\nResponse: %s",
                 message.getFromAgentId(), message.getContent(),
@@ -186,14 +193,12 @@ public class ServerDevAgent extends BaseAgent {
 
     private void handleResponse(AgentMessage message) {
         log.info("Received response from {}: {}", message.getFromAgentId(), message.getContent());
-        // 保存响应到知识库
         saveKnowledge("response_" + System.currentTimeMillis(), message.getContent());
     }
 
     private void handleCommand(AgentMessage message) {
         log.info("Received command from {}: {}", message.getFromAgentId(), message.getContent());
 
-        // 使用 SKILL 系统执行命令
         String skillPrompt = buildSkillPrompt("执行命令和操作");
         String fullPrompt = skillPrompt + "\n\n执行命令: " + message.getContent();
         String result = sendMessage(fullPrompt);
@@ -203,7 +208,6 @@ public class ServerDevAgent extends BaseAgent {
         report.setToAgentId(message.getFromAgentId());
         sendMessage(report);
 
-        // 保存命令执行经验
         saveExperience("command_" + System.currentTimeMillis(),
             String.format("Command from %s: %s\nResult: %s",
                 message.getFromAgentId(), message.getContent(),

@@ -28,6 +28,7 @@ public class AgentManager {
     private final ContextManager contextManager;
     private final MemoryManager memoryManager;
     private final SkillManager skillManager;
+    private final ProjectManager projectManager;
     private final FeishuBotService feishuService;
 
     private final Map<String, Agent> agents = new ConcurrentHashMap<>();
@@ -38,6 +39,7 @@ public class AgentManager {
                        ContextManager contextManager,
                        MemoryManager memoryManager,
                        SkillManager skillManager,
+                       ProjectManager projectManager,
                        FeishuBotService feishuService) {
         this.appConfig = appConfig;
         this.cliEngine = cliEngine;
@@ -45,16 +47,17 @@ public class AgentManager {
         this.contextManager = contextManager;
         this.memoryManager = memoryManager;
         this.skillManager = skillManager;
+        this.projectManager = projectManager;
         this.feishuService = feishuService;
     }
 
     public Agent createProducerAgent(AgentDefinition definition) {
         ProducerAgent producer = new ProducerAgent(definition, cliEngine, messageBus,
-                contextManager, memoryManager, skillManager, this, feishuService);
+                contextManager, memoryManager, skillManager, projectManager, this, feishuService);
         producer.initialize();
         producer.start();
         agents.put(definition.getId(), producer);
-        log.info("Producer agent created: {}", definition.getName());
+        log.info("Producer agent created: {} for workDir: {}", definition.getName(), definition.getWorkDir());
         return producer;
     }
 
@@ -63,12 +66,12 @@ public class AgentManager {
             return createProducerAgent(definition);
         }
 
-        ServerDevAgent agent = new ServerDevAgent(definition, cliEngine, messageBus, contextManager, memoryManager, skillManager);
+        ServerDevAgent agent = new ServerDevAgent(definition, cliEngine, messageBus, contextManager, memoryManager, skillManager, projectManager);
         agent.initialize();
         agent.start();
         agents.put(definition.getId(), agent);
 
-        log.info("Agent created: {} ({})", definition.getName(), definition.getId());
+        log.info("Agent created: {} ({}) for workDir: {}", definition.getName(), definition.getId(), definition.getWorkDir());
         return agent;
     }
 
@@ -114,11 +117,16 @@ public class AgentManager {
         status.put("alive", agent.isAlive());
         status.put("taskCount", agent.getTasks().size());
 
-        // 添加上下文信息
         if (agent instanceof com.chengxun.gamemaker.agent.BaseAgent baseAgent) {
             status.put("conversationId", baseAgent.getCurrentConversationId());
             status.put("workingMemorySize", baseAgent.getAgentContext().getWorkingMemory().size());
             status.put("learnedPatternsCount", baseAgent.getAgentContext().getLearnedPatterns().size());
+
+            if (baseAgent.getCurrentProject() != null) {
+                status.put("projectId", baseAgent.getCurrentProject().getId());
+                status.put("projectName", baseAgent.getCurrentProject().getName());
+                status.put("workDir", baseAgent.getCurrentProject().getWorkDir());
+            }
         }
 
         return status;

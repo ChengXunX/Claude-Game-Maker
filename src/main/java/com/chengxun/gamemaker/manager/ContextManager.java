@@ -2,6 +2,7 @@ package com.chengxun.gamemaker.manager;
 
 import com.chengxun.gamemaker.config.AppConfig;
 import com.chengxun.gamemaker.model.AgentContext;
+import com.chengxun.gamemaker.model.GameProject;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -29,21 +30,22 @@ public class ContextManager {
 
     // ===== AgentContext 主文件 =====
 
-    public void saveContext(AgentContext context) {
-        Path contextPath = getContextPath(context.getAgentId());
+    public void saveContext(AgentContext context, GameProject project) {
+        Path contextPath = getContextPath(context.getAgentId(), project);
         try {
             Files.createDirectories(contextPath.getParent());
             context.touch();
             objectMapper.writerWithDefaultPrettyPrinter()
                 .writeValue(contextPath.toFile(), context);
-            log.debug("Context saved for agent: {}", context.getAgentId());
+            log.debug("Context saved for agent: {} in project: {}", context.getAgentId(),
+                project != null ? project.getId() : "global");
         } catch (IOException e) {
             log.error("Failed to save context for agent: {}", context.getAgentId(), e);
         }
     }
 
-    public AgentContext loadContext(String agentId) {
-        Path contextPath = getContextPath(agentId);
+    public AgentContext loadContext(String agentId, GameProject project) {
+        Path contextPath = getContextPath(agentId, project);
         if (!Files.exists(contextPath)) {
             return null;
         }
@@ -55,27 +57,27 @@ public class ContextManager {
         }
     }
 
-    public AgentContext getOrCreateContext(String agentId) {
-        AgentContext ctx = loadContext(agentId);
+    public AgentContext getOrCreateContext(String agentId, GameProject project) {
+        AgentContext ctx = loadContext(agentId, project);
         if (ctx == null) {
             ctx = AgentContext.builder()
                 .agentId(agentId)
                 .build();
-            saveContext(ctx);
+            saveContext(ctx, project);
         }
         return ctx;
     }
 
-    public void updateSessionId(String agentId, String sessionId) {
-        AgentContext ctx = getOrCreateContext(agentId);
+    public void updateSessionId(String agentId, GameProject project, String sessionId) {
+        AgentContext ctx = getOrCreateContext(agentId, project);
         ctx.setSessionId(sessionId);
-        saveContext(ctx);
+        saveContext(ctx, project);
     }
 
     // ===== 对话历史 =====
 
-    public void saveConversation(String agentId, String conversationId, List<ConversationMessage> messages) {
-        Path convPath = getConversationPath(agentId, conversationId);
+    public void saveConversation(String agentId, GameProject project, String conversationId, List<ConversationMessage> messages) {
+        Path convPath = getConversationPath(agentId, project, conversationId);
         try {
             Files.createDirectories(convPath.getParent());
             objectMapper.writerWithDefaultPrettyPrinter()
@@ -86,8 +88,8 @@ public class ContextManager {
         }
     }
 
-    public List<ConversationMessage> loadConversation(String agentId, String conversationId) {
-        Path convPath = getConversationPath(agentId, conversationId);
+    public List<ConversationMessage> loadConversation(String agentId, GameProject project, String conversationId) {
+        Path convPath = getConversationPath(agentId, project, conversationId);
         if (!Files.exists(convPath)) {
             return new ArrayList<>();
         }
@@ -100,8 +102,8 @@ public class ContextManager {
         }
     }
 
-    public List<String> listConversations(String agentId) {
-        Path convDir = getConversationsDir(agentId);
+    public List<String> listConversations(String agentId, GameProject project) {
+        Path convDir = getConversationsDir(agentId, project);
         if (!Files.exists(convDir)) {
             return new ArrayList<>();
         }
@@ -117,11 +119,11 @@ public class ContextManager {
         }
     }
 
-    public List<ConversationMessage> getRecentMessages(String agentId, int limit) {
-        List<String> convIds = listConversations(agentId);
+    public List<ConversationMessage> getRecentMessages(String agentId, GameProject project, int limit) {
+        List<String> convIds = listConversations(agentId, project);
         List<ConversationMessage> result = new ArrayList<>();
         for (String convId : convIds) {
-            List<ConversationMessage> msgs = loadConversation(agentId, convId);
+            List<ConversationMessage> msgs = loadConversation(agentId, project, convId);
             result.addAll(msgs);
             if (result.size() >= limit) break;
         }
@@ -133,9 +135,9 @@ public class ContextManager {
 
     // ===== 上下文快照 =====
 
-    public void createSnapshot(String agentId, AgentContext context, List<ConversationMessage> recentMessages) {
+    public void createSnapshot(String agentId, GameProject project, AgentContext context, List<ConversationMessage> recentMessages) {
         String timestamp = LocalDateTime.now().format(SNAPSHOT_FORMAT);
-        Path snapshotPath = getSnapshotPath(agentId, timestamp);
+        Path snapshotPath = getSnapshotPath(agentId, project, timestamp);
         try {
             Files.createDirectories(snapshotPath.getParent());
             Map<String, Object> snapshot = new LinkedHashMap<>();
@@ -150,8 +152,8 @@ public class ContextManager {
         }
     }
 
-    public Map<String, Object> loadLatestSnapshot(String agentId) {
-        Path snapshotDir = getSnapshotsDir(agentId);
+    public Map<String, Object> loadLatestSnapshot(String agentId, GameProject project) {
+        Path snapshotDir = getSnapshotsDir(agentId, project);
         if (!Files.exists(snapshotDir)) {
             return null;
         }
@@ -169,8 +171,8 @@ public class ContextManager {
         return null;
     }
 
-    public void cleanupOldSnapshots(String agentId, int keepCount) {
-        Path snapshotDir = getSnapshotsDir(agentId);
+    public void cleanupOldSnapshots(String agentId, GameProject project, int keepCount) {
+        Path snapshotDir = getSnapshotsDir(agentId, project);
         if (!Files.exists(snapshotDir)) return;
         try {
             List<Path> snapshots = Files.list(snapshotDir)
@@ -187,24 +189,33 @@ public class ContextManager {
 
     // ===== 路径方法 =====
 
-    private Path getContextPath(String agentId) {
+    private Path getContextPath(String agentId, GameProject project) {
+        if (project != null) {
+            return Path.of(project.getContextsDir(), agentId, "context.json");
+        }
         return Path.of(appConfig.getContextsDir(), agentId, "context.json");
     }
 
-    private Path getConversationsDir(String agentId) {
+    private Path getConversationsDir(String agentId, GameProject project) {
+        if (project != null) {
+            return Path.of(project.getContextsDir(), agentId, "conversations");
+        }
         return Path.of(appConfig.getContextsDir(), agentId, "conversations");
     }
 
-    private Path getConversationPath(String agentId, String conversationId) {
-        return Path.of(appConfig.getContextsDir(), agentId, "conversations", conversationId + ".json");
+    private Path getConversationPath(String agentId, GameProject project, String conversationId) {
+        return getConversationsDir(agentId, project).resolve(conversationId + ".json");
     }
 
-    private Path getSnapshotsDir(String agentId) {
+    private Path getSnapshotsDir(String agentId, GameProject project) {
+        if (project != null) {
+            return Path.of(project.getContextsDir(), agentId, "snapshots");
+        }
         return Path.of(appConfig.getContextsDir(), agentId, "snapshots");
     }
 
-    private Path getSnapshotPath(String agentId, String timestamp) {
-        return Path.of(appConfig.getContextsDir(), agentId, "snapshots", timestamp + ".json");
+    private Path getSnapshotPath(String agentId, GameProject project, String timestamp) {
+        return getSnapshotsDir(agentId, project).resolve(timestamp + ".json");
     }
 
     // ===== 内部类 =====
