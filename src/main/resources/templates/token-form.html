@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title th:text="${token != null ? '编辑 Token' : '添加 Token'}">Token 表单</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+</head>
+<body class="bg-dark text-light">
+    <!-- Navbar -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-black border-bottom border-secondary">
+        <div class="container-fluid">
+            <a class="navbar-brand" th:href="@{/}">
+                <i class="bi bi-controller"></i> ChengXun Game Maker
+            </a>
+            <div class="collapse navbar-collapse">
+                <ul class="navbar-nav me-auto">
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/}">
+                            <i class="bi bi-speedometer2"></i> 仪表盘
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/agents}">
+                            <i class="bi bi-robot"></i> Agents
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link active" th:href="@{/tokens}">
+                            <i class="bi bi-key"></i> Token 管理
+                        </a>
+                    </li>
+                    <li class="nav-item" sec:authorize="hasRole('ADMIN')">
+                        <a class="nav-link" th:href="@{/admin/users}">
+                            <i class="bi bi-people"></i> 用户管理
+                        </a>
+                    </li>
+                </ul>
+                <ul class="navbar-nav">
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
+                            <i class="bi bi-person-circle"></i> <span th:text="${username}">User</span>
+                        </a>
+                        <ul class="dropdown-menu dropdown-menu-end dropdown-menu-dark">
+                            <li>
+                                <form th:action="@{/logout}" method="post">
+                                    <button class="dropdown-item" type="submit">
+                                        <i class="bi bi-box-arrow-right"></i> 退出登录
+                                    </button>
+                                </form>
+                            </li>
+                        </ul>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid mt-4">
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a th:href="@{/}" class="text-decoration-none">首页</a></li>
+                <li class="breadcrumb-item"><a th:href="@{/tokens}" class="text-decoration-none">Token 管理</a></li>
+                <li class="breadcrumb-item active" th:text="${token != null ? '编辑 Token' : '添加 Token'}"></li>
+            </ol>
+        </nav>
+
+        <h2 class="mb-4">
+            <i class="bi bi-key"></i>
+            <span th:text="${token != null ? '编辑 Token: ' + token.name : '添加新 Token'}"></span>
+        </h2>
+
+        <!-- Alerts -->
+        <div th:if="${error}" class="alert alert-danger alert-dismissible fade show" role="alert">
+            <i class="bi bi-exclamation-circle"></i> <span th:text="${error}"></span>
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+
+        <div class="row">
+            <div class="col-md-8">
+                <div class="card bg-dark border-secondary">
+                    <div class="card-body">
+                        <form th:action="${token != null ? '/tokens/' + token.id + '/edit' : '/tokens/create'}"
+                              method="post">
+
+                            <div class="mb-3">
+                                <label class="form-label">Token 名称 *</label>
+                                <input type="text" class="form-control bg-dark text-light border-secondary"
+                                       name="name" required placeholder="如: 生产环境 Token"
+                                       th:value="${token != null ? token.name : ''}">
+                            </div>
+
+                            <div class="mb-3">
+                                <label class="form-label">API Key *</label>
+                                <input type="password" class="form-control bg-dark text-light border-secondary"
+                                       name="apiKey" th:required="${token == null}"
+                                       placeholder="输入 API Key">
+                                <div class="form-text" th:if="${token != null}">
+                                    留空则保持原有 Key 不变
+                                </div>
+                            </div>
+
+                            <div class="mb-3">
+                                <label class="form-label">API URL</label>
+                                <input type="text" class="form-control bg-dark text-light border-secondary"
+                                       name="apiUrl" placeholder="https://api.anthropic.com"
+                                       th:value="${token != null ? token.apiUrl : ''}">
+                            </div>
+
+                            <div class="row">
+                                <div class="col-md-6 mb-3">
+                                    <label class="form-label">模型</label>
+                                    <input type="text" class="form-control bg-dark text-light border-secondary"
+                                           name="model" placeholder="claude-sonnet-4-20250514"
+                                           th:value="${token != null ? token.model : ''}">
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <label class="form-label">最大 Token 数</label>
+                                    <input type="number" class="form-control bg-dark text-light border-secondary"
+                                           name="maxTokens" value="4096"
+                                           th:value="${token != null ? token.maxTokens : 4096}">
+                                </div>
+                            </div>
+
+                            <div class="mb-3">
+                                <label class="form-label">描述</label>
+                                <textarea class="form-control bg-dark text-light border-secondary"
+                                          name="description" rows="3"
+                                          placeholder="Token 用途说明..."
+                                          th:text="${token != null ? token.description : ''}"></textarea>
+                            </div>
+
+                            <!-- 新增时可选择分配给 Agent -->
+                            <div class="mb-3" th:if="${token == null}">
+                                <label class="form-label">分配给 Agent（可选）</label>
+                                <select name="assignAgentId" class="form-select bg-dark text-light border-secondary">
+                                    <option value="">不分配</option>
+                                    <option th:each="agent : ${agents}"
+                                            th:value="${agent.id}"
+                                            th:text="${agent.name + ' (' + agent.role + ')'}">
+                                    </option>
+                                </select>
+                                <div class="form-text">选择后会立即将此 Token 分配给指定 Agent</div>
+                            </div>
+
+                            <div class="d-flex gap-2">
+                                <button type="submit" class="btn btn-primary">
+                                    <i class="bi bi-check-circle"></i>
+                                    <span th:text="${token != null ? '保存修改' : '添加 Token'}"></span>
+                                </button>
+                                <a th:href="@{/tokens}" class="btn btn-secondary">
+                                    <i class="bi bi-arrow-left"></i> 返回
+                                </a>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-4">
+                <div class="card bg-dark border-secondary">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-info-circle"></i> 说明</h5>
+                    </div>
+                    <div class="card-body">
+                        <h6>Token 用途</h6>
+                        <p class="text-muted small">
+                            API Token 用于 Agent 调用 AI 服务。每个 Token 可以分配给一个或多个 Agent。
+                        </p>
+
+                        <h6>状态说明</h6>
+                        <ul class="list-unstyled small">
+                            <li><span class="badge bg-success">活跃</span> - 正常使用中</li>
+                            <li><span class="badge bg-warning">耗尽</span> - 配额已用完</li>
+                            <li><span class="badge bg-danger">禁用</span> - 手动禁用</li>
+                            <li><span class="badge bg-dark">过期</span> - 已过有效期</li>
+                        </ul>
+
+                        <h6>分配说明</h6>
+                        <p class="text-muted small">
+                            分配 Token 给 Agent 后，该 Agent 将使用此 Token 进行 API 调用。
+                            制作人 Agent 可以在运行时为其他 Agent 分配 Token。
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
