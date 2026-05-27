@@ -12,6 +12,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 @Component
@@ -21,7 +22,8 @@ public class SkillManager {
 
     private final AppConfig appConfig;
     private final ObjectMapper objectMapper = new ObjectMapper();
-    private final Map<String, Skill> skills = new LinkedHashMap<>();
+    private final Map<String, Skill> globalSkills = new LinkedHashMap<>();
+    private final Map<String, Map<String, Skill>> projectSkills = new ConcurrentHashMap<>();
 
     public SkillManager(AppConfig appConfig) {
         this.appConfig = appConfig;
@@ -43,7 +45,7 @@ public class SkillManager {
             Files.list(skillsDir)
                 .filter(p -> p.toString().endsWith(".md"))
                 .forEach(this::loadSkillFromFile);
-            log.info("Loaded {} builtin skills", skills.size());
+            log.info("Loaded {} builtin skills", globalSkills.size());
         } catch (IOException e) {
             log.error("Failed to load builtin skills", e);
         }
@@ -73,7 +75,7 @@ public class SkillManager {
                 .examples(parseExamples(metadata.getOrDefault("examples", "")))
                 .build();
 
-            skills.put(skill.getId(), skill);
+            globalSkills.put(skill.getId(), skill);
             log.debug("Loaded skill: {}", skill.getId());
         } catch (Exception e) {
             log.error("Failed to load skill from file: {}", path, e);
@@ -102,30 +104,105 @@ public class SkillManager {
             .collect(Collectors.toList());
     }
 
-    // ===== SKILL 操作 =====
+    // ===== 全局 SKILL 操作 =====
 
-    public void registerSkill(Skill skill) {
-        skills.put(skill.getId(), skill);
-        log.info("Skill registered: {}", skill.getId());
+    public void registerGlobalSkill(Skill skill) {
+        globalSkills.put(skill.getId(), skill);
+        log.info("Global skill registered: {}", skill.getId());
     }
 
-    public Skill getSkill(String skillId) {
-        return skills.get(skillId);
+    public Skill getGlobalSkill(String skillId) {
+        return globalSkills.get(skillId);
     }
 
-    public List<Skill> getAllSkills() {
-        return new ArrayList<>(skills.values());
+    public List<Skill> getAllGlobalSkills() {
+        return new ArrayList<>(globalSkills.values());
     }
 
-    public List<Skill> getSkillsByCategory(String category) {
-        return skills.values().stream()
-            .filter(s -> category.equals(s.getCategory()))
-            .collect(Collectors.toList());
+    // ===== 项目级别 SKILL 操作 =====
+
+    public void loadProjectSkills(String projectId, String projectSkillsDir) {
+        Path skillsDir = Path.of(projectSkillsDir);
+        if (!Files.exists(skillsDir)) {
+            log.debug("No project skills directory: {}", projectSkillsDir);
+            return;
+        }
+
+        Map<String, Skill> skills = new LinkedHashMap<>();
+        try {
+            Files.list(skillsDir)
+                .filter(p -> p.toString().endsWith(".md"))
+                .forEach(path -> {
+                    Skill skill = loadSkillFromPath(path);
+                    if (skill != null) {
+                        skill.setCategory("project");
+                        skills.put(skill.getId(), skill);
+                    }
+                });
+            projectSkills.put(projectId, skills);
+            log.info("Loaded {} project skills for: {}", skills.size(), projectId);
+        } catch (IOException e) {
+            log.error("Failed to load project skills for: {}", projectId, e);
+        }
     }
 
-    public List<Skill> matchSkills(String taskDescription) {
+    private Skill loadSkillFromPath(Path path) {
+        try {
+            String content = Files.readString(path);
+            String fileName = path.getFileName().toString().replace(".md", "");
+
+            String[] parts = content.split("---", 3);
+            if (parts.length < 3) {
+                log.warn("Invalid skill file format: {}", path);
+                return null;
+            }
+
+            Map<String, String> metadata = parseMetadata(parts[1]);
+            String prompt = parts[2].trim();
+
+            return Skill.builder()
+                .id(fileName)
+                .name(metadata.getOrDefault("name", fileName))
+                .description(metadata.getOrDefault("description", ""))
+                .triggerPattern(metadata.getOrDefault("trigger", fileName))
+                .prompt(prompt)
+                .examples(parseExamples(metadata.getOrDefault("examples", "")))
+                .build();
+        } catch (Exception e) {
+            log.error("Failed to load skill from file: {}", path, e);
+            return null;
+        }
+    }
+
+    public void registerProjectSkill(String projectId, Skill skill) {
+        projectSkills.computeIfAbsent(projectId, k -> new LinkedHashMap<>()).put(skill.getId(), skill);
+        log.info("Project skill registered: {} for project: {}", skill.getId(), projectId);
+    }
+
+    public Map<String, Skill> getProjectSkills(String projectId) {
+        return projectSkills.getOrDefault(projectId, new LinkedHashMap<>());
+    }
+
+    // ===== SKILL 匹配和查询 =====
+
+    public List<Skill> matchSkills(String taskDescription, String projectId) {
         String lowerTask = taskDescription.toLowerCase();
-        return skills.values().stream()
+        List<Skill> matched = new ArrayList<>();
+
+        // 先匹配项目级别 SKILL
+        Map<String, Skill> projSkills = projectSkills.get(projectId);
+        if (projSkills != null) {
+            matched.addAll(matchSkillsFromMap(lowerTask, projSkills));
+        }
+
+        // 再匹配全局 SKILL
+        matched.addAll(matchSkillsFromMap(lowerTask, globalSkills));
+
+        return matched;
+    }
+
+    private List<Skill> matchSkillsFromMap(String lowerTask, Map<String, Skill> skillsMap) {
+        return skillsMap.values().stream()
             .filter(skill -> {
                 String pattern = skill.getTriggerPattern().toLowerCase();
                 String[] keywords = pattern.split("[,|]");
@@ -138,6 +215,21 @@ public class SkillManager {
             })
             .sorted((a, b) -> Integer.compare(b.getUsageCount(), a.getUsageCount()))
             .collect(Collectors.toList());
+    }
+
+    public List<Skill> getAllSkills(String projectId) {
+        List<Skill> all = new ArrayList<>();
+
+        // 项目级别 SKILL
+        Map<String, Skill> projSkills = projectSkills.get(projectId);
+        if (projSkills != null) {
+            all.addAll(projSkills.values());
+        }
+
+        // 全局 SKILL
+        all.addAll(globalSkills.values());
+
+        return all;
     }
 
     public String buildSkillPrompt(List<Skill> matchedSkills) {
@@ -155,21 +247,35 @@ public class SkillManager {
         return sb.toString();
     }
 
-    public void recordSkillUsage(String skillId) {
-        Skill skill = skills.get(skillId);
+    public void recordSkillUsage(String skillId, String projectId) {
+        // 先查找项目级别
+        Map<String, Skill> projSkills = projectSkills.get(projectId);
+        if (projSkills != null && projSkills.containsKey(skillId)) {
+            projSkills.get(skillId).recordUsage();
+            return;
+        }
+
+        // 再查找全局
+        Skill skill = globalSkills.get(skillId);
         if (skill != null) {
             skill.recordUsage();
         }
     }
 
-    public void saveLearnedSkill(Skill skill, String agentId) {
+    public void saveLearnedSkill(Skill skill, String agentId, String projectId, String projectSkillsDir) {
         skill.setCategory("learned");
-        registerSkill(skill);
+        registerProjectSkill(projectId, skill);
 
-        MemoryManager memoryManager = new MemoryManager(appConfig);
         String skillContent = String.format("---\nname: %s\ndescription: %s\ntrigger: %s\n---\n\n%s",
             skill.getName(), skill.getDescription(), skill.getTriggerPattern(), skill.getPrompt());
-        memoryManager.saveMemory(agentId, "skills", skill.getId(), skillContent);
-        log.info("Learned skill saved: {} for agent: {}", skill.getId(), agentId);
+
+        try {
+            Path skillPath = Path.of(projectSkillsDir, skill.getId() + ".md");
+            Files.createDirectories(skillPath.getParent());
+            Files.writeString(skillPath, skillContent);
+            log.info("Learned skill saved: {} for project: {}", skill.getId(), projectId);
+        } catch (IOException e) {
+            log.error("Failed to save learned skill: {}", skill.getId(), e);
+        }
     }
 }
