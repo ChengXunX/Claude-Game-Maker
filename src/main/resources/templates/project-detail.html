@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title th:text="${project.name} + ' - 项目详情'">项目详情</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+</head>
+<body class="bg-dark text-light">
+    <!-- Navbar -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-black border-bottom border-secondary">
+        <div class="container-fluid">
+            <a class="navbar-brand" th:href="@{/}">
+                <i class="bi bi-controller"></i> ChengXun Game Maker
+            </a>
+            <div class="collapse navbar-collapse">
+                <ul class="navbar-nav me-auto">
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/}">
+                            <i class="bi bi-speedometer2"></i> 仪表盘
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/agents}">
+                            <i class="bi bi-robot"></i> Agents
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link active" th:href="@{/projects}">
+                            <i class="bi bi-folder"></i> 项目
+                        </a>
+                    </li>
+                    <li class="nav-item" sec:authorize="hasRole('ADMIN')">
+                        <a class="nav-link" th:href="@{/admin/users}">
+                            <i class="bi bi-people"></i> 用户管理
+                        </a>
+                    </li>
+                </ul>
+                <ul class="navbar-nav">
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
+                            <i class="bi bi-person-circle"></i> <span th:text="${username}">User</span>
+                        </a>
+                        <ul class="dropdown-menu dropdown-menu-end dropdown-menu-dark">
+                            <li>
+                                <form th:action="@{/logout}" method="post">
+                                    <button class="dropdown-item" type="submit">
+                                        <i class="bi bi-box-arrow-right"></i> 退出登录
+                                    </button>
+                                </form>
+                            </li>
+                        </ul>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid mt-4">
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a th:href="@{/}" class="text-decoration-none">首页</a></li>
+                <li class="breadcrumb-item"><a th:href="@{/projects}" class="text-decoration-none">项目</a></li>
+                <li class="breadcrumb-item active" th:text="${project.name}"></li>
+            </ol>
+        </nav>
+
+        <div class="row">
+            <!-- Project Info -->
+            <div class="col-md-4">
+                <div class="card bg-dark border-secondary mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-folder"></i> <span th:text="${project.name}"></span></h5>
+                    </div>
+                    <div class="card-body">
+                        <p><strong>ID：</strong><code th:text="${project.id}"></code></p>
+                        <p><strong>状态：</strong><span class="badge bg-primary" th:text="${project.status}"></span></p>
+                        <p><strong>描述：</strong><span th:text="${project.description ?: '无'}"></span></p>
+                        <p><strong>工作目录：</strong><br>
+                            <code th:text="${project.workDir}"></code>
+                        </p>
+                        <p><strong>Agent：</strong><br>
+                            <span th:each="agentId : ${project.agentIds}" class="badge bg-secondary me-1" th:text="${agentId}"></span>
+                        </p>
+                        <p><strong>创建时间：</strong><br>
+                            <small th:text="${#temporals.format(project.createdAt, 'yyyy-MM-dd HH:mm:ss')}"></small>
+                        </p>
+                        <p><strong>最后活跃：</strong><br>
+                            <small th:text="${#temporals.format(project.lastActiveAt, 'yyyy-MM-dd HH:mm:ss')}"></small>
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Project Rules -->
+            <div class="col-md-8">
+                <div class="card bg-dark border-secondary">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-file-text"></i> 项目规范</h5>
+                    </div>
+                    <div class="card-body">
+                        <form th:action="@{/projects/{id}/rules(id=${project.id})}" method="post">
+                            <div class="mb-3">
+                                <textarea class="form-control bg-dark text-light border-secondary" name="rules"
+                                          rows="15" placeholder="输入项目规范...&#10;&#10;示例：&#10;## 代码规范&#10;- 使用 Java 17&#10;- 遵循 Google Style Guide&#10;&#10;## 项目结构&#10;- src/main/java/...&#10;- src/test/java/...">
+                                    <span th:text="${rules}"></span>
+                                </textarea>
+                            </div>
+                            <button type="submit" class="btn btn-primary">
+                                <i class="bi bi-save"></i> 保存规范
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
