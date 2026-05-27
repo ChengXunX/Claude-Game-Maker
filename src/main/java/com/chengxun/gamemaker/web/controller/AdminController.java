@@ -2,7 +2,9 @@ package com.chengxun.gamemaker.web.controller;
 
 import com.chengxun.gamemaker.web.entity.User;
 import com.chengxun.gamemaker.web.service.OperationLogService;
+import com.chengxun.gamemaker.web.service.RoleService;
 import com.chengxun.gamemaker.web.service.UserService;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
@@ -13,13 +15,16 @@ import java.util.List;
 
 @Controller
 @RequestMapping("/admin")
+@PreAuthorize("hasRole('ADMIN')")
 public class AdminController {
 
     private final UserService userService;
+    private final RoleService roleService;
     private final OperationLogService logService;
 
-    public AdminController(UserService userService, OperationLogService logService) {
+    public AdminController(UserService userService, RoleService roleService, OperationLogService logService) {
         this.userService = userService;
+        this.roleService = roleService;
         this.logService = logService;
     }
 
@@ -27,6 +32,7 @@ public class AdminController {
     public String listUsers(Model model, Authentication authentication) {
         List<User> users = userService.getAllUsers();
         model.addAttribute("users", users);
+        model.addAttribute("roles", roleService.getAllRoles());
         model.addAttribute("username", authentication.getName());
         return "admin/users";
     }
@@ -75,6 +81,22 @@ public class AdminController {
             User user = userService.disableUser(userId);
             logService.log(getUserId(authentication), "DISABLE_USER", user.getUsername(), "Disabled user", null);
             redirectAttributes.addFlashAttribute("success", "用户 " + user.getUsername() + " 已禁用");
+        } catch (Exception e) {
+            redirectAttributes.addFlashAttribute("error", e.getMessage());
+        }
+        return "redirect:/admin/users";
+    }
+
+    @PostMapping("/users/{userId}/role")
+    public String updateUserRole(@PathVariable Long userId,
+                                @RequestParam Long roleId,
+                                Authentication authentication,
+                                RedirectAttributes redirectAttributes) {
+        try {
+            User user = userService.updateUserRole(userId, roleId);
+            logService.log(getUserId(authentication), "UPDATE_ROLE", user.getUsername(),
+                "Role updated to " + user.getRole().getDisplayName(), null);
+            redirectAttributes.addFlashAttribute("success", "用户 " + user.getUsername() + " 角色已更新");
         } catch (Exception e) {
             redirectAttributes.addFlashAttribute("error", e.getMessage());
         }
