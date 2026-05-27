@@ -86,17 +86,29 @@ public class AppConfig {
         private String appId;
         private String appSecret;
         private String webhookUrl;
+        private String chatId;       // 默认接收消息的群 ID
+        private String verifyToken;  // 事件订阅验证 token
+        private String encryptKey;   // 事件订阅加密 key
         private boolean enabled = false;
-        
+
         public String getAppId() { return appId; }
         public void setAppId(String appId) { this.appId = appId; }
-        
+
         public String getAppSecret() { return appSecret; }
         public void setAppSecret(String appSecret) { this.appSecret = appSecret; }
-        
+
         public String getWebhookUrl() { return webhookUrl; }
         public void setWebhookUrl(String webhookUrl) { this.webhookUrl = webhookUrl; }
-        
+
+        public String getChatId() { return chatId; }
+        public void setChatId(String chatId) { this.chatId = chatId; }
+
+        public String getVerifyToken() { return verifyToken; }
+        public void setVerifyToken(String verifyToken) { this.verifyToken = verifyToken; }
+
+        public String getEncryptKey() { return encryptKey; }
+        public void setEncryptKey(String encryptKey) { this.encryptKey = encryptKey; }
+
         public boolean isEnabled() { return enabled; }
         public void setEnabled(boolean enabled) { this.enabled = enabled; }
     }
