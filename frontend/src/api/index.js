@@ -89,7 +89,9 @@ export const agentApi = {
   stop: (projectId, agentRole) => api.post(`/agents/project/${projectId}/${agentRole}/stop`),
   restart: (projectId, agentRole) => api.post(`/agents/project/${projectId}/${agentRole}/restart`),
   sendTask: (projectId, agentRole, data) => api.post(`/agents/project/${projectId}/${agentRole}/task`, data),
-  query: (projectId, agentRole, data) => api.post(`/agents/project/${projectId}/${agentRole}/query`, data)
+  query: (projectId, agentRole, data) => api.post(`/agents/project/${projectId}/${agentRole}/query`, data),
+  getReasoningDepth: (projectId, agentRole) => api.get(`/agents/project/${projectId}/${agentRole}/reasoning-depth`),
+  setReasoningDepth: (projectId, agentRole, depth) => api.put(`/agents/project/${projectId}/${agentRole}/reasoning-depth`, { reasoningDepth: depth })
 }
 
 export const projectApi = {
@@ -199,7 +201,9 @@ export const configApi = {
   batchUpdate: (data) => api.put('/configs/batch', data),
   create: (data) => api.post('/configs', data),
   delete: (id) => api.delete(`/configs/${id}`),
-  refreshCache: () => api.post('/configs/refresh-cache')
+  refreshCache: () => api.post('/configs/refresh-cache'),
+  testAiConnection: (data) => api.post('/configs/test-ai-connection', data, { timeout: 30000 }),
+  reveal: (id) => api.get(`/configs/${id}/reveal`)
 }
 
 // ===== 设备信任 API =====
@@ -320,16 +324,34 @@ export const pipelineApi = {
 
 // ===== 工作流 API =====
 export const workflowApi = {
+  // 模板管理
   getTemplates: () => api.get('/workflow/templates'),
   createTemplate: (data) => api.post('/workflow/templates', data),
   deleteTemplate: (id) => api.delete(`/workflow/templates/${id}`),
   generateTemplate: (data) => api.post('/workflow/templates/generate', data),
+
+  // 实例管理
   getInstances: (params) => api.get('/workflow/running', { params }),
+  getAllInstances: () => api.get('/workflow/instances'),
+  getInstancesByProject: (projectId) => api.get(`/workflow/instances/project/${projectId}`),
+  getInstanceDetail: (id) => api.get(`/workflow/instances/${id}/detail`),
+  getStepExecutions: (id) => api.get(`/workflow/instances/${id}/steps`),
   start: (data) => api.post('/workflow/start', data),
   cancel: (id) => api.post(`/workflow/${id}/cancel`),
   pause: (id) => api.post(`/workflow/${id}/pause`),
   resume: (id) => api.post(`/workflow/${id}/resume`),
-  getStatus: (id) => api.get(`/workflow/${id}`)
+  getStatus: (id) => api.get(`/workflow/${id}`),
+
+  // 审批管理
+  getPendingApprovals: () => api.get('/workflow/approvals/pending'),
+  approveStep: (instanceId, stepId, data) => api.post(`/workflow/instances/${instanceId}/steps/${stepId}/approve`, data),
+  rejectStep: (instanceId, stepId, data) => api.post(`/workflow/instances/${instanceId}/steps/${stepId}/reject`, data),
+
+  // 审计日志
+  getAuditLogs: (instanceId) => api.get(`/workflow/instances/${instanceId}/audit-logs`),
+
+  // Agent评分
+  getAgentScores: (role, projectId) => api.get('/workflow/agent-scores', { params: { role, projectId } })
 }
 
 // ===== 全局搜索 API =====

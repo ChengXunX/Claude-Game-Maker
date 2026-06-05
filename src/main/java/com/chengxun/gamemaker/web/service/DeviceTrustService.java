@@ -193,26 +193,22 @@ public class DeviceTrustService {
             userAgent = "unknown";
         }
 
-        // 结合多个请求特征生成更安全的设备指纹
+        // 仅使用浏览器特征生成设备指纹，不包含IP地址
+        // 原因：X-Forwarded-For 会随网络环境变化（代理、CDN、IP轮换），
+        // 导致同一个浏览器被误判为不同设备，频繁触发设备验证
         StringBuilder raw = new StringBuilder();
         raw.append(userAgent);
 
-        // 添加 Accept-Language 头
+        // Accept-Language：反映用户的语言和区域设置，同一浏览器通常稳定
         String acceptLanguage = request.getHeader("Accept-Language");
         if (acceptLanguage != null) {
             raw.append("|").append(acceptLanguage);
         }
 
-        // 添加 Accept-Encoding 头
+        // Accept-Encoding：反映浏览器支持的压缩方式，同一浏览器通常稳定
         String acceptEncoding = request.getHeader("Accept-Encoding");
         if (acceptEncoding != null) {
             raw.append("|").append(acceptEncoding);
-        }
-
-        // 添加 X-Forwarded-For（如果存在）
-        String forwardedFor = request.getHeader("X-Forwarded-For");
-        if (forwardedFor != null && !forwardedFor.isEmpty()) {
-            raw.append("|").append(forwardedFor.split(",")[0].trim());
         }
 
         try {

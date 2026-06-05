@@ -457,3 +457,28 @@ CREATE TABLE IF NOT EXISTS agent_logs (
     INDEX idx_agent_log_created (created_at),
     INDEX idx_agent_log_level (level)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 工作流模板表（用户自定义模板持久化）
+CREATE TABLE IF NOT EXISTS workflow_templates (
+    id VARCHAR(64) PRIMARY KEY COMMENT '模板ID',
+    name VARCHAR(128) NOT NULL COMMENT '模板名称',
+    description VARCHAR(512) COMMENT '模板描述',
+    steps_json TEXT COMMENT '步骤定义JSON',
+    builtin BOOLEAN DEFAULT FALSE COMMENT '是否为内置模板',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    INDEX idx_wf_tpl_builtin (builtin)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='工作流模板表';
+
+-- 游戏模板表（用户自定义模板持久化）
+CREATE TABLE IF NOT EXISTS game_templates (
+    id VARCHAR(64) PRIMARY KEY COMMENT '模板ID',
+    name VARCHAR(128) NOT NULL COMMENT '模板名称',
+    description VARCHAR(512) COMMENT '模板描述',
+    game_type VARCHAR(64) COMMENT '游戏类型',
+    config_json TEXT COMMENT '模板配置JSON',
+    builtin BOOLEAN DEFAULT FALSE COMMENT '是否为内置模板',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    INDEX idx_game_tpl_builtin (builtin)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='游戏模板表';

@@ -17,7 +17,7 @@
               <div class="form-tip">登录页面"联系管理员"按钮跳转的链接，支持网址或邮箱</div>
             </el-form-item>
             <el-form-item>
-              <el-button type="primary" @click="saveBasic">保存</el-button>
+              <el-button type="primary" @click="saveBasic" :loading="saving">保存</el-button>
             </el-form-item>
           </el-form>
         </el-tab-pane>
@@ -32,7 +32,7 @@
               <el-input-number v-model="securityForm.deviceTrustDays" :min="1" :max="365" />
             </el-form-item>
             <el-form-item>
-              <el-button type="primary" @click="saveSecurity">保存</el-button>
+              <el-button type="primary" @click="saveSecurity" :loading="saving">保存</el-button>
             </el-form-item>
           </el-form>
         </el-tab-pane>
@@ -59,6 +59,9 @@
           <el-form :model="claudeForm" label-width="150px" style="max-width: 600px">
             <el-form-item label="API Key">
               <el-input v-model="claudeForm.apiKey" type="password" show-password placeholder="请输入 API Key" />
+              <div v-if="apiKeySet" class="form-tip" style="color: #67c23a;">
+                API Key 已配置（留空则不修改）
+              </div>
             </el-form-item>
             <el-form-item label="API URL">
               <el-input v-model="claudeForm.apiUrl" placeholder="https://api.anthropic.com" />
@@ -92,7 +95,8 @@
               </div>
             </el-form-item>
             <el-form-item>
-              <el-button type="primary" @click="saveClaude">保存</el-button>
+              <el-button type="primary" @click="saveClaude" :loading="saving">保存</el-button>
+              <el-button type="success" @click="testConnection" :loading="testing">测试连接</el-button>
             </el-form-item>
           </el-form>
         </el-tab-pane>
@@ -116,6 +120,9 @@ import { configApi } from '@/api'
 const activeTab = ref('basic')
 const activePlatform = ref('')
 const longContext = ref(false)
+const saving = ref(false)
+const testing = ref(false)
+const apiKeySet = ref(false)
 
 /** 基本设置表单 */
 const basicForm = ref({
@@ -273,7 +280,6 @@ const currentModels = computed(() => {
 
 /**
  * 应用平台预设
- * @param {string} platform 平台标识
  */
 function applyPreset(platform) {
   const preset = PLATFORM_PRESETS[platform]
@@ -305,6 +311,7 @@ function onLongContextChange() {
 
 /** 保存基本设置 */
 const saveBasic = async () => {
+  saving.value = true
   try {
     await configApi.batchUpdate([
       { configKey: 'system.name', configValue: basicForm.value.systemName },
@@ -313,30 +320,69 @@ const saveBasic = async () => {
     ElMessage.success('基本设置已保存')
   } catch (error) {
     ElMessage.error('保存失败')
+  } finally {
+    saving.value = false
   }
 }
 
 /** 保存安全设置 */
 const saveSecurity = async () => {
+  saving.value = true
   try {
+    await configApi.batchUpdate([
+      { configKey: 'security.device.trust.enabled', configValue: String(securityForm.value.deviceTrustEnabled) },
+      { configKey: 'security.device.trust.days', configValue: String(securityForm.value.deviceTrustDays) }
+    ])
     ElMessage.success('安全设置已保存')
   } catch (error) {
     ElMessage.error('保存失败')
+  } finally {
+    saving.value = false
   }
 }
 
 /** 保存 Claude 设置 */
 const saveClaude = async () => {
+  saving.value = true
   try {
-    await configApi.batchUpdate([
-      { configKey: 'claude.api.key', configValue: claudeForm.value.apiKey },
+    const updates = [
       { configKey: 'claude.api.url', configValue: claudeForm.value.apiUrl },
       { configKey: 'claude.model', configValue: claudeForm.value.model },
       { configKey: 'claude.max.tokens', configValue: String(claudeForm.value.maxTokens) }
-    ])
+    ]
+    // API Key 只在用户输入了新值时才更新
+    if (claudeForm.value.apiKey && claudeForm.value.apiKey.trim()) {
+      updates.push({ configKey: 'claude.api.key', configValue: claudeForm.value.apiKey.trim() })
+    }
+    await configApi.batchUpdate(updates)
     ElMessage.success('AI 模型设置已保存')
+    // 保存后重新加载，确认数据已持久化
+    await loadSettings()
   } catch (error) {
     ElMessage.error('保存失败')
+  } finally {
+    saving.value = false
+  }
+}
+
+/** 测试 AI 模型连接 */
+const testConnection = async () => {
+  testing.value = true
+  try {
+    const result = await configApi.testAiConnection({
+      apiKey: claudeForm.value.apiKey || '',
+      apiUrl: claudeForm.value.apiUrl,
+      model: claudeForm.value.model
+    })
+    if (result.success) {
+      ElMessage.success(result.message)
+    } else {
+      ElMessage.warning(result.message)
+    }
+  } catch (error) {
+    ElMessage.error('测试请求失败: ' + (error.message || '未知错误'))
+  } finally {
+    testing.value = false
   }
 }
 
@@ -354,7 +400,8 @@ const loadSettings = async () => {
             basicForm.value.contactLink = config.configValue || ''
             break
           case 'claude.api.key':
-            claudeForm.value.apiKey = config.configValue || ''
+            // 不覆盖用户正在输入的值
+            apiKeySet.value = !!(config.configValue && config.configValue.trim())
             break
           case 'claude.api.url':
             claudeForm.value.apiUrl = config.configValue || 'https://api.anthropic.com'
@@ -366,12 +413,33 @@ const loadSettings = async () => {
           case 'claude.max.tokens':
             claudeForm.value.maxTokens = parseInt(config.configValue) || 4096
             break
+          case 'security.device.trust.enabled':
+            securityForm.value.deviceTrustEnabled = config.configValue !== 'false'
+            break
+          case 'security.device.trust.days':
+            securityForm.value.deviceTrustDays = parseInt(config.configValue) || 30
+            break
         }
       })
+      // 自动匹配当前平台
+      detectPlatform()
     }
   } catch (error) {
     console.error('加载设置失败:', error)
   }
+}
+
+/** 根据当前 API URL 自动匹配平台 */
+function detectPlatform() {
+  const url = claudeForm.value.apiUrl
+  if (!url) return
+  for (const [key, preset] of Object.entries(PLATFORM_PRESETS)) {
+    if (url === preset.url) {
+      activePlatform.value = key
+      return
+    }
+  }
+  activePlatform.value = ''
 }
 
 onMounted(() => {

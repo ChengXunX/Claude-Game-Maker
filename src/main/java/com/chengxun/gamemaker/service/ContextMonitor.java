@@ -2,9 +2,11 @@ package com.chengxun.gamemaker.service;
 
 import com.chengxun.gamemaker.agent.Agent;
 import com.chengxun.gamemaker.agent.BaseAgent;
+import com.chengxun.gamemaker.config.SystemConstants;
 import com.chengxun.gamemaker.engine.ClaudeCliEngine;
 import com.chengxun.gamemaker.manager.AgentManager;
 import com.chengxun.gamemaker.manager.ContextManager;
+import com.chengxun.gamemaker.web.service.SystemConfigService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -38,18 +40,19 @@ public class ContextMonitor {
 
     private static final Logger log = LoggerFactory.getLogger(ContextMonitor.class);
 
-    /** 最大消息积压数量 */
-    private static final int MAX_MESSAGE_BACKLOG = 50;
+    /** 默认最大消息积压数量（配置不存在时使用） */
+    private static final int DEFAULT_MAX_MESSAGE_BACKLOG = 50;
 
-    /** 最大无响应时间（分钟） */
-    private static final int MAX_IDLE_MINUTES = 30;
+    /** 默认最大无响应时间（分钟）（配置不存在时使用） */
+    private static final int DEFAULT_MAX_IDLE_MINUTES = 30;
 
-    /** 最大恢复尝试次数 */
-    private static final int MAX_RECOVERY_ATTEMPTS = 3;
+    /** 默认最大恢复尝试次数（配置不存在时使用） */
+    private static final int DEFAULT_MAX_RECOVERY_ATTEMPTS = 3;
 
     private final AgentManager agentManager;
     private final ClaudeCliEngine cliEngine;
     private final ContextManager contextManager;
+    private final SystemConfigService configService;
 
     /**
      * Agent 健康状态缓存
@@ -72,10 +75,33 @@ public class ContextMonitor {
      */
     private final ConcurrentHashMap<String, LocalDateTime> lastActivityTime = new ConcurrentHashMap<>();
 
-    public ContextMonitor(AgentManager agentManager, ClaudeCliEngine cliEngine, ContextManager contextManager) {
+    public ContextMonitor(AgentManager agentManager, ClaudeCliEngine cliEngine,
+                          ContextManager contextManager, SystemConfigService configService) {
         this.agentManager = agentManager;
         this.cliEngine = cliEngine;
         this.contextManager = contextManager;
+        this.configService = configService;
+    }
+
+    /**
+     * 获取最大消息积压数量（从配置读取）
+     */
+    private int getMaxMessageBacklog() {
+        return configService.getInt(SystemConstants.AGENT_MAX_MESSAGE_BACKLOG, DEFAULT_MAX_MESSAGE_BACKLOG);
+    }
+
+    /**
+     * 获取最大无响应时间（分钟）（从配置读取）
+     */
+    private int getMaxIdleMinutes() {
+        return configService.getInt(SystemConstants.AGENT_MAX_IDLE_MINUTES, DEFAULT_MAX_IDLE_MINUTES);
+    }
+
+    /**
+     * 获取最大恢复尝试次数（从配置读取）
+     */
+    private int getMaxRecoveryAttempts() {
+        return configService.getInt(SystemConstants.AGENT_MAX_RECOVERY_ATTEMPTS, DEFAULT_MAX_RECOVERY_ATTEMPTS);
     }
 
     /**
@@ -187,16 +213,18 @@ public class ContextMonitor {
         }
 
         // 2. 检查消息积压
-        if (agent.getPendingMessages().size() > MAX_MESSAGE_BACKLOG) {
-            status.markUnhealthy("消息积压: " + agent.getPendingMessages().size() + " 条",
+        int maxBacklog = getMaxMessageBacklog();
+        if (agent.getPendingMessages().size() > maxBacklog) {
+            status.markUnhealthy("消息积压: " + agent.getPendingMessages().size() + " 条（阈值: " + maxBacklog + "）",
                 ContextHealthStatus.Severity.WARNING);
             return status;
         }
 
         // 3. 检查长时间无响应
+        int maxIdleMinutes = getMaxIdleMinutes();
         LocalDateTime lastActivity = lastActivityTime.get(agent.getId());
-        if (lastActivity != null && lastActivity.plusMinutes(MAX_IDLE_MINUTES).isBefore(LocalDateTime.now())) {
-            status.markUnhealthy("长时间无响应: " + MAX_IDLE_MINUTES + " 分钟",
+        if (lastActivity != null && lastActivity.plusMinutes(maxIdleMinutes).isBefore(LocalDateTime.now())) {
+            status.markUnhealthy("长时间无响应: " + maxIdleMinutes + " 分钟",
                 ContextHealthStatus.Severity.WARNING);
             return status;
         }
@@ -233,14 +261,15 @@ public class ContextMonitor {
     private void handleContextFailure(Agent agent, ContextHealthStatus status) {
         String agentId = agent.getId();
         int attempts = recoveryAttempts.getOrDefault(agentId, 0);
+        int maxAttempts = getMaxRecoveryAttempts();
 
-        log.warn("Context failure detected for agent {}: {} (severity={}, attempts={})",
-            agentId, status.getIssue(), status.getSeverity(), attempts);
+        log.warn("Context failure detected for agent {}: {} (severity={}, attempts={}/{})",
+            agentId, status.getIssue(), status.getSeverity(), attempts, maxAttempts);
 
         // 检查是否超过最大恢复次数
-        if (attempts >= MAX_RECOVERY_ATTEMPTS) {
+        if (attempts >= maxAttempts) {
             log.error("Agent {} exceeded max recovery attempts ({}), stopping agent",
-                agentId, MAX_RECOVERY_ATTEMPTS);
+                agentId, maxAttempts);
             handleCriticalFailure(agent, status);
             return;
         }
@@ -414,5 +443,73 @@ public class ContextMonitor {
             }
         }
         return false;
+    }
+
+    /**
+     * 检查单个 Agent 的健康状态
+     *
+     * @param agentId Agent ID
+     * @return 健康状态，Agent 不存在返回 null
+     */
+    public ContextHealthStatus checkSingleAgent(String agentId) {
+        Agent agent = agentManager.getAgent(agentId);
+        if (agent == null) {
+            log.warn("Agent not found for health check: {}", agentId);
+            return null;
+        }
+
+        log.info("Manual health check triggered for agent: {}", agentId);
+        ContextHealthStatus status = checkAgentContext(agent);
+        healthStatusMap.put(agentId, status);
+        return status;
+    }
+
+    /**
+     * 重建 Agent 上下文（彻底重建）
+     * 销毁当前上下文并重新创建
+     *
+     * @param agentId Agent ID
+     * @return 是否成功触发重建
+     */
+    public boolean rebuildContext(String agentId) {
+        Agent agent = agentManager.getAgent(agentId);
+        if (agent == null) {
+            log.warn("Agent not found for context rebuild: {}", agentId);
+            return false;
+        }
+
+        log.info("Context rebuild triggered for agent: {}", agentId);
+
+        // 重置恢复尝试次数
+        recoveryAttempts.remove(agentId);
+
+        if (agent instanceof BaseAgent ba) {
+            try {
+                // 先停止 Agent
+                agent.stop();
+                // 重新启动（会自动创建新上下文）
+                agent.start();
+                log.info("Context rebuild completed for agent: {}", agentId);
+
+                // 更新健康状态
+                ContextHealthStatus status = checkAgentContext(agent);
+                healthStatusMap.put(agentId, status);
+                return true;
+            } catch (Exception e) {
+                log.error("Context rebuild failed for agent {}", agentId, e);
+                return false;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 重置 Agent 的恢复尝试次数
+     *
+     * @param agentId Agent ID
+     */
+    public void resetRecoveryAttempts(String agentId) {
+        recoveryAttempts.remove(agentId);
+        log.info("Recovery attempts reset for agent: {}", agentId);
     }
 }

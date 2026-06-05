@@ -83,12 +83,14 @@ public class StreamingClaudeCliEngine {
 
     /**
      * 获取或创建进程
+     * --print 模式是一次性进程，每次都需要创建新进程
      */
     private ProcessInfo getOrCreateProcess(String agentId, String sessionId,
                                            String workDir, String apiKey, String apiUrl, String model) {
-        ProcessInfo existing = processes.get(agentId);
-        if (existing != null && existing.isAlive()) {
-            return existing;
+        // 清理旧进程（--print 模式下进程用完即销毁）
+        ProcessInfo existing = processes.remove(agentId);
+        if (existing != null) {
+            existing.destroy();
         }
 
         try {

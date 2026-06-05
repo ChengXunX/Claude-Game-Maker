@@ -1,6 +1,8 @@
 package com.chengxun.gamemaker.engine;
 
+import com.chengxun.gamemaker.config.SystemConstants;
 import com.chengxun.gamemaker.model.TaskAssignment;
+import com.chengxun.gamemaker.web.service.SystemConfigService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -13,11 +15,28 @@ import java.util.function.Consumer;
 /**
  * Agent任务队列
  * 支持任务优先级、重试机制和任务状态跟踪
+ *
+ * 配置项（通过 SystemConfigService 动态读取）：
+ * - agent.task-queue-size: 任务队列最大容量
+ * - agent.max-retry-count: 任务最大重试次数
+ * - agent.history-size: 历史记录保留数量
+ *
+ * @author chengxun
+ * @since 1.0.0
  */
 @Component
 public class AgentTaskQueue {
 
     private static final Logger log = LoggerFactory.getLogger(AgentTaskQueue.class);
+
+    /** 默认任务队列大小（配置不存在时使用） */
+    private static final int DEFAULT_QUEUE_SIZE = 500;
+
+    /** 默认最大重试次数（配置不存在时使用） */
+    private static final int DEFAULT_RETRY_COUNT = 3;
+
+    /** 默认历史记录大小（配置不存在时使用） */
+    private static final int DEFAULT_HISTORY_SIZE = 1000;
 
     /** 任务队列：按Agent分组，支持优先级 */
     private final ConcurrentHashMap<String, PriorityBlockingQueue<TaskAssignment>> taskQueues = new ConcurrentHashMap<>();
@@ -36,14 +55,33 @@ public class AgentTaskQueue {
         return t;
     });
 
-    /** 最大队列大小 */
-    private static final int MAX_QUEUE_SIZE = 500;
+    /** 配置服务 */
+    private final SystemConfigService configService;
 
-    /** 最大重试次数 */
-    private static final int MAX_RETRY_COUNT = 3;
+    public AgentTaskQueue(SystemConfigService configService) {
+        this.configService = configService;
+    }
 
-    /** 任务历史最大保留数量 */
-    private static final int MAX_HISTORY_SIZE = 1000;
+    /**
+     * 获取最大队列大小（从配置读取）
+     */
+    private int getMaxQueueSize() {
+        return configService.getInt(SystemConstants.AGENT_TASK_QUEUE_SIZE, DEFAULT_QUEUE_SIZE);
+    }
+
+    /**
+     * 获取最大重试次数（从配置读取）
+     */
+    private int getMaxRetryCount() {
+        return configService.getInt(SystemConstants.AGENT_MAX_RETRY_COUNT, DEFAULT_RETRY_COUNT);
+    }
+
+    /**
+     * 获取历史记录最大大小（从配置读取）
+     */
+    private int getMaxHistorySize() {
+        return configService.getInt(SystemConstants.AGENT_HISTORY_SIZE, DEFAULT_HISTORY_SIZE);
+    }
 
     /**
      * 注册Agent的任务处理器
@@ -81,8 +119,9 @@ public class AgentTaskQueue {
             k -> new PriorityBlockingQueue<>(11, (a, b) -> Integer.compare(b.getPriorityValue(), a.getPriorityValue()))
         );
 
-        if (queue.size() >= MAX_QUEUE_SIZE) {
-            log.warn("Task queue for agent {} is full, rejecting task", agentId);
+        int maxSize = getMaxQueueSize();
+        if (queue.size() >= maxSize) {
+            log.warn("Task queue for agent {} is full (size={}/{}), rejecting task", agentId, queue.size(), maxSize);
             task.setStatus(TaskAssignment.TaskStatus.REJECTED);
             return;
         }
@@ -136,11 +175,12 @@ public class AgentTaskQueue {
      */
     private void handleTaskError(TaskAssignment task, String agentId, Exception error) {
         int retryCount = task.getRetryCount() != null ? task.getRetryCount() : 0;
+        int maxRetry = getMaxRetryCount();
 
-        if (retryCount < MAX_RETRY_COUNT) {
+        if (retryCount < maxRetry) {
             task.setRetryCount(retryCount + 1);
             task.setStatus(TaskAssignment.TaskStatus.RETRYING);
-            log.info("Retrying task {} (attempt {}/{})", task.getId(), retryCount + 1, MAX_RETRY_COUNT);
+            log.info("Retrying task {} (attempt {}/{})", task.getId(), retryCount + 1, maxRetry);
 
             // 延迟重试
             executorService.submit(() -> {
@@ -156,7 +196,7 @@ public class AgentTaskQueue {
             task.setError(error.getMessage());
             task.setCompletedAt(java.time.LocalDateTime.now());
             task.setCompletedAtMs(System.currentTimeMillis());
-            log.error("Task {} failed after {} retries", task.getId(), MAX_RETRY_COUNT);
+            log.error("Task {} failed after {} retries", task.getId(), maxRetry);
         }
     }
 
@@ -203,8 +243,9 @@ public class AgentTaskQueue {
      */
     @Scheduled(fixedRate = 600000)
     public void cleanupTaskHistory() {
-        if (taskHistory.size() > MAX_HISTORY_SIZE) {
-            int toRemove = taskHistory.size() - MAX_HISTORY_SIZE;
+        int maxSize = getMaxHistorySize();
+        if (taskHistory.size() > maxSize) {
+            int toRemove = taskHistory.size() - maxSize;
             taskHistory.entrySet().stream()
                 .sorted((a, b) -> {
                     long timeA = a.getValue().getCreatedAtMs() != null ? a.getValue().getCreatedAtMs() : 0;

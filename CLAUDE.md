@@ -212,3 +212,41 @@ src/main/java/com/chengxun/gamemaker/
 2. **配置分组**：按功能模块分组（security、agent、email、notification、system）
 3. **配置缓存**：使用内存缓存提高查询效率
 4. **热更新**：支持配置动态更新，无需重启服务
+
+## 部署规范
+
+### 部署方式
+
+使用项目根目录下的 `deploy.sh` 脚本进行部署：
+
+```bash
+./deploy.sh
+```
+
+### 部署流程
+
+1. 构建前端（npm run build）
+2. 部署前端文件到 /var/www/game-maker
+3. 构建后端（mvn clean package）
+4. 配置 Nginx
+5. 停止旧服务并启动后端
+6. 验证部署
+
+### 部署端口
+
+- 前端端口：18080
+- 后端端口：19922
+
+### sudo 权限处理
+
+部署脚本需要 sudo 权限执行以下操作：
+- 创建部署目录 /var/www/game-maker
+- 复制前端文件
+- 配置 Nginx
+- 重启 Nginx 服务
+
+**安全提示**：
+- sudo 密码仅在当前会话上下文中有效，不会被持久化存储
+- 如果不放心，可以手动执行需要 sudo 的命令
+- Claude 在执行部署时会询问用户是自己执行还是提供密码
+- 提供的密码仅存在于当前对话上下文中，对话结束后自动失效

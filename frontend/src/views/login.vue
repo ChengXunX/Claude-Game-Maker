@@ -108,7 +108,7 @@
       </el-form>
 
       <template #footer>
-        <el-button @click="skipDeviceVerify">跳过</el-button>
+        <el-button @click="cancelDeviceVerify">取消</el-button>
         <el-button type="primary" @click="handleVerifyDevice" :loading="verifyLoading">
           验证
         </el-button>
@@ -199,8 +199,8 @@ const handleLogin = async () => {
 
         // 检查是否需要设备验证
         if (result.needDeviceVerify) {
-          // 保存token用于后续验证
-          tempToken.value = result.token
+          // 保存验证专用 token（不是登录 token）
+          verifyToken.value = result.verifyToken
           deviceName.value = result.deviceName || '未知设备'
           showDeviceVerify.value = true
           ElMessage.warning('检测到陌生设备，请进行验证')
@@ -219,7 +219,7 @@ const handleLogin = async () => {
 
 // 设备验证相关状态
 const showDeviceVerify = ref(false)
-const tempToken = ref('')
+const verifyToken = ref('')  // 验证专用 token（不是登录 token）
 const deviceName = ref('')
 const verifyCode = ref('')
 const trustDevice = ref(true)
@@ -230,7 +230,7 @@ const countdown = ref(60)
 // 发送验证码
 const sendVerifyCode = async () => {
   try {
-    await api.post('/v1/auth/send-verify-code', { token: tempToken.value })
+    await api.post('/v1/auth/send-verify-code', { verifyToken: verifyToken.value })
     ElMessage.success('验证码已发送到您的邮箱')
     codeSent.value = true
 
@@ -257,8 +257,8 @@ const handleVerifyDevice = async () => {
 
   verifyLoading.value = true
   try {
-    await api.post('/v1/auth/verify-device', {
-      token: tempToken.value,
+    const result = await api.post('/v1/auth/verify-device', {
+      verifyToken: verifyToken.value,
       verifyCode: verifyCode.value,
       trustDevice: trustDevice.value.toString()
     })
@@ -266,8 +266,8 @@ const handleVerifyDevice = async () => {
     ElMessage.success('验证成功')
     showDeviceVerify.value = false
 
-    // 设置token并跳转
-    localStorage.setItem('token', tempToken.value)
+    // 验证成功后，后端返回真正的登录 token
+    localStorage.setItem('token', result.token)
     router.push('/')
   } catch (error) {
     ElMessage.error(error.response?.data?.message || '验证失败')
@@ -276,13 +276,12 @@ const handleVerifyDevice = async () => {
   }
 }
 
-// 跳过设备验证（不信任设备）
-const skipDeviceVerify = () => {
+// 取消设备验证（清除验证 token，回到登录页）
+const cancelDeviceVerify = () => {
   showDeviceVerify.value = false
-  // 直接使用token登录，不信任设备
-  localStorage.setItem('token', tempToken.value)
-  ElMessage.success('登录成功')
-  router.push('/')
+  verifyToken.value = ''
+  verifyCode.value = ''
+  ElMessage.info('已取消验证，请重新登录')
 }
 </script>
 

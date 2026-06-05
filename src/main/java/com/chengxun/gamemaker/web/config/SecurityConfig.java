@@ -84,10 +84,7 @@ public class SecurityConfig {
             .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)  // 添加 JWT 过滤器
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/api/public/**").permitAll() // 公开API允许匿名访问
-                .requestMatchers("/api/v1/auth/login").permitAll() // 登录API允许匿名访问
-                .requestMatchers("/api/v1/auth/captcha").permitAll() // 验证码API允许匿名访问
-                .requestMatchers("/api/v1/auth/register-config").permitAll() // 注册配置API允许匿名访问
-                .requestMatchers("/api/v1/auth/register").permitAll() // 注册API允许匿名访问
+                .requestMatchers("/api/v1/auth/**").permitAll() // 认证相关API（登录、注册、设备验证等）允许匿名访问
                 .requestMatchers("/api/auth/**").permitAll() // 认证相关API允许匿名访问
                 .requestMatchers("/api/install/**").permitAll() // 安装向导允许匿名访问
                 .requestMatchers("/feishu/**").permitAll() // 飞书webhook允许匿名访问

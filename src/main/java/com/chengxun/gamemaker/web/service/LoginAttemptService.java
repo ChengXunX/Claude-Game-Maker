@@ -1,5 +1,6 @@
 package com.chengxun.gamemaker.web.service;
 
+import com.chengxun.gamemaker.config.SystemConstants;
 import org.springframework.stereotype.Service;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -13,20 +14,47 @@ import java.util.concurrent.atomic.AtomicInteger;
  * - 达到最大尝试次数后锁定账户
  * - 支持锁定时间自动解锁
  *
+ * 配置项（通过 SystemConfigService 动态读取）：
+ * - security.max-login-attempts: 最大登录尝试次数
+ * - security.session-timeout-minutes: 会话超时时间（用于锁定时长）
+ *
  * @author chengxun
  * @since 1.0.0
  */
 @Service
 public class LoginAttemptService {
 
-    /** 最大登录尝试次数 */
-    private static final int MAX_ATTEMPTS = 5;
+    /** 默认最大登录尝试次数（配置不存在时使用） */
+    private static final int DEFAULT_MAX_ATTEMPTS = 5;
 
-    /** 锁定时间（毫秒）：30分钟 */
-    private static final long LOCKOUT_DURATION_MS = 30 * 60 * 1000;
+    /** 默认锁定时间（毫秒）：30分钟 */
+    private static final long DEFAULT_LOCKOUT_DURATION_MS = 30 * 60 * 1000;
+
+    /** 配置服务 */
+    private final SystemConfigService configService;
 
     /** 登录尝试记录，key为用户名 */
     private final ConcurrentHashMap<String, AttemptInfo> attempts = new ConcurrentHashMap<>();
+
+    public LoginAttemptService(SystemConfigService configService) {
+        this.configService = configService;
+    }
+
+    /**
+     * 获取最大登录尝试次数（从配置读取）
+     */
+    private int getMaxAttempts() {
+        return configService.getInt(SystemConstants.SECURITY_MAX_LOGIN_ATTEMPTS, DEFAULT_MAX_ATTEMPTS);
+    }
+
+    /**
+     * 获取锁定时长（从配置读取，单位分钟转毫秒）
+     */
+    private long getLockoutDurationMs() {
+        // 从 session-timeout 配置推导锁定时长，或者使用默认值
+        int sessionTimeoutMinutes = configService.getInt(SystemConstants.SECURITY_SESSION_TIMEOUT, 30);
+        return sessionTimeoutMinutes * 60 * 1000L;
+    }
 
     /**
      * 记录登录失败尝试
@@ -95,7 +123,7 @@ public class LoginAttemptService {
         if (info == null || !info.isLocked()) {
             return 0;
         }
-        long remaining = LOCKOUT_DURATION_MS - (System.currentTimeMillis() - info.getLockoutTime());
+        long remaining = getLockoutDurationMs() - (System.currentTimeMillis() - info.getLockoutTime());
         return Math.max(0, remaining);
     }
 
@@ -110,24 +138,25 @@ public class LoginAttemptService {
 
     /**
      * 内部类：登录尝试信息
+     * 注意：需要通过外部类引用获取配置值
      */
-    private static class AttemptInfo {
+    private class AttemptInfo {
         private final AtomicInteger attempts = new AtomicInteger(0);
         private volatile long lockoutTime = 0;
 
         public void incrementAttempts() {
             int current = attempts.incrementAndGet();
-            if (current >= MAX_ATTEMPTS) {
+            if (current >= getMaxAttempts()) {
                 lockoutTime = System.currentTimeMillis();
             }
         }
 
         public boolean isLocked() {
-            return attempts.get() >= MAX_ATTEMPTS;
+            return attempts.get() >= getMaxAttempts();
         }
 
         public boolean isLockoutExpired() {
-            return System.currentTimeMillis() - lockoutTime > LOCKOUT_DURATION_MS;
+            return System.currentTimeMillis() - lockoutTime > getLockoutDurationMs();
         }
 
         public long getLockoutTime() {

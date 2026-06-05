@@ -1,6 +1,7 @@
 package com.chengxun.gamemaker.service;
 
 import com.chengxun.gamemaker.agent.Agent;
+import com.chengxun.gamemaker.config.SystemConstants;
 import com.chengxun.gamemaker.manager.AgentManager;
 import com.chengxun.gamemaker.web.entity.AgentLog;
 import com.chengxun.gamemaker.web.entity.DismissalRequest;
@@ -12,6 +13,7 @@ import com.chengxun.gamemaker.web.repository.DismissalRequestRepository;
 import com.chengxun.gamemaker.web.repository.PerformanceReviewRepository;
 import com.chengxun.gamemaker.web.repository.ProducerReplacementRepository;
 import com.chengxun.gamemaker.web.service.NotificationService;
+import com.chengxun.gamemaker.web.service.SystemConfigService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -33,6 +35,9 @@ import java.util.stream.Collectors;
  * 4. 管理员审批解雇
  * 5. 执行解雇
  *
+ * 配置项（通过 SystemConfigService 动态读取）：
+ * - agent.max-warnings: 最大警告次数，超过触发解雇流程
+ *
  * @author chengxun
  * @since 1.0.0
  */
@@ -42,17 +47,17 @@ public class PerformanceManagementService {
 
     private static final Logger log = LoggerFactory.getLogger(PerformanceManagementService.class);
 
-    /** 低分阈值 */
-    private static final int LOW_SCORE_THRESHOLD = 60;
+    /** 默认低分阈值 */
+    private static final int DEFAULT_LOW_SCORE_THRESHOLD = 60;
 
-    /** 警告阈值 */
-    private static final int WARNING_THRESHOLD = 50;
+    /** 默认警告阈值 */
+    private static final int DEFAULT_WARNING_THRESHOLD = 50;
 
-    /** 连续低分期数触发解雇 */
-    private static final int CONSECUTIVE_LOW_PERIODS_FOR_DISMISSAL = 3;
+    /** 默认连续低分期数触发解雇 */
+    private static final int DEFAULT_CONSECUTIVE_LOW_PERIODS = 3;
 
-    /** 最大警告次数 */
-    private static final int MAX_WARNINGS_BEFORE_DISMISSAL = 3;
+    /** 默认最大警告次数（配置不存在时使用） */
+    private static final int DEFAULT_MAX_WARNINGS = 3;
 
     @Autowired
     private PerformanceReviewRepository reviewRepository;
@@ -71,6 +76,16 @@ public class PerformanceManagementService {
 
     @Autowired
     private NotificationService notificationService;
+
+    @Autowired
+    private SystemConfigService configService;
+
+    /**
+     * 获取最大警告次数（从配置读取）
+     */
+    private int getMaxWarnings() {
+        return configService.getInt(SystemConstants.AGENT_MAX_WARNINGS, DEFAULT_MAX_WARNINGS);
+    }
 
     // ===== 绩效打分 =====
 
@@ -142,7 +157,7 @@ public class PerformanceManagementService {
         // 检查是否需要警告
         if (review.needsWarning()) {
             review.setIsWarning(true);
-            review.setWarningReason("综合评分低于警告阈值（" + WARNING_THRESHOLD + "分）");
+            review.setWarningReason("综合评分低于警告阈值（" + DEFAULT_WARNING_THRESHOLD + "分）");
         }
 
         PerformanceReview saved = reviewRepository.save(review);
@@ -212,8 +227,9 @@ public class PerformanceManagementService {
         Long warningCount = reviewRepository.countWarningsByAgentId(agentId);
 
         // 检查是否满足解雇条件
-        if (consecutiveLowPeriods >= CONSECUTIVE_LOW_PERIODS_FOR_DISMISSAL ||
-            warningCount >= MAX_WARNINGS_BEFORE_DISMISSAL) {
+        int maxWarnings = getMaxWarnings();
+        if (consecutiveLowPeriods >= DEFAULT_CONSECUTIVE_LOW_PERIODS ||
+            warningCount >= maxWarnings) {
 
             Agent agent = agentManager.getAgent(agentId);
             Agent producer = agentManager.getAgent(producerId);

@@ -1,6 +1,8 @@
 package com.chengxun.gamemaker.engine;
 
+import com.chengxun.gamemaker.config.SystemConstants;
 import com.chengxun.gamemaker.model.AgentMessage;
+import com.chengxun.gamemaker.web.service.SystemConfigService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -17,11 +19,28 @@ import java.util.function.Consumer;
  * - 消息持久化（内存）
  * - 消息消费回调
  * - 消息重试
+ *
+ * 配置项（通过 SystemConfigService 动态读取）：
+ * - agent.message-queue-size: 消息队列最大容量
+ * - agent.max-retry-count: 消息最大重试次数
+ * - agent.history-size: 历史记录保留数量
+ *
+ * @author chengxun
+ * @since 1.0.0
  */
 @Component
 public class AgentMessageQueue {
 
     private static final Logger log = LoggerFactory.getLogger(AgentMessageQueue.class);
+
+    /** 默认消息队列大小（配置不存在时使用） */
+    private static final int DEFAULT_QUEUE_SIZE = 1000;
+
+    /** 默认最大重试次数（配置不存在时使用） */
+    private static final int DEFAULT_RETRY_COUNT = 3;
+
+    /** 默认历史记录大小（配置不存在时使用） */
+    private static final int DEFAULT_HISTORY_SIZE = 2000;
 
     /** 消息队列：按目标Agent分组 */
     private final ConcurrentHashMap<String, PriorityBlockingQueue<AgentMessage>> messageQueues = new ConcurrentHashMap<>();
@@ -40,14 +59,33 @@ public class AgentMessageQueue {
         return t;
     });
 
-    /** 最大队列大小 */
-    private static final int MAX_QUEUE_SIZE = 1000;
+    /** 配置服务 */
+    private final SystemConfigService configService;
 
-    /** 最大重试次数 */
-    private static final int MAX_RETRY_COUNT = 3;
+    public AgentMessageQueue(SystemConfigService configService) {
+        this.configService = configService;
+    }
 
-    /** 消息历史最大保留数量 */
-    private static final int MAX_HISTORY_SIZE = 2000;
+    /**
+     * 获取最大队列大小（从配置读取）
+     */
+    private int getMaxQueueSize() {
+        return configService.getInt(SystemConstants.AGENT_MESSAGE_QUEUE_SIZE, DEFAULT_QUEUE_SIZE);
+    }
+
+    /**
+     * 获取最大重试次数（从配置读取）
+     */
+    private int getMaxRetryCount() {
+        return configService.getInt(SystemConstants.AGENT_MAX_RETRY_COUNT, DEFAULT_RETRY_COUNT);
+    }
+
+    /**
+     * 获取历史记录最大大小（从配置读取）
+     */
+    private int getMaxHistorySize() {
+        return configService.getInt(SystemConstants.AGENT_HISTORY_SIZE, DEFAULT_HISTORY_SIZE);
+    }
 
     /**
      * 注册Agent的消息处理器
@@ -94,8 +132,10 @@ public class AgentMessageQueue {
             k -> new PriorityBlockingQueue<>(11, (a, b) -> Integer.compare(b.getPriority(), a.getPriority()))
         );
 
-        if (queue.size() >= MAX_QUEUE_SIZE) {
-            log.warn("Message queue for agent {} is full, dropping oldest message", message.getToAgentId());
+        int maxSize = getMaxQueueSize();
+        if (queue.size() >= maxSize) {
+            log.warn("Message queue for agent {} is full (size={}/{}), dropping oldest message",
+                message.getToAgentId(), queue.size(), maxSize);
             queue.poll(); // 移除最旧的消息
         }
 
@@ -155,11 +195,12 @@ public class AgentMessageQueue {
      */
     private void handleMessageError(AgentMessage message, Exception error) {
         int retryCount = message.getRetryCount() != null ? message.getRetryCount() : 0;
+        int maxRetry = getMaxRetryCount();
 
-        if (retryCount < MAX_RETRY_COUNT) {
+        if (retryCount < maxRetry) {
             message.setRetryCount(retryCount + 1);
             message.setStatus(AgentMessage.MessageStatus.RETRYING);
-            log.info("Retrying message {} (attempt {}/{})", message.getId(), retryCount + 1, MAX_RETRY_COUNT);
+            log.info("Retrying message {} (attempt {}/{})", message.getId(), retryCount + 1, maxRetry);
 
             // 延迟重试
             executorService.submit(() -> {
@@ -173,7 +214,7 @@ public class AgentMessageQueue {
         } else {
             message.setStatus(AgentMessage.MessageStatus.FAILED);
             message.setError(error.getMessage());
-            log.error("Message {} failed after {} retries", message.getId(), MAX_RETRY_COUNT);
+            log.error("Message {} failed after {} retries", message.getId(), maxRetry);
         }
     }
 
@@ -220,8 +261,9 @@ public class AgentMessageQueue {
      */
     @Scheduled(fixedRate = 600000)
     public void cleanupMessageHistory() {
-        if (messageHistory.size() > MAX_HISTORY_SIZE) {
-            int toRemove = messageHistory.size() - MAX_HISTORY_SIZE;
+        int maxSize = getMaxHistorySize();
+        if (messageHistory.size() > maxSize) {
+            int toRemove = messageHistory.size() - maxSize;
             messageHistory.entrySet().stream()
                 .sorted((a, b) -> {
                     long timeA = a.getValue().getTimestampMs() != null ? a.getValue().getTimestampMs() : 0;

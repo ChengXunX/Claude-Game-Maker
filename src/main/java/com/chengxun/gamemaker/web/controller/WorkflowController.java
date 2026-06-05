@@ -2,6 +2,13 @@ package com.chengxun.gamemaker.web.controller;
 
 import com.chengxun.gamemaker.config.AppConfig;
 import com.chengxun.gamemaker.engine.ClaudeCliEngine;
+import com.chengxun.gamemaker.web.entity.WorkflowApprovalEntity;
+import com.chengxun.gamemaker.web.entity.WorkflowAuditLogEntity;
+import com.chengxun.gamemaker.web.entity.WorkflowInstanceEntity;
+import com.chengxun.gamemaker.web.entity.WorkflowStepExecutionEntity;
+import com.chengxun.gamemaker.web.repository.WorkflowInstanceRepository;
+import com.chengxun.gamemaker.web.repository.WorkflowStepExecutionRepository;
+import com.chengxun.gamemaker.web.service.AgentMatchStrategy;
 import com.chengxun.gamemaker.web.service.WorkflowEngine;
 import com.chengxun.gamemaker.web.service.WorkflowEngine.*;
 import io.swagger.v3.oas.annotations.Operation;
@@ -11,6 +18,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.ArrayList;
@@ -45,6 +53,15 @@ public class WorkflowController {
 
     @Autowired
     private AppConfig appConfig;
+
+    @Autowired
+    private WorkflowInstanceRepository instanceRepository;
+
+    @Autowired
+    private WorkflowStepExecutionRepository stepExecutionRepository;
+
+    @Autowired
+    private AgentMatchStrategy agentMatchStrategy;
 
     /**
      * 获取所有工作流模板
@@ -232,6 +249,141 @@ public class WorkflowController {
             return response.substring(start, end + 1);
         }
         return null;
+    }
+
+    // ===== 实例管理（数据库持久化） =====
+
+    /**
+     * 获取所有工作流实例（从数据库）
+     */
+    @Operation(summary = "获取所有实例", description = "从数据库获取所有工作流实例")
+    @GetMapping("/instances")
+    @PreAuthorize("hasAuthority('PERM_workflow:view')")
+    public ResponseEntity<List<WorkflowInstanceEntity>> getAllInstances() {
+        return ResponseEntity.ok(instanceRepository.findAll());
+    }
+
+    /**
+     * 按项目获取工作流实例
+     */
+    @Operation(summary = "按项目获取实例", description = "获取指定项目的工作流实例")
+    @GetMapping("/instances/project/{projectId}")
+    @PreAuthorize("hasAuthority('PERM_workflow:view')")
+    public ResponseEntity<List<WorkflowInstanceEntity>> getInstancesByProject(@PathVariable String projectId) {
+        return ResponseEntity.ok(instanceRepository.findByProjectIdOrderByCreatedAtDesc(projectId));
+    }
+
+    /**
+     * 获取实例详情（从数据库）
+     */
+    @Operation(summary = "获取实例详情", description = "从数据库获取工作流实例详情")
+    @GetMapping("/instances/{instanceId}/detail")
+    @PreAuthorize("hasAuthority('PERM_workflow:view')")
+    public ResponseEntity<Map<String, Object>> getInstanceDetail(@PathVariable String instanceId) {
+        return instanceRepository.findById(instanceId)
+            .map(instance -> {
+                List<WorkflowStepExecutionEntity> steps = stepExecutionRepository.findByInstanceIdOrderByCreatedAtAsc(instanceId);
+                List<WorkflowApprovalEntity> approvals = workflowEngine.getApprovals(instanceId);
+                List<WorkflowAuditLogEntity> auditLogs = workflowEngine.getAuditLogs(instanceId);
+                return ResponseEntity.ok(Map.<String, Object>of(
+                    "instance", instance,
+                    "steps", steps,
+                    "approvals", approvals,
+                    "auditLogs", auditLogs
+                ));
+            })
+            .orElse(ResponseEntity.notFound().build());
+    }
+
+    /**
+     * 获取实例的步骤执行详情
+     */
+    @Operation(summary = "获取步骤执行详情", description = "获取工作流实例的步骤执行记录")
+    @GetMapping("/instances/{instanceId}/steps")
+    @PreAuthorize("hasAuthority('PERM_workflow:view')")
+    public ResponseEntity<List<WorkflowStepExecutionEntity>> getStepExecutions(@PathVariable String instanceId) {
+        return ResponseEntity.ok(stepExecutionRepository.findByInstanceIdOrderByCreatedAtAsc(instanceId));
+    }
+
+    // ===== 审批管理 =====
+
+    /**
+     * 审批通过
+     */
+    @Operation(summary = "审批通过", description = "审批通过指定的工作流步骤")
+    @PostMapping("/instances/{instanceId}/steps/{stepId}/approve")
+    @PreAuthorize("hasAuthority('PERM_workflow:manage')")
+    public ResponseEntity<Map<String, Object>> approveStep(
+            @PathVariable String instanceId,
+            @PathVariable String stepId,
+            @RequestBody(required = false) Map<String, String> request,
+            Authentication authentication) {
+        String comment = request != null ? request.get("comment") : null;
+        String username = authentication.getName();
+
+        boolean result = workflowEngine.approveStep(instanceId, stepId, null, username, comment);
+        if (result) {
+            return ResponseEntity.ok(Map.of("status", "success", "message", "审批通过"));
+        }
+        return ResponseEntity.badRequest().body(Map.of("status", "error", "message", "审批失败，可能已审批或不存在"));
+    }
+
+    /**
+     * 审批拒绝
+     */
+    @Operation(summary = "审批拒绝", description = "拒绝指定的工作流步骤")
+    @PostMapping("/instances/{instanceId}/steps/{stepId}/reject")
+    @PreAuthorize("hasAuthority('PERM_workflow:manage')")
+    public ResponseEntity<Map<String, Object>> rejectStep(
+            @PathVariable String instanceId,
+            @PathVariable String stepId,
+            @RequestBody Map<String, String> request,
+            Authentication authentication) {
+        String comment = request.get("comment");
+        String username = authentication.getName();
+
+        boolean result = workflowEngine.rejectStep(instanceId, stepId, null, username, comment);
+        if (result) {
+            return ResponseEntity.ok(Map.of("status", "success", "message", "已拒绝"));
+        }
+        return ResponseEntity.badRequest().body(Map.of("status", "error", "message", "拒绝失败，可能已审批或不存在"));
+    }
+
+    /**
+     * 获取待审批列表
+     */
+    @Operation(summary = "获取待审批列表", description = "获取所有待审批的工作流步骤")
+    @GetMapping("/approvals/pending")
+    @PreAuthorize("hasAuthority('PERM_workflow:view')")
+    public ResponseEntity<List<WorkflowApprovalEntity>> getPendingApprovals() {
+        return ResponseEntity.ok(workflowEngine.getPendingApprovals());
+    }
+
+    // ===== 审计日志 =====
+
+    /**
+     * 获取实例的审计日志
+     */
+    @Operation(summary = "获取审计日志", description = "获取工作流实例的审计日志")
+    @GetMapping("/instances/{instanceId}/audit-logs")
+    @PreAuthorize("hasAuthority('PERM_workflow:view')")
+    public ResponseEntity<List<WorkflowAuditLogEntity>> getAuditLogs(@PathVariable String instanceId) {
+        return ResponseEntity.ok(workflowEngine.getAuditLogs(instanceId));
+    }
+
+    // ===== Agent匹配 =====
+
+    /**
+     * 获取Agent匹配评分
+     * 查看指定角色的Agent综合评分，用于调试和监控
+     */
+    @Operation(summary = "获取Agent评分", description = "获取指定角色的Agent综合评分")
+    @GetMapping("/agent-scores")
+    @PreAuthorize("hasAuthority('PERM_workflow:view')")
+    public ResponseEntity<List<Map<String, Object>>> getAgentScores(
+            @RequestParam String role,
+            @RequestParam(required = false) String projectId) {
+        return ResponseEntity.ok(agentMatchStrategy.getAgentScores(role, projectId));
     }
 
     /**

@@ -34,7 +34,10 @@
         <el-table-column prop="configKey" label="配置键" min-width="200" show-overflow-tooltip />
         <el-table-column prop="configValue" label="配置值" min-width="200">
           <template #default="{ row }">
-            <span v-if="!row._editing">{{ row.configValue }}</span>
+            <template v-if="!row._editing">
+              <el-icon v-if="isMasked(row.configValue)" style="color: #e6a23c; margin-right: 4px; vertical-align: middle;"><Lock /></el-icon>
+              <span>{{ row.configValue }}</span>
+            </template>
             <el-input v-else v-model="row._newValue" size="small" />
           </template>
         </el-table-column>
@@ -112,6 +115,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { configApi } from '@/api'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Lock } from '@element-plus/icons-vue'
 
 const loading = ref(false)
 const configs = ref([])
@@ -186,10 +190,23 @@ const handleRefreshCache = async () => {
   }
 }
 
+/** 判断是否为敏感配置（含 * 号表示已脱敏） */
+const isMasked = (value) => value && value.includes('*')
+
 /** 编辑配置 */
-const handleEdit = (row) => {
+const handleEdit = async (row) => {
   row._editing = true
-  row._newValue = row.configValue
+  // 如果值已脱敏，先获取原始值
+  if (isMasked(row.configValue)) {
+    try {
+      const data = await configApi.reveal(row.id)
+      row._newValue = data.configValue
+    } catch {
+      row._newValue = row.configValue
+    }
+  } else {
+    row._newValue = row.configValue
+  }
 }
 
 /** 取消编辑 */

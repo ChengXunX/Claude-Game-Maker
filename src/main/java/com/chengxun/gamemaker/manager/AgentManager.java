@@ -481,4 +481,41 @@ public class AgentManager {
 
         return status;
     }
+
+    /**
+     * 设置 Agent 的推理深度（全局生效）
+     *
+     * @param projectId 项目 ID
+     * @param agentRole Agent 角色
+     * @param depth 推理深度 (1-5)
+     * @return 是否设置成功
+     */
+    public boolean setReasoningDepth(String projectId, String agentRole, int depth) {
+        Agent agent = getAgent(projectId, agentRole);
+        if (agent == null) {
+            log.warn("Agent not found for setting reasoning depth: {}:{}", projectId, agentRole);
+            return false;
+        }
+
+        // 验证深度范围
+        int validDepth = Math.max(1, Math.min(5, depth));
+        agent.getDefinition().setReasoningDepth(validDepth);
+        log.info("Set reasoning depth for agent {}:{} to {}", projectId, agentRole, validDepth);
+        return true;
+    }
+
+    /**
+     * 获取 Agent 的推理深度
+     *
+     * @param projectId 项目 ID
+     * @param agentRole Agent 角色
+     * @return 推理深度，Agent 不存在返回 -1
+     */
+    public int getReasoningDepth(String projectId, String agentRole) {
+        Agent agent = getAgent(projectId, agentRole);
+        if (agent == null) {
+            return -1;
+        }
+        return agent.getDefinition().getReasoningDepth();
+    }
 }

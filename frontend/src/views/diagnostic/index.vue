@@ -421,8 +421,11 @@
  * 权限要求：系统管理员
  */
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { diagnosticApi } from '@/api'
 import { ElMessage } from 'element-plus'
+
+const route = useRoute()
 
 const loading = ref(false)
 const running = ref(false)
@@ -578,6 +581,14 @@ watch(autoRefresh, (val) => {
   } else {
     stopAutoRefresh()
   }
+})
+
+/** 路由变化时关闭所有弹窗，防止 keep-alive 下弹窗 DOM 残留导致页面空白 */
+watch(() => route.path, () => {
+  cpuDialogVisible.value = false
+  memoryDialogVisible.value = false
+  threadDialogVisible.value = false
+  diskDialogVisible.value = false
 })
 
 onMounted(() => {

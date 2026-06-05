@@ -60,6 +60,9 @@ public class JwtUtils {
         }
     }
 
+    /** 验证 token 过期时间（毫秒），默认 5 分钟 */
+    private static final long VERIFY_TOKEN_EXPIRATION = 5 * 60 * 1000L;
+
     /** Token 前缀 */
     public static final String TOKEN_PREFIX = "Bearer ";
 
@@ -225,6 +228,53 @@ public class JwtUtils {
             return Math.max(remaining, 0);
         } catch (Exception e) {
             return -1;
+        }
+    }
+
+    /**
+     * 生成设备验证专用 Token
+     * 仅用于设备验证流程，有效期 5 分钟，包含 purpose 标识
+     *
+     * @param username 用户名
+     * @param userId 用户ID
+     * @return 验证专用 Token
+     */
+    public String generateVerifyToken(String username, Long userId) {
+        Date now = new Date();
+        Date expirationDate = new Date(now.getTime() + VERIFY_TOKEN_EXPIRATION);
+
+        Map<String, Object> claims = new HashMap<>();
+        claims.put("userId", userId);
+        claims.put("purpose", "device-verify");
+
+        return Jwts.builder()
+                .setClaims(claims)
+                .setSubject(username)
+                .setIssuedAt(now)
+                .setExpiration(expirationDate)
+                .signWith(getSigningKey())
+                .compact();
+    }
+
+    /**
+     * 从验证 Token 中获取用户名
+     * 验证 Token 必须包含 purpose=device-verify 标识
+     *
+     * @param verifyToken 验证专用 Token
+     * @return 用户名，如果 Token 无效或不是验证专用 Token 返回 null
+     */
+    public String getUsernameFromVerifyToken(String verifyToken) {
+        try {
+            Claims claims = parseToken(verifyToken);
+            String purpose = claims.get("purpose", String.class);
+            if (!"device-verify".equals(purpose)) {
+                log.warn("Token 不是验证专用 token: purpose={}", purpose);
+                return null;
+            }
+            return claims.getSubject();
+        } catch (Exception e) {
+            log.error("从验证 Token 解析用户名失败: {}", e.getMessage());
+            return null;
         }
     }
 }

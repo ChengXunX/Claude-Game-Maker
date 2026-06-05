@@ -313,6 +313,198 @@ public class AiToolRegistry {
             Map.of(),
             "PERM_agents:view"
         ));
+
+        // ===== 工作流管理 =====
+
+        // 31. 查询工作流模板
+        registerTool(new AiTool(
+            "list_workflow_templates",
+            "获取所有工作流模板列表（包括内置和自定义模板）",
+            Map.of(),
+            "PERM_workflow:view"
+        ));
+
+        // 32. 创建工作流模板
+        Map<String, ParameterDef> createWfParams = new HashMap<>();
+        createWfParams.put("id", new ParameterDef("string", "模板ID（英文标识，如 my-workflow）", true));
+        createWfParams.put("name", new ParameterDef("string", "模板名称", true));
+        createWfParams.put("description", new ParameterDef("string", "模板描述", false));
+        registerTool(new AiTool(
+            "create_workflow_template",
+            "创建新的工作流模板",
+            createWfParams,
+            "PERM_workflow:manage"
+        ));
+
+        // 33. 删除工作流模板
+        Map<String, ParameterDef> deleteWfParams = new HashMap<>();
+        deleteWfParams.put("templateId", new ParameterDef("string", "要删除的模板ID", true));
+        registerTool(new AiTool(
+            "delete_workflow_template",
+            "删除自定义工作流模板（内置模板无法删除）",
+            deleteWfParams,
+            "PERM_workflow:manage"
+        ));
+
+        // 34. 启动工作流
+        Map<String, ParameterDef> startWfParams = new HashMap<>();
+        startWfParams.put("templateId", new ParameterDef("string", "工作流模板ID", true));
+        startWfParams.put("projectId", new ParameterDef("string", "关联的项目ID", true));
+        startWfParams.put("parameters", new ParameterDef("object", "工作流参数（JSON对象）", false));
+        registerTool(new AiTool(
+            "start_workflow",
+            "使用指定模板启动工作流实例",
+            startWfParams,
+            "PERM_workflow:manage"
+        ));
+
+        // 35. 查询运行中的工作流
+        registerTool(new AiTool(
+            "list_workflow_instances",
+            "获取所有运行中的工作流实例",
+            Map.of(),
+            "PERM_workflow:view"
+        ));
+
+        // 36. 取消工作流
+        Map<String, ParameterDef> cancelWfParams = new HashMap<>();
+        cancelWfParams.put("instanceId", new ParameterDef("string", "工作流实例ID", true));
+        registerTool(new AiTool(
+            "cancel_workflow",
+            "取消运行中的工作流实例",
+            cancelWfParams,
+            "PERM_workflow:manage"
+        ));
+
+        // 37. 暂停工作流
+        Map<String, ParameterDef> pauseWfParams = new HashMap<>();
+        pauseWfParams.put("instanceId", new ParameterDef("string", "工作流实例ID", true));
+        registerTool(new AiTool(
+            "pause_workflow",
+            "暂停运行中的工作流实例",
+            pauseWfParams,
+            "PERM_workflow:manage"
+        ));
+
+        // 38. 恢复工作流
+        Map<String, ParameterDef> resumeWfParams = new HashMap<>();
+        resumeWfParams.put("instanceId", new ParameterDef("string", "工作流实例ID", true));
+        registerTool(new AiTool(
+            "resume_workflow",
+            "恢复暂停的工作流实例",
+            resumeWfParams,
+            "PERM_workflow:manage"
+        ));
+
+        // ===== 游戏模板管理 =====
+
+        // 39. 创建游戏模板
+        Map<String, ParameterDef> createGameTplParams = new HashMap<>();
+        createGameTplParams.put("name", new ParameterDef("string", "模板名称", true));
+        createGameTplParams.put("description", new ParameterDef("string", "模板描述", false));
+        createGameTplParams.put("gameType", new ParameterDef("string", "游戏类型（如 rpg、slg、casual）", false));
+        registerTool(new AiTool(
+            "create_game_template",
+            "创建新的游戏模板",
+            createGameTplParams,
+            "PERM_skills:manage"
+        ));
+
+        // 40. 删除游戏模板
+        Map<String, ParameterDef> deleteGameTplParams = new HashMap<>();
+        deleteGameTplParams.put("templateId", new ParameterDef("string", "要删除的模板ID", true));
+        registerTool(new AiTool(
+            "delete_game_template",
+            "删除自定义游戏模板（内置模板无法删除）",
+            deleteGameTplParams,
+            "PERM_skills:manage"
+        ));
+
+        // ===== 告警管理 =====
+
+        // 41. 确认告警
+        Map<String, ParameterDef> ackAlertParams = new HashMap<>();
+        ackAlertParams.put("alertId", new ParameterDef("number", "告警ID", true));
+        registerTool(new AiTool(
+            "acknowledge_alert",
+            "确认告警（表示已知晓）",
+            ackAlertParams,
+            "PERM_system:monitor"
+        ));
+
+        // 42. 解决告警
+        Map<String, ParameterDef> resolveAlertParams = new HashMap<>();
+        resolveAlertParams.put("alertId", new ParameterDef("number", "告警ID", true));
+        resolveAlertParams.put("resolution", new ParameterDef("string", "解决方案说明", false));
+        registerTool(new AiTool(
+            "resolve_alert",
+            "标记告警为已解决",
+            resolveAlertParams,
+            "PERM_system:monitor"
+        ));
+
+        // ===== 通知管理 =====
+
+        // 43. 标记通知已读
+        Map<String, ParameterDef> readNotifParams = new HashMap<>();
+        readNotifParams.put("notificationId", new ParameterDef("number", "通知ID", true));
+        registerTool(new AiTool(
+            "mark_notification_read",
+            "标记单条通知为已读",
+            readNotifParams,
+            "PERM_notification:view"
+        ));
+
+        // 44. 全部标记已读
+        registerTool(new AiTool(
+            "mark_all_notifications_read",
+            "标记所有通知为已读",
+            Map.of(),
+            "PERM_notification:view"
+        ));
+
+        // ===== 配置管理 =====
+
+        // 45. 更新系统配置
+        Map<String, ParameterDef> updateConfigParams = new HashMap<>();
+        updateConfigParams.put("key", new ParameterDef("string", "配置键", true));
+        updateConfigParams.put("value", new ParameterDef("string", "配置值", true));
+        registerTool(new AiTool(
+            "update_config",
+            "更新系统配置项",
+            updateConfigParams,
+            "PERM_system:config:manage"
+        ));
+
+        // ===== CI/CD =====
+
+        // 46. 触发流水线
+        Map<String, ParameterDef> triggerPipelineParams = new HashMap<>();
+        triggerPipelineParams.put("pipelineId", new ParameterDef("number", "流水线ID", true));
+        registerTool(new AiTool(
+            "trigger_pipeline",
+            "触发CI/CD流水线执行",
+            triggerPipelineParams,
+            "PERM_pipeline:execute"
+        ));
+
+        // ===== 系统信息 =====
+
+        // 47. 获取系统信息
+        registerTool(new AiTool(
+            "get_system_info",
+            "获取系统运行环境信息（Java版本、OS、内存、CPU等）",
+            Map.of(),
+            null
+        ));
+
+        // 48. 获取系统自检
+        registerTool(new AiTool(
+            "get_diagnostic",
+            "获取系统自检结果（Agent、项目、技能、工作流统计）",
+            Map.of(),
+            "PERM_system:monitor"
+        ));
     }
 
     /**

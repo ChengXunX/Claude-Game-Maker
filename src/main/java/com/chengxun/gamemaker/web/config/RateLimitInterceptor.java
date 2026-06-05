@@ -1,5 +1,7 @@
 package com.chengxun.gamemaker.web.config;
 
+import com.chengxun.gamemaker.config.SystemConstants;
+import com.chengxun.gamemaker.web.service.SystemConfigService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -8,6 +10,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
 
 import java.time.Instant;
@@ -19,21 +22,27 @@ import java.util.concurrent.atomic.AtomicInteger;
  * API 限流拦截器
  * 基于滑动窗口计数器的内存限流
  *
+ * 配置项（通过 SystemConfigService 动态读取）：
+ * - rate-limit.global: 全局 API 每分钟请求限制
+ * - rate-limit.auth: 认证接口每分钟请求限制
+ * - rate-limit.write: 写操作每分钟请求限制
+ *
  * @author chengxun
  * @since 1.0.0
  */
+@Component
 public class RateLimitInterceptor implements HandlerInterceptor {
 
     private static final Logger log = LoggerFactory.getLogger(RateLimitInterceptor.class);
 
-    /** 全局 API 限流：每 IP 每分钟 120 次 */
-    private static final int GLOBAL_LIMIT = 120;
+    /** 默认全局限流（配置不存在时使用） */
+    private static final int DEFAULT_GLOBAL_LIMIT = 120;
 
-    /** 认证 API 限流：每 IP 每分钟 10 次 */
-    private static final int AUTH_LIMIT = 10;
+    /** 默认认证限流（配置不存在时使用） */
+    private static final int DEFAULT_AUTH_LIMIT = 10;
 
-    /** 写操作限流：每用户每分钟 60 次 */
-    private static final int WRITE_LIMIT = 60;
+    /** 默认写操作限流（配置不存在时使用） */
+    private static final int DEFAULT_WRITE_LIMIT = 60;
 
     /** 窗口大小（毫秒）：1 分钟 */
     private static final long WINDOW_MS = 60_000;
@@ -44,6 +53,30 @@ public class RateLimitInterceptor implements HandlerInterceptor {
     @Autowired
     private ObjectMapper objectMapper;
 
+    @Autowired
+    private SystemConfigService configService;
+
+    /**
+     * 获取全局限流配置
+     */
+    private int getGlobalLimit() {
+        return configService.getInt(SystemConstants.RATE_LIMIT_GLOBAL, DEFAULT_GLOBAL_LIMIT);
+    }
+
+    /**
+     * 获取认证限流配置
+     */
+    private int getAuthLimit() {
+        return configService.getInt(SystemConstants.RATE_LIMIT_AUTH, DEFAULT_AUTH_LIMIT);
+    }
+
+    /**
+     * 获取写操作限流配置
+     */
+    private int getWriteLimit() {
+        return configService.getInt(SystemConstants.RATE_LIMIT_WRITE, DEFAULT_WRITE_LIMIT);
+    }
+
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
         String clientIp = getClientIp(request);
@@ -52,13 +85,13 @@ public class RateLimitInterceptor implements HandlerInterceptor {
 
         // 1. 认证 API 限流（登录/注册）
         if (path.startsWith("/api/v1/auth/") || path.equals("/login") || path.equals("/register")) {
-            if (!checkRate("auth:" + clientIp, AUTH_LIMIT)) {
+            if (!checkRate("auth:" + clientIp, getAuthLimit())) {
                 return reject(response, "登录/注册请求过于频繁，请稍后再试");
             }
         }
 
         // 2. 全局 API 限流
-        if (!checkRate("global:" + clientIp, GLOBAL_LIMIT)) {
+        if (!checkRate("global:" + clientIp, getGlobalLimit())) {
             return reject(response, "请求过于频繁，请稍后再试");
         }
 
@@ -66,7 +99,7 @@ public class RateLimitInterceptor implements HandlerInterceptor {
         if ("POST".equals(method) || "PUT".equals(method) || "DELETE".equals(method)) {
             String userId = request.getRemoteUser();
             String key = userId != null ? "write:" + userId : "write:" + clientIp;
-            if (!checkRate(key, WRITE_LIMIT)) {
+            if (!checkRate(key, getWriteLimit())) {
                 return reject(response, "操作过于频繁，请稍后再试");
             }
         }

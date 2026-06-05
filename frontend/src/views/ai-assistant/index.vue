@@ -127,9 +127,16 @@ const createNewSession = async (silent = false) => {
   try {
     const data = await api.post('/chat/sessions', { title: '新对话' })
     sessions.value.unshift(data)
-    currentSessionId.value = data.id
-    currentMessages.value = []
-    if (!silent) {
+    // 静默模式下不重置消息，避免清空StreamingChat中用户刚发送的消息
+    if (silent) {
+      currentSessionId.value = data.id
+    } else {
+      currentSessionId.value = data.id
+      currentMessages.value = []
+      // 强制清空聊天组件内部消息
+      if (chatRef.value) {
+        chatRef.value.clearChat()
+      }
       ElMessage.success('新会话已创建')
     }
     return data
@@ -143,6 +150,10 @@ const createNewSession = async (silent = false) => {
 const switchSession = async (sessionId) => {
   if (currentSessionId.value === sessionId) return
   currentSessionId.value = sessionId
+  // 先清空聊天组件，避免显示旧会话内容
+  if (chatRef.value) {
+    chatRef.value.clearChat()
+  }
   await loadSessionMessages(sessionId)
 }
 

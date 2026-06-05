@@ -32,8 +32,8 @@
         </el-table-column>
         <el-table-column label="信任状态" width="100">
           <template #default="{ row }">
-            <el-tag :type="row.trusted ? 'success' : 'info'" size="small">
-              {{ row.trusted ? '可信' : '未知' }}
+            <el-tag :type="getTrustStatus(row).type" size="small">
+              {{ getTrustStatus(row).label }}
             </el-tag>
           </template>
         </el-table-column>
@@ -70,6 +70,13 @@ const devices = ref([])
 const formatTime = (time) => {
   if (!time) return '-'
   return new Date(time).toLocaleString('zh-CN')
+}
+
+/** 获取信任状态 */
+const getTrustStatus = (row) => {
+  if (!row.trustedAt) return { type: 'info', label: '未知' }
+  if (row.expiresAt && new Date(row.expiresAt) < new Date()) return { type: 'warning', label: '已过期' }
+  return { type: 'success', label: '可信' }
 }
 
 /** 加载设备列表 */

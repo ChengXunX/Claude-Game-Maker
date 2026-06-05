@@ -87,10 +87,6 @@ public class AuthApiController {
             // 获取用户信息
             User user = userService.getUserByUsername(request.getUsername());
 
-            // 生成 JWT Token
-            String role = user.getRole() != null ? user.getRole().getName() : "USER";
-            String jwtToken = jwtUtils.generateToken(user.getUsername(), user.getId(), role);
-
             // 设备信任检查
             boolean deviceTrusted = false;
             boolean needDeviceVerify = false;
@@ -109,13 +105,27 @@ public class AuthApiController {
                 }
             }
 
+            // 设备验证未通过时，不返回 JWT token，防止绕过验证
+            if (needDeviceVerify) {
+                response.put("success", true);
+                response.put("needDeviceVerify", true);
+                response.put("deviceName", deviceName);
+                // 返回临时验证 token（仅用于设备验证流程，不是登录 token）
+                String verifyToken = jwtUtils.generateVerifyToken(user.getUsername(), user.getId());
+                response.put("verifyToken", verifyToken);
+                log.info("用户需要设备验证: {}, 不返回登录 token", request.getUsername());
+                return ResponseEntity.ok(response);
+            }
+
+            // 设备已信任或功能未启用，正常登录
+            String role = user.getRole() != null ? user.getRole().getName() : "USER";
+            String jwtToken = jwtUtils.generateToken(user.getUsername(), user.getId(), role);
+
             response.put("success", true);
             response.put("message", "登录成功");
             response.put("token", jwtToken);
             response.put("user", buildUserInfo(user));
             response.put("deviceTrusted", deviceTrusted);
-            response.put("needDeviceVerify", needDeviceVerify);
-            response.put("deviceName", deviceName);
 
             log.info("用户登录成功: {}", request.getUsername());
             return ResponseEntity.ok(response);
@@ -144,33 +154,38 @@ public class AuthApiController {
 
     /**
      * 验证设备（二次验证）
-     * 陌生设备登录时需要验证
+     * 陌生设备登录时需要验证，验证通过后才返回登录 token
      *
-     * @param request 包含验证码的请求
+     * @param request 包含验证token和验证码的请求
      * @param httpRequest HTTP请求
-     * @return 验证结果
+     * @return 验证结果（成功时包含登录 token）
      */
     @PostMapping("/verify-device")
-    @Operation(summary = "验证设备", description = "陌生设备二次验证")
+    @Operation(summary = "验证设备", description = "陌生设备二次验证，验证通过后返回登录 token")
     public ResponseEntity<Map<String, Object>> verifyDevice(@RequestBody Map<String, String> request,
                                                              HttpServletRequest httpRequest) {
         Map<String, Object> response = new HashMap<>();
 
         try {
-            String token = request.get("token");
+            String verifyToken = request.get("verifyToken");
             String verifyCode = request.get("verifyCode");
             boolean trustDevice = Boolean.parseBoolean(request.getOrDefault("trustDevice", "false"));
 
-            if (token == null || verifyCode == null) {
+            if (verifyToken == null || verifyCode == null) {
                 response.put("success", false);
                 response.put("message", "参数不完整");
                 return ResponseEntity.badRequest().body(response);
             }
 
-            // 从token获取用户信息
-            String username = jwtUtils.getUsernameFromToken(token);
-            User user = userService.getUserByUsername(username);
+            // 从验证token获取用户信息（必须是验证专用token，不能用登录token）
+            String username = jwtUtils.getUsernameFromVerifyToken(verifyToken);
+            if (username == null) {
+                response.put("success", false);
+                response.put("message", "验证 token 无效或已过期，请重新登录");
+                return ResponseEntity.status(401).body(response);
+            }
 
+            User user = userService.getUserByUsername(username);
             if (user == null) {
                 response.put("success", false);
                 response.put("message", "用户不存在");
@@ -190,10 +205,17 @@ public class AuthApiController {
                 log.info("设备已信任: user={}, device={}", username, deviceTrustService.parseDeviceName(httpRequest));
             }
 
+            // 验证通过，生成真正的登录 token
+            String role = user.getRole() != null ? user.getRole().getName() : "USER";
+            String jwtToken = jwtUtils.generateToken(user.getUsername(), user.getId(), role);
+
             response.put("success", true);
             response.put("message", "验证成功");
+            response.put("token", jwtToken);
+            response.put("user", buildUserInfo(user));
             response.put("deviceTrusted", trustDevice);
 
+            log.info("设备验证通过，用户登录成功: {}", username);
             return ResponseEntity.ok(response);
 
         } catch (Exception e) {
@@ -207,7 +229,7 @@ public class AuthApiController {
     /**
      * 发送设备验证邮件
      *
-     * @param request 包含token的请求
+     * @param request 包含验证token的请求
      * @return 发送结果
      */
     @PostMapping("/send-verify-code")
@@ -216,16 +238,21 @@ public class AuthApiController {
         Map<String, Object> response = new HashMap<>();
 
         try {
-            String token = request.get("token");
+            String verifyToken = request.get("verifyToken");
 
-            if (token == null) {
+            if (verifyToken == null) {
                 response.put("success", false);
                 response.put("message", "参数不完整");
                 return ResponseEntity.badRequest().body(response);
             }
 
-            // 从token获取用户信息
-            String username = jwtUtils.getUsernameFromToken(token);
+            // 从验证token获取用户信息（必须是验证专用token）
+            String username = jwtUtils.getUsernameFromVerifyToken(verifyToken);
+            if (username == null) {
+                response.put("success", false);
+                response.put("message", "验证 token 无效或已过期，请重新登录");
+                return ResponseEntity.status(401).body(response);
+            }
             User user = userService.getUserByUsername(username);
 
             if (user == null) {

@@ -121,8 +121,8 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
-    # Swagger UI 代理（必须在SPA规则之前）
-    location /swagger-ui {
+    # Swagger UI 代理（^~ 前缀优先于正则匹配，防止 .css/.js 被静态资源规则拦截）
+    location ^~ /swagger-ui {
         proxy_pass http://127.0.0.1:19922;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -139,6 +139,24 @@ server {
     location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
         expires 30d;
         add_header Cache-Control "public, immutable";
+    }
+
+    # SSE 流式接口（AI助手等）- 需要长超时和禁用缓冲
+    location /api/v1/ai-assistant/stream/ {
+        proxy_pass http://127.0.0.1:19922;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # SSE 必须禁用缓冲，否则事件不会实时推送
+        proxy_buffering off;
+        proxy_cache off;
+
+        # SSE 长超时（AI 响应可能需要几分钟）
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 300s;
+        proxy_read_timeout 300s;
     }
 
     # API 反向代理到后端

@@ -800,6 +800,117 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages(session_id);
 
 -- ============================================
+-- 21. 工作流模板表（用户自定义模板持久化）
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS workflow_templates (
+    id VARCHAR(64) PRIMARY KEY,
+    name VARCHAR(128) NOT NULL,
+    description VARCHAR(512),
+    steps_json TEXT,
+    builtin BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_wf_tpl_builtin ON workflow_templates(builtin);
+
+-- ============================================
+-- 22. 游戏模板表（用户自定义模板持久化）
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS game_templates (
+    id VARCHAR(64) PRIMARY KEY,
+    name VARCHAR(128) NOT NULL,
+    description VARCHAR(512),
+    game_type VARCHAR(64),
+    config_json TEXT,
+    builtin BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_game_tpl_builtin ON game_templates(builtin);
+
+-- ============================================
+-- 23. 工作流运行时表
+-- ============================================
+
+-- 工作流实例表
+CREATE TABLE IF NOT EXISTS workflow_instances (
+    id VARCHAR(64) PRIMARY KEY,
+    template_id VARCHAR(64) NOT NULL,
+    project_id VARCHAR(100),
+    status VARCHAR(20) NOT NULL DEFAULT 'CREATED',
+    parameters_json TEXT,
+    context_json TEXT,
+    error_message TEXT,
+    started_at TIMESTAMP NULL,
+    completed_at TIMESTAMP NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_wfi_template ON workflow_instances(template_id);
+CREATE INDEX IF NOT EXISTS idx_wfi_project ON workflow_instances(project_id);
+CREATE INDEX IF NOT EXISTS idx_wfi_status ON workflow_instances(status);
+CREATE INDEX IF NOT EXISTS idx_wfi_created ON workflow_instances(created_at);
+
+-- 工作流步骤执行表
+CREATE TABLE IF NOT EXISTS workflow_step_executions (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    instance_id VARCHAR(64) NOT NULL,
+    step_id VARCHAR(64) NOT NULL,
+    agent_id VARCHAR(100),
+    agent_role VARCHAR(50),
+    status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+    input_data_json TEXT,
+    output_data_json TEXT,
+    error_message TEXT,
+    retry_count INT DEFAULT 0,
+    max_retries INT DEFAULT 3,
+    timeout_minutes INT DEFAULT 30,
+    started_at TIMESTAMP NULL,
+    completed_at TIMESTAMP NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_wfse_instance ON workflow_step_executions(instance_id);
+CREATE INDEX IF NOT EXISTS idx_wfse_status ON workflow_step_executions(status);
+CREATE INDEX IF NOT EXISTS idx_wfse_agent ON workflow_step_executions(agent_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uk_wfse_instance_step ON workflow_step_executions(instance_id, step_id);
+
+-- 工作流审批表
+CREATE TABLE IF NOT EXISTS workflow_approvals (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    instance_id VARCHAR(64) NOT NULL,
+    step_id VARCHAR(64) NOT NULL,
+    approver_id BIGINT,
+    approver_name VARCHAR(50),
+    status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+    comment TEXT,
+    requested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    decided_at TIMESTAMP NULL
+);
+CREATE INDEX IF NOT EXISTS idx_wfa_instance ON workflow_approvals(instance_id);
+CREATE INDEX IF NOT EXISTS idx_wfa_status ON workflow_approvals(status);
+CREATE INDEX IF NOT EXISTS idx_wfa_approver ON workflow_approvals(approver_id);
+
+-- 工作流审计日志表
+CREATE TABLE IF NOT EXISTS workflow_audit_logs (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    instance_id VARCHAR(64) NOT NULL,
+    step_id VARCHAR(64),
+    action VARCHAR(50) NOT NULL,
+    actor_type VARCHAR(20) NOT NULL DEFAULT 'SYSTEM',
+    actor_id VARCHAR(100),
+    actor_name VARCHAR(100),
+    detail_json TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_wfal_instance ON workflow_audit_logs(instance_id);
+CREATE INDEX IF NOT EXISTS idx_wfal_action ON workflow_audit_logs(action);
+CREATE INDEX IF NOT EXISTS idx_wfal_actor ON workflow_audit_logs(actor_type, actor_id);
+CREATE INDEX IF NOT EXISTS idx_wfal_created ON workflow_audit_logs(created_at);
+
+-- ============================================
 -- 完成
 -- ============================================
 -- H2 数据库建表完成

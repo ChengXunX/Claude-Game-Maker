@@ -1,8 +1,13 @@
 package com.chengxun.gamemaker.service;
 
 import com.chengxun.gamemaker.model.Skill;
+import com.chengxun.gamemaker.web.entity.GameTemplateEntity;
+import com.chengxun.gamemaker.web.repository.GameTemplateRepository;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import jakarta.annotation.PostConstruct;
@@ -28,6 +33,11 @@ import java.util.concurrent.ConcurrentHashMap;
 public class GameTemplateService {
 
     private static final Logger log = LoggerFactory.getLogger(GameTemplateService.class);
+
+    @Autowired
+    private GameTemplateRepository gameTemplateRepository;
+
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     /** 游戏模板缓存 */
     private final Map<String, GameTemplate> templates = new ConcurrentHashMap<>();
@@ -210,7 +220,41 @@ public class GameTemplateService {
         // 加载模板内容
         loadTemplateContents();
 
+        // 从数据库加载用户自定义模板
+        loadCustomTemplatesFromDatabase();
+
         log.info("游戏模板初始化完成，共 {} 个模板", templates.size());
+    }
+
+    /**
+     * 从数据库加载用户自定义的游戏模板
+     */
+    private void loadCustomTemplatesFromDatabase() {
+        try {
+            List<GameTemplateEntity> customList = gameTemplateRepository.findByBuiltinFalse();
+            for (GameTemplateEntity entity : customList) {
+                if (templates.containsKey(entity.getId())) {
+                    continue; // 跳过已存在的内置模板
+                }
+                List<String> keywords = new ArrayList<>();
+                if (entity.getConfigJson() != null && !entity.getConfigJson().isEmpty()) {
+                    try {
+                        Map<String, Object> config = objectMapper.readValue(entity.getConfigJson(), new TypeReference<Map<String, Object>>() {});
+                        Object kw = config.get("keywords");
+                        if (kw instanceof List) {
+                            keywords = (List<String>) kw;
+                        }
+                    } catch (Exception ignored) {}
+                }
+                GameTemplate template = new GameTemplate(entity.getId(), entity.getName(), entity.getDescription(), keywords, null);
+                template.setContent(entity.getConfigJson());
+                templates.put(entity.getId(), template);
+                log.info("Loaded custom game template from DB: {}", entity.getId());
+            }
+            log.info("Loaded {} custom game templates from database", customList.size());
+        } catch (Exception e) {
+            log.warn("Failed to load custom game templates from database: {}", e.getMessage());
+        }
     }
 
     /**
@@ -282,7 +326,26 @@ public class GameTemplateService {
         template.setContent(content);
         templates.put(id, template);
 
-        log.info("创建游戏模板: {} - {}", id, name);
+        // 持久化到数据库
+        try {
+            GameTemplateEntity entity = new GameTemplateEntity();
+            entity.setId(id);
+            entity.setName(name);
+            entity.setDescription(description);
+            entity.setBuiltin(false);
+            Map<String, Object> config = new LinkedHashMap<>();
+            config.put("keywords", keywords != null ? keywords : new ArrayList<>());
+            config.put("skillName", skillName);
+            if (content != null) {
+                config.put("content", content);
+            }
+            entity.setConfigJson(objectMapper.writeValueAsString(config));
+            gameTemplateRepository.save(entity);
+            log.info("创建游戏模板并持久化: {} - {}", id, name);
+        } catch (Exception e) {
+            log.error("Failed to persist game template: {}", id, e);
+        }
+
         return template;
     }
 
@@ -322,6 +385,12 @@ public class GameTemplateService {
     public boolean deleteTemplate(String id) {
         GameTemplate removed = templates.remove(id);
         if (removed != null) {
+            // 从数据库中删除（如果存在）
+            try {
+                gameTemplateRepository.deleteById(id);
+            } catch (Exception e) {
+                log.debug("Template not found in database or delete failed: {}", id);
+            }
             log.info("删除游戏模板: {}", id);
             return true;
         }

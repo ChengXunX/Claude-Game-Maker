@@ -1,5 +1,6 @@
 package com.chengxun.gamemaker.web.service;
 
+import com.chengxun.gamemaker.config.AppConfig;
 import com.chengxun.gamemaker.web.entity.SystemConfig;
 import com.chengxun.gamemaker.web.repository.SystemConfigRepository;
 import org.slf4j.Logger;
@@ -27,9 +28,11 @@ public class SystemConfigService {
     private final ConcurrentHashMap<String, SystemConfig> configCache = new ConcurrentHashMap<>();
 
     private final SystemConfigRepository configRepository;
+    private final AppConfig appConfig;
 
-    public SystemConfigService(SystemConfigRepository configRepository) {
+    public SystemConfigService(SystemConfigRepository configRepository, AppConfig appConfig) {
         this.configRepository = configRepository;
+        this.appConfig = appConfig;
     }
 
     /**
@@ -68,6 +71,9 @@ public class SystemConfigService {
         // 加载所有配置到缓存
         loadAllToCache();
 
+        // 将数据库中保存的配置同步到内存 AppConfig，确保重启后配置不丢失
+        syncConfigsToAppConfig();
+
         log.info("System configs initialized, total: {}", configCache.size());
     }
 
@@ -93,6 +99,64 @@ public class SystemConfigService {
     private void loadAllToCache() {
         configCache.clear();
         configRepository.findAll().forEach(config -> configCache.put(config.getConfigKey(), config));
+    }
+
+    /**
+     * 将数据库中保存的配置同步到内存中的 AppConfig
+     * 确保应用重启后，通过 UI 保存的配置（如 API Key、安全设置）仍然生效
+     */
+    private void syncConfigsToAppConfig() {
+        // 同步 Claude 配置
+        String apiKey = getString("claude.api.key", null);
+        if (apiKey != null && !apiKey.isEmpty()) {
+            appConfig.getClaude().setApiKey(apiKey);
+            log.info("启动同步: claude.api.key 已加载");
+        }
+
+        String apiUrl = getString("claude.api.url", null);
+        if (apiUrl != null && !apiUrl.isEmpty()) {
+            appConfig.getClaude().setApiUrl(apiUrl);
+            log.info("启动同步: claude.api.url = {}", apiUrl);
+        }
+
+        String model = getString("claude.model", null);
+        if (model != null && !model.isEmpty()) {
+            appConfig.getClaude().setModel(model);
+            log.info("启动同步: claude.model = {}", model);
+        }
+
+        String maxTokens = getString("claude.max.tokens", null);
+        if (maxTokens != null && !maxTokens.isEmpty()) {
+            try {
+                appConfig.getClaude().setMaxTokens(Integer.parseInt(maxTokens));
+                log.info("启动同步: claude.max.tokens = {}", maxTokens);
+            } catch (NumberFormatException e) {
+                log.warn("Invalid max tokens value in DB: {}", maxTokens);
+            }
+        }
+
+        // 同步安全配置（支持点分隔和连字符两种 key 格式）
+        String deviceTrustEnabled = getString("security.device.trust.enabled", null);
+        if (deviceTrustEnabled == null) {
+            deviceTrustEnabled = getString("security.device-trust-enabled", null);
+        }
+        if (deviceTrustEnabled != null) {
+            appConfig.getSecurity().setDeviceTrustEnabled(Boolean.parseBoolean(deviceTrustEnabled));
+            log.info("启动同步: deviceTrustEnabled = {}", deviceTrustEnabled);
+        }
+
+        String deviceTrustDays = getString("security.device.trust.days", null);
+        if (deviceTrustDays == null) {
+            deviceTrustDays = getString("security.device-trust-days", null);
+        }
+        if (deviceTrustDays != null) {
+            try {
+                appConfig.getSecurity().setDeviceTrustDays(Integer.parseInt(deviceTrustDays));
+                log.info("启动同步: deviceTrustDays = {}", deviceTrustDays);
+            } catch (NumberFormatException e) {
+                log.warn("Invalid device trust days value in DB: {}", deviceTrustDays);
+            }
+        }
     }
 
     /**
@@ -187,7 +251,7 @@ public class SystemConfigService {
     }
 
     /**
-     * 设置全局配置值
+     * 设置全局配置值（不存在则自动创建）
      */
     public void setConfig(String key, String value) {
         SystemConfig config = configRepository.findByConfigKeyAndProjectIdIsNull(key).orElse(null);
@@ -197,8 +261,25 @@ public class SystemConfigService {
             configCache.put(key, config);
             log.info("Config updated: {} = {}", key, value);
         } else {
-            log.warn("Config not found: {}", key);
+            // 配置不存在时自动创建
+            config = new SystemConfig();
+            config.setConfigKey(key);
+            config.setConfigValue(value);
+            config.setGroup(extractGroup(key));
+            config.setValueType("string");
+            configRepository.save(config);
+            configCache.put(key, config);
+            log.info("Config created: {} = {}", key, value);
         }
+    }
+
+    /**
+     * 从配置键中提取分组名
+     * 例如 "claude.api.key" -> "claude"
+     */
+    private String extractGroup(String key) {
+        if (key == null || !key.contains(".")) return "custom";
+        return key.substring(0, key.indexOf('.'));
     }
 
     /**

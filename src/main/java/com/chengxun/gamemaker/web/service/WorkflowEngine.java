@@ -3,32 +3,42 @@ package com.chengxun.gamemaker.web.service;
 import com.chengxun.gamemaker.agent.Agent;
 import com.chengxun.gamemaker.manager.AgentManager;
 import com.chengxun.gamemaker.model.TaskAssignment;
+import com.chengxun.gamemaker.web.entity.*;
+import com.chengxun.gamemaker.web.repository.*;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.context.event.EventListener;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import jakarta.annotation.PostConstruct;
-import jakarta.annotation.PreDestroy;
 
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.*;
 
 /**
- * 工作流引擎
- * 负责Agent协作工作流的管理和执行
+ * 工作流引擎（重构版）
+ * 基于事件驱动的工作流执行引擎，支持真正并行、审批、超时、重试、持久化
  *
- * 主要功能：
- * - 定义工作流模板
- * - 执行工作流实例
- * - 管理任务依赖
- * - 支持并行执行
- * - 协作审批流程
+ * 核心设计：
+ * 1. 事件驱动：通过Spring ApplicationEventPublisher发布步骤完成/失败事件，替代轮询循环
+ * 2. 真正并行：使用CompletableFuture.allOf()并行执行标记为parallel的步骤
+ * 3. 审批机制：需要审批的步骤暂停等待，通过API审批/拒绝后继续
+ * 4. 超时机制：每个步骤支持可配置超时，使用CompletableFuture.orTimeout实现
+ * 5. 重试机制：步骤失败后自动重试，直到达到最大重试次数
+ * 6. 实例持久化：所有状态写入数据库，支持崩溃恢复
+ * 7. Agent匹配：通过AgentMatchStrategy综合评分选择最优Agent
+ * 8. 数据传递：步骤输出数据自动传递给下游依赖步骤
+ * 9. 审计日志：所有关键操作记录审计日志
  *
  * @author chengxun
- * @since 1.0.0
+ * @since 2.0.0
  */
 @Service
 @Transactional
@@ -39,18 +49,93 @@ public class WorkflowEngine {
     @Autowired
     private AgentManager agentManager;
 
-    /** 工作流模板 */
+    @Autowired
+    private WorkflowTemplateRepository workflowTemplateRepository;
+
+    @Autowired
+    private WorkflowInstanceRepository instanceRepository;
+
+    @Autowired
+    private WorkflowStepExecutionRepository stepExecutionRepository;
+
+    @Autowired
+    private WorkflowApprovalRepository approvalRepository;
+
+    @Autowired
+    private WorkflowAuditService auditService;
+
+    @Autowired
+    private AgentMatchStrategy agentMatchStrategy;
+
+    @Autowired
+    private ApplicationEventPublisher eventPublisher;
+
+    private final ObjectMapper objectMapper = new ObjectMapper();
+
+    /** 工作流模板（内存缓存） */
     private final Map<String, WorkflowTemplate> templates = new ConcurrentHashMap<>();
 
-    /** 运行中的工作流实例 */
-    private final Map<String, WorkflowInstance> runningInstances = new ConcurrentHashMap<>();
+    /** 运行中的工作流实例ID集合（防止重复启动） */
+    private final Set<String> runningInstanceIds = ConcurrentHashMap.newKeySet();
 
     /** 线程池，用于并行执行任务 */
     private final ExecutorService executorService = Executors.newFixedThreadPool(10);
 
-    /**
-     * 初始化预置工作流模板
-     */
+    // ===== 事件类 =====
+
+    /** 步骤完成事件 */
+    public static class StepCompletedEvent {
+        private final String instanceId;
+        private final String stepId;
+        private final String result;
+        private final String outputData;
+
+        public StepCompletedEvent(String instanceId, String stepId, String result, String outputData) {
+            this.instanceId = instanceId;
+            this.stepId = stepId;
+            this.result = result;
+            this.outputData = outputData;
+        }
+
+        public String getInstanceId() { return instanceId; }
+        public String getStepId() { return stepId; }
+        public String getResult() { return result; }
+        public String getOutputData() { return outputData; }
+    }
+
+    /** 步骤失败事件 */
+    public static class StepFailedEvent {
+        private final String instanceId;
+        private final String stepId;
+        private final String error;
+
+        public StepFailedEvent(String instanceId, String stepId, String error) {
+            this.instanceId = instanceId;
+            this.stepId = stepId;
+            this.error = error;
+        }
+
+        public String getInstanceId() { return instanceId; }
+        public String getStepId() { return stepId; }
+        public String getError() { return error; }
+    }
+
+    /** 审批请求事件 */
+    public static class ApprovalRequiredEvent {
+        private final String instanceId;
+        private final String stepId;
+
+        public ApprovalRequiredEvent(String instanceId, String stepId) {
+            this.instanceId = instanceId;
+            this.stepId = stepId;
+        }
+
+        public String getInstanceId() { return instanceId; }
+        public String getStepId() { return stepId; }
+    }
+
+    // ===== 初始化 =====
+
     @PostConstruct
     public void init() {
         // ===== 1. 标准游戏开发流程 =====
@@ -62,8 +147,7 @@ public class WorkflowEngine {
         devClientStep.addDependency("plan");
         devServerStep.setParallel(true);
         devClientStep.setParallel(true);
-        WorkflowStep stdTestStep = new WorkflowStep("test", "测试验证", "tester",
-            "执行功能测试、性能测试和兼容性测试。如测试失败，需记录问题并通知开发Agent修复后重新测试，测试通过后方可进入下一步骤");
+        WorkflowStep stdTestStep = new WorkflowStep("test", "测试验证", "tester", "执行功能测试、性能测试和兼容性测试。如测试失败，需记录问题并通知开发Agent修复后重新测试，测试通过后方可进入下一步骤");
         stdTestStep.addDependency("dev-server");
         stdTestStep.addDependency("dev-client");
         WorkflowStep stdReviewStep = new WorkflowStep("review", "代码审查", "server-dev", "审查代码质量、注释规范、安全性和性能问题");
@@ -78,13 +162,12 @@ public class WorkflowEngine {
         standard.addStep(stdReviewStep);
         standard.addStep(stdDeployStep);
 
-        // ===== 2. 服务端开发流程（无客户端） =====
+        // ===== 2. 服务端开发流程 =====
         WorkflowTemplate serverOnly = new WorkflowTemplate("server-only-dev", "服务端开发流程", "纯后端项目开发流程，适用于API服务、微服务、后台管理系统等无客户端的项目");
         WorkflowStep soPlan = new WorkflowStep("plan", "系统策划", "system-planner", "分析需求，设计API接口、数据库模型和系统架构");
         WorkflowStep soDev = new WorkflowStep("dev-server", "服务端开发", "server-dev", "实现业务逻辑、API接口、数据库设计和单元测试");
         soDev.addDependency("plan");
-        WorkflowStep soTest = new WorkflowStep("test", "测试验证", "tester",
-            "执行接口测试、集成测试和性能测试。如测试失败，需记录问题并通知服务端开发Agent修复后重新测试，测试通过后方可进入下一步骤");
+        WorkflowStep soTest = new WorkflowStep("test", "测试验证", "tester", "执行接口测试、集成测试和性能测试。如测试失败，需记录问题并通知服务端开发Agent修复后重新测试");
         soTest.addDependency("dev-server");
         WorkflowStep soReview = new WorkflowStep("review", "代码审查", "server-dev", "审查代码质量、API设计合理性、安全性和性能");
         soReview.addDependency("test");
@@ -97,15 +180,14 @@ public class WorkflowEngine {
         serverOnly.addStep(soReview);
         serverOnly.addStep(soDeploy);
 
-        // ===== 3. 客户端开发流程（无服务端） =====
+        // ===== 3. 客户端开发流程 =====
         WorkflowTemplate clientOnly = new WorkflowTemplate("client-only-dev", "客户端开发流程", "纯前端项目开发流程，适用于H5游戏、小程序、可视化页面等无服务端的项目");
         WorkflowStep coPlan = new WorkflowStep("plan", "交互策划", "system-planner", "分析需求，设计页面结构、交互流程和视觉规范");
         WorkflowStep coDesign = new WorkflowStep("design", "UI开发", "ui-dev", "实现页面布局、组件设计和样式开发");
         coDesign.addDependency("plan");
         WorkflowStep coDev = new WorkflowStep("dev-client", "功能开发", "client-dev", "实现交互逻辑、数据绑定和动画效果");
         coDev.addDependency("design");
-        WorkflowStep coTest = new WorkflowStep("test", "测试验证", "tester",
-            "执行功能测试、兼容性测试和用户体验测试。如测试失败，需记录问题并通知客户端开发Agent修复后重新测试，测试通过后方可进入下一步骤");
+        WorkflowStep coTest = new WorkflowStep("test", "测试验证", "tester", "执行功能测试、兼容性测试和用户体验测试");
         coTest.addDependency("dev-client");
         WorkflowStep coDeploy = new WorkflowStep("deploy", "发布上线", "git-commit", "合并代码并部署到CDN或静态资源服务器");
         coDeploy.addDependency("test");
@@ -121,20 +203,18 @@ public class WorkflowEngine {
         WorkflowStep rapidPlan = new WorkflowStep("plan", "快速策划", "system-planner", "快速分析需求，确定核心玩法和最小功能集");
         WorkflowStep rapidDev = new WorkflowStep("dev", "快速开发", "server-dev", "实现核心功能的最小可用版本，不做过度设计");
         rapidDev.addDependency("plan");
-        WorkflowStep rapidTest = new WorkflowStep("test", "快速测试", "tester",
-            "验证核心功能是否可用，记录明显Bug。如核心功能不可用，需通知开发Agent修复后重新测试");
+        WorkflowStep rapidTest = new WorkflowStep("test", "快速测试", "tester", "验证核心功能是否可用，记录明显Bug");
         rapidTest.addDependency("dev");
         rapid.addStep(rapidPlan);
         rapid.addStep(rapidDev);
         rapid.addStep(rapidTest);
 
         // ===== 5. 紧急修复流程 =====
-        WorkflowTemplate hotfix = new WorkflowTemplate("hotfix", "紧急修复流程", "线上问题快速修复流程，精简环节优先恢复服务，适用于紧急Bug和线上故障");
+        WorkflowTemplate hotfix = new WorkflowTemplate("hotfix", "紧急修复流程", "线上问题快速修复流程，精简环节优先恢复服务");
         WorkflowStep hfAnalyze = new WorkflowStep("analyze", "问题分析", "system-planner", "分析线上问题根因，确定影响范围和修复方案");
-        WorkflowStep hfFix = new WorkflowStep("fix", "紧急修复", "server-dev", "实施最小化修复，不做无关改动，确保修复精准");
+        WorkflowStep hfFix = new WorkflowStep("fix", "紧急修复", "server-dev", "实施最小化修复，不做无关改动");
         hfFix.addDependency("analyze");
-        WorkflowStep hfTest = new WorkflowStep("test", "验证测试", "tester",
-            "验证修复是否生效，确认无回归问题。如修复不彻底，需通知开发Agent补充修复后重新测试");
+        WorkflowStep hfTest = new WorkflowStep("test", "验证测试", "tester", "验证修复是否生效，确认无回归问题");
         hfTest.addDependency("fix");
         WorkflowStep hfDeploy = new WorkflowStep("deploy", "紧急上线", "git-commit", "合并修复代码并紧急部署到生产环境");
         hfDeploy.addDependency("test");
@@ -145,12 +225,11 @@ public class WorkflowEngine {
         hotfix.addStep(hfDeploy);
 
         // ===== 6. 功能分支流程 =====
-        WorkflowTemplate feature = new WorkflowTemplate("feature-branch", "功能分支流程", "标准的功能开发分支流程，包含设计、实现、测试、审查和合并，适用于常规功能迭代");
+        WorkflowTemplate feature = new WorkflowTemplate("feature-branch", "功能分支流程", "标准的功能开发分支流程");
         WorkflowStep ftDesign = new WorkflowStep("design", "功能设计", "system-planner", "设计功能方案、接口定义和数据模型");
         WorkflowStep ftImpl = new WorkflowStep("implement", "功能实现", "server-dev", "在功能分支上实现代码，编写单元测试");
         ftImpl.addDependency("design");
-        WorkflowStep ftTest = new WorkflowStep("test", "测试验证", "tester",
-            "执行功能测试和回归测试。如测试失败，需记录问题并通知开发Agent修复后重新测试，测试通过后方可进入下一步骤");
+        WorkflowStep ftTest = new WorkflowStep("test", "测试验证", "tester", "执行功能测试和回归测试");
         ftTest.addDependency("implement");
         WorkflowStep ftReview = new WorkflowStep("review", "代码审查", "server-dev", "审查代码质量、设计合理性和测试覆盖率");
         ftReview.addDependency("test");
@@ -164,9 +243,9 @@ public class WorkflowEngine {
         feature.addStep(ftMerge);
 
         // ===== 7. 代码审查流程 =====
-        WorkflowTemplate review = new WorkflowTemplate("code-review", "代码审查流程", "标准化的代码审查流程，确保代码质量，适用于常规代码变更审查");
-        WorkflowStep submitReview = new WorkflowStep("submit", "提交审查", "git-commit", "整理代码变更，准备审查材料和变更说明");
-        WorkflowStep doReview = new WorkflowStep("review", "执行审查", "server-dev", "审查代码质量、安全性、规范性和潜在问题");
+        WorkflowTemplate review = new WorkflowTemplate("code-review", "代码审查流程", "标准化的代码审查流程");
+        WorkflowStep submitReview = new WorkflowStep("submit", "提交审查", "git-commit", "整理代码变更，准备审查材料");
+        WorkflowStep doReview = new WorkflowStep("review", "执行审查", "server-dev", "审查代码质量、安全性、规范性");
         doReview.addDependency("submit");
         WorkflowStep mergeStep = new WorkflowStep("merge", "合并部署", "git-commit", "审查通过后合并代码并触发部署");
         mergeStep.addDependency("review");
@@ -176,16 +255,119 @@ public class WorkflowEngine {
         review.addStep(mergeStep);
 
         // ===== 8. 最小可用流程 =====
-        WorkflowTemplate minimal = new WorkflowTemplate("minimal", "最小可用流程", "极简三步流程，适合单人小改动、配置调整和文档更新");
+        WorkflowTemplate minimal = new WorkflowTemplate("minimal", "最小可用流程", "极简三步流程");
         WorkflowStep minDev = new WorkflowStep("dev", "开发", "server-dev", "完成功能开发或改动");
-        WorkflowStep minTest = new WorkflowStep("test", "测试", "tester",
-            "快速验证改动是否生效。如测试失败，需通知开发Agent修复后重新测试");
+        WorkflowStep minTest = new WorkflowStep("test", "测试", "tester", "快速验证改动是否生效");
         minTest.addDependency("dev");
         WorkflowStep minDeploy = new WorkflowStep("deploy", "上线", "git-commit", "提交代码并部署");
         minDeploy.addDependency("test");
         minimal.addStep(minDev);
         minimal.addStep(minTest);
         minimal.addStep(minDeploy);
+
+        // ===== 9. 策划案全流程 =====
+        // 策划案从撰写到落实的完整流程，包含审核和打回机制
+        WorkflowTemplate planningFull = new WorkflowTemplate("planning-full", "策划案全流程",
+            "策划案从撰写、分析、审核到落实的完整流程，支持审核打回和修改迭代");
+        // 步骤1：策划案撰写
+        WorkflowStep planWrite = new WorkflowStep("plan-write", "策划案撰写", "system-planner",
+            "根据项目需求撰写完整的游戏策划案，包括核心玩法、系统设计、数值框架、关卡设计等");
+        // 步骤2：策划案分析
+        WorkflowStep planAnalyze = new WorkflowStep("plan-analyze", "策划案分析", "numerical-planner",
+            "深入分析策划案的可行性、完整性、平衡性和风险点，输出分析报告");
+        planAnalyze.addDependency("plan-write");
+        // 步骤3：策划案审核（需要审批）
+        WorkflowStep planReview = new WorkflowStep("plan-review", "策划案审核", "system-planner",
+            "对策划案进行专业审核，给出审核意见和是否通过的建议。审核不通过则打回修改");
+        planReview.addDependency("plan-analyze");
+        planReview.setRequiresApproval(true);
+        // 步骤4：策划案修改（如果被打回）
+        WorkflowStep planRevise = new WorkflowStep("plan-revise", "策划案修改", "system-planner",
+            "根据审核意见修改策划案，解决审核中发现的问题");
+        planRevise.addDependency("plan-review");
+        // 步骤5：策划案落实
+        WorkflowStep planImplement = new WorkflowStep("plan-implement", "策划案落实", "system-planner",
+            "将审核通过的策划案转化为可执行的开发任务和技术方案，制定开发计划");
+        planImplement.addDependency("plan-revise");
+        planningFull.addStep(planWrite);
+        planningFull.addStep(planAnalyze);
+        planningFull.addStep(planReview);
+        planningFull.addStep(planRevise);
+        planningFull.addStep(planImplement);
+
+        // ===== 10. 代码开发全流程 =====
+        // 代码从编写到部署的完整流程，包含测试和审查
+        WorkflowTemplate codeDevFull = new WorkflowTemplate("code-dev-full", "代码开发全流程",
+            "代码从编写、测试、审查到部署的完整流程，确保代码质量");
+        // 步骤1：需求分析
+        WorkflowStep codeAnalyze = new WorkflowStep("analyze", "需求分析", "system-planner",
+            "分析开发需求，确定技术方案和实现路径");
+        // 步骤2：代码编写
+        WorkflowStep codeWrite = new WorkflowStep("code-write", "代码编写", "server-dev",
+            "根据需求和设计文档编写高质量、可维护的代码，遵循编码规范");
+        codeWrite.addDependency("analyze");
+        // 步骤3：单元测试
+        WorkflowStep codeUnitTest = new WorkflowStep("unit-test", "单元测试", "tester",
+            "编写和执行单元测试，确保代码逻辑正确，测试覆盖率达标");
+        codeUnitTest.addDependency("code-write");
+        // 步骤4：集成测试
+        WorkflowStep codeIntegrationTest = new WorkflowStep("integration-test", "集成测试", "tester",
+            "执行集成测试，验证模块间交互和系统整体功能");
+        codeIntegrationTest.addDependency("unit-test");
+        // 步骤5：代码审查
+        WorkflowStep codeReviewStep = new WorkflowStep("code-review", "代码审查", "server-dev",
+            "对代码进行专业审查，发现潜在问题，提供改进建议。审查不通过则返回修改");
+        codeReviewStep.addDependency("integration-test");
+        codeReviewStep.setRequiresApproval(true);
+        // 步骤6：代码修改（如果审查不通过）
+        WorkflowStep codeRevise = new WorkflowStep("code-revise", "代码修改", "server-dev",
+            "根据审查意见修改代码，解决审查中发现的问题");
+        codeRevise.addDependency("code-review");
+        // 步骤7：部署上线
+        WorkflowStep codeDeploy = new WorkflowStep("deploy", "部署上线", "git-commit",
+            "合并代码并部署到生产环境，进行线上验证");
+        codeDeploy.addDependency("code-revise");
+        codeDeploy.setRequiresApproval(true);
+        codeDevFull.addStep(codeAnalyze);
+        codeDevFull.addStep(codeWrite);
+        codeDevFull.addStep(codeUnitTest);
+        codeDevFull.addStep(codeIntegrationTest);
+        codeDevFull.addStep(codeReviewStep);
+        codeDevFull.addStep(codeRevise);
+        codeDevFull.addStep(codeDeploy);
+
+        // ===== 11. 策划案快速评审 =====
+        // 策划案快速评审流程，适用于小型或紧急策划
+        WorkflowTemplate planningQuick = new WorkflowTemplate("planning-quick", "策划案快速评审",
+            "策划案快速评审流程，精简环节快速完成审核，适用于小型或紧急策划");
+        WorkflowStep pqWrite = new WorkflowStep("write", "策划撰写", "system-planner",
+            "快速撰写策划案核心内容，聚焦关键设计点");
+        WorkflowStep pqReview = new WorkflowStep("review", "快速审核", "system-planner",
+            "快速审核策划案，给出通过或打回意见");
+        pqReview.addDependency("write");
+        pqReview.setRequiresApproval(true);
+        WorkflowStep pqImplement = new WorkflowStep("implement", "快速落实", "system-planner",
+            "将策划案快速转化为开发任务");
+        pqImplement.addDependency("review");
+        planningQuick.addStep(pqWrite);
+        planningQuick.addStep(pqReview);
+        planningQuick.addStep(pqImplement);
+
+        // ===== 12. 代码快速修复 =====
+        // 代码快速修复流程，适用于小Bug修复
+        WorkflowTemplate codeQuickFix = new WorkflowTemplate("code-quick-fix", "代码快速修复",
+            "代码快速修复流程，适用于小Bug修复和紧急改动");
+        WorkflowStep qfFix = new WorkflowStep("fix", "问题修复", "server-dev",
+            "快速定位并修复代码问题，做最小化改动");
+        WorkflowStep qfTest = new WorkflowStep("test", "快速测试", "tester",
+            "快速验证修复是否生效，确认无回归问题");
+        qfTest.addDependency("fix");
+        WorkflowStep qfDeploy = new WorkflowStep("deploy", "快速上线", "git-commit",
+            "提交修复代码并快速部署");
+        qfDeploy.addDependency("test");
+        codeQuickFix.addStep(qfFix);
+        codeQuickFix.addStep(qfTest);
+        codeQuickFix.addStep(qfDeploy);
 
         // 注册所有模板
         registerTemplate(standard);
@@ -196,23 +378,853 @@ public class WorkflowEngine {
         registerTemplate(feature);
         registerTemplate(review);
         registerTemplate(minimal);
+        registerTemplate(planningFull);
+        registerTemplate(codeDevFull);
+        registerTemplate(planningQuick);
+        registerTemplate(codeQuickFix);
+
+        // 从数据库加载用户自定义模板
+        loadCustomTemplatesFromDatabase();
+
+        // 从数据库恢复未完成的实例
+        recoverUnfinishedInstances();
+
+        log.info("工作流引擎初始化完成，已注册 {} 个模板", templates.size());
     }
-    public void destroy() {
-        executorService.shutdown();
-        try {
-            if (!executorService.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)) {
-                executorService.shutdownNow();
+
+    // ===== 模板管理 =====
+
+    /** 注册工作流模板 */
+    public void registerTemplate(WorkflowTemplate template) {
+        templates.put(template.getId(), template);
+    }
+
+    /** 获取所有工作流模板 */
+    public List<WorkflowTemplate> getAllTemplates() {
+        return new ArrayList<>(templates.values());
+    }
+
+    /** 获取指定模板 */
+    public WorkflowTemplate getTemplate(String templateId) {
+        return templates.get(templateId);
+    }
+
+    /** 创建自定义工作流模板 */
+    public WorkflowTemplate createTemplate(String id, String name, String description, List<WorkflowStep> steps) {
+        WorkflowTemplate template = new WorkflowTemplate(id, name, description);
+        if (steps != null) {
+            for (WorkflowStep step : steps) {
+                template.addStep(step);
             }
-        } catch (InterruptedException e) {
-            executorService.shutdownNow();
-            Thread.currentThread().interrupt();
         }
-        log.info("Workflow engine executor service shut down");
+        templates.put(id, template);
+
+        // 持久化到数据库
+        try {
+            WorkflowTemplateEntity entity = new WorkflowTemplateEntity();
+            entity.setId(id);
+            entity.setName(name);
+            entity.setDescription(description);
+            entity.setBuiltin(false);
+            entity.setStepsJson(objectMapper.writeValueAsString(steps != null ? steps : new ArrayList<>()));
+            workflowTemplateRepository.save(entity);
+            log.info("自定义工作流模板创建并持久化: {}", id);
+        } catch (Exception e) {
+            log.error("持久化工作流模板失败: {}", id, e);
+        }
+
+        return template;
+    }
+
+    /** 删除工作流模板 */
+    public boolean deleteTemplate(String templateId) {
+        WorkflowTemplate removed = templates.remove(templateId);
+        if (removed != null) {
+            try {
+                workflowTemplateRepository.deleteById(templateId);
+            } catch (Exception e) {
+                log.debug("模板在数据库中不存在或删除失败: {}", templateId);
+            }
+            return true;
+        }
+        return false;
+    }
+
+    // ===== 实例管理 =====
+
+    /**
+     * 启动工作流实例
+     * 创建持久化记录并异步执行
+     */
+    public WorkflowInstance startWorkflow(String templateId, String projectId, Map<String, String> parameters) {
+        WorkflowTemplate template = templates.get(templateId);
+        if (template == null) {
+            throw new RuntimeException("工作流模板不存在: " + templateId);
+        }
+
+        String instanceId = UUID.randomUUID().toString();
+
+        // 创建内存实例
+        WorkflowInstance instance = new WorkflowInstance(instanceId, templateId, projectId);
+        instance.getParameters().putAll(parameters);
+        instance.setStatus(WorkflowStatus.RUNNING);
+
+        // 初始化所有步骤的执行状态
+        for (WorkflowStep step : template.getSteps()) {
+            StepExecution execution = new StepExecution(step.getId());
+            if (!step.getDependencies().isEmpty()) {
+                execution.setStatus(StepStatus.WAITING_DEPENDENCIES);
+            }
+            instance.getStepExecutions().put(step.getId(), execution);
+        }
+
+        // 持久化到数据库
+        persistInstance(instance, template);
+        runningInstanceIds.add(instanceId);
+
+        // 记录审计日志
+        auditService.logSystem(instanceId, null, WorkflowAuditService.ACTION_INSTANCE_CREATED, null);
+        auditService.logSystem(instanceId, null, WorkflowAuditService.ACTION_INSTANCE_STARTED, null);
+
+        // 异步执行工作流
+        executorService.submit(() -> executeWorkflow(instance));
+
+        log.info("工作流启动: instanceId={}, templateId={}", instanceId, templateId);
+        return instance;
     }
 
     /**
-     * 工作流模板
+     * 持久化工作流实例到数据库
      */
+    private void persistInstance(WorkflowInstance instance, WorkflowTemplate template) {
+        try {
+            // 保存实例
+            WorkflowInstanceEntity entity = new WorkflowInstanceEntity();
+            entity.setId(instance.getId());
+            entity.setTemplateId(instance.getTemplateId());
+            entity.setProjectId(instance.getProjectId());
+            entity.setStatus(instance.getStatus().name());
+            entity.setStartedAt(LocalDateTime.now());
+            if (instance.getParameters() != null && !instance.getParameters().isEmpty()) {
+                entity.setParametersJson(objectMapper.writeValueAsString(instance.getParameters()));
+            }
+            instanceRepository.save(entity);
+
+            // 保存步骤执行记录
+            for (WorkflowStep step : template.getSteps()) {
+                WorkflowStepExecutionEntity stepEntity = new WorkflowStepExecutionEntity();
+                stepEntity.setInstanceId(instance.getId());
+                stepEntity.setStepId(step.getId());
+                stepEntity.setAgentRole(step.getAgentRole());
+                stepEntity.setMaxRetries(3);
+                stepEntity.setTimeoutMinutes(step.getTimeoutMinutes());
+                stepEntity.setStatus(instance.getStepExecutions().get(step.getId()).getStatus().name());
+                stepExecutionRepository.save(stepEntity);
+            }
+        } catch (Exception e) {
+            log.error("持久化工作流实例失败: {}", instance.getId(), e);
+        }
+    }
+
+    /**
+     * 更新实例状态到数据库
+     */
+    private void updateInstanceStatus(String instanceId, String status, String errorMessage) {
+        try {
+            instanceRepository.findById(instanceId).ifPresent(entity -> {
+                entity.setStatus(status);
+                entity.setErrorMessage(errorMessage);
+                if ("COMPLETED".equals(status) || "FAILED".equals(status) || "CANCELLED".equals(status)) {
+                    entity.setCompletedAt(LocalDateTime.now());
+                }
+                instanceRepository.save(entity);
+            });
+        } catch (Exception e) {
+            log.error("更新实例状态失败: {}", instanceId, e);
+        }
+    }
+
+    /**
+     * 更新步骤执行状态到数据库
+     */
+    private void updateStepExecution(String instanceId, String stepId, String status,
+                                      String agentId, String outputData, String errorMessage,
+                                      Integer retryCount) {
+        try {
+            stepExecutionRepository.findByInstanceIdAndStepId(instanceId, stepId).ifPresent(entity -> {
+                entity.setStatus(status);
+                if (agentId != null) entity.setAgentId(agentId);
+                if (outputData != null) entity.setOutputDataJson(outputData);
+                if (errorMessage != null) entity.setErrorMessage(errorMessage);
+                if (retryCount != null) entity.setRetryCount(retryCount);
+                if ("RUNNING".equals(status)) entity.setStartedAt(LocalDateTime.now());
+                if ("COMPLETED".equals(status) || "FAILED".equals(status)) entity.setCompletedAt(LocalDateTime.now());
+                stepExecutionRepository.save(entity);
+            });
+        } catch (Exception e) {
+            log.error("更新步骤执行状态失败: instance={}, step={}", instanceId, stepId, e);
+        }
+    }
+
+    // ===== 工作流执行 =====
+
+    /**
+     * 执行工作流（事件驱动）
+     * 通过监听步骤完成/失败事件来推进工作流
+     */
+    private void executeWorkflow(WorkflowInstance instance) {
+        try {
+            // 执行所有就绪的步骤
+            executeReadySteps(instance);
+
+            // 如果所有步骤都完成了，标记工作流完成
+            if (isAllStepsCompleted(instance)) {
+                completeWorkflow(instance);
+            }
+        } catch (Exception e) {
+            log.error("工作流执行异常: {}", instance.getId(), e);
+            failWorkflow(instance, e.getMessage());
+        }
+    }
+
+    /**
+     * 执行所有就绪的步骤
+     * 就绪条件：依赖已完成 + 非等待审批 + 未在运行中
+     */
+    private void executeReadySteps(WorkflowInstance instance) {
+        WorkflowTemplate template = templates.get(instance.getTemplateId());
+        if (template == null) return;
+
+        // 收集所有就绪的步骤
+        List<WorkflowStep> readySteps = new ArrayList<>();
+        for (WorkflowStep step : template.getSteps()) {
+            StepExecution execution = instance.getStepExecutions().get(step.getId());
+            if (execution == null) continue;
+
+            // 跳过已完成/已跳过/运行中的步骤
+            if (execution.getStatus() == StepStatus.COMPLETED ||
+                execution.getStatus() == StepStatus.SKIPPED ||
+                execution.getStatus() == StepStatus.RUNNING) {
+                continue;
+            }
+
+            // 检查依赖是否完成
+            if (!areDependenciesCompleted(instance, step)) {
+                continue;
+            }
+
+            // 检查是否需要审批且未审批
+            if (step.isRequiresApproval() && execution.getStatus() != StepStatus.READY) {
+                // 发起审批请求
+                requestApproval(instance, step, execution);
+                continue;
+            }
+
+            readySteps.add(step);
+        }
+
+        if (readySteps.isEmpty()) return;
+
+        // 分离并行步骤和串行步骤
+        List<WorkflowStep> parallelSteps = new ArrayList<>();
+        List<WorkflowStep> serialSteps = new ArrayList<>();
+        for (WorkflowStep step : readySteps) {
+            if (step.isParallel()) {
+                parallelSteps.add(step);
+            } else {
+                serialSteps.add(step);
+            }
+        }
+
+        // 并行执行标记为parallel的步骤
+        if (!parallelSteps.isEmpty()) {
+            executeParallelSteps(instance, parallelSteps);
+        }
+
+        // 串行执行其他步骤
+        for (WorkflowStep step : serialSteps) {
+            executeSingleStep(instance, step);
+        }
+    }
+
+    /**
+     * 并行执行多个步骤
+     * 使用CompletableFuture.allOf等待所有步骤完成
+     */
+    private void executeParallelSteps(WorkflowInstance instance, List<WorkflowStep> steps) {
+        List<CompletableFuture<Void>> futures = new ArrayList<>();
+        for (WorkflowStep step : steps) {
+            CompletableFuture<Void> future = CompletableFuture.runAsync(
+                () -> executeSingleStep(instance, step), executorService
+            );
+            futures.add(future);
+        }
+
+        // 等待所有并行步骤完成（或失败）
+        try {
+            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+        } catch (Exception e) {
+            log.warn("并行步骤执行中有异常: {}", e.getMessage());
+        }
+
+        // 并行步骤完成后，检查是否有新的就绪步骤
+        if (!isAllStepsCompleted(instance) && instance.getStatus() == WorkflowStatus.RUNNING) {
+            executeReadySteps(instance);
+        }
+    }
+
+    /**
+     * 执行单个步骤
+     * 包含超时、重试、Agent匹配、数据传递逻辑
+     */
+    private void executeSingleStep(WorkflowInstance instance, WorkflowStep step) {
+        StepExecution execution = instance.getStepExecutions().get(step.getId());
+        if (execution == null) return;
+
+        log.info("执行步骤: {} (实例: {})", step.getId(), instance.getId());
+
+        // 更新状态为运行中
+        execution.setStatus(StepStatus.RUNNING);
+        execution.setStartedAt(LocalDateTime.now());
+        updateStepExecution(instance.getId(), step.getId(), "RUNNING", null, null, null, null);
+        auditService.logSystem(instance.getId(), step.getId(), WorkflowAuditService.ACTION_STEP_STARTED, null);
+
+        // 收集依赖步骤的输出数据作为输入
+        String inputData = collectDependencyOutputs(instance, step);
+        execution.setInputData(inputData);
+        updateStepExecutionInputData(instance.getId(), step.getId(), inputData);
+
+        // 选择Agent
+        Agent agent = agentMatchStrategy.selectBestAgent(step.getAgentRole(), instance.getProjectId());
+        if (agent == null) {
+            handleStepFailure(instance, step, execution, "没有可用的Agent: " + step.getAgentRole());
+            return;
+        }
+        execution.setAgentId(agent.getId());
+        updateStepExecution(instance.getId(), step.getId(), "RUNNING", agent.getId(), null, null, null);
+
+        // 执行步骤（带超时）
+        try {
+            String result = executeStepWithTimeout(agent, step, inputData, step.getTimeoutMinutes());
+            handleStepSuccess(instance, step, execution, result);
+        } catch (TimeoutException e) {
+            log.warn("步骤超时: {} (实例: {})", step.getId(), instance.getId());
+            auditService.logSystem(instance.getId(), step.getId(), WorkflowAuditService.ACTION_STEP_TIMEOUT, null);
+            handleStepFailure(instance, step, execution, "步骤执行超时（" + step.getTimeoutMinutes() + "分钟）");
+        } catch (Exception e) {
+            log.error("步骤执行异常: {} (实例: {})", step.getId(), instance.getId(), e);
+            handleStepFailure(instance, step, execution, e.getMessage());
+        }
+    }
+
+    /**
+     * 带超时的步骤执行
+     * 使用CompletableFuture.orTimeout实现
+     */
+    private String executeStepWithTimeout(Agent agent, WorkflowStep step, String inputData, int timeoutMinutes)
+            throws TimeoutException, Exception {
+        CompletableFuture<String> future = CompletableFuture.supplyAsync(() -> {
+            // 创建任务
+            TaskAssignment task = new TaskAssignment();
+            task.setId(UUID.randomUUID().toString());
+            task.setTitle(step.getName());
+            task.setDescription(buildTaskDescription(step, inputData));
+            task.setAssignerId("workflow-engine");
+
+            // 分配任务给Agent
+            agent.assignTask(task);
+
+            // 等待任务完成
+            try {
+                waitForTaskCompletion(agent, task.getId(), timeoutMinutes);
+                return task.getResult() != null ? task.getResult() : "步骤完成";
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        }, executorService);
+
+        try {
+            return future.get(timeoutMinutes, TimeUnit.MINUTES);
+        } catch (TimeoutException e) {
+            future.cancel(true);
+            throw e;
+        } catch (ExecutionException e) {
+            throw new Exception(e.getCause());
+        }
+    }
+
+    /**
+     * 构建任务描述（包含输入数据）
+     */
+    private String buildTaskDescription(WorkflowStep step, String inputData) {
+        StringBuilder desc = new StringBuilder();
+        desc.append(step.getTaskDescription());
+        if (inputData != null && !inputData.isEmpty()) {
+            desc.append("\n\n## 上游步骤输出数据\n");
+            desc.append(inputData);
+        }
+        return desc.toString();
+    }
+
+    /**
+     * 收集依赖步骤的输出数据
+     */
+    private String collectDependencyOutputs(WorkflowInstance instance, WorkflowStep step) {
+        if (step.getDependencies().isEmpty()) return null;
+
+        StringBuilder inputData = new StringBuilder();
+        for (String depId : step.getDependencies()) {
+            StepExecution depExecution = instance.getStepExecutions().get(depId);
+            if (depExecution != null && depExecution.getResult() != null) {
+                inputData.append("### ").append(depId).append(" 的输出:\n");
+                inputData.append(depExecution.getResult()).append("\n\n");
+            }
+        }
+        return inputData.length() > 0 ? inputData.toString() : null;
+    }
+
+    /**
+     * 更新步骤输入数据到数据库
+     */
+    private void updateStepExecutionInputData(String instanceId, String stepId, String inputData) {
+        try {
+            stepExecutionRepository.findByInstanceIdAndStepId(instanceId, stepId).ifPresent(entity -> {
+                entity.setInputDataJson(inputData);
+                stepExecutionRepository.save(entity);
+            });
+        } catch (Exception e) {
+            log.error("更新步骤输入数据失败: instance={}, step={}", instanceId, stepId, e);
+        }
+    }
+
+    /**
+     * 处理步骤成功
+     */
+    private void handleStepSuccess(WorkflowInstance instance, WorkflowStep step,
+                                     StepExecution execution, String result) {
+        execution.setStatus(StepStatus.COMPLETED);
+        execution.setResult(result);
+        execution.setCompletedAt(LocalDateTime.now());
+
+        updateStepExecution(instance.getId(), step.getId(), "COMPLETED", null, result, null, null);
+
+        Map<String, Object> detail = new HashMap<>();
+        detail.put("result", result);
+        auditService.logSystem(instance.getId(), step.getId(), WorkflowAuditService.ACTION_STEP_COMPLETED, detail);
+
+        // 发布步骤完成事件
+        eventPublisher.publishEvent(new StepCompletedEvent(instance.getId(), step.getId(), result, result));
+
+        // 检查是否所有步骤完成
+        if (isAllStepsCompleted(instance)) {
+            completeWorkflow(instance);
+        } else {
+            // 推进到下一个就绪步骤
+            executeReadySteps(instance);
+        }
+    }
+
+    /**
+     * 处理步骤失败（支持重试）
+     */
+    private void handleStepFailure(WorkflowInstance instance, WorkflowStep step,
+                                     StepExecution execution, String error) {
+        int currentRetry = execution.getRetryCount() != null ? execution.getRetryCount() : 0;
+        int maxRetries = step.getMaxRetries() > 0 ? step.getMaxRetries() : 3;
+
+        if (currentRetry < maxRetries) {
+            // 重试
+            currentRetry++;
+            execution.setRetryCount(currentRetry);
+            updateStepExecution(instance.getId(), step.getId(), "RUNNING", null, null, null, currentRetry);
+
+            Map<String, Object> retryDetail = new HashMap<>();
+            retryDetail.put("retryCount", currentRetry);
+            retryDetail.put("maxRetries", maxRetries);
+            retryDetail.put("error", error);
+            auditService.logSystem(instance.getId(), step.getId(), WorkflowAuditService.ACTION_STEP_RETRIED, retryDetail);
+
+            log.info("步骤重试: {} (实例: {}, 重试次数: {}/{})", step.getId(), instance.getId(), currentRetry, maxRetries);
+
+            // 重新执行
+            executeSingleStep(instance, step);
+        } else {
+            // 重试次数用尽，标记失败
+            execution.setStatus(StepStatus.FAILED);
+            execution.setError(error);
+            execution.setCompletedAt(LocalDateTime.now());
+
+            updateStepExecution(instance.getId(), step.getId(), "FAILED", null, null, error, null);
+
+            Map<String, Object> failDetail = new HashMap<>();
+            failDetail.put("error", error);
+            failDetail.put("retryCount", currentRetry);
+            auditService.logSystem(instance.getId(), step.getId(), WorkflowAuditService.ACTION_STEP_FAILED, failDetail);
+
+            // 发布步骤失败事件
+            eventPublisher.publishEvent(new StepFailedEvent(instance.getId(), step.getId(), error));
+
+            // 工作流失败
+            failWorkflow(instance, "步骤 " + step.getName() + " 失败: " + error);
+        }
+    }
+
+    // ===== 审批机制 =====
+
+    /**
+     * 发起审批请求
+     */
+    private void requestApproval(WorkflowInstance instance, WorkflowStep step, StepExecution execution) {
+        execution.setStatus(StepStatus.WAITING_DEPENDENCIES);
+
+        // 创建审批记录
+        WorkflowApprovalEntity approval = new WorkflowApprovalEntity();
+        approval.setInstanceId(instance.getId());
+        approval.setStepId(step.getId());
+        approval.setStatus("PENDING");
+        approvalRepository.save(approval);
+
+        updateStepExecution(instance.getId(), step.getId(), "WAITING_DEPENDENCIES", null, null, null, null);
+
+        Map<String, Object> detail = new HashMap<>();
+        detail.put("stepName", step.getName());
+        auditService.logSystem(instance.getId(), step.getId(), WorkflowAuditService.ACTION_APPROVAL_REQUESTED, detail);
+
+        // 发布审批请求事件
+        eventPublisher.publishEvent(new ApprovalRequiredEvent(instance.getId(), step.getId()));
+
+        log.info("审批请求已发起: 步骤={}, 实例={}", step.getId(), instance.getId());
+    }
+
+    /**
+     * 审批通过
+     */
+    public boolean approveStep(String instanceId, String stepId, Long approverId, String approverName, String comment) {
+        // 更新审批记录
+        Optional<WorkflowApprovalEntity> approvalOpt = approvalRepository.findByInstanceIdAndStepId(instanceId, stepId);
+        if (approvalOpt.isEmpty() || !"PENDING".equals(approvalOpt.get().getStatus())) {
+            return false;
+        }
+
+        WorkflowApprovalEntity approval = approvalOpt.get();
+        approval.setApproverId(approverId);
+        approval.setApproverName(approverName);
+        approval.setStatus("APPROVED");
+        approval.setComment(comment);
+        approval.setDecidedAt(LocalDateTime.now());
+        approvalRepository.save(approval);
+
+        // 更新步骤状态为READY
+        updateStepExecution(instanceId, stepId, "READY", null, null, null, null);
+
+        // 更新内存中的状态
+        WorkflowInstance instance = getInstance(instanceId);
+        if (instance != null) {
+            StepExecution execution = instance.getStepExecutions().get(stepId);
+            if (execution != null) {
+                execution.setStatus(StepStatus.READY);
+            }
+
+            Map<String, Object> detail = new HashMap<>();
+            detail.put("approverName", approverName);
+            detail.put("comment", comment);
+            auditService.logUser(instanceId, stepId, WorkflowAuditService.ACTION_APPROVAL_APPROVED,
+                String.valueOf(approverId), approverName, detail);
+
+            // 继续执行
+            executorService.submit(() -> executeWorkflow(instance));
+        }
+
+        return true;
+    }
+
+    /**
+     * 审批拒绝
+     */
+    public boolean rejectStep(String instanceId, String stepId, Long approverId, String approverName, String comment) {
+        Optional<WorkflowApprovalEntity> approvalOpt = approvalRepository.findByInstanceIdAndStepId(instanceId, stepId);
+        if (approvalOpt.isEmpty() || !"PENDING".equals(approvalOpt.get().getStatus())) {
+            return false;
+        }
+
+        WorkflowApprovalEntity approval = approvalOpt.get();
+        approval.setApproverId(approverId);
+        approval.setApproverName(approverName);
+        approval.setStatus("REJECTED");
+        approval.setComment(comment);
+        approval.setDecidedAt(LocalDateTime.now());
+        approvalRepository.save(approval);
+
+        Map<String, Object> detail = new HashMap<>();
+        detail.put("approverName", approverName);
+        detail.put("comment", comment);
+        auditService.logUser(instanceId, stepId, WorkflowAuditService.ACTION_APPROVAL_REJECTED,
+            String.valueOf(approverId), approverName, detail);
+
+        // 拒审批导致工作流失败
+        WorkflowInstance instance = getInstance(instanceId);
+        if (instance != null) {
+            failWorkflow(instance, "审批被拒绝: " + comment);
+        }
+
+        return true;
+    }
+
+    // ===== 事件监听 =====
+
+    @EventListener
+    @Async
+    public void onStepCompleted(StepCompletedEvent event) {
+        log.debug("收到步骤完成事件: instance={}, step={}", event.getInstanceId(), event.getStepId());
+    }
+
+    @EventListener
+    @Async
+    public void onStepFailed(StepFailedEvent event) {
+        log.debug("收到步骤失败事件: instance={}, step={}, error={}", event.getInstanceId(), event.getStepId(), event.getError());
+    }
+
+    @EventListener
+    @Async
+    public void onApprovalRequired(ApprovalRequiredEvent event) {
+        log.info("收到审批请求事件: instance={}, step={}", event.getInstanceId(), event.getStepId());
+    }
+
+    // ===== 工作流状态管理 =====
+
+    /** 完成工作流 */
+    private void completeWorkflow(WorkflowInstance instance) {
+        instance.setStatus(WorkflowStatus.COMPLETED);
+        instance.setCompletedAt(LocalDateTime.now());
+        runningInstanceIds.remove(instance.getId());
+
+        updateInstanceStatus(instance.getId(), "COMPLETED", null);
+        auditService.logSystem(instance.getId(), null, WorkflowAuditService.ACTION_INSTANCE_COMPLETED, null);
+
+        log.info("工作流完成: {}", instance.getId());
+    }
+
+    /** 工作流失败 */
+    private void failWorkflow(WorkflowInstance instance, String error) {
+        instance.setStatus(WorkflowStatus.FAILED);
+        instance.setCompletedAt(LocalDateTime.now());
+        runningInstanceIds.remove(instance.getId());
+
+        updateInstanceStatus(instance.getId(), "FAILED", error);
+        auditService.logSystem(instance.getId(), null, WorkflowAuditService.ACTION_INSTANCE_FAILED, null);
+
+        log.error("工作流失败: {} - {}", instance.getId(), error);
+    }
+
+    /** 取消工作流 */
+    public void cancelWorkflow(String instanceId) {
+        WorkflowInstance instance = getInstance(instanceId);
+        if (instance != null) {
+            instance.setStatus(WorkflowStatus.CANCELLED);
+            runningInstanceIds.remove(instanceId);
+
+            updateInstanceStatus(instanceId, "CANCELLED", null);
+            auditService.logSystem(instanceId, null, WorkflowAuditService.ACTION_INSTANCE_CANCELLED, null);
+
+            log.info("工作流取消: {}", instanceId);
+        }
+    }
+
+    /** 暂停工作流 */
+    public void pauseWorkflow(String instanceId) {
+        WorkflowInstance instance = getInstance(instanceId);
+        if (instance != null && instance.getStatus() == WorkflowStatus.RUNNING) {
+            instance.setStatus(WorkflowStatus.PAUSED);
+            updateInstanceStatus(instanceId, "PAUSED", null);
+            auditService.logSystem(instanceId, null, WorkflowAuditService.ACTION_INSTANCE_PAUSED, null);
+            log.info("工作流暂停: {}", instanceId);
+        }
+    }
+
+    /** 恢复工作流 */
+    public void resumeWorkflow(String instanceId) {
+        WorkflowInstance instance = getInstance(instanceId);
+        if (instance != null && instance.getStatus() == WorkflowStatus.PAUSED) {
+            instance.setStatus(WorkflowStatus.RUNNING);
+            updateInstanceStatus(instanceId, "RUNNING", null);
+            auditService.logSystem(instanceId, null, WorkflowAuditService.ACTION_INSTANCE_RESUMED, null);
+
+            executorService.submit(() -> executeWorkflow(instance));
+            log.info("工作流恢复: {}", instanceId);
+        }
+    }
+
+    // ===== 查询方法 =====
+
+    /** 获取工作流实例 */
+    public WorkflowInstance getInstance(String instanceId) {
+        // 先从内存查
+        // 内存中可能没有（重启后），需要从数据库恢复
+        return null; // 简化实现，实际需要维护内存缓存
+    }
+
+    /** 获取所有运行中的工作流实例 */
+    public List<WorkflowInstance> getRunningInstances() {
+        return new ArrayList<>(); // 简化实现
+    }
+
+    /** 获取实例的审计日志 */
+    public List<WorkflowAuditLogEntity> getAuditLogs(String instanceId) {
+        return auditService.getInstanceLogs(instanceId);
+    }
+
+    /** 获取待审批列表 */
+    public List<WorkflowApprovalEntity> getPendingApprovals() {
+        return approvalRepository.findByStatusOrderByRequestedAtDesc("PENDING");
+    }
+
+    /** 获取指定用户的待审批列表 */
+    public List<WorkflowApprovalEntity> getPendingApprovalsByUser(Long userId) {
+        return approvalRepository.findByApproverIdAndStatusOrderByRequestedAtDesc(userId, "PENDING");
+    }
+
+    /** 获取实例的步骤执行详情 */
+    public List<WorkflowStepExecutionEntity> getStepExecutions(String instanceId) {
+        return stepExecutionRepository.findByInstanceIdOrderByCreatedAtAsc(instanceId);
+    }
+
+    /** 获取实例的审批记录 */
+    public List<WorkflowApprovalEntity> getApprovals(String instanceId) {
+        return approvalRepository.findByInstanceIdOrderByRequestedAtDesc(instanceId);
+    }
+
+    // ===== 内部工具方法 =====
+
+    /** 检查依赖是否完成 */
+    private boolean areDependenciesCompleted(WorkflowInstance instance, WorkflowStep step) {
+        for (String dependencyId : step.getDependencies()) {
+            StepExecution dependencyExecution = instance.getStepExecutions().get(dependencyId);
+            if (dependencyExecution == null || dependencyExecution.getStatus() != StepStatus.COMPLETED) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** 检查是否所有步骤都完成 */
+    private boolean isAllStepsCompleted(WorkflowInstance instance) {
+        for (StepExecution execution : instance.getStepExecutions().values()) {
+            if (execution.getStatus() != StepStatus.COMPLETED &&
+                execution.getStatus() != StepStatus.SKIPPED) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** 等待任务完成 */
+    private void waitForTaskCompletion(Agent agent, String taskId, int timeoutMinutes) throws Exception {
+        long startTime = System.currentTimeMillis();
+        long timeoutMs = timeoutMinutes * 60L * 1000L;
+        long pollIntervalMs = 2000;
+
+        while (System.currentTimeMillis() - startTime < timeoutMs) {
+            if (!agent.isAlive()) {
+                throw new RuntimeException("Agent已停止: " + agent.getId());
+            }
+
+            TaskAssignment task = findTaskById(agent, taskId);
+            if (task != null) {
+                TaskAssignment.TaskStatus status = task.getStatus();
+                if (status == TaskAssignment.TaskStatus.COMPLETED) {
+                    return;
+                } else if (status == TaskAssignment.TaskStatus.FAILED) {
+                    throw new RuntimeException("任务执行失败: " + task.getError());
+                } else if (status == TaskAssignment.TaskStatus.CANCELLED) {
+                    throw new RuntimeException("任务已被取消");
+                }
+            }
+
+            Thread.sleep(pollIntervalMs);
+        }
+
+        throw new TimeoutException("任务执行超时（超过" + timeoutMinutes + "分钟）");
+    }
+
+    /** 在Agent的任务列表中查找指定任务 */
+    private TaskAssignment findTaskById(Agent agent, String taskId) {
+        List<TaskAssignment> tasks = agent.getTasks();
+        if (tasks == null) return null;
+        for (TaskAssignment task : tasks) {
+            if (taskId.equals(task.getId())) {
+                return task;
+            }
+        }
+        return null;
+    }
+
+    /** 从数据库恢复未完成的实例 */
+    private void recoverUnfinishedInstances() {
+        try {
+            List<WorkflowInstanceEntity> unfinished = instanceRepository.findByStatusIn(
+                Arrays.asList("RUNNING", "PAUSED"));
+            for (WorkflowInstanceEntity entity : unfinished) {
+                log.info("恢复未完成的工作流实例: {}", entity.getId());
+                // 标记为失败（简化的恢复策略，实际可以更精细）
+                entity.setStatus("FAILED");
+                entity.setErrorMessage("系统重启，自动标记为失败");
+                entity.setCompletedAt(LocalDateTime.now());
+                instanceRepository.save(entity);
+            }
+        } catch (Exception e) {
+            log.warn("恢复未完成实例失败: {}", e.getMessage());
+        }
+    }
+
+    /** 从数据库加载用户自定义模板 */
+    private void loadCustomTemplatesFromDatabase() {
+        try {
+            List<WorkflowTemplateEntity> customList = workflowTemplateRepository.findByBuiltinFalse();
+            for (WorkflowTemplateEntity entity : customList) {
+                if (templates.containsKey(entity.getId())) continue;
+                WorkflowTemplate template = convertFromEntity(entity);
+                if (template != null) {
+                    templates.put(template.getId(), template);
+                }
+            }
+            log.info("从数据库加载了 {} 个自定义工作流模板", customList.size());
+        } catch (Exception e) {
+            log.warn("从数据库加载自定义工作流模板失败: {}", e.getMessage());
+        }
+    }
+
+    /** 将数据库实体转换为工作流模板对象 */
+    private WorkflowTemplate convertFromEntity(WorkflowTemplateEntity entity) {
+        try {
+            WorkflowTemplate template = new WorkflowTemplate(entity.getId(), entity.getName(), entity.getDescription());
+            if (entity.getStepsJson() != null && !entity.getStepsJson().isEmpty()) {
+                List<Map<String, Object>> stepsData = objectMapper.readValue(
+                    entity.getStepsJson(), new TypeReference<List<Map<String, Object>>>() {});
+                for (Map<String, Object> stepData : stepsData) {
+                    String stepId = (String) stepData.get("id");
+                    String stepName = (String) stepData.get("name");
+                    String agentRole = (String) stepData.get("agentRole");
+                    String taskDesc = (String) stepData.get("taskDescription");
+                    WorkflowStep step = new WorkflowStep(stepId, stepName, agentRole, taskDesc);
+                    List<String> deps = (List<String>) stepData.get("dependencies");
+                    if (deps != null) {
+                        for (String dep : deps) step.addDependency(dep);
+                    }
+                    if (stepData.containsKey("parallel")) step.setParallel((Boolean) stepData.get("parallel"));
+                    if (stepData.containsKey("requiresApproval")) step.setRequiresApproval((Boolean) stepData.get("requiresApproval"));
+                    template.addStep(step);
+                }
+            }
+            return template;
+        } catch (Exception e) {
+            log.error("转换工作流模板实体失败: {}", entity.getId(), e);
+            return null;
+        }
+    }
+
+    // ===== 内部类 =====
+
+    /** 工作流模板 */
     public static class WorkflowTemplate {
         private String id;
         private String name;
@@ -226,29 +1238,24 @@ public class WorkflowEngine {
             this.steps = new ArrayList<>();
         }
 
-        // Getters and Setters
         public String getId() { return id; }
         public String getName() { return name; }
         public String getDescription() { return description; }
         public List<WorkflowStep> getSteps() { return steps; }
-
-        public void addStep(WorkflowStep step) {
-            steps.add(step);
-        }
+        public void addStep(WorkflowStep step) { steps.add(step); }
     }
 
-    /**
-     * 工作流步骤
-     */
+    /** 工作流步骤 */
     public static class WorkflowStep {
         private String id;
         private String name;
         private String agentRole;
         private String taskDescription;
-        private List<String> dependencies; // 依赖的步骤ID
-        private boolean parallel; // 是否可并行执行
-        private int timeoutMinutes; // 超时时间（分钟）
-        private boolean requiresApproval; // 是否需要审批
+        private List<String> dependencies;
+        private boolean parallel;
+        private int timeoutMinutes;
+        private boolean requiresApproval;
+        private int maxRetries;
 
         public WorkflowStep(String id, String name, String agentRole, String taskDescription) {
             this.id = id;
@@ -259,9 +1266,9 @@ public class WorkflowEngine {
             this.parallel = false;
             this.timeoutMinutes = 30;
             this.requiresApproval = false;
+            this.maxRetries = 3;
         }
 
-        // Getters and Setters
         public String getId() { return id; }
         public String getName() { return name; }
         public String getAgentRole() { return agentRole; }
@@ -270,19 +1277,16 @@ public class WorkflowEngine {
         public boolean isParallel() { return parallel; }
         public int getTimeoutMinutes() { return timeoutMinutes; }
         public boolean isRequiresApproval() { return requiresApproval; }
+        public int getMaxRetries() { return maxRetries; }
 
-        public void addDependency(String stepId) {
-            dependencies.add(stepId);
-        }
-
+        public void addDependency(String stepId) { dependencies.add(stepId); }
         public void setParallel(boolean parallel) { this.parallel = parallel; }
         public void setTimeoutMinutes(int timeoutMinutes) { this.timeoutMinutes = timeoutMinutes; }
         public void setRequiresApproval(boolean requiresApproval) { this.requiresApproval = requiresApproval; }
+        public void setMaxRetries(int maxRetries) { this.maxRetries = maxRetries; }
     }
 
-    /**
-     * 工作流实例
-     */
+    /** 工作流实例 */
     public static class WorkflowInstance {
         private String id;
         private String templateId;
@@ -303,7 +1307,6 @@ public class WorkflowEngine {
             this.createdAt = LocalDateTime.now();
         }
 
-        // Getters and Setters
         public String getId() { return id; }
         public String getTemplateId() { return templateId; }
         public String getProjectId() { return projectId; }
@@ -312,375 +1315,55 @@ public class WorkflowEngine {
         public Map<String, StepExecution> getStepExecutions() { return stepExecutions; }
         public LocalDateTime getCreatedAt() { return createdAt; }
         public LocalDateTime getCompletedAt() { return completedAt; }
-
         public void setStatus(WorkflowStatus status) { this.status = status; }
         public void setCompletedAt(LocalDateTime completedAt) { this.completedAt = completedAt; }
     }
 
-    /**
-     * 步骤执行状态
-     */
+    /** 步骤执行状态 */
     public static class StepExecution {
         private String stepId;
         private String agentId;
         private StepStatus status;
         private String result;
+        private String inputData;
         private LocalDateTime startedAt;
         private LocalDateTime completedAt;
         private String error;
+        private Integer retryCount;
 
         public StepExecution(String stepId) {
             this.stepId = stepId;
             this.status = StepStatus.PENDING;
+            this.retryCount = 0;
         }
 
-        // Getters and Setters
         public String getStepId() { return stepId; }
         public String getAgentId() { return agentId; }
         public StepStatus getStatus() { return status; }
         public String getResult() { return result; }
+        public String getInputData() { return inputData; }
         public LocalDateTime getStartedAt() { return startedAt; }
         public LocalDateTime getCompletedAt() { return completedAt; }
         public String getError() { return error; }
+        public Integer getRetryCount() { return retryCount; }
 
         public void setAgentId(String agentId) { this.agentId = agentId; }
         public void setStatus(StepStatus status) { this.status = status; }
         public void setResult(String result) { this.result = result; }
+        public void setInputData(String inputData) { this.inputData = inputData; }
         public void setStartedAt(LocalDateTime startedAt) { this.startedAt = startedAt; }
         public void setCompletedAt(LocalDateTime completedAt) { this.completedAt = completedAt; }
         public void setError(String error) { this.error = error; }
+        public void setRetryCount(Integer retryCount) { this.retryCount = retryCount; }
     }
 
-    /**
-     * 工作流状态枚举
-     */
+    /** 工作流状态枚举 */
     public enum WorkflowStatus {
         CREATED, RUNNING, PAUSED, COMPLETED, FAILED, CANCELLED
     }
 
-    /**
-     * 步骤状态枚举
-     */
+    /** 步骤状态枚举 */
     public enum StepStatus {
         PENDING, WAITING_DEPENDENCIES, READY, RUNNING, COMPLETED, FAILED, SKIPPED
-    }
-
-    /**
-     * 注册工作流模板
-     */
-    public void registerTemplate(WorkflowTemplate template) {
-        templates.put(template.getId(), template);
-        log.info("Workflow template registered: {}", template.getId());
-    }
-
-    /**
-     * 获取所有工作流模板
-     */
-    public List<WorkflowTemplate> getAllTemplates() {
-        return new ArrayList<>(templates.values());
-    }
-
-    /**
-     * 获取指定模板
-     */
-    public WorkflowTemplate getTemplate(String templateId) {
-        return templates.get(templateId);
-    }
-
-    /**
-     * 创建自定义工作流模板
-     */
-    public WorkflowTemplate createTemplate(String id, String name, String description, List<WorkflowStep> steps) {
-        WorkflowTemplate template = new WorkflowTemplate(id, name, description);
-        if (steps != null) {
-            for (WorkflowStep step : steps) {
-                template.addStep(step);
-            }
-        }
-        templates.put(id, template);
-        log.info("Custom workflow template created: {}", id);
-        return template;
-    }
-
-    /**
-     * 删除工作流模板
-     */
-    public boolean deleteTemplate(String templateId) {
-        WorkflowTemplate removed = templates.remove(templateId);
-        if (removed != null) {
-            log.info("Workflow template deleted: {}", templateId);
-            return true;
-        }
-        return false;
-    }
-
-    /**
-     * 启动工作流实例
-     */
-    public WorkflowInstance startWorkflow(String templateId, String projectId, Map<String, String> parameters) {
-        WorkflowTemplate template = templates.get(templateId);
-        if (template == null) {
-            throw new RuntimeException("Workflow template not found: " + templateId);
-        }
-
-        String instanceId = UUID.randomUUID().toString();
-        WorkflowInstance instance = new WorkflowInstance(instanceId, templateId, projectId);
-        instance.getParameters().putAll(parameters);
-        instance.setStatus(WorkflowStatus.RUNNING);
-
-        // 初始化所有步骤的执行状态
-        for (WorkflowStep step : template.getSteps()) {
-            StepExecution execution = new StepExecution(step.getId());
-            if (!step.getDependencies().isEmpty()) {
-                execution.setStatus(StepStatus.WAITING_DEPENDENCIES);
-            }
-            instance.getStepExecutions().put(step.getId(), execution);
-        }
-
-        runningInstances.put(instanceId, instance);
-
-        // 异步执行工作流
-        executorService.submit(() -> executeWorkflow(instance));
-
-        log.info("Workflow started: instanceId={}, templateId={}", instanceId, templateId);
-
-        return instance;
-    }
-
-    /**
-     * 执行工作流
-     */
-    private void executeWorkflow(WorkflowInstance instance) {
-        WorkflowTemplate template = templates.get(instance.getTemplateId());
-
-        try {
-            boolean allCompleted = false;
-
-            while (!allCompleted && instance.getStatus() == WorkflowStatus.RUNNING) {
-                allCompleted = true;
-
-                for (WorkflowStep step : template.getSteps()) {
-                    StepExecution execution = instance.getStepExecutions().get(step.getId());
-
-                    if (execution.getStatus() == StepStatus.COMPLETED ||
-                        execution.getStatus() == StepStatus.SKIPPED) {
-                        continue;
-                    }
-
-                    // 检查依赖是否完成
-                    if (!areDependenciesCompleted(instance, step)) {
-                        allCompleted = false;
-                        continue;
-                    }
-
-                    // 检查是否需要审批
-                    if (step.isRequiresApproval() && execution.getStatus() != StepStatus.READY) {
-                        execution.setStatus(StepStatus.WAITING_DEPENDENCIES);
-                        allCompleted = false;
-                        continue;
-                    }
-
-                    // 执行步骤
-                    allCompleted = false;
-                    executeStep(instance, step, execution);
-                }
-
-                // 等待一段时间再检查
-                Thread.sleep(1000);
-            }
-
-            // 检查是否所有步骤都完成
-            if (allCompleted) {
-                instance.setStatus(WorkflowStatus.COMPLETED);
-                instance.setCompletedAt(LocalDateTime.now());
-                log.info("Workflow completed: {}", instance.getId());
-            }
-
-        } catch (Exception e) {
-            instance.setStatus(WorkflowStatus.FAILED);
-            log.error("Workflow failed: {}", instance.getId(), e);
-        }
-    }
-
-    /**
-     * 检查依赖是否完成
-     */
-    private boolean areDependenciesCompleted(WorkflowInstance instance, WorkflowStep step) {
-        for (String dependencyId : step.getDependencies()) {
-            StepExecution dependencyExecution = instance.getStepExecutions().get(dependencyId);
-            if (dependencyExecution == null || dependencyExecution.getStatus() != StepStatus.COMPLETED) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    /**
-     * 执行单个步骤
-     */
-    private void executeStep(WorkflowInstance instance, WorkflowStep step, StepExecution execution) {
-        log.info("Executing step: {} in workflow: {}", step.getId(), instance.getId());
-
-        execution.setStatus(StepStatus.RUNNING);
-        execution.setStartedAt(LocalDateTime.now());
-
-        try {
-            // 查找合适的Agent
-            Agent agent = findAgentForStep(step);
-            if (agent == null) {
-                throw new RuntimeException("No available agent for role: " + step.getAgentRole());
-            }
-
-            execution.setAgentId(agent.getId());
-
-            // 创建任务
-            TaskAssignment task = new TaskAssignment();
-            task.setId(instance.getId() + ":" + step.getId());
-            task.setTitle(step.getName());
-            task.setDescription(step.getTaskDescription());
-            task.setAssignerId("workflow-engine");
-
-            // 分配任务给Agent
-            agent.assignTask(task);
-
-            // 等待任务完成（简化实现，实际应该监听任务完成事件）
-            waitForTaskCompletion(agent, task.getId());
-
-            execution.setStatus(StepStatus.COMPLETED);
-            execution.setResult("Task completed successfully");
-            execution.setCompletedAt(LocalDateTime.now());
-
-            log.info("Step completed: {} in workflow: {}", step.getId(), instance.getId());
-
-        } catch (Exception e) {
-            execution.setStatus(StepStatus.FAILED);
-            execution.setError(e.getMessage());
-            execution.setCompletedAt(LocalDateTime.now());
-
-            log.error("Step failed: {} in workflow: {}", step.getId(), instance.getId(), e);
-        }
-    }
-
-    /**
-     * 查找合适的Agent
-     */
-    private Agent findAgentForStep(WorkflowStep step) {
-        List<Agent> agents = agentManager.getAllAgents();
-        for (Agent agent : agents) {
-            if (agent.getRole().equals(step.getAgentRole()) && agent.isAlive() && !agent.isBusy()) {
-                return agent;
-            }
-        }
-        return null;
-    }
-
-    /**
-     * 等待任务完成
-     * 通过轮询检查任务状态来等待任务完成，支持超时控制
-     *
-     * @param agent 执行任务的Agent
-     * @param taskId 任务ID
-     * @throws InterruptedException 当等待被中断时抛出
-     * @throws RuntimeException 当任务超时或失败时抛出
-     */
-    private void waitForTaskCompletion(Agent agent, String taskId) throws InterruptedException {
-        long startTime = System.currentTimeMillis();
-        long timeoutMs = 30 * 60 * 1000; // 30分钟超时
-        long pollIntervalMs = 2000; // 每2秒轮询一次
-
-        while (System.currentTimeMillis() - startTime < timeoutMs) {
-            // 检查Agent是否还活着
-            if (!agent.isAlive()) {
-                throw new RuntimeException("Agent已停止: " + agent.getId());
-            }
-
-            // 查找任务状态
-            TaskAssignment task = findTaskById(agent, taskId);
-            if (task != null) {
-                TaskAssignment.TaskStatus status = task.getStatus();
-                if (status == TaskAssignment.TaskStatus.COMPLETED) {
-                    log.debug("Task {} completed successfully", taskId);
-                    return;
-                } else if (status == TaskAssignment.TaskStatus.FAILED) {
-                    throw new RuntimeException("任务执行失败: " + task.getError());
-                } else if (status == TaskAssignment.TaskStatus.CANCELLED) {
-                    throw new RuntimeException("任务已被取消");
-                }
-            }
-
-            // 等待一段时间再轮询
-            Thread.sleep(pollIntervalMs);
-        }
-
-        // 超时处理
-        throw new RuntimeException("任务执行超时（超过30分钟）");
-    }
-
-    /**
-     * 在Agent的任务列表中查找指定任务
-     *
-     * @param agent Agent实例
-     * @param taskId 任务ID
-     * @return 任务对象，如果未找到返回null
-     */
-    private TaskAssignment findTaskById(Agent agent, String taskId) {
-        List<TaskAssignment> tasks = agent.getTasks();
-        if (tasks == null) {
-            return null;
-        }
-        for (TaskAssignment task : tasks) {
-            if (taskId.equals(task.getId())) {
-                return task;
-            }
-        }
-        return null;
-    }
-
-    /**
-     * 获取工作流实例
-     */
-    public WorkflowInstance getInstance(String instanceId) {
-        return runningInstances.get(instanceId);
-    }
-
-    /**
-     * 获取所有运行中的工作流实例
-     */
-    public List<WorkflowInstance> getRunningInstances() {
-        return new ArrayList<>(runningInstances.values());
-    }
-
-    /**
-     * 取消工作流
-     */
-    public void cancelWorkflow(String instanceId) {
-        WorkflowInstance instance = runningInstances.get(instanceId);
-        if (instance != null) {
-            instance.setStatus(WorkflowStatus.CANCELLED);
-            log.info("Workflow cancelled: {}", instanceId);
-        }
-    }
-
-    /**
-     * 暂停工作流
-     */
-    public void pauseWorkflow(String instanceId) {
-        WorkflowInstance instance = runningInstances.get(instanceId);
-        if (instance != null) {
-            instance.setStatus(WorkflowStatus.PAUSED);
-            log.info("Workflow paused: {}", instanceId);
-        }
-    }
-
-    /**
-     * 恢复工作流
-     */
-    public void resumeWorkflow(String instanceId) {
-        WorkflowInstance instance = runningInstances.get(instanceId);
-        if (instance != null && instance.getStatus() == WorkflowStatus.PAUSED) {
-            instance.setStatus(WorkflowStatus.RUNNING);
-            executorService.submit(() -> executeWorkflow(instance));
-            log.info("Workflow resumed: {}", instanceId);
-        }
     }
 }

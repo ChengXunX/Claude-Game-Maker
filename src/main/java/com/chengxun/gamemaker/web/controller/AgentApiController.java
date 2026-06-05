@@ -278,4 +278,79 @@ public class AgentApiController {
             return ResponseEntity.internalServerError().body(Map.of("success", false, "message", "发送失败: " + e.getMessage()));
         }
     }
+
+    /**
+     * 设置 Agent 推理深度（全局生效）
+     *
+     * @param projectId 项目 ID
+     * @param agentRole Agent 角色
+     * @param request 包含 reasoningDepth 的请求体
+     * @return 操作结果
+     */
+    @PutMapping("/project/{projectId}/{agentRole}/reasoning-depth")
+    @Operation(summary = "设置推理深度", description = "设置 Agent 的推理深度，全局生效（1=快速 2=标准 3=深入 4=全面 5=极致）")
+    public ResponseEntity<Map<String, Object>> setReasoningDepth(
+            @PathVariable String projectId,
+            @PathVariable String agentRole,
+            @RequestBody Map<String, Object> request,
+            Authentication authentication) {
+        User user = userService.getUserByUsername(authentication.getName());
+        if (!permissionService.hasProjectAccess(user, projectId, ProjectMember.ProjectRole.MANAGER)) {
+            return ResponseEntity.status(403).body(Map.of("success", false, "message", "权限不足"));
+        }
+
+        Object depthObj = request.get("reasoningDepth");
+        if (depthObj == null) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "推理深度不能为空"));
+        }
+
+        int depth;
+        try {
+            depth = Integer.parseInt(depthObj.toString());
+        } catch (NumberFormatException e) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "推理深度必须是 1-5 的整数"));
+        }
+
+        if (depth < 1 || depth > 5) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "推理深度必须在 1-5 之间"));
+        }
+
+        boolean success = agentManager.setReasoningDepth(projectId, agentRole, depth);
+        if (success) {
+            String depthLabel = com.chengxun.gamemaker.model.AgentDefinition.getReasoningDepthLabel(depth);
+            logService.log(user.getId(), "SET_REASONING_DEPTH", agentRole,
+                "Set reasoning depth to " + depth + " (" + depthLabel + ")", null);
+            return ResponseEntity.ok(Map.of(
+                "success", true,
+                "message", "推理深度已设置为: " + depthLabel,
+                "reasoningDepth", depth,
+                "reasoningDepthLabel", depthLabel
+            ));
+        } else {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "Agent 不存在"));
+        }
+    }
+
+    /**
+     * 获取 Agent 推理深度
+     *
+     * @param projectId 项目 ID
+     * @param agentRole Agent 角色
+     * @return 推理深度信息
+     */
+    @GetMapping("/project/{projectId}/{agentRole}/reasoning-depth")
+    @Operation(summary = "获取推理深度")
+    public ResponseEntity<Map<String, Object>> getReasoningDepth(
+            @PathVariable String projectId,
+            @PathVariable String agentRole) {
+        int depth = agentManager.getReasoningDepth(projectId, agentRole);
+        if (depth == -1) {
+            return ResponseEntity.notFound().build();
+        }
+        String depthLabel = com.chengxun.gamemaker.model.AgentDefinition.getReasoningDepthLabel(depth);
+        return ResponseEntity.ok(Map.of(
+            "reasoningDepth", depth,
+            "reasoningDepthLabel", depthLabel
+        ));
+    }
 }

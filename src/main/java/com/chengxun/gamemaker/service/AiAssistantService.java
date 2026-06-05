@@ -47,6 +47,24 @@ public class AiAssistantService {
     /** 对话历史 */
     private final Map<String, List<ConversationEntry>> conversationHistory = new ConcurrentHashMap<>();
 
+    /** Claude CLI 会话ID映射：chatSessionId -> claudeSessionId */
+    private final Map<String, String> claudeSessionIdMap = new ConcurrentHashMap<>();
+
+    /** 会话累计消息大小（字节），用于判断是否需要重置上下文 */
+    private final Map<String, Long> sessionContextSize = new ConcurrentHashMap<>();
+
+    /** 会话当前使用的模型名称 */
+    private final Map<String, String> sessionModelMap = new ConcurrentHashMap<>();
+
+    /** 会话主题摘要：chatSessionId -> 摘要文本 */
+    private final Map<String, String> sessionTopicMap = new ConcurrentHashMap<>();
+
+    /** 默认上下文大小阈值（100KB） */
+    private static final long DEFAULT_CONTEXT_SIZE_THRESHOLD = 100 * 1024;
+
+    /** 1M 上下文模型的阈值（800KB，留 20% 余量） */
+    private static final long LONG_CONTEXT_SIZE_THRESHOLD = 800 * 1024;
+
     /** AI助手的固定会话ID */
     private static final String ASSISTANT_SESSION_ID = "system-assistant";
 
@@ -351,6 +369,187 @@ public class AiAssistantService {
      */
     public void clearConversationHistory(String userId) {
         conversationHistory.remove(userId);
+    }
+
+    /**
+     * 获取 Claude CLI 会话ID
+     * 用于 --resume 恢复上下文
+     * 当上下文累计大小超过模型对应的阈值时返回 null（强制重新开始，避免响应变慢）
+     *
+     * @param chatSessionId 聊天会话ID
+     * @return 会话恢复信息，包含 sessionId 和是否需要注入摘要
+     */
+    public SessionResumeInfo getClaudeSessionId(String chatSessionId) {
+        Long contextSize = sessionContextSize.get(chatSessionId);
+        String model = sessionModelMap.get(chatSessionId);
+        long threshold = getContextThreshold(model);
+
+        if (contextSize != null && contextSize > threshold) {
+            log.info("会话上下文过大 ({}KB > {}KB)，重置 sessionId - chatSessionId: {}, model: {}",
+                contextSize / 1024, threshold / 1024, chatSessionId, model);
+
+            // 生成会话摘要
+            String summary = generateSessionSummary(chatSessionId);
+
+            // 重置 session
+            claudeSessionIdMap.remove(chatSessionId);
+            sessionContextSize.put(chatSessionId, 0L);
+
+            return new SessionResumeInfo(null, true, summary);
+        }
+
+        String claudeSessionId = claudeSessionIdMap.get(chatSessionId);
+        return new SessionResumeInfo(claudeSessionId, false, null);
+    }
+
+    /**
+     * 根据模型名称获取上下文大小阈值
+     *
+     * @param model 模型名称
+     * @return 阈值（字节）
+     */
+    private long getContextThreshold(String model) {
+        if (model == null) {
+            return DEFAULT_CONTEXT_SIZE_THRESHOLD;
+        }
+        // 带 [1m] 标记的模型有 1M 上下文窗口
+        if (model.contains("[1m]")) {
+            return LONG_CONTEXT_SIZE_THRESHOLD;
+        }
+        // 其他模型使用默认阈值
+        return DEFAULT_CONTEXT_SIZE_THRESHOLD;
+    }
+
+    /**
+     * 保存 Claude CLI 会话ID
+     * 用于后续对话恢复上下文
+     *
+     * @param chatSessionId 聊天会话ID
+     * @param claudeSessionId Claude CLI 会话ID
+     */
+    public void saveClaudeSessionId(String chatSessionId, String claudeSessionId) {
+        claudeSessionIdMap.put(chatSessionId, claudeSessionId);
+        log.debug("保存 Claude sessionId: {} -> {}", chatSessionId, claudeSessionId);
+    }
+
+    /**
+     * 设置会话使用的模型
+     *
+     * @param chatSessionId 聊天会话ID
+     * @param model 模型名称
+     */
+    public void setSessionModel(String chatSessionId, String model) {
+        sessionModelMap.put(chatSessionId, model);
+    }
+
+    /**
+     * 累加会话上下文大小
+     * 用于判断何时需要重置上下文
+     *
+     * @param chatSessionId 聊天会话ID
+     * @param messageSize 本次消息大小（字节）
+     */
+    public void addContextSize(String chatSessionId, long messageSize) {
+        sessionContextSize.merge(chatSessionId, messageSize, Long::sum);
+    }
+
+    /**
+     * 更新会话主题摘要
+     * 从对话内容中提取关键信息
+     *
+     * @param chatSessionId 聊天会话ID
+     * @param userMessage 用户消息
+     * @param assistantReply 助手回复
+     */
+    public void updateSessionTopic(String chatSessionId, String userMessage, String assistantReply) {
+        // 提取用户意图和关键信息
+        StringBuilder topic = new StringBuilder();
+
+        // 保留之前的主题信息（如果有）
+        String existingTopic = sessionTopicMap.get(chatSessionId);
+        if (existingTopic != null && !existingTopic.isEmpty()) {
+            topic.append(existingTopic).append("\n---\n");
+        }
+
+        // 提取用户消息的关键信息（截取前200字）
+        if (userMessage != null && !userMessage.isEmpty()) {
+            String userSummary = userMessage.length() > 200 ? userMessage.substring(0, 200) + "..." : userMessage;
+            topic.append("用户: ").append(userSummary).append("\n");
+        }
+
+        // 提取助手回复的关键信息（截取前200字）
+        if (assistantReply != null && !assistantReply.isEmpty()) {
+            String replySummary = assistantReply.length() > 200 ? assistantReply.substring(0, 200) + "..." : assistantReply;
+            topic.append("助手: ").append(replySummary).append("\n");
+        }
+
+        // 只保留最近 10 轮对话的摘要
+        String topicStr = topic.toString();
+        String[] lines = topicStr.split("\n---\n");
+        if (lines.length > 10) {
+            StringBuilder trimmed = new StringBuilder();
+            for (int i = lines.length - 10; i < lines.length; i++) {
+                if (i > lines.length - 10) trimmed.append("\n---\n");
+                trimmed.append(lines[i]);
+            }
+            topicStr = trimmed.toString();
+        }
+
+        sessionTopicMap.put(chatSessionId, topicStr);
+    }
+
+    /**
+     * 生成会话摘要
+     * 用于 session 重置后注入新会话，让 AI 知道之前在做什么
+     *
+     * @param chatSessionId 聊天会话ID
+     * @return 会话摘要文本
+     */
+    private String generateSessionSummary(String chatSessionId) {
+        String topic = sessionTopicMap.get(chatSessionId);
+        if (topic == null || topic.isEmpty()) {
+            return null;
+        }
+
+        StringBuilder summary = new StringBuilder();
+        summary.append("## 会话上下文恢复\n\n");
+        summary.append("这是一个之前的会话，由于上下文过长已自动重置。以下是之前的对话摘要：\n\n");
+        summary.append(topic);
+        summary.append("\n\n请基于以上上下文继续与用户对话，保持工作连续性。");
+
+        return summary.toString();
+    }
+
+    /**
+     * 会话恢复信息
+     */
+    public static class SessionResumeInfo {
+        private final String sessionId;
+        private final boolean needsReset;
+        private final String summary;
+
+        public SessionResumeInfo(String sessionId, boolean needsReset, String summary) {
+            this.sessionId = sessionId;
+            this.needsReset = needsReset;
+            this.summary = summary;
+        }
+
+        public String getSessionId() { return sessionId; }
+        public boolean isNeedsReset() { return needsReset; }
+        public String getSummary() { return summary; }
+    }
+
+    /**
+     * 清除 Claude CLI 会话ID 和上下文大小
+     * 会话删除时调用
+     *
+     * @param chatSessionId 聊天会话ID
+     */
+    public void clearClaudeSessionId(String chatSessionId) {
+        claudeSessionIdMap.remove(chatSessionId);
+        sessionContextSize.remove(chatSessionId);
+        sessionModelMap.remove(chatSessionId);
+        sessionTopicMap.remove(chatSessionId);
     }
 
     /**

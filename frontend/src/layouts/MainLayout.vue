@@ -160,7 +160,7 @@
  * - 面包屑导航
  * - 用户信息和快捷操作
  */
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox, ElMessage } from 'element-plus'
 import { useUserStore } from '@/stores/user'
@@ -171,6 +171,25 @@ const userStore = useUserStore()
 
 const isCollapse = ref(false)
 const notificationCount = ref(0)
+
+/**
+ * 全局路由变化监听
+ * 路由切换时关闭所有 el-dialog 遗留在 body 上的遮罩层
+ * 解决 keep-alive + el-dialog 导致的页面空白问题：
+ * el-dialog 默认 append-to-body，关闭弹窗时遮罩层 DOM 可能未被清理，
+ * 当 keep-alive 缓存的组件带弹窗被切走再切回时，残留的遮罩层会覆盖新页面
+ */
+watch(() => route.path, (newPath, oldPath) => {
+  if (newPath !== oldPath) {
+    // 移除所有 el-dialog 遗留的 overlay DOM
+    document.querySelectorAll('.el-overlay').forEach(el => {
+      el.remove()
+    })
+    // 恢复 body 滚动（el-dialog 打开时会锁定 body）
+    document.body.style.overflow = ''
+    document.body.classList.remove('el-popup-parent--hidden')
+  }
+})
 
 /** 用户信息 */
 const username = computed(() => userStore.username || 'Admin')

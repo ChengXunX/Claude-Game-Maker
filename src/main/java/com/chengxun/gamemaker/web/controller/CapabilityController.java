@@ -209,4 +209,55 @@ public class CapabilityController {
             "message", success ? "恢复已触发" : "恢复失败"
         ));
     }
+
+    /**
+     * 手动检查单个 Agent 的健康状态
+     */
+    @PostMapping("/health/{agentId}/check")
+    public ResponseEntity<Map<String, Object>> checkAgent(@PathVariable String agentId) {
+        var status = contextMonitor.checkSingleAgent(agentId);
+        return ResponseEntity.ok(Map.of(
+            "success", status != null,
+            "agentId", agentId,
+            "status", status != null ? status : "Agent 不存在"
+        ));
+    }
+
+    /**
+     * 检查所有 Agent 的健康状态
+     */
+    @PostMapping("/health/check-all")
+    public ResponseEntity<Map<String, Object>> checkAllAgents() {
+        contextMonitor.checkAllAgentsContext();
+        return ResponseEntity.ok(Map.of(
+            "success", true,
+            "message", "全部检查完成"
+        ));
+    }
+
+    /**
+     * 重建 Agent 上下文（彻底重建）
+     */
+    @PostMapping("/health/{agentId}/rebuild")
+    public ResponseEntity<Map<String, Object>> rebuildAgent(@PathVariable String agentId) {
+        boolean success = contextMonitor.rebuildContext(agentId);
+        return ResponseEntity.ok(Map.of(
+            "success", success,
+            "agentId", agentId,
+            "message", success ? "重建已触发" : "重建失败"
+        ));
+    }
+
+    /**
+     * 重置 Agent 的恢复尝试计数
+     */
+    @PostMapping("/health/{agentId}/reset-recovery")
+    public ResponseEntity<Map<String, Object>> resetRecoveryCount(@PathVariable String agentId) {
+        contextMonitor.resetRecoveryAttempts(agentId);
+        return ResponseEntity.ok(Map.of(
+            "success", true,
+            "agentId", agentId,
+            "message", "恢复计数已重置"
+        ));
+    }
 }
