@@ -117,7 +117,7 @@
           <el-input v-model="submitForm.title" placeholder="审查标题" />
         </el-form-item>
         <el-form-item label="项目" prop="projectId">
-          <el-input v-model="submitForm.projectId" placeholder="项目ID" />
+          <ProjectSelector v-model="submitForm.projectId" placeholder="选择项目" width="100%" />
         </el-form-item>
         <el-form-item label="分支" prop="branch">
           <el-input v-model="submitForm.branch" placeholder="分支名称" />
@@ -146,6 +146,7 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { reviewApi } from '@/api'
 import { ElMessage } from 'element-plus'
+import ProjectSelector from '@/components/ProjectSelector.vue'
 
 const router = useRouter()
 

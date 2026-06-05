@@ -223,22 +223,62 @@
   </div>
 
   <!-- CPU 详情对话框 -->
-  <el-dialog v-model="cpuDialogVisible" title="CPU 详细信息" width="700px">
+  <el-dialog v-model="cpuDialogVisible" title="CPU 详细信息" width="900px">
     <div v-if="cpuDetails" class="detail-content">
-      <el-descriptions :column="2" border>
+      <el-descriptions :column="2" border class="mb-4">
         <el-descriptions-item label="操作系统">{{ cpuDetails.osName }} {{ cpuDetails.osArch }}</el-descriptions-item>
         <el-descriptions-item label="系统版本">{{ cpuDetails.osVersion }}</el-descriptions-item>
         <el-descriptions-item label="CPU 核心">{{ cpuDetails.availableProcessors }}</el-descriptions-item>
         <el-descriptions-item label="系统负载">{{ cpuDetails.systemLoadAverage }}</el-descriptions-item>
-        <el-descriptions-item label="系统 CPU">{{ cpuDetails.systemCpuLoad }}%</el-descriptions-item>
-        <el-descriptions-item label="进程 CPU">{{ cpuDetails.processCpuLoad }}%</el-descriptions-item>
+        <el-descriptions-item label="系统 CPU">
+          <el-progress :percentage="cpuDetails.systemCpuLoad" :color="getCpuColor(cpuDetails.systemCpuLoad)" :stroke-width="10" style="width: 120px; display: inline-block" />
+          <span style="margin-left: 4px">{{ cpuDetails.systemCpuLoad }}%</span>
+        </el-descriptions-item>
+        <el-descriptions-item label="进程 CPU">
+          <el-progress :percentage="cpuDetails.processCpuLoad" :color="getCpuColor(cpuDetails.processCpuLoad)" :stroke-width="10" style="width: 120px; display: inline-block" />
+          <span style="margin-left: 4px">{{ cpuDetails.processCpuLoad }}%</span>
+        </el-descriptions-item>
         <el-descriptions-item label="进程 PID">{{ cpuDetails.pid }}</el-descriptions-item>
         <el-descriptions-item label="CPU 时间">{{ cpuDetails.processCpuTime }}ms</el-descriptions-item>
-        <el-descriptions-item label="Java 版本">{{ cpuDetails.javaVersion }}</el-descriptions-item>
-        <el-descriptions-item label="JVM">{{ cpuDetails.jvmName }}</el-descriptions-item>
         <el-descriptions-item label="运行时间">{{ cpuDetails.uptimeFormatted }}</el-descriptions-item>
         <el-descriptions-item label="虚拟内存">{{ cpuDetails.committedVirtualMemory }}MB</el-descriptions-item>
       </el-descriptions>
+
+      <div class="detail-section" v-if="cpuDetails.env">
+        <h4>系统环境</h4>
+        <el-descriptions :column="2" border>
+          <el-descriptions-item label="Java 版本">{{ cpuDetails.javaVersion }}</el-descriptions-item>
+          <el-descriptions-item label="JVM">{{ cpuDetails.jvmName }} {{ cpuDetails.jvmVersion }}</el-descriptions-item>
+          <el-descriptions-item label="运行用户">{{ cpuDetails.env.user }}</el-descriptions-item>
+          <el-descriptions-item label="工作目录">{{ cpuDetails.env.userDir }}</el-descriptions-item>
+          <el-descriptions-item label="临时目录">{{ cpuDetails.env.tempDir }}</el-descriptions-item>
+          <el-descriptions-item label="文件编码">{{ cpuDetails.env.fileEncoding }}</el-descriptions-item>
+          <el-descriptions-item label="物理内存">{{ cpuDetails.env.freePhysicalMemoryMB }}MB / {{ cpuDetails.env.availableMemoryMB }}MB</el-descriptions-item>
+          <el-descriptions-item label="交换空间">{{ cpuDetails.env.freeSwapSpaceMB }}MB / {{ cpuDetails.env.totalSwapSpaceMB }}MB</el-descriptions-item>
+        </el-descriptions>
+      </div>
+
+      <div class="detail-section" v-if="cpuDetails.topCpuThreads?.length">
+        <h4>CPU 占用 TOP {{ cpuDetails.topCpuThreads.length }} 线程</h4>
+        <el-table :data="cpuDetails.topCpuThreads" stripe size="small" max-height="300">
+          <el-table-column prop="id" label="ID" width="70" />
+          <el-table-column prop="name" label="线程名" min-width="180" show-overflow-tooltip />
+          <el-table-column label="状态" width="100">
+            <template #default="{ row }">
+              <el-tag :type="getStateType(row.state)" size="small">{{ row.state }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="CPU 耗时" width="100">
+            <template #default="{ row }">{{ row.cpuTimeMs }}ms</template>
+          </el-table-column>
+          <el-table-column label="栈顶方法" min-width="250" show-overflow-tooltip>
+            <template #default="{ row }">
+              <span class="stack-trace">{{ row.stackTop || '-' }}</span>
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
+
       <div class="detail-section" v-if="cpuDetails.jvmArgs?.length">
         <h4>JVM 启动参数</h4>
         <div class="param-list">

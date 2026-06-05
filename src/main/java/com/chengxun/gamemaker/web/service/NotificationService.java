@@ -34,17 +34,20 @@ public class NotificationService {
     private final NotificationRepository notificationRepository;
     private final EmailService emailService;
     private final com.chengxun.gamemaker.feishu.FeishuBotService feishuService;
+    private final com.chengxun.gamemaker.dingtalk.DingTalkService dingTalkService;
     private final UserRepository userRepository;
     private final NotificationTemplateService templateService;
 
     public NotificationService(NotificationRepository notificationRepository,
                                EmailService emailService,
                                com.chengxun.gamemaker.feishu.FeishuBotService feishuService,
+                               com.chengxun.gamemaker.dingtalk.DingTalkService dingTalkService,
                                UserRepository userRepository,
                                NotificationTemplateService templateService) {
         this.notificationRepository = notificationRepository;
         this.emailService = emailService;
         this.feishuService = feishuService;
+        this.dingTalkService = dingTalkService;
         this.userRepository = userRepository;
         this.templateService = templateService;
     }
@@ -101,6 +104,11 @@ public class NotificationService {
             if (channel == NotificationChannel.FEISHU) {
                 sendFeishuNotification(title, content);
             }
+
+            // 发送钉钉通知
+            if (channel == NotificationChannel.DINGTALK) {
+                sendDingTalkNotification(title, content);
+            }
         } catch (Exception e) {
             log.error("Failed to send notification: {}", e.getMessage());
         }
@@ -137,6 +145,15 @@ public class NotificationService {
     private void sendFeishuNotification(String title, String content) {
         if (feishuService.isEnabled()) {
             feishuService.sendMessage(String.format("**%s**\n\n%s", title, content));
+        }
+    }
+
+    /**
+     * 发送钉钉通知
+     */
+    private void sendDingTalkNotification(String title, String content) {
+        if (dingTalkService.isEnabled()) {
+            dingTalkService.sendMarkdown(title, String.format("### %s\n\n%s", title, content));
         }
     }
 

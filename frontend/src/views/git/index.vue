@@ -49,8 +49,8 @@
         <el-form-item label="默认分支" prop="branch">
           <el-input v-model="addForm.branch" placeholder="main" />
         </el-form-item>
-        <el-form-item label="项目 ID" prop="projectId">
-          <el-input v-model="addForm.projectId" placeholder="关联的项目 ID" />
+        <el-form-item label="所属项目" prop="projectId">
+          <ProjectSelector v-model="addForm.projectId" placeholder="选择关联项目" width="100%" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -73,6 +73,7 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { gitApi } from '@/api'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import ProjectSelector from '@/components/ProjectSelector.vue'
 
 const router = useRouter()
 

@@ -112,6 +112,24 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
+    # OpenAPI 文档代理（必须在SPA规则之前）
+    location /v3/api-docs {
+        proxy_pass http://127.0.0.1:19922;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Swagger UI 代理（必须在SPA规则之前）
+    location /swagger-ui {
+        proxy_pass http://127.0.0.1:19922;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
     # 前端路由 - SPA 支持
     location / {
         try_files $uri $uri/ /index.html;

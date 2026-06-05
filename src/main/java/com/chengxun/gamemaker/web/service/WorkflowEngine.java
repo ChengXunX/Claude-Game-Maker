@@ -9,6 +9,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 
 import java.time.LocalDateTime;
@@ -48,9 +49,58 @@ public class WorkflowEngine {
     private final ExecutorService executorService = Executors.newFixedThreadPool(10);
 
     /**
-     * 应用关闭时关闭线程池
+     * 初始化预置工作流模板
      */
-    @PreDestroy
+    @PostConstruct
+    public void init() {
+        // 标准游戏开发流程
+        WorkflowTemplate standard = new WorkflowTemplate("standard-game-dev", "标准游戏开发流程", "完整的游戏开发流程，包含策划、开发、测试、部署四个阶段");
+        WorkflowStep planStep = new WorkflowStep("plan", "系统策划", "system-planner", "分析游戏需求，制定系统架构和技术方案");
+        WorkflowStep devServerStep = new WorkflowStep("dev-server", "服务端开发", "server-dev", "实现服务端逻辑、API接口和数据库设计");
+        devServerStep.addDependency("plan");
+        WorkflowStep devClientStep = new WorkflowStep("dev-client", "客户端开发", "client-dev", "实现前端界面、交互逻辑和游戏画面");
+        devClientStep.addDependency("plan");
+        devServerStep.setParallel(true);
+        devClientStep.setParallel(true);
+        WorkflowStep testStep = new WorkflowStep("test", "测试验证", "tester", "执行功能测试、性能测试和兼容性测试");
+        testStep.addDependency("dev-server");
+        testStep.addDependency("dev-client");
+        WorkflowStep deployStep = new WorkflowStep("deploy", "部署上线", "git-commit", "代码审查、合并分支并部署到生产环境");
+        deployStep.addDependency("test");
+        deployStep.setRequiresApproval(true);
+        standard.addStep(planStep);
+        standard.addStep(devServerStep);
+        standard.addStep(devClientStep);
+        standard.addStep(testStep);
+        standard.addStep(deployStep);
+
+        // 快速原型流程
+        WorkflowTemplate rapid = new WorkflowTemplate("rapid-prototype", "快速原型流程", "快速验证游戏创意的轻量流程，适合小型项目和Demo");
+        WorkflowStep rapidPlan = new WorkflowStep("plan", "快速策划", "system-planner", "快速分析需求，确定核心玩法");
+        WorkflowStep rapidDev = new WorkflowStep("dev", "快速开发", "server-dev", "实现核心功能的最小可用版本");
+        rapidDev.addDependency("plan");
+        WorkflowStep rapidTest = new WorkflowStep("test", "快速测试", "tester", "验证核心功能是否可用");
+        rapidTest.addDependency("dev");
+        rapid.addStep(rapidPlan);
+        rapid.addStep(rapidDev);
+        rapid.addStep(rapidTest);
+
+        // 代码审查流程
+        WorkflowTemplate review = new WorkflowTemplate("code-review", "代码审查流程", "标准化的代码审查流程，确保代码质量");
+        WorkflowStep submitReview = new WorkflowStep("submit", "提交审查", "git-commit", "整理代码变更，准备审查材料");
+        WorkflowStep doReview = new WorkflowStep("review", "执行审查", "server-dev", "审查代码质量、安全性和规范性");
+        doReview.addDependency("submit");
+        WorkflowStep mergeStep = new WorkflowStep("merge", "合并部署", "git-commit", "审查通过后合并代码并触发部署");
+        mergeStep.addDependency("review");
+        mergeStep.setRequiresApproval(true);
+        review.addStep(submitReview);
+        review.addStep(doReview);
+        review.addStep(mergeStep);
+
+        registerTemplate(standard);
+        registerTemplate(rapid);
+        registerTemplate(review);
+    }
     public void destroy() {
         executorService.shutdown();
         try {
@@ -225,6 +275,47 @@ public class WorkflowEngine {
     public void registerTemplate(WorkflowTemplate template) {
         templates.put(template.getId(), template);
         log.info("Workflow template registered: {}", template.getId());
+    }
+
+    /**
+     * 获取所有工作流模板
+     */
+    public List<WorkflowTemplate> getAllTemplates() {
+        return new ArrayList<>(templates.values());
+    }
+
+    /**
+     * 获取指定模板
+     */
+    public WorkflowTemplate getTemplate(String templateId) {
+        return templates.get(templateId);
+    }
+
+    /**
+     * 创建自定义工作流模板
+     */
+    public WorkflowTemplate createTemplate(String id, String name, String description, List<WorkflowStep> steps) {
+        WorkflowTemplate template = new WorkflowTemplate(id, name, description);
+        if (steps != null) {
+            for (WorkflowStep step : steps) {
+                template.addStep(step);
+            }
+        }
+        templates.put(id, template);
+        log.info("Custom workflow template created: {}", id);
+        return template;
+    }
+
+    /**
+     * 删除工作流模板
+     */
+    public boolean deleteTemplate(String templateId) {
+        WorkflowTemplate removed = templates.remove(templateId);
+        if (removed != null) {
+            log.info("Workflow template deleted: {}", templateId);
+            return true;
+        }
+        return false;
     }
 
     /**

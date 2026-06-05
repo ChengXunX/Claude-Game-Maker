@@ -320,7 +320,10 @@ export const pipelineApi = {
 
 // ===== 工作流 API =====
 export const workflowApi = {
-  getTemplates: () => api.get('/workflow/running'),
+  getTemplates: () => api.get('/workflow/templates'),
+  createTemplate: (data) => api.post('/workflow/templates', data),
+  deleteTemplate: (id) => api.delete(`/workflow/templates/${id}`),
+  generateTemplate: (data) => api.post('/workflow/templates/generate', data),
   getInstances: (params) => api.get('/workflow/running', { params }),
   start: (data) => api.post('/workflow/start', data),
   cancel: (id) => api.post(`/workflow/${id}/cancel`),

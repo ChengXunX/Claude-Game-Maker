@@ -364,13 +364,14 @@ public class SystemDiagnosticService {
 
     /**
      * 获取 CPU 详细信息
-     * 包含各处理器负载、系统属性等
+     * 包含各处理器负载、系统属性、高 CPU 线程等
      */
     public Map<String, Object> getCpuDetails() {
         Map<String, Object> details = new LinkedHashMap<>();
         try {
             OperatingSystemMXBean osBean = (OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
             Runtime runtime = Runtime.getRuntime();
+            ThreadMXBean threadBean = ManagementFactory.getThreadMXBean();
 
             // 基本信息
             details.put("osName", System.getProperty("os.name"));
@@ -402,6 +403,43 @@ public class SystemDiagnosticService {
             // 启动参数
             List<String> inputArgs = ManagementFactory.getRuntimeMXBean().getInputArguments();
             details.put("jvmArgs", inputArgs);
+
+            // 高 CPU 线程 TOP 10
+            long[] threadIds = threadBean.getAllThreadIds();
+            List<Map<String, Object>> topCpuThreads = new ArrayList<>();
+            for (long tid : threadIds) {
+                long cpuTime = threadBean.getThreadCpuTime(tid);
+                if (cpuTime <= 0) continue;
+                ThreadInfo info = threadBean.getThreadInfo(tid, 3);
+                if (info == null) continue;
+                Map<String, Object> t = new LinkedHashMap<>();
+                t.put("id", tid);
+                t.put("name", info.getThreadName());
+                t.put("state", info.getThreadState().name());
+                t.put("cpuTimeMs", cpuTime / 1_000_000);
+                StackTraceElement[] stack = info.getStackTrace();
+                if (stack.length > 0) {
+                    t.put("stackTop", stack[0].toString());
+                }
+                topCpuThreads.add(t);
+            }
+            topCpuThreads.sort((a, b) -> Long.compare((long) b.get("cpuTimeMs"), (long) a.get("cpuTimeMs")));
+            if (topCpuThreads.size() > 10) {
+                topCpuThreads = topCpuThreads.subList(0, 10);
+            }
+            details.put("topCpuThreads", topCpuThreads);
+
+            // 操作系统环境
+            Map<String, Object> env = new LinkedHashMap<>();
+            env.put("user", System.getProperty("user.name"));
+            env.put("userDir", System.getProperty("user.dir"));
+            env.put("tempDir", System.getProperty("java.io.tmpdir"));
+            env.put("fileEncoding", System.getProperty("file.encoding"));
+            env.put("availableMemoryMB", osBean.getTotalPhysicalMemorySize() / 1024 / 1024);
+            env.put("freePhysicalMemoryMB", osBean.getFreePhysicalMemorySize() / 1024 / 1024);
+            env.put("totalSwapSpaceMB", osBean.getTotalSwapSpaceSize() / 1024 / 1024);
+            env.put("freeSwapSpaceMB", osBean.getFreeSwapSpaceSize() / 1024 / 1024);
+            details.put("env", env);
 
         } catch (Exception e) {
             details.put("error", e.getMessage());
