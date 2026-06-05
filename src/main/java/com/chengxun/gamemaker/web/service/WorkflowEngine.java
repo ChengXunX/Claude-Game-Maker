@@ -53,42 +53,120 @@ public class WorkflowEngine {
      */
     @PostConstruct
     public void init() {
-        // 标准游戏开发流程
-        WorkflowTemplate standard = new WorkflowTemplate("standard-game-dev", "标准游戏开发流程", "完整的游戏开发流程，包含策划、开发、测试、部署四个阶段");
-        WorkflowStep planStep = new WorkflowStep("plan", "系统策划", "system-planner", "分析游戏需求，制定系统架构和技术方案");
+        // ===== 1. 标准游戏开发流程 =====
+        WorkflowTemplate standard = new WorkflowTemplate("standard-game-dev", "标准游戏开发流程", "完整的游戏开发流程，包含策划、并行开发、测试审查、部署上线。适用于有客户端和服务端的完整项目");
+        WorkflowStep planStep = new WorkflowStep("plan", "系统策划", "system-planner", "分析游戏需求，制定系统架构和技术方案，输出设计文档");
         WorkflowStep devServerStep = new WorkflowStep("dev-server", "服务端开发", "server-dev", "实现服务端逻辑、API接口和数据库设计");
         devServerStep.addDependency("plan");
         WorkflowStep devClientStep = new WorkflowStep("dev-client", "客户端开发", "client-dev", "实现前端界面、交互逻辑和游戏画面");
         devClientStep.addDependency("plan");
         devServerStep.setParallel(true);
         devClientStep.setParallel(true);
-        WorkflowStep testStep = new WorkflowStep("test", "测试验证", "tester", "执行功能测试、性能测试和兼容性测试");
-        testStep.addDependency("dev-server");
-        testStep.addDependency("dev-client");
-        WorkflowStep deployStep = new WorkflowStep("deploy", "部署上线", "git-commit", "代码审查、合并分支并部署到生产环境");
-        deployStep.addDependency("test");
-        deployStep.setRequiresApproval(true);
+        WorkflowStep stdTestStep = new WorkflowStep("test", "测试验证", "tester",
+            "执行功能测试、性能测试和兼容性测试。如测试失败，需记录问题并通知开发Agent修复后重新测试，测试通过后方可进入下一步骤");
+        stdTestStep.addDependency("dev-server");
+        stdTestStep.addDependency("dev-client");
+        WorkflowStep stdReviewStep = new WorkflowStep("review", "代码审查", "server-dev", "审查代码质量、注释规范、安全性和性能问题");
+        stdReviewStep.addDependency("test");
+        WorkflowStep stdDeployStep = new WorkflowStep("deploy", "部署上线", "git-commit", "合并代码并部署到生产环境");
+        stdDeployStep.addDependency("review");
+        stdDeployStep.setRequiresApproval(true);
         standard.addStep(planStep);
         standard.addStep(devServerStep);
         standard.addStep(devClientStep);
-        standard.addStep(testStep);
-        standard.addStep(deployStep);
+        standard.addStep(stdTestStep);
+        standard.addStep(stdReviewStep);
+        standard.addStep(stdDeployStep);
 
-        // 快速原型流程
-        WorkflowTemplate rapid = new WorkflowTemplate("rapid-prototype", "快速原型流程", "快速验证游戏创意的轻量流程，适合小型项目和Demo");
-        WorkflowStep rapidPlan = new WorkflowStep("plan", "快速策划", "system-planner", "快速分析需求，确定核心玩法");
-        WorkflowStep rapidDev = new WorkflowStep("dev", "快速开发", "server-dev", "实现核心功能的最小可用版本");
+        // ===== 2. 服务端开发流程（无客户端） =====
+        WorkflowTemplate serverOnly = new WorkflowTemplate("server-only-dev", "服务端开发流程", "纯后端项目开发流程，适用于API服务、微服务、后台管理系统等无客户端的项目");
+        WorkflowStep soPlan = new WorkflowStep("plan", "系统策划", "system-planner", "分析需求，设计API接口、数据库模型和系统架构");
+        WorkflowStep soDev = new WorkflowStep("dev-server", "服务端开发", "server-dev", "实现业务逻辑、API接口、数据库设计和单元测试");
+        soDev.addDependency("plan");
+        WorkflowStep soTest = new WorkflowStep("test", "测试验证", "tester",
+            "执行接口测试、集成测试和性能测试。如测试失败，需记录问题并通知服务端开发Agent修复后重新测试，测试通过后方可进入下一步骤");
+        soTest.addDependency("dev-server");
+        WorkflowStep soReview = new WorkflowStep("review", "代码审查", "server-dev", "审查代码质量、API设计合理性、安全性和性能");
+        soReview.addDependency("test");
+        WorkflowStep soDeploy = new WorkflowStep("deploy", "部署上线", "git-commit", "合并代码并部署到生产环境");
+        soDeploy.addDependency("review");
+        soDeploy.setRequiresApproval(true);
+        serverOnly.addStep(soPlan);
+        serverOnly.addStep(soDev);
+        serverOnly.addStep(soTest);
+        serverOnly.addStep(soReview);
+        serverOnly.addStep(soDeploy);
+
+        // ===== 3. 客户端开发流程（无服务端） =====
+        WorkflowTemplate clientOnly = new WorkflowTemplate("client-only-dev", "客户端开发流程", "纯前端项目开发流程，适用于H5游戏、小程序、可视化页面等无服务端的项目");
+        WorkflowStep coPlan = new WorkflowStep("plan", "交互策划", "system-planner", "分析需求，设计页面结构、交互流程和视觉规范");
+        WorkflowStep coDesign = new WorkflowStep("design", "UI开发", "ui-dev", "实现页面布局、组件设计和样式开发");
+        coDesign.addDependency("plan");
+        WorkflowStep coDev = new WorkflowStep("dev-client", "功能开发", "client-dev", "实现交互逻辑、数据绑定和动画效果");
+        coDev.addDependency("design");
+        WorkflowStep coTest = new WorkflowStep("test", "测试验证", "tester",
+            "执行功能测试、兼容性测试和用户体验测试。如测试失败，需记录问题并通知客户端开发Agent修复后重新测试，测试通过后方可进入下一步骤");
+        coTest.addDependency("dev-client");
+        WorkflowStep coDeploy = new WorkflowStep("deploy", "发布上线", "git-commit", "合并代码并部署到CDN或静态资源服务器");
+        coDeploy.addDependency("test");
+        coDeploy.setRequiresApproval(true);
+        clientOnly.addStep(coPlan);
+        clientOnly.addStep(coDesign);
+        clientOnly.addStep(coDev);
+        clientOnly.addStep(coTest);
+        clientOnly.addStep(coDeploy);
+
+        // ===== 4. 快速原型流程 =====
+        WorkflowTemplate rapid = new WorkflowTemplate("rapid-prototype", "快速原型流程", "快速验证游戏创意的轻量流程，跳过审查直接测试，适合Demo和概念验证");
+        WorkflowStep rapidPlan = new WorkflowStep("plan", "快速策划", "system-planner", "快速分析需求，确定核心玩法和最小功能集");
+        WorkflowStep rapidDev = new WorkflowStep("dev", "快速开发", "server-dev", "实现核心功能的最小可用版本，不做过度设计");
         rapidDev.addDependency("plan");
-        WorkflowStep rapidTest = new WorkflowStep("test", "快速测试", "tester", "验证核心功能是否可用");
+        WorkflowStep rapidTest = new WorkflowStep("test", "快速测试", "tester",
+            "验证核心功能是否可用，记录明显Bug。如核心功能不可用，需通知开发Agent修复后重新测试");
         rapidTest.addDependency("dev");
         rapid.addStep(rapidPlan);
         rapid.addStep(rapidDev);
         rapid.addStep(rapidTest);
 
-        // 代码审查流程
-        WorkflowTemplate review = new WorkflowTemplate("code-review", "代码审查流程", "标准化的代码审查流程，确保代码质量");
-        WorkflowStep submitReview = new WorkflowStep("submit", "提交审查", "git-commit", "整理代码变更，准备审查材料");
-        WorkflowStep doReview = new WorkflowStep("review", "执行审查", "server-dev", "审查代码质量、安全性和规范性");
+        // ===== 5. 紧急修复流程 =====
+        WorkflowTemplate hotfix = new WorkflowTemplate("hotfix", "紧急修复流程", "线上问题快速修复流程，精简环节优先恢复服务，适用于紧急Bug和线上故障");
+        WorkflowStep hfAnalyze = new WorkflowStep("analyze", "问题分析", "system-planner", "分析线上问题根因，确定影响范围和修复方案");
+        WorkflowStep hfFix = new WorkflowStep("fix", "紧急修复", "server-dev", "实施最小化修复，不做无关改动，确保修复精准");
+        hfFix.addDependency("analyze");
+        WorkflowStep hfTest = new WorkflowStep("test", "验证测试", "tester",
+            "验证修复是否生效，确认无回归问题。如修复不彻底，需通知开发Agent补充修复后重新测试");
+        hfTest.addDependency("fix");
+        WorkflowStep hfDeploy = new WorkflowStep("deploy", "紧急上线", "git-commit", "合并修复代码并紧急部署到生产环境");
+        hfDeploy.addDependency("test");
+        hfDeploy.setRequiresApproval(true);
+        hotfix.addStep(hfAnalyze);
+        hotfix.addStep(hfFix);
+        hotfix.addStep(hfTest);
+        hotfix.addStep(hfDeploy);
+
+        // ===== 6. 功能分支流程 =====
+        WorkflowTemplate feature = new WorkflowTemplate("feature-branch", "功能分支流程", "标准的功能开发分支流程，包含设计、实现、测试、审查和合并，适用于常规功能迭代");
+        WorkflowStep ftDesign = new WorkflowStep("design", "功能设计", "system-planner", "设计功能方案、接口定义和数据模型");
+        WorkflowStep ftImpl = new WorkflowStep("implement", "功能实现", "server-dev", "在功能分支上实现代码，编写单元测试");
+        ftImpl.addDependency("design");
+        WorkflowStep ftTest = new WorkflowStep("test", "测试验证", "tester",
+            "执行功能测试和回归测试。如测试失败，需记录问题并通知开发Agent修复后重新测试，测试通过后方可进入下一步骤");
+        ftTest.addDependency("implement");
+        WorkflowStep ftReview = new WorkflowStep("review", "代码审查", "server-dev", "审查代码质量、设计合理性和测试覆盖率");
+        ftReview.addDependency("test");
+        WorkflowStep ftMerge = new WorkflowStep("merge", "合并上线", "git-commit", "审查通过后合并功能分支到主干并部署");
+        ftMerge.addDependency("review");
+        ftMerge.setRequiresApproval(true);
+        feature.addStep(ftDesign);
+        feature.addStep(ftImpl);
+        feature.addStep(ftTest);
+        feature.addStep(ftReview);
+        feature.addStep(ftMerge);
+
+        // ===== 7. 代码审查流程 =====
+        WorkflowTemplate review = new WorkflowTemplate("code-review", "代码审查流程", "标准化的代码审查流程，确保代码质量，适用于常规代码变更审查");
+        WorkflowStep submitReview = new WorkflowStep("submit", "提交审查", "git-commit", "整理代码变更，准备审查材料和变更说明");
+        WorkflowStep doReview = new WorkflowStep("review", "执行审查", "server-dev", "审查代码质量、安全性、规范性和潜在问题");
         doReview.addDependency("submit");
         WorkflowStep mergeStep = new WorkflowStep("merge", "合并部署", "git-commit", "审查通过后合并代码并触发部署");
         mergeStep.addDependency("review");
@@ -97,9 +175,27 @@ public class WorkflowEngine {
         review.addStep(doReview);
         review.addStep(mergeStep);
 
+        // ===== 8. 最小可用流程 =====
+        WorkflowTemplate minimal = new WorkflowTemplate("minimal", "最小可用流程", "极简三步流程，适合单人小改动、配置调整和文档更新");
+        WorkflowStep minDev = new WorkflowStep("dev", "开发", "server-dev", "完成功能开发或改动");
+        WorkflowStep minTest = new WorkflowStep("test", "测试", "tester",
+            "快速验证改动是否生效。如测试失败，需通知开发Agent修复后重新测试");
+        minTest.addDependency("dev");
+        WorkflowStep minDeploy = new WorkflowStep("deploy", "上线", "git-commit", "提交代码并部署");
+        minDeploy.addDependency("test");
+        minimal.addStep(minDev);
+        minimal.addStep(minTest);
+        minimal.addStep(minDeploy);
+
+        // 注册所有模板
         registerTemplate(standard);
+        registerTemplate(serverOnly);
+        registerTemplate(clientOnly);
         registerTemplate(rapid);
+        registerTemplate(hotfix);
+        registerTemplate(feature);
         registerTemplate(review);
+        registerTemplate(minimal);
     }
     public void destroy() {
         executorService.shutdown();

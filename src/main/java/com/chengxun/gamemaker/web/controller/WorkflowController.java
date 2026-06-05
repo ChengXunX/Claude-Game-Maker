@@ -138,6 +138,10 @@ public class WorkflowController {
                 "- tester: 测试，负责功能和性能测试\n" +
                 "- git-commit: Git专员，负责代码管理和部署\n" +
                 "- producer: 制作人，负责统筹管理\n\n" +
+                "设计原则：\n" +
+                "- 测试步骤的taskDescription应说明：如测试失败需通知开发Agent修复后重新测试\n" +
+                "- 部署步骤建议设置requiresApproval为true\n" +
+                "- 可并行的开发步骤建议设置parallel为true\n\n" +
                 "请严格按以下JSON格式返回，不要包含其他内容：\n" +
                 "{\"name\":\"模板名称\",\"description\":\"模板描述\",\"steps\":[{\"id\":\"step-1\",\"name\":\"步骤名称\",\"agentRole\":\"角色\",\"taskDescription\":\"任务描述\",\"dependencies\":[],\"requiresApproval\":false}]}\n\n" +
                 "注意：\n" +
