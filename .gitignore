@@ -90,6 +90,9 @@ settings.properties
 *.pid
 app.pid
 
+# Runtime logs
+logs/
+
 # Keystore / SSL certificates
 *.p12
 *.jks
