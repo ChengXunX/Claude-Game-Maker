@@ -41,14 +41,58 @@ public class ClaudeCliEngine {
         processes.values().forEach(ProcessInfo::destroy);
         processes.clear();
     }
-    
-    public String sendMessage(String agentId, String sessionId, String message, 
+
+    /**
+     * 销毁指定 Agent 的 CLI 进程
+     * 当 Agent 的 API 配置变更时调用，下次发送消息时会创建新进程
+     *
+     * @param agentId Agent ID
+     */
+    public void destroyProcess(String agentId) {
+        ProcessInfo processInfo = processes.remove(agentId);
+        if (processInfo != null) {
+            processInfo.destroy();
+            log.info("Destroyed Claude CLI process for agent: {}", agentId);
+        }
+    }
+
+    /**
+     * 检查指定 Agent 的 CLI 进程是否存活
+     *
+     * @param agentId Agent ID
+     * @return 进程是否存活
+     */
+    public boolean isProcessAlive(String agentId) {
+        ProcessInfo processInfo = processes.get(agentId);
+        return processInfo != null && processInfo.isAlive();
+    }
+
+    public String sendMessage(String agentId, String sessionId, String message,
                               String workDir, String apiKey, String apiUrl, String model) {
-        ProcessInfo processInfo = getOrCreateProcess(agentId, sessionId, workDir, apiKey, apiUrl, model);
+        return sendMessage(agentId, sessionId, message, workDir, apiKey, apiUrl, model, null);
+    }
+
+    /**
+     * 发送消息到 Claude CLI（带 MCP 配置）
+     *
+     * @param agentId    Agent ID
+     * @param sessionId  会话 ID
+     * @param message    消息内容
+     * @param workDir    工作目录
+     * @param apiKey     API Key
+     * @param apiUrl     API URL
+     * @param model      模型
+     * @param mcpConfig  MCP 配置 JSON（可选）
+     * @return Claude 的响应
+     */
+    public String sendMessage(String agentId, String sessionId, String message,
+                              String workDir, String apiKey, String apiUrl, String model,
+                              String mcpConfig) {
+        ProcessInfo processInfo = getOrCreateProcess(agentId, sessionId, workDir, apiKey, apiUrl, model, mcpConfig);
         if (processInfo == null) {
             return "Failed to create Claude CLI process";
         }
-        
+
         return executeCommand(processInfo, message, agentId);
     }
     
@@ -56,15 +100,21 @@ public class ClaudeCliEngine {
         return sessionIds.get(agentId);
     }
     
-    private ProcessInfo getOrCreateProcess(String agentId, String sessionId, 
+    private ProcessInfo getOrCreateProcess(String agentId, String sessionId,
                                            String workDir, String apiKey, String apiUrl, String model) {
+        return getOrCreateProcess(agentId, sessionId, workDir, apiKey, apiUrl, model, null);
+    }
+
+    private ProcessInfo getOrCreateProcess(String agentId, String sessionId,
+                                           String workDir, String apiKey, String apiUrl, String model,
+                                           String mcpConfig) {
         ProcessInfo existing = processes.get(agentId);
         if (existing != null && existing.isAlive()) {
             return existing;
         }
-        
+
         try {
-            return createProcess(agentId, sessionId, workDir, apiKey, apiUrl, model);
+            return createProcess(agentId, sessionId, workDir, apiKey, apiUrl, model, mcpConfig);
         } catch (Exception e) {
             log.error("Failed to create Claude CLI process for agent: {}", agentId, e);
             return null;
@@ -73,15 +123,21 @@ public class ClaudeCliEngine {
     
     private ProcessInfo createProcess(String agentId, String sessionId,
                                       String workDir, String apiKey, String apiUrl, String model) throws IOException {
+        return createProcess(agentId, sessionId, workDir, apiKey, apiUrl, model, null);
+    }
+
+    private ProcessInfo createProcess(String agentId, String sessionId,
+                                      String workDir, String apiKey, String apiUrl, String model,
+                                      String mcpConfig) throws IOException {
         String installPath = appConfig.getClaude().getInstallPath();
-        
+
         ProcessBuilder pb = new ProcessBuilder();
         pb.redirectErrorStream(false);
-        
+
         if (workDir != null && !workDir.isEmpty()) {
             pb.directory(new File(workDir));
         }
-        
+
         java.util.List<String> command = new java.util.ArrayList<>();
         command.add(installPath);
         command.add("--print");
@@ -90,18 +146,34 @@ public class ClaudeCliEngine {
         command.add("--output-format");
         command.add("stream-json");
         command.add("--verbose");
-        command.add("--dangerously-skip-permissions");
-        
+
         if (model != null && !model.isEmpty()) {
             command.add("--model");
             command.add(model);
         }
-        
+
         if (sessionId != null && !sessionId.isEmpty()) {
             command.add("--resume");
             command.add(sessionId);
         }
-        
+
+        // 注入 MCP 配置
+        if (mcpConfig != null && !mcpConfig.isEmpty()) {
+            try {
+                // 写入临时文件
+                java.nio.file.Path mcpFile = java.nio.file.Path.of(
+                    System.getProperty("java.io.tmpdir"),
+                    "mcp-" + agentId.replaceAll("[^a-zA-Z0-9-]", "_") + ".json"
+                );
+                java.nio.file.Files.writeString(mcpFile, mcpConfig);
+                command.add("--mcp-config");
+                command.add(mcpFile.toString());
+                log.info("MCP config injected for agent: {}", agentId);
+            } catch (Exception e) {
+                log.warn("Failed to write MCP config for agent {}: {}", agentId, e.getMessage());
+            }
+        }
+
         pb.command(command);
         
         Map<String, String> env = pb.environment();
@@ -126,6 +198,7 @@ public class ClaudeCliEngine {
             OutputStream stdin = processInfo.process.getOutputStream();
             stdin.write((message + "\n").getBytes());
             stdin.flush();
+            // 关闭 stdin 以通知进程输入结束（--print 模式需要）
             stdin.close();
             
             StringBuilder output = new StringBuilder();
@@ -193,19 +266,21 @@ public class ClaudeCliEngine {
             }
             
             stderrThread.join(3000);
-            processes.remove(agentId);
-            
+
             String result = output.toString().trim();
             if (result.isEmpty() && stderrOutput.length() > 0) {
                 return "Error: " + stderrOutput.toString().trim();
             }
-            
+
             return result.isEmpty() ? "No response from Claude" : result;
-            
+
         } catch (Exception e) {
             log.error("Error executing command for agent: {}", agentId, e);
-            processes.remove(agentId);
             return "Error: " + e.getMessage();
+        } finally {
+            // 确保进程被销毁，防止泄漏
+            processes.remove(agentId);
+            processInfo.destroy();
         }
     }
     

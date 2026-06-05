@@ -1,0 +1,1058 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>安装向导 - ChengXun Game Maker</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        body { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); min-height: 100vh; }
+        .install-card { max-width: 750px; margin: 0 auto; }
+        .step-indicator { display: flex; justify-content: center; margin-bottom: 2rem; flex-wrap: wrap; }
+        .step { width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+                font-weight: bold; margin: 0 4px; transition: all 0.3s; font-size: 0.85rem; }
+        .step.active { background: #0d6efd; color: white; }
+        .step.completed { background: #198754; color: white; }
+        .step.pending { background: #6c757d; color: white; }
+        .step-line { width: 20px; height: 2px; background: #6c757d; align-self: center; }
+        .step-line.completed { background: #198754; }
+        .fade-in { animation: fadeIn 0.3s ease-in; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .test-btn { min-width: 100px; }
+        .test-result { margin-top: 8px; padding: 8px; border-radius: 4px; font-size: 0.85rem; }
+        .test-success { background: #19875433; color: #75b798; border: 1px solid #198754; }
+        .test-fail { background: #dc354533; color: #ea868f; border: 1px solid #dc3545; }
+        .text-muted { color: #adb5bd !important; }
+        .card-header h5 { color: #e9ecef; }
+        small.text-muted { color: #adb5bd !important; }
+    </style>
+</head>
+<body class="d-flex align-items-center py-4">
+    <div class="container">
+        <div class="install-card">
+            <div class="text-center mb-4">
+                <h2 class="text-white"><i class="bi bi-controller"></i> ChengXun Game Maker</h2>
+                <p class="text-light opacity-75">系统安装向导</p>
+                <button class="btn btn-outline-danger btn-sm mt-2" onclick="resetInstall()" title="重置安装状态，方便重新测试">
+                    <i class="bi bi-arrow-counterclockwise"></i> 重置安装
+                </button>
+            </div>
+
+            <!-- 步骤指示器 -->
+            <div class="step-indicator" id="stepIndicator"></div>
+
+            <!-- Step 1: 数据库 -->
+            <div class="card bg-dark border-secondary fade-in step-panel" id="step-1">
+                <div class="card-header"><h5 class="mb-0"><i class="bi bi-database"></i> 数据库连接</h5></div>
+                <div class="card-body">
+                    <p class="text-muted mb-3">选择数据库类型并配置连接信息。</p>
+                    <div class="mb-3">
+                        <label class="form-label text-light">数据库类型</label>
+                        <select class="form-select bg-dark text-light border-secondary" id="dbType" onchange="toggleDbType()">
+                            <option value="h2">H2 内置数据库（测试/演示）</option>
+                            <option value="mysql">MySQL（生产推荐）</option>
+                        </select>
+                    </div>
+                    <!-- MySQL 配置 -->
+                    <div id="mysqlConfig" style="display:none">
+                        <div class="row mb-3">
+                            <div class="col-8">
+                                <label class="form-label text-light">主机</label>
+                                <input type="text" class="form-control bg-dark text-light border-secondary" id="mysqlHost" value="localhost" autocomplete="off">
+                            </div>
+                            <div class="col-4">
+                                <label class="form-label text-light">端口</label>
+                                <input type="number" class="form-control bg-dark text-light border-secondary" id="mysqlPort" value="3306" autocomplete="off">
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label text-light">数据库名</label>
+                            <input type="text" class="form-control bg-dark text-light border-secondary" id="mysqlDb" value="game_maker" autocomplete="off">
+                        </div>
+                        <div class="row mb-3">
+                            <div class="col-6">
+                                <label class="form-label text-light">用户名</label>
+                                <input type="text" class="form-control bg-dark text-light border-secondary" id="mysqlUser" value="root" autocomplete="off">
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label text-light">密码</label>
+                                <div class="input-group">
+                                    <input type="password" class="form-control bg-dark text-light border-secondary" id="mysqlPass" autocomplete="new-password">
+                                    <button class="btn btn-outline-secondary" type="button" onclick="togglePassword('mysqlPass', this)">
+                                        <i class="bi bi-eye"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="dbResult" class="test-result" style="display:none"></div>
+                    <div class="d-flex justify-content-between mt-3">
+                        <div></div>
+                        <div>
+                            <button class="btn btn-outline-info test-btn me-2" onclick="testDb()">
+                                <i class="bi bi-lightning"></i> 测试连接
+                            </button>
+                            <button class="btn btn-primary" onclick="saveDbAndContinue()">
+                                <i class="bi bi-check"></i> 保存并继续
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 2: 初始化数据库 -->
+            <div class="card bg-dark border-secondary fade-in step-panel" id="step-2" style="display:none">
+                <div class="card-header"><h5 class="mb-0"><i class="bi bi-table"></i> 初始化数据库</h5></div>
+                <div class="card-body">
+                    <p class="text-muted mb-3">创建数据表和初始数据，执行过程实时显示。</p>
+                    <div id="initProgress" style="display:none">
+                        <div class="progress mb-3" style="height: 20px;">
+                            <div id="initProgressBar" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%">0%</div>
+                        </div>
+                        <div id="initLog" class="bg-black text-success p-3 rounded" style="max-height: 300px; overflow-y: auto; font-family: monospace; font-size: 0.85em;"></div>
+                    </div>
+                    <div id="initResult" class="test-result" style="display:none"></div>
+                    <div class="d-flex justify-content-between mt-3">
+                        <button class="btn btn-outline-secondary" onclick="goStep(1)"><i class="bi bi-arrow-left"></i> 上一步</button>
+                        <button class="btn btn-primary" id="btnInit" onclick="initDb()"><i class="bi bi-database-add"></i> 初始化数据库</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 3: 系统配置 -->
+            <div class="card bg-dark border-secondary fade-in step-panel" id="step-3" style="display:none">
+                <div class="card-header"><h5 class="mb-0"><i class="bi bi-gear"></i> 系统配置</h5></div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <label class="form-label text-light">系统名称</label>
+                        <input type="text" class="form-control bg-dark text-light border-secondary" id="sysName" value="ChengXun Game Maker">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label text-light">JWT 密钥 <span class="text-danger">*</span></label>
+                        <div class="input-group">
+                            <input type="text" class="form-control bg-dark text-light border-secondary" id="jwtSecret" placeholder="至少32位随机字符串">
+                            <button class="btn btn-outline-secondary" onclick="genJwt()"><i class="bi bi-arrow-clockwise"></i> 生成</button>
+                        </div>
+                        <small class="text-muted">用于 Token 签名，请使用随机强密钥</small>
+                    </div>
+                    <div class="d-flex justify-content-between mt-3">
+                        <button class="btn btn-outline-secondary" onclick="goStep(2)"><i class="bi bi-arrow-left"></i> 上一步</button>
+                        <button class="btn btn-primary" onclick="saveSystem()"><i class="bi bi-check"></i> 保存并继续</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 4: Claude API -->
+            <div class="card bg-dark border-secondary fade-in step-panel" id="step-4" style="display:none">
+                <div class="card-header"><h5 class="mb-0"><i class="bi bi-robot"></i> Claude API 配置</h5></div>
+                <div class="card-body">
+                    <p class="text-muted mb-3">配置 AI 引擎的 API 连接。点击下方平台按钮可快速填充。</p>
+
+                    <!-- 平台预设按钮 -->
+                    <div class="mb-3">
+                        <label class="form-label text-light">快速选择平台</label>
+                        <div class="d-flex flex-wrap gap-2">
+                            <button type="button" class="btn btn-sm btn-outline-info" onclick="applyPreset('anthropic')">✦ Anthropic</button>
+                            <button type="button" class="btn btn-sm btn-outline-success" onclick="applyPreset('openai')">⚡ OpenAI</button>
+                            <button type="button" class="btn btn-sm btn-outline-warning" onclick="applyPreset('mimo')">🤖 小米 MiMo</button>
+                            <button type="button" class="btn btn-sm btn-outline-primary" onclick="applyPreset('qwen')">☁ 阿里云通义</button>
+                            <button type="button" class="btn btn-sm btn-outline-info" onclick="applyPreset('tencent')">🐧 腾讯云</button>
+                            <button type="button" class="btn btn-sm btn-outline-danger" onclick="applyPreset('volcengine')">🌋 火山引擎</button>
+                            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="applyPreset('baidu')">🔍 百度智能云</button>
+                            <button type="button" class="btn btn-sm btn-outline-light" onclick="applyPreset('stepfun')">🚀 阶跃星辰</button>
+                            <button type="button" class="btn btn-sm btn-outline-info" onclick="applyPreset('zhipu')">💬 智谱 AI</button>
+                            <button type="button" class="btn btn-sm btn-outline-success" onclick="applyPreset('minimax')">🧠 MiniMax</button>
+                            <button type="button" class="btn btn-sm btn-outline-warning" onclick="applyPreset('moonshot')">🌙 月之暗面 Kimi</button>
+                            <button type="button" class="btn btn-sm btn-outline-primary" onclick="applyPreset('xfyun')">🎤 科大讯飞</button>
+                            <button type="button" class="btn btn-sm btn-outline-light" onclick="applyPreset('openrouter')">🔀 OpenRouter</button>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label text-light">API Key <span class="text-danger">*</span></label>
+                        <div class="input-group">
+                            <input type="password" class="form-control bg-dark text-light border-secondary" id="claudeKey" placeholder="sk-ant-..." autocomplete="new-password">
+                            <button class="btn btn-outline-secondary" type="button" onclick="togglePassword('claudeKey', this)">
+                                <i class="bi bi-eye"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label text-light">API URL</label>
+                        <input type="text" class="form-control bg-dark text-light border-secondary" id="claudeUrl" value="https://api.anthropic.com" placeholder="https://api.anthropic.com">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label text-light">模型</label>
+                        <select class="form-select bg-dark text-light border-secondary" id="claudeModelSelect" onchange="onModelSelectChange()">
+                            <option value="">-- 选择预设模型 --</option>
+                            <option value="claude-sonnet-4-20250514">Claude Sonnet 4</option>
+                            <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5</option>
+                            <option value="claude-opus-4-20250918">Claude Opus 4</option>
+                            <option value="custom">自定义模型...</option>
+                        </select>
+                        <input type="text" class="form-control bg-dark text-light border-secondary mt-2" id="claudeModelCustom"
+                            placeholder="输入模型名称" style="display:none;">
+                        <input type="hidden" id="claudeModel" value="">
+                        <div class="form-check mt-2">
+                            <input class="form-check-input" type="checkbox" id="longContext" onchange="onLongContextChange()">
+                            <label class="form-check-label text-muted" for="longContext">
+                                长上下文模式 (追加 [1m] 参数)
+                            </label>
+                        </div>
+                    </div>
+                    <div id="claudeResult" class="test-result" style="display:none"></div>
+                    <div class="d-flex justify-content-between mt-3">
+                        <button class="btn btn-outline-secondary" onclick="goStep(3)"><i class="bi bi-arrow-left"></i> 上一步</button>
+                        <div>
+                            <button class="btn btn-outline-info test-btn me-2" onclick="testClaude()"><i class="bi bi-lightning"></i> 测试连接</button>
+                            <button class="btn btn-primary" onclick="saveClaude()"><i class="bi bi-check"></i> 保存并继续</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 5: 邮件配置 -->
+            <div class="card bg-dark border-secondary fade-in step-panel" id="step-5" style="display:none">
+                <div class="card-header"><h5 class="mb-0"><i class="bi bi-envelope"></i> 邮件配置 <span class="badge bg-secondary">可选</span></h5></div>
+                <div class="card-body">
+                    <p class="text-muted mb-3">配置 SMTP 邮件服务，用于通知和注册验证。</p>
+                    <div class="row mb-3">
+                        <div class="col-8">
+                            <label class="form-label text-light">SMTP 服务器</label>
+                            <input type="text" class="form-control bg-dark text-light border-secondary" id="emailHost" placeholder="smtp.example.com">
+                        </div>
+                        <div class="col-4">
+                            <label class="form-label text-light">端口</label>
+                            <input type="number" class="form-control bg-dark text-light border-secondary" id="emailPort" value="587">
+                        </div>
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col-6">
+                            <label class="form-label text-light">用户名</label>
+                            <input type="text" class="form-control bg-dark text-light border-secondary" id="emailUser">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label text-light">密码</label>
+                            <input type="password" class="form-control bg-dark text-light border-secondary" id="emailPass" autocomplete="new-password">
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label text-light">发件人地址</label>
+                        <input type="email" class="form-control bg-dark text-light border-secondary" id="emailFrom" placeholder="noreply@example.com">
+                    </div>
+                    <div id="emailResult" class="test-result" style="display:none"></div>
+                    <div class="d-flex justify-content-between mt-3">
+                        <button class="btn btn-outline-secondary" onclick="goStep(4)"><i class="bi bi-arrow-left"></i> 上一步</button>
+                        <div>
+                            <button class="btn btn-outline-info test-btn me-2" onclick="testEmail()"><i class="bi bi-lightning"></i> 测试连接</button>
+                            <button class="btn btn-outline-primary" onclick="skipStep(6)">跳过</button>
+                            <button class="btn btn-primary ms-2" onclick="saveEmail()"><i class="bi bi-check"></i> 保存并继续</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 6: 飞书配置 -->
+            <div class="card bg-dark border-secondary fade-in step-panel" id="step-6" style="display:none">
+                <div class="card-header"><h5 class="mb-0"><i class="bi bi-chat-dots"></i> 飞书配置 <span class="badge bg-secondary">可选</span></h5></div>
+                <div class="card-body">
+                    <p class="text-muted mb-3">配置飞书机器人，用于接收系统通知（如Agent任务完成、错误告警等）。</p>
+                    <div class="alert alert-info py-2 mb-3" style="font-size:0.85rem;">
+                        <strong>如何获取？</strong> 飞书管理后台 → 群设置 → 群机器人 → 添加机器人 → 自定义机器人 → 复制 Webhook 地址
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label text-light">Webhook URL <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control bg-dark text-light border-secondary" id="feishuWebhook" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/xxx">
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col-6">
+                            <label class="form-label text-light">App ID <small class="text-muted">（可选）</small></label>
+                            <input type="text" class="form-control bg-dark text-light border-secondary" id="feishuAppId" placeholder="如需更高级功能才需要填写">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label text-light">App Secret <small class="text-muted">（可选）</small></label>
+                            <input type="password" class="form-control bg-dark text-light border-secondary" id="feishuSecret" autocomplete="new-password">
+                        </div>
+                    </div>
+                    <div id="feishuResult" class="test-result" style="display:none"></div>
+                    <div class="d-flex justify-content-between mt-3">
+                        <button class="btn btn-outline-secondary" onclick="goStep(5)"><i class="bi bi-arrow-left"></i> 上一步</button>
+                        <div>
+                            <button class="btn btn-outline-info test-btn me-2" onclick="testFeishu()"><i class="bi bi-lightning"></i> 测试连接</button>
+                            <button class="btn btn-outline-primary" onclick="skipStep(7)">跳过</button>
+                            <button class="btn btn-primary ms-2" onclick="saveFeishu()"><i class="bi bi-check"></i> 保存并继续</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 7: 钉钉配置 -->
+            <div class="card bg-dark border-secondary fade-in step-panel" id="step-7" style="display:none">
+                <div class="card-header"><h5 class="mb-0"><i class="bi bi-messenger"></i> 钉钉配置 <span class="badge bg-secondary">可选</span></h5></div>
+                <div class="card-body">
+                    <p class="text-muted mb-3">配置钉钉机器人，用于接收系统通知（如Agent任务完成、错误告警等）。</p>
+                    <div class="alert alert-info py-2 mb-3" style="font-size:0.85rem;">
+                        <strong>如何获取？</strong> 钉钉群 → 群设置 → 智能群助手 → 添加机器人 → 自定义机器人 → 复制 Webhook 地址
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label text-light">Webhook URL <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control bg-dark text-light border-secondary" id="dingWebhook" placeholder="https://oapi.dingtalk.com/robot/send?access_token=xxx">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label text-light">加签密钥 <small class="text-muted">（安全设置中选择"加签"时需要）</small></label>
+                        <input type="password" class="form-control bg-dark text-light border-secondary" id="dingSecret" autocomplete="new-password">
+                    </div>
+                    <div id="dingResult" class="test-result" style="display:none"></div>
+                    <div class="d-flex justify-content-between mt-3">
+                        <button class="btn btn-outline-secondary" onclick="goStep(6)"><i class="bi bi-arrow-left"></i> 上一步</button>
+                        <div>
+                            <button class="btn btn-outline-info test-btn me-2" onclick="testDing()"><i class="bi bi-lightning"></i> 测试连接</button>
+                            <button class="btn btn-outline-primary" onclick="skipStep(8)">跳过</button>
+                            <button class="btn btn-primary ms-2" onclick="saveDing()"><i class="bi bi-check"></i> 保存并继续</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 8: Redis 配置 -->
+            <div class="card bg-dark border-secondary fade-in step-panel" id="step-8" style="display:none">
+                <div class="card-header"><h5 class="mb-0"><i class="bi bi-hdd-stack"></i> Redis 配置 <span class="badge bg-secondary">可选</span></h5></div>
+                <div class="card-body">
+                    <p class="text-muted mb-3">配置 Redis 用于缓存和分布式锁。</p>
+                    <div class="row mb-3">
+                        <div class="col-8">
+                            <label class="form-label text-light">主机</label>
+                            <input type="text" class="form-control bg-dark text-light border-secondary" id="redisHost" value="localhost">
+                        </div>
+                        <div class="col-4">
+                            <label class="form-label text-light">端口</label>
+                            <input type="number" class="form-control bg-dark text-light border-secondary" id="redisPort" value="6379">
+                        </div>
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col-6">
+                            <label class="form-label text-light">密码（可选）</label>
+                            <input type="password" class="form-control bg-dark text-light border-secondary" id="redisPass" autocomplete="new-password">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label text-light">数据库</label>
+                            <input type="number" class="form-control bg-dark text-light border-secondary" id="redisDb" value="0">
+                        </div>
+                    </div>
+                    <div id="redisResult" class="test-result" style="display:none"></div>
+                    <div class="d-flex justify-content-between mt-3">
+                        <button class="btn btn-outline-secondary" onclick="goStep(7)"><i class="bi bi-arrow-left"></i> 上一步</button>
+                        <div>
+                            <button class="btn btn-outline-info test-btn me-2" onclick="testRedis()"><i class="bi bi-lightning"></i> 测试连接</button>
+                            <button class="btn btn-outline-primary" onclick="skipStep(9)">跳过</button>
+                            <button class="btn btn-primary ms-2" onclick="saveRedis()"><i class="bi bi-check"></i> 保存并继续</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 9: 创建管理员 -->
+            <div class="card bg-dark border-secondary fade-in step-panel" id="step-9" style="display:none">
+                <div class="card-header"><h5 class="mb-0"><i class="bi bi-person-gear"></i> 创建管理员账号</h5></div>
+                <div class="card-body">
+                    <p class="text-muted mb-3">设置系统管理员账号，用于登录和管理整个系统。</p>
+                    <div class="mb-3">
+                        <label class="form-label text-light">用户名 <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control bg-dark text-light border-secondary" id="admUser" value="admin" minlength="3" autocomplete="off">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label text-light">密码 <span class="text-danger">*</span></label>
+                        <div class="input-group">
+                            <input type="password" class="form-control bg-dark text-light border-secondary" id="admPass" placeholder="至少8位" minlength="8" autocomplete="new-password">
+                            <button class="btn btn-outline-secondary" type="button" onclick="togglePassword('admPass', this)">
+                                <i class="bi bi-eye"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label text-light">确认密码 <span class="text-danger">*</span></label>
+                        <input type="password" class="form-control bg-dark text-light border-secondary" id="admPassConfirm" placeholder="再次输入密码" minlength="8" autocomplete="new-password">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label text-light">邮箱 <span class="text-danger">*</span></label>
+                        <input type="email" class="form-control bg-dark text-light border-secondary" id="admEmail" placeholder="admin@example.com" required>
+                        <div class="form-text text-muted">用于找回密码和接收通知</div>
+                    </div>
+                    <div id="admResult" class="test-result" style="display:none"></div>
+                    <div class="d-flex justify-content-between mt-3">
+                        <button class="btn btn-outline-secondary" onclick="goStep(8)"><i class="bi bi-arrow-left"></i> 上一步</button>
+                        <button class="btn btn-success" onclick="createAdmin()"><i class="bi bi-person-check"></i> 创建并完成安装</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 10: 完成 -->
+            <div class="card bg-dark border-secondary fade-in step-panel" id="step-10" style="display:none">
+                <div class="card-header bg-success"><h5 class="mb-0 text-white"><i class="bi bi-check-circle"></i> 安装完成</h5></div>
+                <div class="card-body text-center">
+                    <i class="bi bi-check-circle-fill text-success" style="font-size: 4rem;"></i>
+                    <h4 class="text-light mt-3">系统安装成功！</h4>
+                    <p class="text-muted mb-4">ChengXun Game Maker 已准备就绪，所有配置已保存到数据库。</p>
+                    <div class="mb-4 text-start">
+                        <h6 class="text-light">下一步：</h6>
+                        <ul class="text-muted">
+                            <li>使用管理员账号登录</li>
+                            <li>创建项目并设置目标</li>
+                            <li>Agent 将自动开始工作</li>
+                        </ul>
+                    </div>
+                    <button class="btn btn-primary btn-lg" onclick="goToLogin()"><i class="bi bi-box-arrow-in-right"></i> 前往登录</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const TOTAL_STEPS = 10;
+        let cur = 1;
+
+        // 步骤名称
+        const NAMES = ['', '数据库', '初始化', '系统配置', 'Claude API', '邮件', '飞书', '钉钉', 'Redis', '管理员', '完成'];
+
+        function renderIndicator() {
+            let html = '';
+            for (let i = 1; i <= TOTAL_STEPS; i++) {
+                if (i > 1) html += `<div class="step-line${i <= cur ? ' completed' : ''}"></div>`;
+                const cls = i < cur ? 'completed' : i === cur ? 'active' : 'pending';
+                html += `<div class="step ${cls}" title="${NAMES[i]}">${i < cur ? '<i class="bi bi-check"></i>' : i}</div>`;
+            }
+            document.getElementById('stepIndicator').innerHTML = html;
+        }
+
+        function goStep(n) {
+            document.getElementById('step-' + cur).style.display = 'none';
+            document.getElementById('step-' + n).style.display = 'block';
+            cur = n;
+            renderIndicator();
+        }
+
+        function skipStep(next) { goStep(next); }
+
+        // ===== API 调用 =====
+
+        async function api(url, body) {
+            try {
+                const resp = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body || {})
+                });
+                if (!resp.ok) {
+                    var errorMsg = 'HTTP ' + resp.status;
+                    try {
+                        var errData = await resp.json();
+                        errorMsg = errData.message || errData.error || errorMsg;
+                    } catch (e) {
+                        // 非JSON响应，使用状态码
+                    }
+                    return { success: false, error: errorMsg };
+                }
+
+                // 检查响应是否为JSON格式
+                var contentType = resp.headers.get('content-type');
+                if (contentType && contentType.includes('application/json')) {
+                    return resp.json();
+                }
+
+                // 尝试解析为JSON，如果失败则返回空对象
+                try {
+                    return await resp.json();
+                } catch (e) {
+                    console.warn('Response is not JSON:', url);
+                    return { success: true, message: '操作成功' };
+                }
+            } catch (e) {
+                console.error('API call failed:', url, e);
+                return { success: false, error: '网络请求失败: ' + e.message };
+            }
+        }
+
+        function showResult(id, data, successMsg) {
+            const el = document.getElementById(id);
+            el.style.display = 'block';
+            if (data.success) {
+                el.className = 'test-result test-success';
+                el.innerHTML = '<i class="bi bi-check-circle"></i> ' + (data.message || successMsg || '成功');
+            } else {
+                el.className = 'test-result test-fail';
+                el.innerHTML = '<i class="bi bi-x-circle"></i> ' + (data.error || '失败');
+            }
+            return data.success;
+        }
+
+        function genJwt() {
+            const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*';
+            let s = '';
+            for (let i = 0; i < 48; i++) s += chars[Math.floor(Math.random() * chars.length)];
+            document.getElementById('jwtSecret').value = s;
+        }
+
+        // 切换数据库类型显示
+        // 密码显示/隐藏切换
+        function togglePassword(inputId, btn) {
+            var input = document.getElementById(inputId);
+            var icon = btn.querySelector('i');
+            if (input.type === 'password') {
+                input.type = 'text';
+                icon.className = 'bi bi-eye-slash';
+            } else {
+                input.type = 'password';
+                icon.className = 'bi bi-eye';
+            }
+        }
+
+        function toggleDbType() {
+            const dbType = document.getElementById('dbType').value;
+            document.getElementById('mysqlConfig').style.display = dbType === 'mysql' ? 'block' : 'none';
+        }
+
+        // Step 1: 测试数据库
+        async function testDb() {
+            const dbType = document.getElementById('dbType').value;
+            let data;
+            if (dbType === 'mysql') {
+                data = await api('/api/install/test-mysql-db', {
+                    host: document.getElementById('mysqlHost').value,
+                    port: parseInt(document.getElementById('mysqlPort').value),
+                    database: document.getElementById('mysqlDb').value,
+                    username: document.getElementById('mysqlUser').value,
+                    password: document.getElementById('mysqlPass').value
+                });
+            } else {
+                data = await api('/api/install/test-db');
+            }
+            if (showResult('dbResult', data, `连接成功: ${data.database || data.message}`)) {
+                return true;
+            }
+            return false;
+        }
+
+        // 保存数据库配置并继续
+        async function saveDbAndContinue() {
+            const dbType = document.getElementById('dbType').value;
+            if (dbType === 'mysql') {
+                // 先测试连接
+                const testOk = await testDb();
+                if (!testOk) return;
+                // 保存 MySQL 配置
+                const data = await api('/api/install/save-mysql', {
+                    host: document.getElementById('mysqlHost').value,
+                    port: parseInt(document.getElementById('mysqlPort').value),
+                    database: document.getElementById('mysqlDb').value,
+                    username: document.getElementById('mysqlUser').value,
+                    password: document.getElementById('mysqlPass').value
+                });
+                if (data.success === false) {
+                    showResult('dbResult', data);
+                    return;
+                }
+            }
+            goStep(2);
+        }
+
+        // ===== Step 2: 初始化数据库 =====
+
+        // 模型选择变化
+        function onModelSelectChange() {
+            var select = document.getElementById('claudeModelSelect');
+            var customInput = document.getElementById('claudeModelCustom');
+            var hiddenInput = document.getElementById('claudeModel');
+
+            if (select.value === 'custom') {
+                customInput.style.display = 'block';
+                customInput.focus();
+                hiddenInput.value = customInput.value;
+            } else {
+                customInput.style.display = 'none';
+                hiddenInput.value = select.value;
+            }
+            updateModelValue();
+        }
+
+        /**
+         * 长上下文开关变化时更新模型名称
+         */
+        function onLongContextChange() {
+            updateModelValue();
+        }
+
+        /**
+         * 更新最终模型值（处理长上下文参数）
+         */
+        function updateModelValue() {
+            var select = document.getElementById('claudeModelSelect');
+            var customInput = document.getElementById('claudeModelCustom');
+            var hiddenInput = document.getElementById('claudeModel');
+            var longCtx = document.getElementById('longContext').checked;
+
+            var baseModel = '';
+            if (select.value === 'custom') {
+                baseModel = customInput.value;
+            } else {
+                baseModel = select.value;
+            }
+
+            // 移除已有的 [1m] 后缀，再根据开关决定是否添加
+            baseModel = baseModel.replace(/\[1m\]$/, '');
+            if (longCtx && baseModel) {
+                hiddenInput.value = baseModel + '[1m]';
+            } else {
+                hiddenInput.value = baseModel;
+            }
+        }
+
+        // 平台预设配置
+        var PLATFORM_PRESETS = {
+            anthropic: {
+                name: 'Anthropic',
+                url: 'https://api.anthropic.com',
+                models: [
+                    { value: 'claude-sonnet-4-20250514', label: 'Claude Sonnet 4' },
+                    { value: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5' },
+                    { value: 'claude-opus-4-20250918', label: 'Claude Opus 4' }
+                ]
+            },
+            openai: {
+                name: 'OpenAI',
+                url: 'https://api.openai.com/v1',
+                models: [
+                    { value: 'gpt-5.5', label: 'GPT-5.5' },
+                    { value: 'gpt-4o', label: 'GPT-4o' },
+                    { value: 'gpt-4o-mini', label: 'GPT-4o Mini' },
+                    { value: 'o1-preview', label: 'o1-preview' }
+                ]
+            },
+            mimo: {
+                name: '小米 MiMo',
+                url: 'https://token-plan-cn.xiaomimimo.com/anthropic',
+                models: [
+                    { value: 'mimo-v2.5-pro', label: 'MiMo V2.5 Pro' },
+                    { value: 'mimo-v2.5', label: 'MiMo V2.5' }
+                ]
+            },
+            qwen: {
+                name: '阿里云通义',
+                url: 'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1',
+                models: [
+                    { value: 'qwen3.7-max', label: 'Qwen3.7 Max' },
+                    { value: 'qwen3.6-plus', label: 'Qwen3.6 Plus' },
+                    { value: 'qwen3.6-flash', label: 'Qwen3.6 Flash' }
+                ]
+            },
+            tencent: {
+                name: '腾讯云',
+                url: 'https://api.lkeap.cloud.tencent.com/plan/v3',
+                models: [
+                    { value: 'hy3-preview', label: 'Hy3 Preview' },
+                    { value: 'deepseek-v4', label: 'DeepSeek V4' },
+                    { value: 'glm-5.1', label: 'GLM-5.1' },
+                    { value: 'kimi-k2.6', label: 'Kimi K2.6' },
+                    { value: 'minimax-m2.5', label: 'MiniMax M2.5' }
+                ]
+            },
+            volcengine: {
+                name: '火山引擎',
+                url: 'https://ark.cn-beijing.volces.com/api/v3',
+                models: [
+                    { value: 'doubao-seed-2.0-pro', label: 'Doubao Seed 2.0 Pro' },
+                    { value: 'doubao-seed-code-preview', label: 'Doubao Seed Code' },
+                    { value: 'kimi-k2.5', label: 'Kimi K2.5' },
+                    { value: 'glm-4.7', label: 'GLM-4.7' },
+                    { value: 'deepseek-v3.2', label: 'DeepSeek V3.2' }
+                ]
+            },
+            baidu: {
+                name: '百度智能云',
+                url: 'https://qianfan.baidubce.com/v2',
+                models: [
+                    { value: 'wenxin-5.1', label: '文心 5.1' },
+                    { value: 'deepseek-v4', label: 'DeepSeek V4' },
+                    { value: 'glm-5.1', label: 'GLM-5.1' },
+                    { value: 'minimax-m2.5', label: 'MiniMax M2.5' }
+                ]
+            },
+            stepfun: {
+                name: '阶跃星辰',
+                url: 'https://api.stepfun.com/step_plan/v1',
+                models: [
+                    { value: 'step-3.7-flash', label: 'Step 3.7 Flash' },
+                    { value: 'step-3.5-flash', label: 'Step 3.5 Flash' },
+                    { value: 'step-deepresearch', label: 'Step DeepResearch' }
+                ]
+            },
+            zhipu: {
+                name: '智谱 AI',
+                url: 'https://open.bigmodel.cn/api/paas/v4',
+                models: [
+                    { value: 'glm-5.1', label: 'GLM-5.1' },
+                    { value: 'glm-5', label: 'GLM-5' },
+                    { value: 'glm-4.7', label: 'GLM-4.7' }
+                ]
+            },
+            minimax: {
+                name: 'MiniMax',
+                url: 'https://api.minimaxi.com/v1',
+                models: [
+                    { value: 'minimax-m3', label: 'MiniMax M3' },
+                    { value: 'minimax-m2.7', label: 'MiniMax M2.7' }
+                ]
+            },
+            moonshot: {
+                name: '月之暗面 Kimi',
+                url: 'https://api.moonshot.cn/v1',
+                models: [
+                    { value: 'kimi-k2.6', label: 'Kimi K2.6' }
+                ]
+            },
+            xfyun: {
+                name: '科大讯飞',
+                url: 'https://spark-api-open.xf-yun.cn/x2/',
+                models: [
+                    { value: 'x2-flash', label: '星火 X2 Flash' }
+                ]
+            },
+            openrouter: {
+                name: 'OpenRouter',
+                url: 'https://openrouter.ai/api/v1',
+                models: [
+                    { value: 'owl-alpha', label: 'Owl Alpha' },
+                    { value: 'gpt-5.5', label: 'GPT-5.5' },
+                    { value: 'qwen-3.6', label: 'Qwen 3.6' },
+                    { value: 'deepseek-v4', label: 'DeepSeek V4' }
+                ]
+            }
+        };
+
+        /**
+         * 应用平台预设
+         * @param {string} platform 平台标识
+         */
+        function applyPreset(platform) {
+            var preset = PLATFORM_PRESETS[platform];
+            if (!preset) return;
+
+            // 设置 URL
+            document.getElementById('claudeUrl').value = preset.url;
+
+            // 更新模型下拉选项
+            var select = document.getElementById('claudeModelSelect');
+            select.innerHTML = '<option value="">-- 选择模型 --</option>';
+            preset.models.forEach(function(m) {
+                var opt = document.createElement('option');
+                opt.value = m.value;
+                opt.textContent = m.label;
+                select.appendChild(opt);
+            });
+            var customOpt = document.createElement('option');
+            customOpt.value = 'custom';
+            customOpt.textContent = '自定义模型...';
+            select.appendChild(customOpt);
+
+            // 默认选中第一个模型
+            if (preset.models.length > 0) {
+                select.value = preset.models[0].value;
+            }
+
+            // 隐藏自定义输入
+            document.getElementById('claudeModelCustom').style.display = 'none';
+
+            // 重置长上下文开关
+            document.getElementById('longContext').checked = false;
+
+            // 更新隐藏的model值
+            updateModelValue();
+        }
+
+        // 自定义模型输入同步
+        document.addEventListener('DOMContentLoaded', function() {
+            var customInput = document.getElementById('claudeModelCustom');
+            if (customInput) {
+                customInput.addEventListener('input', function() {
+                    updateModelValue();
+                });
+            }
+        });
+
+        // 数据库初始化（SSE实时进度）
+        async function initDb() {
+            var btn = document.getElementById('btnInit');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> 初始化中...';
+
+            var progressDiv = document.getElementById('initProgress');
+            var progressBar = document.getElementById('initProgressBar');
+            var initLog = document.getElementById('initLog');
+            progressDiv.style.display = 'block';
+            initLog.innerHTML = '';
+            progressBar.style.width = '0%';
+            progressBar.textContent = '0%';
+
+            var eventSource = new EventSource('/api/install/init-db-stream');
+            var completed = false;
+
+            eventSource.addEventListener('progress', function(e) {
+                var data = JSON.parse(e.data);
+                var step = data.step;
+                var total = data.total;
+                var message = data.message;
+
+                // 更新进度条
+                var percent = Math.round((step / total) * 100);
+                progressBar.style.width = percent + '%';
+                progressBar.textContent = percent + '%';
+
+                // 添加日志
+                var logLine = document.createElement('div');
+                logLine.textContent = '[' + new Date().toLocaleTimeString() + '] ' + message;
+                initLog.appendChild(logLine);
+                initLog.scrollTop = initLog.scrollHeight;
+            });
+
+            eventSource.addEventListener('complete', function(e) {
+                completed = true;
+                var data = JSON.parse(e.data);
+                eventSource.close();
+
+                progressBar.style.width = '100%';
+                progressBar.textContent = '100%';
+                progressBar.classList.remove('progress-bar-animated');
+
+                if (data.success) {
+                    progressBar.classList.add('bg-success');
+                    showResult('initResult', data,
+                        '初始化完成！执行 ' + data.executedStatements + ' 条语句' +
+                        (data.errors > 0 ? '，' + data.errors + ' 个错误' : ''));
+                    setTimeout(function() { goStep(3); }, 1500);
+                } else {
+                    progressBar.classList.add('bg-danger');
+                    showResult('initResult', data, '初始化失败');
+                }
+
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-database-add"></i> 初始化数据库';
+            });
+
+            eventSource.onerror = function() {
+                if (!completed) {
+                    eventSource.close();
+                    progressBar.classList.add('bg-danger');
+                    var logLine = document.createElement('div');
+                    logLine.className = 'text-danger';
+                    logLine.textContent = '[' + new Date().toLocaleTimeString() + '] 连接中断';
+                    initLog.appendChild(logLine);
+
+                    btn.disabled = false;
+                    btn.innerHTML = '<i class="bi bi-database-add"></i> 初始化数据库';
+                }
+            };
+        }
+
+        // Step 3: 保存系统配置
+        async function saveSystem() {
+            const secret = document.getElementById('jwtSecret').value;
+            if (!secret || secret.length < 32) {
+                alert('JWT 密钥至少32位，请点击"生成"按钮自动生成');
+                return;
+            }
+            await api('/api/install/save-system', {
+                systemName: document.getElementById('sysName').value,
+                jwtSecret: secret
+            });
+            goStep(4);
+        }
+
+        // Step 4: Claude API
+        async function testClaude() {
+            const apiKey = document.getElementById('claudeKey').value;
+            if (!apiKey) {
+                alert('请先输入 API Key');
+                return;
+            }
+            const data = await api('/api/install/test-claude', {
+                apiKey: apiKey,
+                apiUrl: document.getElementById('claudeUrl').value,
+                model: document.getElementById('claudeModel').value || ''
+            });
+            showResult('claudeResult', data, 'Claude API 连接成功');
+        }
+
+        async function saveClaude() {
+            const key = document.getElementById('claudeKey').value;
+            if (!key) { alert('请输入 API Key'); return; }
+            var model = document.getElementById('claudeModel').value;
+            if (!model) {
+                alert('请选择或输入模型名称');
+                return;
+            }
+            const data = await api('/api/install/save-claude', {
+                apiKey: key,
+                apiUrl: document.getElementById('claudeUrl').value,
+                model: model
+            });
+            if (data.success === false) {
+                showResult('claudeResult', data);
+                return;
+            }
+            goStep(5);
+        }
+
+        // Step 5: 邮件
+        async function testEmail() {
+            const data = await api('/api/install/test-email', {
+                host: document.getElementById('emailHost').value,
+                port: parseInt(document.getElementById('emailPort').value),
+                username: document.getElementById('emailUser').value,
+                password: document.getElementById('emailPass').value
+            });
+            showResult('emailResult', data, 'SMTP 连接成功');
+        }
+
+        async function saveEmail() {
+            const host = document.getElementById('emailHost').value;
+            const user = document.getElementById('emailUser').value;
+            if (!host || !user) {
+                alert('请填写 SMTP 服务器和用户名');
+                return;
+            }
+            await api('/api/install/save-email', {
+                host: host,
+                port: parseInt(document.getElementById('emailPort').value),
+                username: user,
+                password: document.getElementById('emailPass').value,
+                from: document.getElementById('emailFrom').value
+            });
+            goStep(6);
+        }
+
+        // Step 6: 飞书
+        async function testFeishu() {
+            const data = await api('/api/install/test-feishu', {
+                webhookUrl: document.getElementById('feishuWebhook').value
+            });
+            showResult('feishuResult', data, '飞书连接成功');
+        }
+
+        async function saveFeishu() {
+            const webhookUrl = document.getElementById('feishuWebhook').value;
+            if (!webhookUrl) {
+                alert('请填写 Webhook URL');
+                return;
+            }
+            await api('/api/install/save-feishu', {
+                webhookUrl: webhookUrl,
+                appId: document.getElementById('feishuAppId').value,
+                appSecret: document.getElementById('feishuSecret').value
+            });
+            goStep(7);
+        }
+
+        // Step 7: 钉钉
+        async function testDing() {
+            const data = await api('/api/install/test-dingtalk', {
+                webhookUrl: document.getElementById('dingWebhook').value,
+                secret: document.getElementById('dingSecret').value
+            });
+            showResult('dingResult', data, '钉钉连接成功');
+        }
+
+        async function saveDing() {
+            const webhookUrl = document.getElementById('dingWebhook').value;
+            if (!webhookUrl) {
+                alert('请填写 Webhook URL');
+                return;
+            }
+            await api('/api/install/save-dingtalk', {
+                webhookUrl: webhookUrl,
+                secret: document.getElementById('dingSecret').value
+            });
+            goStep(8);
+        }
+
+        // Step 8: Redis
+        async function testRedis() {
+            const data = await api('/api/install/test-redis', {
+                host: document.getElementById('redisHost').value,
+                port: parseInt(document.getElementById('redisPort').value),
+                password: document.getElementById('redisPass').value
+            });
+            showResult('redisResult', data, 'Redis 连接成功');
+        }
+
+        async function saveRedis() {
+            const data = await api('/api/install/save-redis', {
+                host: document.getElementById('redisHost').value,
+                port: parseInt(document.getElementById('redisPort').value),
+                password: document.getElementById('redisPass').value,
+                database: parseInt(document.getElementById('redisDb').value)
+            });
+            if (data.success === false) {
+                showResult('redisResult', data);
+                return;
+            }
+            goStep(9);
+        }
+
+        // ===== Step 9: 创建管理员 =====
+        async function createAdmin() {
+            const user = document.getElementById('admUser').value;
+            const pass = document.getElementById('admPass').value;
+            const passConfirm = document.getElementById('admPassConfirm').value;
+            const email = document.getElementById('admEmail').value;
+
+            if (!user || user.length < 3) { alert('用户名至少3个字符'); return; }
+            if (!pass || pass.length < 8) { alert('密码至少8位'); return; }
+            if (pass !== passConfirm) { alert('两次输入的密码不一致'); return; }
+            if (!email || !email.includes('@')) { alert('请输入有效的邮箱地址'); return; }
+
+            const data = await api('/api/install/create-admin', {
+                username: user,
+                password: pass,
+                email: email
+            });
+
+            if (data.success) {
+                const complete = await api('/api/install/complete');
+                if (complete.success) goStep(10);
+            } else {
+                showResult('admResult', data);
+            }
+        }
+
+        // 跳转到登录页（清除安装状态缓存）
+        function goToLogin() {
+            sessionStorage.removeItem('system_installed');
+            // 使用相对路径跳转，自动保留当前域名和端口
+            window.location.href = '/login';
+        }
+
+        // 重置安装（测试用）
+        async function resetInstall() {
+            if (!confirm('确定要重置安装吗？\n\n这将：\n1. 清空所有数据库表数据\n2. 清除安装标记\n\n您需要重新走一遍安装流程。')) return;
+            try {
+                // 先重置数据库
+                const dbResult = await api('/api/install/reset-database');
+                if (dbResult.success) {
+                    // 再重置安装状态
+                    await api('/api/install/reset');
+                    sessionStorage.removeItem('system_installed');
+                    alert('重置成功！已清空 ' + dbResult.tablesCleared + ' 个表的数据，页面将刷新');
+                    location.reload();
+                } else {
+                    alert('重置失败: ' + (dbResult.error || '未知错误'));
+                }
+            } catch (e) {
+                alert('重置失败: ' + e.message);
+            }
+        }
+
+        // 初始化
+        renderIndicator();
+    </script>
+</body>
+</html>

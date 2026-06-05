@@ -1,0 +1,256 @@
+{
+  "version": "1.0.0",
+  "description": "植物大战僵尸 - DIY系统配置",
+  "diySystem": {
+    "enabled": true,
+    "maxCustomPlants": 100,
+    "maxComponentsPerPlant": 10,
+    "allowSharing": true,
+    "requireValidation": true,
+    "validation": {
+      "maxSunCost": 9999,
+      "minSunCost": 0,
+      "maxHealth": 10000,
+      "minHealth": 1,
+      "maxDamage": 9999,
+      "minDamage": 0,
+      "maxAttackSpeed": 10.0,
+      "minAttackSpeed": 0.1,
+      "maxAreaRadius": 500,
+      "minAreaRadius": 10,
+      "balanceScoreThreshold": 100
+    },
+    "editor": {
+      "canvasSize": {
+        "width": 800,
+        "height": 600
+      },
+      "gridSize": 20,
+      "snapToGrid": true,
+      "showGrid": true,
+      "previewScale": 1.0,
+      "autoSave": true,
+      "autoSaveInterval": 30
+    },
+    "templates": {
+      "maxTemplatesPerUser": 50,
+      "allowPublicTemplates": true,
+      "requireApproval": false,
+      "featuredTemplateCount": 10
+    },
+    "sharing": {
+      "enabled": true,
+      "maxFileSize": "5MB",
+      "allowedFormats": ["json", "png", "jpg"],
+      "requireLogin": true,
+      "moderationEnabled": true,
+      "reportEnabled": true,
+      "likeEnabled": true,
+      "commentEnabled": true,
+      "downloadEnabled": true
+    },
+    "storage": {
+      "local": {
+        "enabled": true,
+        "maxStorageSize": "100MB",
+        "path": "data/diy/plants"
+      },
+      "cloud": {
+        "enabled": false,
+        "provider": "s3",
+        "bucket": "game-maker-diy",
+        "region": "us-east-1"
+      }
+    }
+  },
+  "componentLibrary": {
+    "baseComponents": [
+      "AppearanceComponent",
+      "HealthComponent",
+      "AttackComponent",
+      "SkillComponent",
+      "SunComponent"
+    ],
+    "advancedComponents": [
+      "ProjectileComponent",
+      "AreaComponent",
+      "ControlComponent",
+      "BuffComponent",
+      "SpecialComponent"
+    ],
+    "customComponents": {
+      "enabled": true,
+      "maxCustomComponents": 20,
+      "scriptingEnabled": true,
+      "scriptingLanguage": "lua"
+    }
+  },
+  "balanceRules": [
+    {
+      "id": "sun_cost_rule",
+      "name": "阳光成本规则",
+      "description": "阳光成本必须与植物价值匹配",
+      "formula": "sunCost >= (damage * 0.5 + health * 0.1 + abilities * 50)",
+      "severity": "error"
+    },
+    {
+      "id": "health_rule",
+      "name": "生命值规则",
+      "description": "生命值不能过高",
+      "condition": "health <= 10000",
+      "severity": "error"
+    },
+    {
+      "id": "damage_rule",
+      "name": "伤害规则",
+      "description": "伤害不能过高",
+      "condition": "damage <= 9999",
+      "severity": "error"
+    },
+    {
+      "id": "attack_speed_rule",
+      "name": "攻速规则",
+      "description": "攻速不能过快",
+      "condition": "attackSpeed <= 10.0",
+      "severity": "error"
+    },
+    {
+      "id": "area_radius_rule",
+      "name": "范围规则",
+      "description": "AOE范围不能过大",
+      "condition": "areaRadius <= 500",
+      "severity": "warning"
+    },
+    {
+      "id": "special_ability_rule",
+      "name": "特殊能力规则",
+      "description": "特殊能力需要合理配置",
+      "condition": "specialAbilities <= 5",
+      "severity": "warning"
+    }
+  ],
+  "exportFormats": [
+    {
+      "id": "json",
+      "name": "JSON格式",
+      "extension": ".json",
+      "description": "标准JSON格式，包含所有配置"
+    },
+    {
+      "id": "png",
+      "name": "PNG图片",
+      "extension": ".png",
+      "description": "植物预览图"
+    },
+    {
+      "id": "atlas",
+      "name": "图集",
+      "extension": ".atlas",
+      "description": "精灵图集配置"
+    }
+  ],
+  "importFormats": [
+    {
+      "id": "json",
+      "name": "JSON格式",
+      "extension": ".json",
+      "description": "导入JSON配置文件"
+    },
+    {
+      "id": "template",
+      "name": "模板格式",
+      "extension": ".template",
+      "description": "导入植物模板"
+    }
+  ],
+  "categories": [
+    {
+      "id": "production",
+      "name": "生产类",
+      "icon": "sun",
+      "description": "产出阳光的植物"
+    },
+    {
+      "id": "attack",
+      "name": "攻击类",
+      "icon": "attack",
+      "description": "攻击僵尸的植物"
+    },
+    {
+      "id": "defense",
+      "name": "防御类",
+      "icon": "shield",
+      "description": "阻挡僵尸的植物"
+    },
+    {
+      "id": "control",
+      "name": "控制类",
+      "icon": "freeze",
+      "description": "控制僵尸的植物"
+    },
+    {
+      "id": "support",
+      "name": "支持类",
+      "icon": "buff",
+      "description": "辅助其他植物"
+    },
+    {
+      "id": "instant",
+      "name": "特殊类",
+      "icon": "bomb",
+      "description": "一次性使用的植物"
+    },
+    {
+      "id": "custom",
+      "name": "自定义",
+      "icon": "custom",
+      "description": "玩家自定义植物"
+    }
+  ],
+  "rarities": [
+    {
+      "id": "common",
+      "name": "普通",
+      "color": "#FFFFFF",
+      "maxStats": 100
+    },
+    {
+      "id": "uncommon",
+      "name": "优秀",
+      "color": "#00FF00",
+      "maxStats": 150
+    },
+    {
+      "id": "rare",
+      "name": "稀有",
+      "color": "#0080FF",
+      "maxStats": 200
+    },
+    {
+      "id": "epic",
+      "name": "史诗",
+      "color": "#8000FF",
+      "maxStats": 300
+    },
+    {
+      "id": "legendary",
+      "name": "传说",
+      "color": "#FFD700",
+      "maxStats": 500
+    }
+  ],
+  "ui": {
+    "theme": "default",
+    "language": "zh-CN",
+    "showTooltips": true,
+    "showAnimations": true,
+    "colorScheme": {
+      "primary": "#4CAF50",
+      "secondary": "#FF9800",
+      "accent": "#2196F3",
+      "background": "#1E1E1E",
+      "surface": "#2D2D2D",
+      "text": "#FFFFFF"
+    }
+  }
+}

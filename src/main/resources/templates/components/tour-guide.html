@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<!--
+    新手引导组件（Thymeleaf 版本）
+    首次登录时显示步骤引导
+
+    使用方式: 在页面底部引入
+    <div th:replace="~{components/tour-guide :: guide}"></div>
+-->
+<body>
+<!-- 新手引导 -->
+<div th:fragment="guide" id="tourGuide" style="display: none;">
+    <!-- 遮罩层 -->
+    <div class="tour-overlay" onclick="tourSkip()"></div>
+
+    <!-- 引导卡片 -->
+    <div class="tour-card" id="tourCard">
+        <div class="tour-header">
+            <span class="tour-step-badge" id="tourStepBadge">1 / 5</span>
+            <button class="btn btn-sm btn-link text-muted" onclick="tourSkip()">跳过引导</button>
+        </div>
+        <div class="tour-body">
+            <h5 id="tourTitle">欢迎使用</h5>
+            <p id="tourDesc" class="text-muted">引导描述</p>
+        </div>
+        <div class="tour-footer">
+            <button class="btn btn-sm btn-outline-secondary" id="tourPrevBtn" onclick="tourPrev()" style="display: none;">上一步</button>
+            <button class="btn btn-sm btn-primary" id="tourNextBtn" onclick="tourNext()">下一步</button>
+        </div>
+        <!-- 进度条 -->
+        <div class="tour-progress">
+            <div class="tour-progress-bar" id="tourProgressBar" style="width: 20%;"></div>
+        </div>
+    </div>
+</div>
+
+<style>
+    .tour-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.6);
+        z-index: 9998;
+        cursor: pointer;
+    }
+
+    .tour-card {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: var(--bg-card, #1e2a3a);
+        border: 1px solid var(--border-color, #2d3748);
+        border-radius: 12px;
+        padding: 0;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+        z-index: 9999;
+        max-width: 480px;
+        min-width: 360px;
+        overflow: hidden;
+    }
+
+    .tour-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 12px 20px;
+        border-bottom: 1px solid var(--border-color, #2d3748);
+    }
+
+    .tour-step-badge {
+        background: var(--accent-color, #4a9eff);
+        color: white;
+        padding: 2px 10px;
+        border-radius: 12px;
+        font-size: 12px;
+        font-weight: 600;
+    }
+
+    .tour-body {
+        padding: 24px 20px;
+    }
+
+    .tour-body h5 {
+        margin: 0 0 8px;
+        font-size: 18px;
+        color: var(--text-primary, #e6e6e6);
+    }
+
+    .tour-body p {
+        margin: 0;
+        color: var(--text-secondary, #adb5bd);
+        font-size: 14px;
+        line-height: 1.6;
+    }
+
+    .tour-footer {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        padding: 12px 20px;
+        border-top: 1px solid var(--border-color, #2d3748);
+    }
+
+    .tour-progress {
+        height: 3px;
+        background: var(--bg-secondary, #16213e);
+    }
+
+    .tour-progress-bar {
+        height: 100%;
+        background: var(--accent-color, #4a9eff);
+        transition: width 0.3s ease;
+    }
+
+    /* 高亮目标元素 */
+    .tour-highlight {
+        position: relative;
+        z-index: 9999;
+        box-shadow: 0 0 0 4px var(--accent-color, #4a9eff), 0 0 20px rgba(74, 158, 255, 0.3);
+        border-radius: 4px;
+    }
+</style>
+
+<script>
+    // ===== 新手引导系统 =====
+
+    const tourSteps = [
+        {
+            title: '欢迎使用 ChengXun Game Maker',
+            description: '这是一个 AI 驱动的游戏开发自动化管理系统。让我们花 1 分钟了解主要功能。',
+            target: null
+        },
+        {
+            title: '仪表盘',
+            description: '仪表盘是您的工作起点，可以查看系统概览、Agent 状态和最近活动。所有关键指标一目了然。',
+            target: 'a[href="/"]'
+        },
+        {
+            title: 'Agent 管理',
+            description: '在这里管理您的 AI Agent，包括启动、停止、发送任务、查看状态。每个项目有独立的 Agent 团队。',
+            target: 'a[href="/agents"]'
+        },
+        {
+            title: '能力管理',
+            description: '查看和配置每个 Agent 的能力。能力决定 Agent 能做什么，可以动态启用/禁用。',
+            target: 'a[href="/capabilities"]'
+        },
+        {
+            title: 'AI 助手',
+            description: '与 AI 助手对话，获取开发建议、代码生成、问题排查等帮助。支持流式输出。',
+            target: 'a[href="/ai-assistant"]'
+        }
+    ];
+
+    let tourCurrentStep = 0;
+    let tourActive = false;
+
+    /** 检查是否需要显示引导 */
+    function checkTourGuide() {
+        const completed = localStorage.getItem('tour_completed');
+        if (!completed) {
+            setTimeout(() => showTour(), 1000);
+        }
+    }
+
+    /** 显示引导 */
+    function showTour() {
+        tourActive = true;
+        tourCurrentStep = 0;
+        document.getElementById('tourGuide').style.display = 'block';
+        renderTourStep();
+    }
+
+    /** 渲染当前步骤 */
+    function renderTourStep() {
+        const step = tourSteps[tourCurrentStep];
+        const total = tourSteps.length;
+
+        document.getElementById('tourStepBadge').textContent = (tourCurrentStep + 1) + ' / ' + total;
+        document.getElementById('tourTitle').textContent = step.title;
+        document.getElementById('tourDesc').textContent = step.description;
+        document.getElementById('tourProgressBar').style.width = ((tourCurrentStep + 1) / total * 100) + '%';
+
+        // 上一步按钮
+        document.getElementById('tourPrevBtn').style.display = tourCurrentStep > 0 ? 'inline-block' : 'none';
+
+        // 下一步按钮文字
+        const nextBtn = document.getElementById('tourNextBtn');
+        nextBtn.textContent = tourCurrentStep === total - 1 ? '开始使用' : '下一步';
+
+        // 高亮目标元素
+        clearTourHighlight();
+        if (step.target) {
+            const target = document.querySelector(step.target);
+            if (target) {
+                target.classList.add('tour-highlight');
+                target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+        }
+    }
+
+    /** 下一步 */
+    function tourNext() {
+        if (tourCurrentStep < tourSteps.length - 1) {
+            tourCurrentStep++;
+            renderTourStep();
+        } else {
+            tourComplete();
+        }
+    }
+
+    /** 上一步 */
+    function tourPrev() {
+        if (tourCurrentStep > 0) {
+            tourCurrentStep--;
+            renderTourStep();
+        }
+    }
+
+    /** 完成引导 */
+    function tourComplete() {
+        tourActive = false;
+        clearTourHighlight();
+        document.getElementById('tourGuide').style.display = 'none';
+        localStorage.setItem('tour_completed', 'true');
+    }
+
+    /** 跳过引导 */
+    function tourSkip() {
+        tourComplete();
+    }
+
+    /** 清除高亮 */
+    function clearTourHighlight() {
+        document.querySelectorAll('.tour-highlight').forEach(el => {
+            el.classList.remove('tour-highlight');
+        });
+    }
+
+    /** 重新开始引导（可从设置页面调用） */
+    function restartTour() {
+        localStorage.removeItem('tour_completed');
+        showTour();
+    }
+
+    // 页面加载时检查
+    document.addEventListener('DOMContentLoaded', checkTourGuide);
+</script>
+</body>
+</html>

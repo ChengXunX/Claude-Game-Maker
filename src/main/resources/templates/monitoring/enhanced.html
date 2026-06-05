@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security"
+      th:replace="~{layout :: main-content(~{::title}, ~{::section})}">
+<head>
+    <title>监控仪表盘 - ChengXun Game Maker</title>
+</head>
+<body>
+<section>
+    <div class="container-fluid">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2><i class="bi bi-graph-up"></i> 监控仪表盘</h2>
+            <div>
+                <select class="form-select form-select-sm d-inline-block" style="width: auto;" id="refreshInterval" onchange="setRefreshInterval()">
+                    <option value="0">手动刷新</option>
+                    <option value="5000">5 秒</option>
+                    <option value="15000" selected>15 秒</option>
+                    <option value="30000">30 秒</option>
+                    <option value="60000">1 分钟</option>
+                </select>
+                <button class="btn btn-outline-primary btn-sm ms-2" onclick="loadAllData()">
+                    <i class="bi bi-arrow-clockwise"></i> 刷新
+                </button>
+            </div>
+        </div>
+
+        <!-- 概览卡片 -->
+        <div class="row mb-4">
+            <div class="col-md-3 col-sm-6 mb-3">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <i class="bi bi-robot fs-3 text-primary mb-2"></i>
+                        <h3 id="totalAgents">0</h3>
+                        <small class="text-muted">Agent 总数</small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 col-sm-6 mb-3">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <i class="bi bi-check-circle fs-3 text-success mb-2"></i>
+                        <h3 id="aliveAgents">0</h3>
+                        <small class="text-muted">活跃 Agent</small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 col-sm-6 mb-3">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <i class="bi bi-list-task fs-3 text-warning mb-2"></i>
+                        <h3 id="pendingTasks">0</h3>
+                        <small class="text-muted">待处理任务</small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 col-sm-6 mb-3">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <i class="bi bi-exclamation-triangle fs-3 text-danger mb-2"></i>
+                        <h3 id="pendingApprovals">0</h3>
+                        <small class="text-muted">待审批</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 图表区域 -->
+        <div class="row">
+            <!-- Agent 活动趋势 -->
+            <div class="col-lg-8 mb-4">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h6 class="mb-0"><i class="bi bi-activity"></i> Agent 活动趋势</h6>
+                        <small class="text-muted">最近 1 小时</small>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="agentActivityChart" style="height: 250px;"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Agent 状态分布 -->
+            <div class="col-lg-4 mb-4">
+                <div class="card">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="bi bi-pie-chart"></i> Agent 状态分布</h6>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="agentStatusChart" style="height: 250px;"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <!-- API 调用统计 -->
+            <div class="col-lg-6 mb-4">
+                <div class="card">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="bi bi-bar-chart"></i> API 调用统计</h6>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="apiCallsChart" style="height: 250px;"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 任务完成率 -->
+            <div class="col-lg-6 mb-4">
+                <div class="card">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="bi bi-graph-up-arrow"></i> 任务完成率趋势</h6>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="taskCompletionChart" style="height: 250px;"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <!-- 能力调用统计 -->
+            <div class="col-lg-6 mb-4">
+                <div class="card">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="bi bi-lightning"></i> 能力调用统计</h6>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="capabilityCallsChart" style="height: 250px;"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 资源使用率 -->
+            <div class="col-lg-6 mb-4">
+                <div class="card">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="bi bi-cpu"></i> 系统资源使用率</h6>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="resourceUsageChart" style="height: 250px;"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Agent 详细状态表 -->
+        <div class="card">
+            <div class="card-header">
+                <h6 class="mb-0"><i class="bi bi-list-ul"></i> Agent 详细状态</h6>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>Agent ID</th>
+                                <th>名称</th>
+                                <th>角色</th>
+                                <th>项目</th>
+                                <th>状态</th>
+                                <th>任务数</th>
+                                <th>上下文</th>
+                                <th>最后活动</th>
+                            </tr>
+                        </thead>
+                        <tbody id="agentStatusTable">
+                            <tr>
+                                <td colspan="8" class="text-center text-muted">加载中...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script>
+        let refreshTimer = null;
+
+        // 初始化
+        document.addEventListener('DOMContentLoaded', () => {
+            loadAllData();
+            setRefreshInterval();
+        });
+
+        // 设置刷新间隔
+        function setRefreshInterval() {
+            if (refreshTimer) clearInterval(refreshTimer);
+            const interval = parseInt(document.getElementById('refreshInterval').value);
+            if (interval > 0) {
+                refreshTimer = setInterval(loadAllData, interval);
+            }
+        }
+
+        // 加载所有数据
+        async function loadAllData() {
+            try {
+                await Promise.all([
+                    loadOverview(),
+                    loadAgentActivity(),
+                    loadAgentStatus(),
+                    loadApiCalls(),
+                    loadTaskCompletion(),
+                    loadCapabilityCalls(),
+                    loadResourceUsage(),
+                    loadAgentTable()
+                ]);
+            } catch (e) {
+                console.error('Failed to load monitoring data:', e);
+            }
+        }
+
+        // 加载概览数据（真实 API）
+        async function loadOverview() {
+            try {
+                // 系统健康
+                const sysRes = await fetch('/api/system');
+                const sysData = await sysRes.json();
+                const agents = sysData.components?.agents || {};
+                document.getElementById('totalAgents').textContent = agents.total || 0;
+                document.getElementById('aliveAgents').textContent = agents.alive || 0;
+
+                // 监控概览
+                try {
+                    const overviewRes = await fetch('/api/monitoring/overview');
+                    const overview = await overviewRes.json();
+
+                    // 待审批数
+                    const alerts = overview.alerts || {};
+                    document.getElementById('pendingApprovals').textContent = alerts.activeAlerts || 0;
+
+                    // 任务总数
+                    const tasks = overview.agentTasks || {};
+                    document.getElementById('pendingTasks').textContent = tasks.totalTasks || 0;
+                } catch (e) {
+                    // 监控 API 可能未就绪
+                    console.warn('Monitoring API not ready:', e);
+                }
+            } catch (e) {
+                console.error('Failed to load overview:', e);
+            }
+        }
+
+        // Agent 活动趋势图（真实 API）
+        async function loadAgentActivity() {
+            try {
+                const res = await fetch('/api/monitoring/agent-tasks');
+                const data = await res.json();
+                const agentTasks = data.agentTasks || {};
+
+                const labels = Object.keys(agentTasks);
+                const values = Object.values(agentTasks);
+
+                if (labels.length === 0) {
+                    labels.push('暂无数据');
+                    values.push(0);
+                }
+
+                initBarChart('agentActivityChart', labels, [{
+                    label: '任务数',
+                    data: values,
+                    backgroundColor: 'rgba(54, 162, 235, 0.5)',
+                    borderColor: 'rgba(54, 162, 235, 1)',
+                    borderWidth: 1
+                }]);
+            } catch (e) {
+                console.error('Failed to load agent activity:', e);
+            }
+        }
+
+        // Agent 状态分布图（真实 API）
+        async function loadAgentStatus() {
+            try {
+                const res = await fetch('/api/monitoring/agent-health');
+                const data = await res.json();
+
+                const healthy = data.healthyCount || 0;
+                const unhealthy = data.unhealthyCount || 0;
+                const unknown = (data.totalAgents || 0) - healthy - unhealthy;
+
+                initDoughnutChart('agentStatusChart',
+                    ['健康', '异常', '未知'],
+                    [healthy, unhealthy, Math.max(0, unknown)],
+                    [
+                        'rgba(75, 192, 192, 0.7)',
+                        'rgba(255, 99, 132, 0.7)',
+                        'rgba(200, 200, 200, 0.5)'
+                    ]
+                );
+            } catch (e) {
+                console.error('Failed to load agent status:', e);
+            }
+        }
+
+        // API 调用统计（真实 API）
+        async function loadApiCalls() {
+            try {
+                const res = await fetch('/api/monitoring/api-calls');
+                const data = await res.json();
+                const endpointCalls = data.endpointCalls || {};
+
+                const labels = Object.keys(endpointCalls);
+                const values = Object.values(endpointCalls);
+
+                if (labels.length === 0) {
+                    labels.push('暂无数据');
+                    values.push(0);
+                }
+
+                initBarChart('apiCallsChart', labels.slice(0, 10), [{
+                    label: '调用次数',
+                    data: values.slice(0, 10),
+                    backgroundColor: 'rgba(54, 162, 235, 0.5)',
+                    borderColor: 'rgba(54, 162, 235, 1)',
+                    borderWidth: 1
+                }]);
+            } catch (e) {
+                console.error('Failed to load API calls:', e);
+            }
+        }
+
+        // 任务完成率趋势（真实 API）
+        async function loadTaskCompletion() {
+            try {
+                const res = await fetch('/api/monitoring/agent-tasks');
+                const data = await res.json();
+                const agentTasks = data.agentTasks || {};
+
+                const labels = Object.keys(agentTasks);
+                const values = Object.values(agentTasks);
+
+                if (labels.length === 0) {
+                    labels.push('暂无数据');
+                    values.push(0);
+                }
+
+                initLineChart('taskCompletionChart', labels, [{
+                    label: '任务数',
+                    data: values,
+                    borderColor: 'rgba(75, 192, 192, 1)',
+                    backgroundColor: 'rgba(75, 192, 192, 0.1)',
+                    fill: true,
+                    tension: 0.4
+                }]);
+            } catch (e) {
+                console.error('Failed to load task completion:', e);
+            }
+        }
+
+        // 能力调用统计（真实 API）
+        async function loadCapabilityCalls() {
+            try {
+                const res = await fetch('/api/monitoring/errors');
+                const data = await res.json();
+                const errorCounts = data.errorCounts || {};
+
+                const labels = Object.keys(errorCounts);
+                const values = Object.values(errorCounts);
+
+                if (labels.length === 0) {
+                    labels.push('暂无错误');
+                    values.push(0);
+                }
+
+                initBarChart('capabilityCallsChart', labels.slice(0, 8), [{
+                    label: '错误次数',
+                    data: values.slice(0, 8),
+                    backgroundColor: 'rgba(255, 99, 132, 0.5)',
+                    borderColor: 'rgba(255, 99, 132, 1)',
+                    borderWidth: 1
+                }]);
+            } catch (e) {
+                console.error('Failed to load error stats:', e);
+            }
+        }
+
+        // 资源使用率（真实 API）
+        async function loadResourceUsage() {
+            try {
+                const response = await fetch('/api/system/health/deep');
+                const data = await response.json();
+
+                const memory = data.memory || {};
+                const disk = data.disk || {};
+
+                // 解析内存使用率
+                const memoryUsage = parseFloat(memory.usage) || 0;
+
+                // 解析磁盘使用率
+                const diskUsageStr = disk.usage || '0%';
+                const diskUsage = parseFloat(diskUsageStr) || 0;
+
+                const labels = ['内存', '磁盘'];
+                const used = [memoryUsage, diskUsage];
+                const remaining = [100 - memoryUsage, 100 - diskUsage];
+
+                initBarChart('resourceUsageChart', labels, [
+                    {
+                        label: '已用 %',
+                        data: used,
+                        backgroundColor: used.map(v => v > 80 ? 'rgba(255, 99, 132, 0.7)' : 'rgba(54, 162, 235, 0.5)'),
+                        borderWidth: 1
+                    },
+                    {
+                        label: '剩余 %',
+                        data: remaining,
+                        backgroundColor: 'rgba(75, 192, 192, 0.3)',
+                        borderWidth: 1
+                    }
+                ], { scales: { x: { stacked: true }, y: { stacked: true, max: 100 } } });
+            } catch (e) {
+                console.error('Failed to load resource usage:', e);
+            }
+        }
+
+        // Agent 状态表（真实 API）
+        async function loadAgentTable() {
+            try {
+                const response = await fetch('/api/monitoring/agent-health');
+                const data = await response.json();
+
+                const tbody = document.getElementById('agentStatusTable');
+                const agents = data.agents || [];
+
+                if (agents.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">暂无运行中的 Agent</td></tr>';
+                    return;
+                }
+
+                const statusColors = { 'HEALTHY': 'success', 'UNHEALTHY': 'danger', 'UNKNOWN': 'secondary' };
+                const statusLabels = { 'HEALTHY': '健康', 'UNHEALTHY': '异常', 'UNKNOWN': '未知' };
+
+                tbody.innerHTML = agents.map(a => `
+                    <tr>
+                        <td><code>${a.agentId || a.id || '-'}</code></td>
+                        <td>${a.name || '-'}</td>
+                        <td><span class="badge bg-secondary">${a.role || '-'}</span></td>
+                        <td>${a.projectId || '-'}</td>
+                        <td><span class="badge bg-${statusColors[a.status] || 'secondary'}">${statusLabels[a.status] || a.status || '-'}</span></td>
+                        <td>${a.taskCount || 0}</td>
+                        <td><span class="badge bg-${statusColors[a.status] || 'secondary'}">${statusLabels[a.status] || '-'}</span></td>
+                        <td><small>${a.lastActivity ? new Date(a.lastActivity).toLocaleString() : '-'}</small></td>
+                    </tr>
+                `).join('');
+            } catch (e) {
+                console.error('Failed to load agent table:', e);
+                document.getElementById('agentStatusTable').innerHTML =
+                    '<tr><td colspan="8" class="text-center text-danger">加载失败</td></tr>';
+            }
+        }
+    </script>
+</section>
+</body>
+</html>

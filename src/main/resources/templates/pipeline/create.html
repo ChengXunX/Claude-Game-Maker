@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>创建流水线 - ChengXun Game Maker</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+</head>
+<body class="bg-dark text-light">
+    <div class="container mt-4">
+        <!-- 面包屑导航 -->
+        <nav aria-label="breadcrumb" class="mb-4">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a th:href="@{/pipelines}" class="text-light">流水线</a></li>
+                <li class="breadcrumb-item active">创建流水线</li>
+            </ol>
+        </nav>
+
+        <div class="row justify-content-center">
+            <div class="col-md-8">
+                <div class="card bg-dark">
+                    <div class="card-header">
+                        <i class="bi bi-plus-circle"></i> 创建新流水线
+                    </div>
+                    <div class="card-body">
+                        <form th:action="@{/pipelines/create}" method="post">
+                            <!-- 流水线名称 -->
+                            <div class="mb-3">
+                                <label for="name" class="form-label">流水线名称 <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control bg-dark text-light" id="name" name="name"
+                                       placeholder="例如：生产环境部署流水线" required>
+                            </div>
+
+                            <!-- 描述 -->
+                            <div class="mb-3">
+                                <label for="description" class="form-label">描述</label>
+                                <textarea class="form-control bg-dark text-light" id="description" name="description"
+                                          rows="3" placeholder="描述流水线的用途"></textarea>
+                            </div>
+
+                            <!-- 选择项目 -->
+                            <div class="mb-3">
+                                <label for="projectId" class="form-label">所属项目 <span class="text-danger">*</span></label>
+                                <select class="form-select bg-dark text-light" id="projectId" name="projectId" required>
+                                    <option value="">请选择项目</option>
+                                    <option th:each="project : ${projects}"
+                                            th:value="${project.id}"
+                                            th:text="${project.name}">项目名称</option>
+                                </select>
+                            </div>
+
+                            <!-- 流水线类型 -->
+                            <div class="mb-3">
+                                <label for="pipelineType" class="form-label">流水线类型 <span class="text-danger">*</span></label>
+                                <select class="form-select bg-dark text-light" id="pipelineType" name="pipelineType" required>
+                                    <option value="FULL">完整流水线（构建+测试+部署）</option>
+                                    <option value="BUILD">仅构建</option>
+                                    <option value="TEST">仅测试</option>
+                                    <option value="DEPLOY">仅部署</option>
+                                    <option value="CUSTOM">自定义</option>
+                                </select>
+                                <div class="form-text text-muted">
+                                    选择流水线类型将自动创建默认阶段
+                                </div>
+                            </div>
+
+                            <!-- 流水线配置 -->
+                            <div class="mb-3">
+                                <label for="config" class="form-label">配置（JSON格式）</label>
+                                <textarea class="form-control bg-dark text-light" id="config" name="config"
+                                          rows="5" placeholder='{"env": "production", "branch": "main"}'></textarea>
+                                <div class="form-text text-muted">
+                                    可选：配置流水线的额外参数
+                                </div>
+                            </div>
+
+                            <!-- 提交按钮 -->
+                            <div class="d-flex justify-content-between">
+                                <a th:href="@{/pipelines}" class="btn btn-secondary">
+                                    <i class="bi bi-arrow-left"></i> 返回列表
+                                </a>
+                                <button type="submit" class="btn btn-primary">
+                                    <i class="bi bi-check-circle"></i> 创建流水线
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- 帮助信息 -->
+                <div class="card bg-dark mt-4">
+                    <div class="card-header">
+                        <i class="bi bi-question-circle"></i> 流水线类型说明
+                    </div>
+                    <div class="card-body">
+                        <table class="table table-dark table-striped">
+                            <thead>
+                                <tr>
+                                    <th>类型</th>
+                                    <th>包含阶段</th>
+                                    <th>适用场景</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td><span class="badge bg-primary">完整流水线</span></td>
+                                    <td>代码拉取 → 代码检查 → 单元测试 → 构建 → 集成测试 → 部署 → 通知</td>
+                                    <td>生产环境部署，完整的CI/CD流程</td>
+                                </tr>
+                                <tr>
+                                    <td><span class="badge bg-info">仅构建</span></td>
+                                    <td>代码拉取 → 构建打包</td>
+                                    <td>快速验证代码是否可以编译</td>
+                                </tr>
+                                <tr>
+                                    <td><span class="badge bg-warning text-dark">仅测试</span></td>
+                                    <td>代码拉取 → 单元测试 → 代码检查</td>
+                                    <td>代码质量检查</td>
+                                </tr>
+                                <tr>
+                                    <td><span class="badge bg-success">仅部署</span></td>
+                                    <td>代码拉取 → 构建 → 部署</td>
+                                    <td>手动部署到指定环境</td>
+                                </tr>
+                                <tr>
+                                    <td><span class="badge bg-secondary">自定义</span></td>
+                                    <td>自定义执行脚本</td>
+                                    <td>特殊需求的自定义流程</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

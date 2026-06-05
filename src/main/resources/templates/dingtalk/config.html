@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>钉钉机器人配置 - ChengXun Game Maker</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <link th:href="@{/css/custom.css}" rel="stylesheet">
+</head>
+<body class="bg-dark text-light">
+    <div class="container-fluid mt-4">
+        <!-- 页面标题 -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h2><i class="bi bi-robot"></i> 钉钉机器人配置</h2>
+                        <p class="text-muted mb-0">配置钉钉群机器人，接收系统通知和告警</p>
+                    </div>
+                    <a th:href="@{/notification-templates}" class="btn btn-outline-secondary">
+                        <i class="bi bi-arrow-left"></i> 返回通知模板
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <!-- 成功/错误提示 -->
+        <div th:if="${success}" class="alert alert-success alert-dismissible fade show" role="alert">
+            <i class="bi bi-check-circle"></i> <span th:text="${success}"></span>
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+        <div th:if="${error}" class="alert alert-danger alert-dismissible fade show" role="alert">
+            <i class="bi bi-exclamation-circle"></i> <span th:text="${error}"></span>
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+
+        <div class="row">
+            <!-- 配置表单 -->
+            <div class="col-lg-8">
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-gear"></i> 基本配置</h5>
+                    </div>
+                    <div class="card-body">
+                        <form th:action="@{/dingtalk/save}" method="post">
+                            <div class="mb-3">
+                                <label for="webhookUrl" class="form-label">
+                                    Webhook URL <span class="text-danger">*</span>
+                                </label>
+                                <input type="url" class="form-control" id="webhookUrl" name="webhookUrl"
+                                       th:value="${config.webhookUrl}"
+                                       placeholder="https://oapi.dingtalk.com/robot/send?access_token=xxx"
+                                       required>
+                                <div class="form-text">
+                                    钉钉群机器人Webhook地址，在钉钉群设置 > 智能群助手中创建
+                                </div>
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="secret" class="form-label">
+                                    加签密钥
+                                    <span class="badge bg-secondary">可选</span>
+                                </label>
+                                <input type="text" class="form-control" id="secret" name="secret"
+                                       th:value="${config.secret}"
+                                       placeholder="SEC...">
+                                <div class="form-text">
+                                    安全设置中的"加签"选项，如果选择"加签"方式需要填写此密钥
+                                </div>
+                            </div>
+
+                            <div class="mb-3 form-check">
+                                <input type="checkbox" class="form-check-input" id="enabled" name="enabled"
+                                       th:checked="${config.enabled}" value="true">
+                                <label class="form-check-label" for="enabled">
+                                    启用钉钉机器人
+                                </label>
+                            </div>
+
+                            <div class="d-flex gap-2">
+                                <button type="submit" class="btn btn-primary">
+                                    <i class="bi bi-save"></i> 保存配置
+                                </button>
+                                <button type="button" class="btn btn-outline-success" onclick="testConnection()">
+                                    <i class="bi bi-send"></i> 测试连接
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- 配置状态 -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-info-circle"></i> 配置状态</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-4 mb-3">
+                                <div class="text-muted small">启用状态</div>
+                                <div>
+                                    <span class="badge"
+                                          th:classappend="${configInfo.enabled} ? 'bg-success' : 'bg-secondary'"
+                                          th:text="${configInfo.enabled} ? '已启用' : '未启用'">未启用</span>
+                                </div>
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <div class="text-muted small">Webhook URL</div>
+                                <div>
+                                    <span th:if="${configInfo.webhookUrl != null && !configInfo.webhookUrl.isEmpty()}"
+                                          th:text="${configInfo.webhookUrl}">未配置</span>
+                                    <span th:if="${configInfo.webhookUrl == null || configInfo.webhookUrl.isEmpty()}"
+                                          class="text-danger">未配置</span>
+                                </div>
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <div class="text-muted small">加签密钥</div>
+                                <div>
+                                    <span class="badge"
+                                          th:classappend="${configInfo.hasSecret} ? 'bg-info' : 'bg-secondary'"
+                                          th:text="${configInfo.hasSecret} ? '已配置' : '未配置'">未配置</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 右侧帮助 -->
+            <div class="col-lg-4">
+                <!-- 配置指南 -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-question-circle"></i> 配置指南</h5>
+                    </div>
+                    <div class="card-body">
+                        <h6>如何获取Webhook URL？</h6>
+                        <ol class="small">
+                            <li>打开钉钉，进入目标群</li>
+                            <li>点击群设置 > 智能群助手</li>
+                            <li>添加机器人 > 自定义</li>
+                            <li>设置机器人名称和安全设置</li>
+                            <li>复制Webhook地址</li>
+                        </ol>
+
+                        <h6 class="mt-3">安全设置说明</h6>
+                        <ul class="small">
+                            <li><strong>自定义关键词</strong>：消息包含指定关键词才能发送</li>
+                            <li><strong>加签</strong>：使用密钥进行签名验证</li>
+                            <li><strong>IP地址（段）</strong>：限制来源IP</li>
+                        </ul>
+
+                        <h6 class="mt-3">推荐安全设置</h6>
+                        <p class="small text-muted">
+                            建议使用"加签"方式，将密钥填入上方配置框。
+                            或者使用"自定义关键词"，设置关键词为"ChengXun"。
+                        </p>
+                    </div>
+                </div>
+
+                <!-- 消息类型说明 -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-chat-dots"></i> 支持的消息类型</h5>
+                    </div>
+                    <div class="card-body">
+                        <ul class="list-unstyled small">
+                            <li class="mb-2">
+                                <span class="badge bg-primary">文本</span>
+                                简单文本消息
+                            </li>
+                            <li class="mb-2">
+                                <span class="badge bg-success">Markdown</span>
+                                支持格式化文本
+                            </li>
+                            <li class="mb-2">
+                                <span class="badge bg-info">链接</span>
+                                带图片的链接消息
+                            </li>
+                            <li class="mb-2">
+                                <span class="badge bg-warning">ActionCard</span>
+                                带按钮的卡片消息
+                            </li>
+                            <li class="mb-2">
+                                <span class="badge bg-secondary">FeedCard</span>
+                                多条链接卡片
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- 通知模板 -->
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-envelope-paper"></i> 通知模板</h5>
+                    </div>
+                    <div class="card-body">
+                        <p class="small text-muted mb-3">钉钉通知使用以下模板：</p>
+                        <ul class="list-unstyled small">
+                            <li class="mb-1">
+                                <code>ALERT_DINGTALK</code> - 告警通知
+                            </li>
+                            <li class="mb-1">
+                                <code>RECOVERY_DINGTALK</code> - 恢复通知
+                            </li>
+                            <li class="mb-1">
+                                <code>TASK_DINGTALK</code> - 任务通知
+                            </li>
+                            <li class="mb-1">
+                                <code>AGENT_DINGTALK</code> - Agent通知
+                            </li>
+                        </ul>
+                        <a th:href="@{/notification-templates}" class="btn btn-outline-primary btn-sm w-100 mt-2">
+                            <i class="bi bi-pencil"></i> 管理通知模板
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        function testConnection() {
+            if (!confirm('确定要发送测试消息到钉钉群吗？')) {
+                return;
+            }
+
+            const btn = event.target;
+            btn.disabled = true;
+            btn.innerHTML = '<i class="bi bi-hourglass-split"></i> 发送中...';
+
+            fetch('/dingtalk/api/test', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('测试成功: ' + data.message);
+                } else {
+                    alert('测试失败: ' + data.message);
+                }
+            })
+            .catch(error => {
+                alert('请求失败: ' + error);
+            })
+            .finally(() => {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-send"></i> 测试连接';
+            });
+        }
+    </script>
+</body>
+</html>

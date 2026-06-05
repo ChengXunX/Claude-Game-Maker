@@ -1,0 +1,320 @@
+{
+  "version": "1.0.0",
+  "description": "植物大战僵尸 - 僵尸模板定义",
+  "zombies": {
+    "basic": [
+      {
+        "id": "zombie_basic",
+        "name": "普通僵尸",
+        "description": "最基础的僵尸，速度慢，血量低",
+        "health": 200,
+        "speed": 0.5,
+        "damage": 100,
+        "attackSpeed": 1.0,
+        "armor": 0,
+        "abilities": [],
+        "category": "basic",
+        "rarity": "common"
+      },
+      {
+        "id": "zombie_flag",
+        "name": "旗帜僵尸",
+        "description": "手持旗帜，标志大波僵尸来袭",
+        "health": 200,
+        "speed": 0.5,
+        "damage": 100,
+        "attackSpeed": 1.0,
+        "armor": 0,
+        "abilities": ["wave_announce"],
+        "category": "basic",
+        "rarity": "common"
+      },
+      {
+        "id": "zombie_cone",
+        "name": "路障僵尸",
+        "description": "头戴路障，血量较高",
+        "health": 560,
+        "speed": 0.5,
+        "damage": 100,
+        "attackSpeed": 1.0,
+        "armor": 0,
+        "abilities": [],
+        "category": "basic",
+        "rarity": "common"
+      },
+      {
+        "id": "zombie_bucket",
+        "name": "铁桶僵尸",
+        "description": "头戴铁桶，血量很高",
+        "health": 1300,
+        "speed": 0.5,
+        "damage": 100,
+        "attackSpeed": 1.0,
+        "armor": 0,
+        "abilities": [],
+        "category": "basic",
+        "rarity": "uncommon"
+      }
+    ],
+    "special": [
+      {
+        "id": "zombie_pole",
+        "name": "撑杆僵尸",
+        "description": "使用撑杆跳过第一个植物",
+        "health": 340,
+        "speed": 1.0,
+        "damage": 100,
+        "attackSpeed": 1.0,
+        "armor": 0,
+        "abilities": ["pole_vault"],
+        "category": "special",
+        "rarity": "uncommon"
+      },
+      {
+        "id": "zombie_newspaper",
+        "name": "读报僵尸",
+        "description": "手持报纸，报纸被打掉后加速",
+        "health": 200,
+        "speed": 0.5,
+        "damage": 100,
+        "attackSpeed": 1.0,
+        "armor": 150,
+        "abilities": ["newspaper_shield", "enrage_on_shield_break"],
+        "category": "special",
+        "rarity": "uncommon"
+      },
+      {
+        "id": "zombie_door",
+        "name": "铁门僵尸",
+        "description": "手持铁门作为盾牌",
+        "health": 200,
+        "speed": 0.5,
+        "damage": 100,
+        "attackSpeed": 1.0,
+        "armor": 1100,
+        "abilities": ["door_shield"],
+        "category": "special",
+        "rarity": "uncommon"
+      },
+      {
+        "id": "zombie_football",
+        "name": "橄榄球僵尸",
+        "description": "身穿护甲，速度快",
+        "health": 1600,
+        "speed": 1.5,
+        "damage": 100,
+        "attackSpeed": 1.0,
+        "armor": 0,
+        "abilities": [],
+        "category": "special",
+        "rarity": "rare"
+      }
+    ],
+    "flying": [
+      {
+        "id": "zombie_balloon",
+        "name": "气球僵尸",
+        "description": "漂浮在空中，需要特定植物攻击",
+        "health": 200,
+        "speed": 0.75,
+        "damage": 100,
+        "attackSpeed": 1.0,
+        "armor": 0,
+        "abilities": ["fly"],
+        "category": "flying",
+        "rarity": "uncommon"
+      },
+      {
+        "id": "zombie_pogo",
+        "name": "弹跳僵尸",
+        "description": "使用弹跳杆跳过植物",
+        "health": 500,
+        "speed": 1.0,
+        "damage": 100,
+        "attackSpeed": 1.0,
+        "armor": 0,
+        "abilities": ["pogo_jump"],
+        "category": "flying",
+        "rarity": "rare"
+      }
+    ],
+    "water": [
+      {
+        "id": "zombie_snorkel",
+        "name": "潜水僵尸",
+        "description": "潜入水中，无法被普通植物攻击",
+        "health": 200,
+        "speed": 0.5,
+        "damage": 100,
+        "attackSpeed": 1.0,
+        "armor": 0,
+        "abilities": ["submerge"],
+        "category": "water",
+        "rarity": "uncommon"
+      },
+      {
+        "id": "zombie_dolphin",
+        "name": "海豚僵尸",
+        "description": "骑海豚跳过第一个水生植物",
+        "health": 500,
+        "speed": 1.5,
+        "damage": 100,
+        "attackSpeed": 1.0,
+        "armor": 0,
+        "abilities": ["dolphin_jump"],
+        "category": "water",
+        "rarity": "rare"
+      }
+    ],
+    "boss": [
+      {
+        "id": "zombie_gargantuar",
+        "name": "巨人僵尸",
+        "description": "巨大的僵尸，血量极高，会投掷小僵尸",
+        "health": 3000,
+        "speed": 0.3,
+        "damage": 600,
+        "attackSpeed": 0.5,
+        "armor": 0,
+        "abilities": ["throw_imp", "smash"],
+        "category": "boss",
+        "rarity": "epic"
+      },
+      {
+        "id": "zombie_giga_gargantuar",
+        "name": "红眼巨人僵尸",
+        "description": "更强大的巨人僵尸",
+        "health": 6000,
+        "speed": 0.3,
+        "damage": 600,
+        "attackSpeed": 0.5,
+        "armor": 0,
+        "abilities": ["throw_imp", "smash", "enrage"],
+        "category": "boss",
+        "rarity": "legendary"
+      },
+      {
+        "id": "zombie_zomboss",
+        "name": "僵尸博士",
+        "description": "最终Boss，驾驶机器人战斗",
+        "health": 50000,
+        "speed": 0.2,
+        "damage": 1000,
+        "attackSpeed": 0.3,
+        "armor": 5000,
+        "abilities": ["summon_zombies", "fireball", "iceball", "charge"],
+        "category": "boss",
+        "rarity": "legendary"
+      }
+    ]
+  },
+  "abilities": {
+    "pole_vault": {
+      "name": "撑杆跳跃",
+      "description": "跳过第一个遇到的植物"
+    },
+    "newspaper_shield": {
+      "name": "报纸护盾",
+      "description": "报纸作为额外护甲"
+    },
+    "enrage_on_shield_break": {
+      "name": "狂暴",
+      "description": "护盾被破坏后加速移动"
+    },
+    "door_shield": {
+      "name": "铁门护盾",
+      "description": "铁门作为额外护甲"
+    },
+    "fly": {
+      "name": "飞行",
+      "description": "漂浮在空中，只能被特定植物攻击"
+    },
+    "pogo_jump": {
+      "name": "弹跳",
+      "description": "使用弹跳杆跳过植物"
+    },
+    "submerge": {
+      "name": "潜水",
+      "description": "潜入水中，无法被普通植物攻击"
+    },
+    "dolphin_jump": {
+      "name": "海豚跳跃",
+      "description": "骑海豚跳过水生植物"
+    },
+    "throw_imp": {
+      "name": "投掷小鬼",
+      "description": "血量低于一半时投掷小鬼僵尸"
+    },
+    "smash": {
+      "name": "碾压",
+      "description": "直接碾压植物"
+    },
+    "enrage": {
+      "name": "狂暴",
+      "description": "血量低于一半时加速"
+    },
+    "summon_zombies": {
+      "name": "召唤僵尸",
+      "description": "召唤普通僵尸"
+    },
+    "fireball": {
+      "name": "火球",
+      "description": "发射火球攻击植物"
+    },
+    "iceball": {
+      "name": "冰球",
+      "description": "发射冰球冻结植物"
+    },
+    "charge": {
+      "name": "冲锋",
+      "description": "向前冲锋碾压植物"
+    },
+    "wave_announce": {
+      "name": "波次宣告",
+      "description": "标志大波僵尸来袭"
+    }
+  },
+  "waveTemplates": [
+    {
+      "id": "wave_easy",
+      "name": "简单波次",
+      "description": "少量普通僵尸",
+      "zombies": [
+        {"id": "zombie_basic", "count": 3, "delay": 2}
+      ]
+    },
+    {
+      "id": "wave_medium",
+      "name": "中等波次",
+      "description": "混合普通和特殊僵尸",
+      "zombies": [
+        {"id": "zombie_basic", "count": 5, "delay": 1.5},
+        {"id": "zombie_cone", "count": 2, "delay": 3},
+        {"id": "zombie_pole", "count": 1, "delay": 5}
+      ]
+    },
+    {
+      "id": "wave_hard",
+      "name": "困难波次",
+      "description": "大量特殊僵尸",
+      "zombies": [
+        {"id": "zombie_basic", "count": 5, "delay": 1},
+        {"id": "zombie_cone", "count": 3, "delay": 2},
+        {"id": "zombie_bucket", "count": 2, "delay": 3},
+        {"id": "zombie_football", "count": 1, "delay": 5},
+        {"id": "zombie_pole", "count": 2, "delay": 4}
+      ]
+    },
+    {
+      "id": "wave_boss",
+      "name": "Boss波次",
+      "description": "Boss僵尸带领大波僵尸",
+      "zombies": [
+        {"id": "zombie_basic", "count": 10, "delay": 1},
+        {"id": "zombie_cone", "count": 5, "delay": 2},
+        {"id": "zombie_bucket", "count": 3, "delay": 3},
+        {"id": "zombie_gargantuar", "count": 1, "delay": 10}
+      ]
+    }
+  ]
+}

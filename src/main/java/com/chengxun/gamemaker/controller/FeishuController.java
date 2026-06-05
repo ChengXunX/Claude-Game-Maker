@@ -6,6 +6,8 @@ import com.chengxun.gamemaker.feishu.FeishuBotService;
 import com.chengxun.gamemaker.manager.AgentManager;
 import com.chengxun.gamemaker.manager.ProjectManager;
 import com.chengxun.gamemaker.model.GameProject;
+import com.chengxun.gamemaker.web.entity.Pipeline;
+import com.chengxun.gamemaker.web.service.PipelineService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -14,6 +16,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -25,12 +28,15 @@ public class FeishuController {
     private final FeishuBotService feishuService;
     private final AgentManager agentManager;
     private final ProjectManager projectManager;
+    private final PipelineService pipelineService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public FeishuController(FeishuBotService feishuService, AgentManager agentManager, ProjectManager projectManager) {
+    public FeishuController(FeishuBotService feishuService, AgentManager agentManager,
+                            ProjectManager projectManager, PipelineService pipelineService) {
         this.feishuService = feishuService;
         this.agentManager = agentManager;
         this.projectManager = projectManager;
+        this.pipelineService = pipelineService;
     }
 
     // ===== 飞书事件订阅回调 =====
@@ -146,6 +152,11 @@ public class FeishuController {
             case "查询", "query" -> handleQuery(chatId, parts);
             case "approve" -> handleApproval(chatId, true);
             case "reject" -> handleApproval(chatId, false);
+            // 流水线相关命令
+            case "流水线", "pipeline" -> handlePipelineCommand(chatId, parts);
+            case "构建", "build" -> handleBuild(chatId, parts);
+            case "部署", "deploy" -> handleDeploy(chatId, parts);
+            case "测试", "test" -> handleTest(chatId, parts);
             default -> feishuService.sendMessage(chatId, "❓ 未知命令: " + command + "\n\n输入 **帮助** 查看可用命令");
         }
     }
@@ -311,8 +322,354 @@ public class FeishuController {
             targetAgent.getName(), queryContent));
     }
 
+    /**
+     * 处理审批请求
+     * 记录审批结果并通知相关Agent
+     *
+     * @param chatId 飞书聊天ID
+     * @param approved 是否批准
+     */
     private void handleApproval(String chatId, boolean approved) {
-        // TODO: 处理审批逻辑
-        feishuService.sendMessage(chatId, approved ? "✅ 已批准" : "❌ 已拒绝");
+        log.info("Approval request processed: chatId={}, approved={}", chatId, approved);
+
+        // 通知所有Producer Agent审批结果
+        agentManager.getAllAgents().stream()
+            .filter(a -> "producer".equals(a.getRole()))
+            .forEach(agent -> {
+                com.chengxun.gamemaker.model.AgentMessage approvalMsg = com.chengxun.gamemaker.model.AgentMessage.builder()
+                    .fromAgentId("feishu-user")
+                    .toAgentId(agent.getId())
+                    .type(com.chengxun.gamemaker.model.AgentMessage.MessageType.SYSTEM)
+                    .content(approved ? "审批已通过" : "审批已被拒绝")
+                    .build();
+                agent.receiveMessage(approvalMsg);
+            });
+
+        feishuService.sendMessage(chatId, approved ? "✅ 已批准，已通知制作人" : "❌ 已拒绝，已通知制作人");
+    }
+
+    // ===== 流水线相关命令 =====
+
+    /**
+     * 处理流水线命令
+     */
+    private void handlePipelineCommand(String chatId, String[] parts) {
+        if (parts.length < 2) {
+            showPipelineHelp(chatId);
+            return;
+        }
+
+        String subCommand = parts[1].toLowerCase();
+
+        switch (subCommand) {
+            case "列表", "list" -> handlePipelineList(chatId);
+            case "触发", "trigger" -> handlePipelineTrigger(chatId, parts);
+            case "状态", "status" -> handlePipelineStatus(chatId, parts);
+            case "创建", "create" -> handlePipelineCreate(chatId, parts);
+            default -> showPipelineHelp(chatId);
+        }
+    }
+
+    /**
+     * 显示流水线帮助信息
+     */
+    private void showPipelineHelp(String chatId) {
+        feishuService.sendMessage(chatId, "🔧 **流水线命令帮助**\n\n" +
+            "**查看流水线**\n" +
+            "- `流水线 列表` - 查看所有流水线\n" +
+            "- `流水线 状态 <编号>` - 查看流水线状态\n\n" +
+            "**触发执行**\n" +
+            "- `流水线 触发 <编号>` - 触发指定流水线\n" +
+            "- `构建 <项目名>` - 快速触发构建\n" +
+            "- `测试 <项目名>` - 快速触发测试\n" +
+            "- `部署 <项目名>` - 快速触发部署\n\n" +
+            "**创建流水线**\n" +
+            "- `流水线 创建 <项目名> <类型>` - 创建新流水线\n" +
+            "  类型: build/test/deploy/full");
+    }
+
+    /**
+     * 查看流水线列表
+     */
+    private void handlePipelineList(String chatId) {
+        List<Pipeline> pipelines = pipelineService.getAllPipelines();
+
+        if (pipelines.isEmpty()) {
+            feishuService.sendMessage(chatId, "📋 **流水线列表**\n\n暂无流水线\n\n使用 `流水线 创建 <项目名> <类型>` 创建新流水线");
+            return;
+        }
+
+        StringBuilder sb = new StringBuilder("📋 **流水线列表**\n\n");
+        for (Pipeline pipeline : pipelines) {
+            sb.append(String.format("- **%s** (%s)\n  项目: %s\n  状态: %s\n  类型: %s\n\n",
+                pipeline.getName(),
+                pipeline.getPipelineNo(),
+                pipeline.getProjectName(),
+                pipeline.getStatusDescription(),
+                pipeline.getPipelineTypeDescription()));
+        }
+
+        feishuService.sendMessage(chatId, sb.toString());
+    }
+
+    /**
+     * 触发流水线执行
+     */
+    private void handlePipelineTrigger(String chatId, String[] parts) {
+        if (parts.length < 3) {
+            feishuService.sendMessage(chatId, "❌ 用法: `流水线 触发 <编号>`\n\n例如: `流水线 触发 PL-20260529-ABC123`");
+            return;
+        }
+
+        String pipelineNo = parts[2];
+
+        // 查找流水线
+        List<Pipeline> pipelines = pipelineService.getAllPipelines();
+        Pipeline targetPipeline = pipelines.stream()
+            .filter(p -> p.getPipelineNo().equals(pipelineNo))
+            .findFirst()
+            .orElse(null);
+
+        if (targetPipeline == null) {
+            feishuService.sendMessage(chatId, "❌ 未找到流水线: " + pipelineNo);
+            return;
+        }
+
+        if (targetPipeline.isRunning()) {
+            feishuService.sendMessage(chatId, "⚠️ 流水线正在执行中，无法重复触发");
+            return;
+        }
+
+        try {
+            // 触发执行
+            Pipeline pipeline = pipelineService.triggerPipeline(
+                targetPipeline.getId(), 0L, "飞书用户", "FEISHU");
+
+            feishuService.sendMessage(chatId, String.format("✅ 流水线已触发执行\n\n" +
+                "- 名称: %s\n" +
+                "- 编号: %s\n" +
+                "- 项目: %s\n" +
+                "- 类型: %s\n\n" +
+                "请等待执行完成，可使用 `流水线 状态 %s` 查看进度",
+                pipeline.getName(),
+                pipeline.getPipelineNo(),
+                pipeline.getProjectName(),
+                pipeline.getPipelineTypeDescription(),
+                pipeline.getPipelineNo()));
+
+        } catch (Exception e) {
+            feishuService.sendMessage(chatId, "❌ 触发失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 查看流水线状态
+     */
+    private void handlePipelineStatus(String chatId, String[] parts) {
+        if (parts.length < 3) {
+            feishuService.sendMessage(chatId, "❌ 用法: `流水线 状态 <编号>`");
+            return;
+        }
+
+        String pipelineNo = parts[2];
+
+        // 查找流水线
+        List<Pipeline> pipelines = pipelineService.getAllPipelines();
+        Pipeline targetPipeline = pipelines.stream()
+            .filter(p -> p.getPipelineNo().equals(pipelineNo))
+            .findFirst()
+            .orElse(null);
+
+        if (targetPipeline == null) {
+            feishuService.sendMessage(chatId, "❌ 未找到流水线: " + pipelineNo);
+            return;
+        }
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("📊 **流水线状态**\n\n");
+        sb.append(String.format("- 名称: %s\n", targetPipeline.getName()));
+        sb.append(String.format("- 编号: %s\n", targetPipeline.getPipelineNo()));
+        sb.append(String.format("- 项目: %s\n", targetPipeline.getProjectName()));
+        sb.append(String.format("- 类型: %s\n", targetPipeline.getPipelineTypeDescription()));
+        sb.append(String.format("- 状态: %s\n", targetPipeline.getStatusDescription()));
+        sb.append(String.format("- 进度: %d%%\n", targetPipeline.getProgress()));
+
+        if (targetPipeline.getCurrentStage() != null) {
+            sb.append(String.format("- 当前阶段: %s\n", targetPipeline.getCurrentStage()));
+        }
+
+        if (targetPipeline.getTriggeredByName() != null) {
+            sb.append(String.format("- 触发人: %s\n", targetPipeline.getTriggeredByName()));
+        }
+
+        if (targetPipeline.getDurationSeconds() != null) {
+            sb.append(String.format("- 耗时: %d秒\n", targetPipeline.getDurationSeconds()));
+        }
+
+        feishuService.sendMessage(chatId, sb.toString());
+    }
+
+    /**
+     * 创建流水线
+     */
+    private void handlePipelineCreate(String chatId, String[] parts) {
+        if (parts.length < 4) {
+            feishuService.sendMessage(chatId, "❌ 用法: `流水线 创建 <项目名> <类型>`\n\n" +
+                "类型: build/test/deploy/full\n\n" +
+                "例如: `流水线 创建 my-game full`");
+            return;
+        }
+
+        String projectName = parts[2];
+        String pipelineType = parts[3].toUpperCase();
+
+        // 查找项目
+        GameProject targetProject = projectManager.getAllProjects().stream()
+            .filter(p -> p.getName().contains(projectName) || p.getId().contains(projectName))
+            .findFirst()
+            .orElse(null);
+
+        if (targetProject == null) {
+            feishuService.sendMessage(chatId, "❌ 未找到项目: " + projectName);
+            return;
+        }
+
+        // 验证流水线类型
+        if (!List.of("BUILD", "TEST", "DEPLOY", "FULL").contains(pipelineType)) {
+            feishuService.sendMessage(chatId, "❌ 无效的流水线类型: " + pipelineType + "\n\n有效类型: build/test/deploy/full");
+            return;
+        }
+
+        try {
+            Pipeline pipeline = pipelineService.createPipeline(
+                targetProject.getName() + " - " + getPipelineTypeName(pipelineType),
+                "由飞书创建的流水线",
+                targetProject.getId(),
+                pipelineType,
+                null
+            );
+
+            feishuService.sendMessage(chatId, String.format("✅ 流水线创建成功\n\n" +
+                "- 名称: %s\n" +
+                "- 编号: %s\n" +
+                "- 项目: %s\n" +
+                "- 类型: %s\n\n" +
+                "使用 `流水线 触发 %s` 开始执行",
+                pipeline.getName(),
+                pipeline.getPipelineNo(),
+                pipeline.getProjectName(),
+                pipeline.getPipelineTypeDescription(),
+                pipeline.getPipelineNo()));
+
+        } catch (Exception e) {
+            feishuService.sendMessage(chatId, "❌ 创建失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 快速构建
+     */
+    private void handleBuild(String chatId, String[] parts) {
+        if (parts.length < 2) {
+            feishuService.sendMessage(chatId, "❌ 用法: `构建 <项目名>`");
+            return;
+        }
+
+        String projectName = parts[1];
+        quickTriggerPipeline(chatId, projectName, "BUILD", "构建");
+    }
+
+    /**
+     * 快速测试
+     */
+    private void handleTest(String chatId, String[] parts) {
+        if (parts.length < 2) {
+            feishuService.sendMessage(chatId, "❌ 用法: `测试 <项目名>`");
+            return;
+        }
+
+        String projectName = parts[1];
+        quickTriggerPipeline(chatId, projectName, "TEST", "测试");
+    }
+
+    /**
+     * 快速部署
+     */
+    private void handleDeploy(String chatId, String[] parts) {
+        if (parts.length < 2) {
+            feishuService.sendMessage(chatId, "❌ 用法: `部署 <项目名>`");
+            return;
+        }
+
+        String projectName = parts[1];
+        quickTriggerPipeline(chatId, projectName, "DEPLOY", "部署");
+    }
+
+    /**
+     * 快速触发流水线
+     */
+    private void quickTriggerPipeline(String chatId, String projectName, String pipelineType, String actionName) {
+        // 查找项目
+        GameProject targetProject = projectManager.getAllProjects().stream()
+            .filter(p -> p.getName().contains(projectName) || p.getId().contains(projectName))
+            .findFirst()
+            .orElse(null);
+
+        if (targetProject == null) {
+            feishuService.sendMessage(chatId, "❌ 未找到项目: " + projectName);
+            return;
+        }
+
+        // 查找或创建流水线
+        List<Pipeline> projectPipelines = pipelineService.getProjectPipelines(targetProject.getId());
+        Pipeline targetPipeline = projectPipelines.stream()
+            .filter(p -> p.getPipelineType().equals(pipelineType))
+            .findFirst()
+            .orElse(null);
+
+        if (targetPipeline == null) {
+            // 创建新流水线
+            targetPipeline = pipelineService.createPipeline(
+                targetProject.getName() + " - " + actionName,
+                "快速" + actionName + "流水线",
+                targetProject.getId(),
+                pipelineType,
+                null
+            );
+        }
+
+        if (targetPipeline.isRunning()) {
+            feishuService.sendMessage(chatId, "⚠️ 流水线正在执行中，请等待完成");
+            return;
+        }
+
+        try {
+            Pipeline pipeline = pipelineService.triggerPipeline(
+                targetPipeline.getId(), 0L, "飞书用户", "FEISHU");
+
+            feishuService.sendMessage(chatId, String.format("✅ %s流水线已触发\n\n" +
+                "- 项目: %s\n" +
+                "- 编号: %s\n\n" +
+                "请等待执行完成",
+                actionName,
+                targetProject.getName(),
+                pipeline.getPipelineNo()));
+
+        } catch (Exception e) {
+            feishuService.sendMessage(chatId, "❌ 触发失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 获取流水线类型名称
+     */
+    private String getPipelineTypeName(String type) {
+        return switch (type) {
+            case "BUILD" -> "构建";
+            case "TEST" -> "测试";
+            case "DEPLOY" -> "部署";
+            case "FULL" -> "完整流水线";
+            default -> type;
+        };
     }
 }

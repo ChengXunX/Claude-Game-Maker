@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>设备管理 - ChengXun Game Maker</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+</head>
+<body class="bg-dark text-light">
+    <!-- Navbar -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-black border-bottom border-secondary">
+        <div class="container-fluid">
+            <a class="navbar-brand" th:href="@{/}">
+                <i class="bi bi-controller"></i> ChengXun Game Maker
+            </a>
+            <div class="collapse navbar-collapse">
+                <ul class="navbar-nav me-auto">
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/}">
+                            <i class="bi bi-speedometer2"></i> 仪表盘
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/agents}">
+                            <i class="bi bi-robot"></i> Agents
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/projects}">
+                            <i class="bi bi-folder"></i> 项目
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/skills}">
+                            <i class="bi bi-lightning"></i> 技能
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/tokens}">
+                            <i class="bi bi-key"></i> Token 管理
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/monitor}">
+                            <i class="bi bi-graph-up"></i> 监控
+                        </a>
+                    </li>
+                    <li class="nav-item" sec:authorize="hasRole('ADMIN')">
+                        <a class="nav-link" th:href="@{/admin/users}">
+                            <i class="bi bi-people"></i> 用户管理
+                        </a>
+                    </li>
+                    <li class="nav-item" sec:authorize="hasAuthority('PERM_roles:manage')">
+                        <a class="nav-link" th:href="@{/roles}">
+                            <i class="bi bi-shield-lock"></i> 角色管理
+                        </a>
+                    </li>
+                </ul>
+                <ul class="navbar-nav">
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
+                            <i class="bi bi-person-circle"></i> <span th:text="${username}">User</span>
+                        </a>
+                        <ul class="dropdown-menu dropdown-menu-end dropdown-menu-dark">
+                            <li>
+                                <a class="dropdown-item" th:href="@{/profile}">
+                                    <i class="bi bi-person"></i> 个人中心
+                                </a>
+                            </li>
+                            <li>
+                                <a class="dropdown-item active" th:href="@{/devices}">
+                                    <i class="bi bi-laptop"></i> 设备管理
+                                </a>
+                            </li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li>
+                                <form th:action="@{/logout}" method="post">
+                                    <button class="dropdown-item" type="submit">
+                                        <i class="bi bi-box-arrow-right"></i> 退出登录
+                                    </button>
+                                </form>
+                            </li>
+                        </ul>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid mt-4">
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a th:href="@{/}" class="text-decoration-none">首页</a></li>
+                <li class="breadcrumb-item active">设备管理</li>
+            </ol>
+        </nav>
+
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2><i class="bi bi-laptop"></i> 设备管理</h2>
+            <form th:action="@{/devices/remove-all}" method="post"
+                  onsubmit="return confirm('确定要移除所有设备信任吗？下次登录所有设备都需要重新验证。')">
+                <button type="submit" class="btn btn-outline-danger">
+                    <i class="bi bi-trash"></i> 移除所有设备
+                </button>
+            </form>
+        </div>
+
+        <!-- Alerts -->
+        <div th:if="${success}" class="alert alert-success alert-dismissible fade show" role="alert">
+            <i class="bi bi-check-circle"></i> <span th:text="${success}"></span>
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+        <div th:if="${error}" class="alert alert-danger alert-dismissible fade show" role="alert">
+            <i class="bi bi-exclamation-circle"></i> <span th:text="${error}"></span>
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+
+        <!-- Info Card -->
+        <div class="card bg-dark border-secondary mb-4">
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-4">
+                        <div class="d-flex align-items-center mb-3">
+                            <i class="bi bi-info-circle text-info me-2" style="font-size: 1.5rem;"></i>
+                            <div>
+                                <h6 class="mb-0">设备信任</h6>
+                                <small class="text-muted">
+                                    <span th:if="${deviceTrustEnabled}" class="text-success">已启用</span>
+                                    <span th:unless="${deviceTrustEnabled}" class="text-warning">已禁用</span>
+                                </small>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="d-flex align-items-center mb-3">
+                            <i class="bi bi-clock text-warning me-2" style="font-size: 1.5rem;"></i>
+                            <div>
+                                <h6 class="mb-0">信任有效期</h6>
+                                <small class="text-muted" th:text="${trustDays} + ' 天'">7 天</small>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="d-flex align-items-center mb-3">
+                            <i class="bi bi-laptop text-primary me-2" style="font-size: 1.5rem;"></i>
+                            <div>
+                                <h6 class="mb-0">已信任设备</h6>
+                                <small class="text-muted" th:text="${devices.size()} + ' 个'">0 个</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Device List -->
+        <div class="card bg-dark border-secondary">
+            <div class="card-body">
+                <div th:if="${#lists.isEmpty(devices)}" class="text-center py-5">
+                    <i class="bi bi-laptop text-muted" style="font-size: 3rem;"></i>
+                    <p class="text-muted mt-3">暂无已信任的设备</p>
+                    <p class="text-muted small">在新设备登录并通过邮箱验证后，设备将显示在这里</p>
+                </div>
+
+                <div th:unless="${#lists.isEmpty(devices)}" class="table-responsive">
+                    <table class="table table-dark table-hover">
+                        <thead>
+                            <tr>
+                                <th>设备</th>
+                                <th>IP 地址</th>
+                                <th>信任时间</th>
+                                <th>过期时间</th>
+                                <th>最后使用</th>
+                                <th>状态</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr th:each="device : ${devices}">
+                                <td>
+                                    <i class="bi bi-laptop me-2"></i>
+                                    <span th:text="${device.deviceName ?: '未知设备'}"></span>
+                                </td>
+                                <td>
+                                    <code th:text="${device.ipAddress ?: '-'}"></code>
+                                </td>
+                                <td>
+                                    <small th:text="${#temporals.format(device.trustedAt, 'yyyy-MM-dd HH:mm')}"></small>
+                                </td>
+                                <td>
+                                    <small th:text="${#temporals.format(device.expiresAt, 'yyyy-MM-dd HH:mm')}"></small>
+                                </td>
+                                <td>
+                                    <small th:if="${device.lastUsedAt}"
+                                           th:text="${#temporals.format(device.lastUsedAt, 'yyyy-MM-dd HH:mm')}"></small>
+                                    <span th:unless="${device.lastUsedAt}" class="text-muted">-</span>
+                                </td>
+                                <td>
+                                    <span th:if="${device.expired}" class="badge bg-danger">
+                                        <i class="bi bi-x-circle"></i> 已过期
+                                    </span>
+                                    <span th:unless="${device.expired}" class="badge bg-success">
+                                        <i class="bi bi-check-circle"></i> 有效
+                                    </span>
+                                </td>
+                                <td>
+                                    <form th:action="@{/devices/{id}/remove(id=${device.id})}" method="post"
+                                          style="display: inline;"
+                                          onsubmit="return confirm('确定要移除此设备的信任吗？')">
+                                        <button type="submit" class="btn btn-sm btn-outline-danger">
+                                            <i class="bi bi-trash"></i> 移除
+                                        </button>
+                                    </form>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

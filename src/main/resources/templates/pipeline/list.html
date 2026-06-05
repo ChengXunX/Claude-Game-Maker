@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CICD流水线 - ChengXun Game Maker</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+</head>
+<body class="bg-dark text-light">
+    <div class="container-fluid mt-4">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2><i class="bi bi-gear-wide-connected"></i> CICD流水线</h2>
+            <a th:href="@{/pipelines/create}" class="btn btn-primary">
+                <i class="bi bi-plus-circle"></i> 创建流水线
+            </a>
+        </div>
+
+        <!-- 统计卡片 -->
+        <div class="row mb-4">
+            <div class="col-md-3">
+                <div class="card bg-primary text-white">
+                    <div class="card-body">
+                        <h5 class="card-title">总流水线</h5>
+                        <h2 th:text="${stats.totalPipelines ?: 0}">0</h2>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card bg-success text-white">
+                    <div class="card-body">
+                        <h5 class="card-title">运行中</h5>
+                        <h2 th:text="${stats.runningCount ?: 0}">0</h2>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card bg-info text-white">
+                    <div class="card-body">
+                        <h5 class="card-title">成功率</h5>
+                        <h2>95%</h2>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card bg-warning text-dark">
+                    <div class="card-body">
+                        <h5 class="card-title">平均耗时</h5>
+                        <h2>5分钟</h2>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 流水线列表 -->
+        <div class="card bg-dark">
+            <div class="card-header">
+                <i class="bi bi-list"></i> 流水线列表
+            </div>
+            <div class="card-body">
+                <table class="table table-dark table-striped table-hover">
+                    <thead>
+                        <tr>
+                            <th>编号</th>
+                            <th>名称</th>
+                            <th>项目</th>
+                            <th>类型</th>
+                            <th>状态</th>
+                            <th>进度</th>
+                            <th>触发人</th>
+                            <th>创建时间</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr th:each="pipeline : ${pipelines}">
+                            <td>
+                                <a th:href="@{/pipelines/{id}(id=${pipeline.id})}" th:text="${pipeline.pipelineNo}">PL-001</a>
+                            </td>
+                            <td>
+                                <span th:text="${pipeline.name}">流水线名称</span>
+                                <span th:if="${pipeline.autoTriggered}" class="badge bg-info ms-1">自动触发</span>
+                                <span th:if="${pipeline.productionDeploy}" class="badge bg-danger ms-1">生产环境</span>
+                            </td>
+                            <td th:text="${pipeline.projectName}">项目名称</td>
+                            <td>
+                                <span class="badge bg-secondary" th:text="${pipeline.pipelineTypeDescription}">类型</span>
+                            </td>
+                            <td>
+                                <span class="badge" th:classappend="${pipeline.status == 'SUCCESS' ? 'bg-success' :
+                                    pipeline.status == 'RUNNING' ? 'bg-primary' :
+                                    pipeline.status == 'FAILED' ? 'bg-danger' :
+                                    pipeline.status == 'PENDING' ? 'bg-warning text-dark' : 'bg-secondary'}"
+                                    th:text="${pipeline.statusDescription}">状态</span>
+                                <span th:if="${pipeline.requiresApproval}" class="badge ms-1"
+                                      th:classappend="${pipeline.approvalStatus == 'APPROVED' ? 'bg-success' :
+                                      pipeline.approvalStatus == 'REJECTED' ? 'bg-danger' : 'bg-warning text-dark'}"
+                                      th:text="${pipeline.approvalStatusDescription}">审批状态</span>
+                            </td>
+                            <td>
+                                <div class="progress" style="height: 20px;" th:if="${pipeline.isRunning()}">
+                                    <div class="progress-bar" role="progressbar"
+                                         th:style="'width: ' + ${pipeline.progress} + '%'"
+                                         th:text="${pipeline.progress} + '%'"
+                                         th:classappend="${pipeline.status == 'RUNNING' ? 'bg-primary' : 'bg-warning'}">
+                                    </div>
+                                </div>
+                                <span th:if="${!pipeline.isRunning()}" th:text="${pipeline.progress} + '%'">100%</span>
+                            </td>
+                            <td th:text="${pipeline.triggeredByName ?: '-'}">-</td>
+                            <td th:text="${#temporals.format(pipeline.createdAt, 'yyyy-MM-dd HH:mm')}">2026-01-01</td>
+                            <td>
+                                <div class="btn-group btn-group-sm">
+                                    <a th:href="@{/pipelines/{id}(id=${pipeline.id})}"
+                                       class="btn btn-outline-info" title="详情">
+                                        <i class="bi bi-eye"></i>
+                                    </a>
+                                    <!-- 触发执行（需要审批的先提交审批） -->
+                                    <form th:if="${(pipeline.status == 'IDLE' || pipeline.status == 'SUCCESS' || pipeline.status == 'FAILED') && !pipeline.requiresApproval}"
+                                          th:action="@{/pipelines/{id}/trigger(id=${pipeline.id})}" method="post" style="display: inline;">
+                                        <button type="submit" class="btn btn-outline-success" title="触发执行">
+                                            <i class="bi bi-play-circle"></i>
+                                        </button>
+                                    </form>
+                                    <!-- 提交审批 -->
+                                    <form th:if="${(pipeline.status == 'IDLE' || pipeline.status == 'SUCCESS' || pipeline.status == 'FAILED') && pipeline.requiresApproval && pipeline.approvalStatus != 'APPROVED'}"
+                                          th:action="@{/pipelines/{id}/submit-approval(id=${pipeline.id})}" method="post" style="display: inline;">
+                                        <button type="submit" class="btn btn-outline-warning" title="提交审批">
+                                            <i class="bi bi-check2-square"></i>
+                                        </button>
+                                    </form>
+                                    <!-- 已批准后触发执行 -->
+                                    <form th:if="${pipeline.requiresApproval && pipeline.approvalStatus == 'APPROVED' && (pipeline.status == 'IDLE' || pipeline.status == 'SUCCESS' || pipeline.status == 'FAILED')}"
+                                          th:action="@{/pipelines/{id}/trigger(id=${pipeline.id})}" method="post" style="display: inline;">
+                                        <button type="submit" class="btn btn-outline-success" title="触发执行">
+                                            <i class="bi bi-play-circle"></i>
+                                        </button>
+                                    </form>
+                                    <!-- 暂停 -->
+                                    <form th:if="${pipeline.status == 'RUNNING'}"
+                                          th:action="@{/pipelines/{id}/pause(id=${pipeline.id})}" method="post" style="display: inline;">
+                                        <button type="submit" class="btn btn-outline-warning" title="暂停">
+                                            <i class="bi bi-pause-circle"></i>
+                                        </button>
+                                    </form>
+                                    <!-- 恢复 -->
+                                    <form th:if="${pipeline.status == 'PAUSED'}"
+                                          th:action="@{/pipelines/{id}/resume(id=${pipeline.id})}" method="post" style="display: inline;">
+                                        <button type="submit" class="btn btn-outline-success" title="恢复">
+                                            <i class="bi bi-play-circle"></i>
+                                        </button>
+                                    </form>
+                                    <!-- 取消 -->
+                                    <form th:if="${pipeline.isRunning() || pipeline.status == 'PAUSED'}"
+                                          th:action="@{/pipelines/{id}/cancel(id=${pipeline.id})}" method="post" style="display: inline;">
+                                        <button type="submit" class="btn btn-outline-danger" title="取消"
+                                                onclick="return confirm('确定要取消执行吗？')">
+                                            <i class="bi bi-stop-circle"></i>
+                                        </button>
+                                    </form>
+                                </div>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <div th:if="${#lists.isEmpty(pipelines)}" class="text-center py-5">
+                    <i class="bi bi-inbox" style="font-size: 3rem;"></i>
+                    <p class="mt-3">暂无流水线</p>
+                    <a th:href="@{/pipelines/create}" class="btn btn-primary">创建第一个流水线</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

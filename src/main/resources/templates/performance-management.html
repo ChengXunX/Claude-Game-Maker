@@ -1,0 +1,925 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>绩效管理 - ChengXun Game Maker</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <link th:href="@{/css/custom.css}" rel="stylesheet">
+    <link th:href="@{/css/markdown-editor.css}" rel="stylesheet">
+    <style>
+        .score-badge {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 1.2rem;
+        }
+        .grade-A { background: linear-gradient(135deg, #ffd700, #ffed4e); color: #000; }
+        .grade-B { background: linear-gradient(135deg, #00bfff, #87cefa); color: #fff; }
+        .grade-C { background: linear-gradient(135deg, #32cd32, #90ee90); color: #fff; }
+        .grade-D { background: linear-gradient(135deg, #ffa500, #ffd700); color: #000; }
+        .grade-F { background: linear-gradient(135deg, #ff6347, #ff7f7f); color: #fff; }
+        .warning-indicator {
+            color: #ffc107;
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+    </style>
+</head>
+<body class="bg-dark text-light">
+    <div class="container-fluid mt-4">
+        <!-- 页面标题 -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h2><i class="bi bi-clipboard-data"></i> 绩效管理</h2>
+                        <p class="text-muted mb-0">制作人对团队成员进行绩效评审、警告和解雇管理</p>
+                    </div>
+                    <div>
+                        <button class="btn btn-outline-primary" onclick="loadData()">
+                            <i class="bi bi-arrow-clockwise"></i> 刷新
+                        </button>
+                        <button class="btn btn-primary" onclick="showReviewModal()">
+                            <i class="bi bi-plus-circle"></i> 绩效评审
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab导航 -->
+        <ul class="nav nav-tabs mb-4" role="tablist">
+            <li class="nav-item">
+                <a class="nav-link active" data-bs-toggle="tab" href="#reviews">绩效评审</a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link" data-bs-toggle="tab" href="#dismissals">解雇管理</a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link" data-bs-toggle="tab" href="#producer-replace">更换制作人</a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link" data-bs-toggle="tab" href="#statistics">统计分析</a>
+            </li>
+        </ul>
+
+        <!-- Tab内容 -->
+        <div class="tab-content">
+            <!-- 绩效评审 -->
+            <div class="tab-pane fade show active" id="reviews">
+                <div class="row">
+                    <!-- 左侧：团队成员列表 -->
+                    <div class="col-lg-4">
+                        <div class="card mb-4">
+                            <div class="card-header">
+                                <h5 class="mb-0"><i class="bi bi-people"></i> 团队成员</h5>
+                            </div>
+                            <div class="card-body p-0">
+                                <div class="list-group list-group-flush" id="teamMembers">
+                                    <!-- 团队成员列表 -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 右侧：评审历史 -->
+                    <div class="col-lg-8">
+                        <div class="card mb-4">
+                            <div class="card-header">
+                                <h5 class="mb-0"><i class="bi bi-clock-history"></i> 评审历史</h5>
+                            </div>
+                            <div class="card-body">
+                                <div id="reviewHistory">
+                                    <div class="text-center text-muted py-4">
+                                        <i class="bi bi-person fs-1"></i>
+                                        <p class="mt-2">选择团队成员查看评审历史</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 解雇管理 -->
+            <div class="tab-pane fade" id="dismissals">
+                <div class="row">
+                    <!-- 待审批解雇申请 -->
+                    <div class="col-lg-6">
+                        <div class="card mb-4">
+                            <div class="card-header">
+                                <h5 class="mb-0"><i class="bi bi-hourglass-split"></i> 待审批解雇申请</h5>
+                            </div>
+                            <div class="card-body p-0">
+                                <div id="pendingDismissals">
+                                    <!-- 待审批列表 -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 所有解雇申请 -->
+                    <div class="col-lg-6">
+                        <div class="card mb-4">
+                            <div class="card-header">
+                                <h5 class="mb-0"><i class="bi bi-list-ul"></i> 所有解雇申请</h5>
+                            </div>
+                            <div class="card-body p-0">
+                                <div class="table-responsive">
+                                    <table class="table table-hover mb-0">
+                                        <thead>
+                                            <tr>
+                                                <th>申请编号</th>
+                                                <th>Agent</th>
+                                                <th>状态</th>
+                                                <th>时间</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="allDismissals">
+                                            <!-- 所有解雇申请 -->
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 更换制作人 -->
+            <div class="tab-pane fade" id="producer-replace">
+                <div class="row">
+                    <!-- 更换制作人表单 -->
+                    <div class="col-lg-6">
+                        <div class="card mb-4">
+                            <div class="card-header">
+                                <h5 class="mb-0"><i class="bi bi-person-gear"></i> 更换制作人</h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="alert alert-warning">
+                                    <i class="bi bi-exclamation-triangle"></i>
+                                    <strong>注意：</strong>更换制作人不是删除制作人角色，而是"重置"或"替换"制作人。
+                                    新制作人会继承项目，但可能有不同的规范。
+                                </div>
+                                <form id="replaceProducerForm">
+                                    <div class="mb-3">
+                                        <label class="form-label">选择制作人 *</label>
+                                        <select class="form-select" id="replaceProducerId" required>
+                                            <option value="">选择制作人</option>
+                                        </select>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label">项目ID *</label>
+                                        <input type="text" class="form-control" id="replaceProjectId"
+                                               placeholder="输入项目ID" required>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label">更换原因类型 *</label>
+                                        <select class="form-select" id="replaceReasonType" required>
+                                            <option value="">选择原因类型</option>
+                                            <option value="PERFORMANCE_ISSUE">绩效问题</option>
+                                            <option value="MANAGEMENT_ISSUE">管理问题</option>
+                                            <option value="PROJECT_NEEDS">项目需求</option>
+                                            <option value="OPTIMIZATION">优化升级</option>
+                                            <option value="POLICY_CHANGE">政策变更</option>
+                                            <option value="OTHER">其他</option>
+                                        </select>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label">更换原因详情 *</label>
+                                        <textarea class="form-control" id="replaceReason" rows="3"
+                                                  placeholder="详细说明更换原因..." required></textarea>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label">新规范/文档说明 <small class="text-muted">(支持Markdown格式)</small></label>
+                                        <div class="markdown-editor"
+                                             data-name="replaceGuidelines"
+                                             data-rows="4"
+                                             data-placeholder="输入新制作人的规范、职能文档或优化文档..."></div>
+                                    </div>
+                                    <button type="submit" class="btn btn-danger w-100">
+                                        <i class="bi bi-person-x"></i> 确认更换制作人
+                                    </button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 更换历史 -->
+                    <div class="col-lg-6">
+                        <div class="card mb-4">
+                            <div class="card-header">
+                                <h5 class="mb-0"><i class="bi bi-clock-history"></i> 更换历史</h5>
+                            </div>
+                            <div class="card-body p-0">
+                                <div class="table-responsive">
+                                    <table class="table table-hover mb-0">
+                                        <thead>
+                                            <tr>
+                                                <th>更换编号</th>
+                                                <th>原制作人</th>
+                                                <th>新制作人</th>
+                                                <th>原因</th>
+                                                <th>时间</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="replacementHistory">
+                                            <!-- 更换历史 -->
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 统计分析 -->
+            <div class="tab-pane fade" id="statistics">
+                <div class="row">
+                    <div class="col-lg-6">
+                        <div class="card mb-4">
+                            <div class="card-header">
+                                <h5 class="mb-0"><i class="bi bi-bar-chart"></i> Agent平均评分</h5>
+                            </div>
+                            <div class="card-body">
+                                <div id="agentScores">
+                                    <!-- Agent评分统计 -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-lg-6">
+                        <div class="card mb-4">
+                            <div class="card-header">
+                                <h5 class="mb-0"><i class="bi bi-pie-chart"></i> 解雇申请统计</h5>
+                            </div>
+                            <div class="card-body">
+                                <div id="dismissalStats">
+                                    <!-- 解雇统计 -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 绩效评审模态框 -->
+    <div class="modal fade" id="reviewModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">绩效评审</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="reviewForm">
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">被评审Agent *</label>
+                                <select class="form-select" id="reviewAgent" required>
+                                    <option value="">选择Agent</option>
+                                </select>
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">评审周期 *</label>
+                                <input type="text" class="form-control" id="reviewPeriod"
+                                       placeholder="如：2026-Q2" required>
+                            </div>
+                        </div>
+
+                        <h6 class="mt-3 mb-2">评分维度</h6>
+                        <div class="row">
+                            <div class="col-md-3 mb-3">
+                                <label class="form-label">任务质量 (0-100)</label>
+                                <input type="number" class="form-control" id="qualityScore"
+                                       min="0" max="100" required>
+                            </div>
+                            <div class="col-md-3 mb-3">
+                                <label class="form-label">工作效率 (0-100)</label>
+                                <input type="number" class="form-control" id="efficiencyScore"
+                                       min="0" max="100" required>
+                            </div>
+                            <div class="col-md-3 mb-3">
+                                <label class="form-label">协作能力 (0-100)</label>
+                                <input type="number" class="form-control" id="collaborationScore"
+                                       min="0" max="100" required>
+                            </div>
+                            <div class="col-md-3 mb-3">
+                                <label class="form-label">创新能力 (0-100)</label>
+                                <input type="number" class="form-control" id="innovationScore"
+                                       min="0" max="100" required>
+                            </div>
+                        </div>
+
+                        <h6 class="mt-3 mb-2">评价内容</h6>
+                        <div class="mb-3">
+                            <label class="form-label">优点</label>
+                            <textarea class="form-control" id="strengths" rows="2"></textarea>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">待改进</label>
+                            <textarea class="form-control" id="improvements" rows="2"></textarea>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">具体评价</label>
+                            <textarea class="form-control" id="comments" rows="2"></textarea>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">工作亮点</label>
+                            <textarea class="form-control" id="highlights" rows="2"></textarea>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" onclick="submitReview()">提交评审</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 解雇审批模态框 -->
+    <div class="modal fade" id="dismissalModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">解雇审批</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="dismissalDetail">
+                        <!-- 解雇详情 -->
+                    </div>
+                    <hr>
+                    <div class="mb-3">
+                        <label class="form-label">审批意见</label>
+                        <textarea class="form-control" id="dismissalComment" rows="3"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-danger" onclick="rejectDismissal()">驳回</button>
+                    <button type="button" class="btn btn-success" onclick="approveDismissal()">批准</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script th:src="@{/js/markdown-editor.js}"></script>
+    <script>
+        let currentProducerId = null;
+        let currentDismissalId = null;
+
+        // 页面加载
+        document.addEventListener('DOMContentLoaded', () => {
+            loadData();
+            findProducerId();
+        });
+
+        // 查找制作人Agent ID
+        async function findProducerId() {
+            try {
+                const response = await fetch('/api/agent-scheduler/status');
+                const agents = await response.json();
+                const producer = agents.find(a => a.role === 'producer');
+                if (producer) {
+                    currentProducerId = producer.id;
+                }
+            } catch (error) {
+                console.error('Failed to find producer:', error);
+            }
+        }
+
+        // 加载数据
+        async function loadData() {
+            await Promise.all([
+                loadTeamMembers(),
+                loadPendingDismissals(),
+                loadAllDismissals(),
+                loadReplacementHistory(),
+                loadStatistics()
+            ]);
+        }
+
+        // 加载团队成员
+        async function loadTeamMembers() {
+            try {
+                const response = await fetch('/api/agent-scheduler/status');
+                const agents = await response.json();
+
+                const container = document.getElementById('teamMembers');
+                const select = document.getElementById('reviewAgent');
+                container.innerHTML = '';
+                select.innerHTML = '<option value="">选择Agent</option>';
+
+                agents.forEach(agent => {
+                    // 添加到列表
+                    const item = document.createElement('a');
+                    item.className = 'list-group-item list-group-item-action';
+                    item.href = '#';
+                    item.onclick = (e) => {
+                        e.preventDefault();
+                        loadAgentReviews(agent.id);
+                    };
+                    item.innerHTML = `
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <h6 class="mb-0">${agent.name}</h6>
+                                <small class="text-muted">${agent.role}</small>
+                            </div>
+                            <span class="badge ${agent.alive ? 'bg-success' : 'bg-danger'}">
+                                ${agent.alive ? '在线' : '离线'}
+                            </span>
+                        </div>
+                    `;
+                    container.appendChild(item);
+
+                    // 添加到下拉框
+                    const option = document.createElement('option');
+                    option.value = agent.id;
+                    option.textContent = `${agent.name} (${agent.role})`;
+                    select.appendChild(option);
+                });
+            } catch (error) {
+                console.error('Failed to load team members:', error);
+            }
+        }
+
+        // 加载Agent评审历史
+        async function loadAgentReviews(agentId) {
+            try {
+                const response = await fetch(`/api/performance-management/reviews/agent/${agentId}`);
+                const reviews = await response.json();
+
+                const container = document.getElementById('reviewHistory');
+
+                if (reviews.length === 0) {
+                    container.innerHTML = `
+                        <div class="text-center text-muted py-4">
+                            <i class="bi bi-inbox fs-1"></i>
+                            <p class="mt-2">暂无评审记录</p>
+                        </div>
+                    `;
+                    return;
+                }
+
+                container.innerHTML = '';
+
+                reviews.forEach(review => {
+                    const card = document.createElement('div');
+                    card.className = 'card mb-3';
+                    card.innerHTML = `
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between align-items-start mb-2">
+                                <div>
+                                    <h6 class="mb-0">${review.reviewNo}</h6>
+                                    <small class="text-muted">评审周期: ${review.reviewPeriod}</small>
+                                </div>
+                                <div class="score-badge grade-${review.grade}">
+                                    ${review.overallScore}
+                                </div>
+                            </div>
+                            ${review.isWarning ? '<div class="warning-indicator mb-2"><i class="bi bi-exclamation-triangle"></i> 警告</div>' : ''}
+                            <div class="row mb-2">
+                                <div class="col-3"><small>质量: ${review.qualityScore}</small></div>
+                                <div class="col-3"><small>效率: ${review.efficiencyScore}</small></div>
+                                <div class="col-3"><small>协作: ${review.collaborationScore}</small></div>
+                                <div class="col-3"><small>创新: ${review.innovationScore}</small></div>
+                            </div>
+                            ${review.comments ? `<p class="mb-0 small">${review.comments}</p>` : ''}
+                        </div>
+                    `;
+                    container.appendChild(card);
+                });
+            } catch (error) {
+                console.error('Failed to load agent reviews:', error);
+            }
+        }
+
+        // 提交评审
+        async function submitReview() {
+            if (!currentProducerId) {
+                alert('未找到制作人Agent');
+                return;
+            }
+
+            const reviewData = {
+                producerId: currentProducerId,
+                agentId: document.getElementById('reviewAgent').value,
+                projectId: 'default',
+                reviewPeriod: document.getElementById('reviewPeriod').value,
+                qualityScore: parseInt(document.getElementById('qualityScore').value),
+                efficiencyScore: parseInt(document.getElementById('efficiencyScore').value),
+                collaborationScore: parseInt(document.getElementById('collaborationScore').value),
+                innovationScore: parseInt(document.getElementById('innovationScore').value),
+                strengths: document.getElementById('strengths').value,
+                improvements: document.getElementById('improvements').value,
+                comments: document.getElementById('comments').value,
+                highlights: document.getElementById('highlights').value
+            };
+
+            try {
+                const response = await fetch('/api/performance-management/reviews/submit', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(reviewData)
+                });
+
+                const result = await response.json();
+
+                if (result.status === 'success') {
+                    alert(`评审已提交！综合评分: ${result.overallScore}, 等级: ${result.grade}${result.isWarning ? ' (警告)' : ''}`);
+                    bootstrap.Modal.getInstance(document.getElementById('reviewModal')).hide();
+                    document.getElementById('reviewForm').reset();
+                    loadData();
+                } else {
+                    alert('提交失败: ' + result.message);
+                }
+            } catch (error) {
+                alert('请求失败: ' + error.message);
+            }
+        }
+
+        // 加载待审批解雇申请
+        async function loadPendingDismissals() {
+            try {
+                const response = await fetch('/api/performance-management/dismissals/pending');
+                const dismissals = await response.json();
+
+                const container = document.getElementById('pendingDismissals');
+                container.innerHTML = '';
+
+                if (dismissals.length === 0) {
+                    container.innerHTML = '<div class="p-3 text-muted text-center">暂无待审批申请</div>';
+                    return;
+                }
+
+                dismissals.forEach(d => {
+                    const item = document.createElement('div');
+                    item.className = 'card m-2';
+                    item.innerHTML = `
+                        <div class="card-body p-3">
+                            <div class="d-flex justify-content-between align-items-start mb-2">
+                                <div>
+                                    <h6 class="mb-0">${d.agentName}</h6>
+                                    <small class="text-muted">${d.agentRole}</small>
+                                </div>
+                                <span class="badge ${d.isSystemRole ? 'bg-warning' : 'bg-info'}">
+                                    ${d.isSystemRole ? '系统角色' : '自定义'}
+                                </span>
+                            </div>
+                            <p class="mb-1 small"><strong>原因：</strong>${d.reasonTypeDescription}</p>
+                            <p class="mb-2 small text-muted">${d.reason}</p>
+                            <div class="d-flex justify-content-between align-items-center">
+                                <small class="text-muted">警告: ${d.warningCount}次</small>
+                                <button class="btn btn-outline-primary btn-sm" onclick="openDismissalModal(${d.id})">
+                                    审批
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                    container.appendChild(item);
+                });
+            } catch (error) {
+                console.error('Failed to load pending dismissals:', error);
+            }
+        }
+
+        // 加载所有解雇申请
+        async function loadAllDismissals() {
+            try {
+                const response = await fetch('/api/performance-management/dismissals/all');
+                const dismissals = await response.json();
+
+                const tbody = document.getElementById('allDismissals');
+                tbody.innerHTML = '';
+
+                dismissals.forEach(d => {
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `
+                        <td><code>${d.requestNo}</code></td>
+                        <td>${d.agentName}</td>
+                        <td><span class="badge ${getStatusBadge(d.status)}">${d.statusDescription}</span></td>
+                        <td>${new Date(d.createdAt).toLocaleDateString()}</td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+            } catch (error) {
+                console.error('Failed to load all dismissals:', error);
+            }
+        }
+
+        // 加载统计
+        async function loadStatistics() {
+            try {
+                const response = await fetch('/api/performance-management/stats');
+                const stats = await response.json();
+
+                // Agent评分统计
+                const agentScores = document.getElementById('agentScores');
+                agentScores.innerHTML = '';
+
+                if (stats.agentScores) {
+                    stats.agentScores.forEach(score => {
+                        const div = document.createElement('div');
+                        div.className = 'd-flex justify-content-between align-items-center mb-2';
+                        div.innerHTML = `
+                            <span>${score[1]} (${score[0]})</span>
+                            <span class="badge bg-primary">${Math.round(score[2])}分</span>
+                        `;
+                        agentScores.appendChild(div);
+                    });
+                }
+
+                // 解雇统计
+                const dismissalStats = document.getElementById('dismissalStats');
+                dismissalStats.innerHTML = '';
+
+                if (stats.dismissalStats) {
+                    for (const [status, count] of Object.entries(stats.dismissalStats)) {
+                        const div = document.createElement('div');
+                        div.className = 'd-flex justify-content-between align-items-center mb-2';
+                        div.innerHTML = `
+                            <span>${status}</span>
+                            <span class="badge bg-secondary">${count}</span>
+                        `;
+                        dismissalStats.appendChild(div);
+                    }
+                }
+            } catch (error) {
+                console.error('Failed to load statistics:', error);
+            }
+        }
+
+        // 打开解雇审批模态框
+        async function openDismissalModal(requestId) {
+            currentDismissalId = requestId;
+
+            try {
+                const response = await fetch(`/api/performance-management/dismissals/${requestId}`);
+                const request = await response.json();
+
+                const detail = document.getElementById('dismissalDetail');
+                detail.innerHTML = `
+                    <h6>申请编号：${request.requestNo}</h6>
+                    <div class="mt-3">
+                        <p><strong>被解雇Agent：</strong>${request.agentName} (${request.agentRole})</p>
+                        <p><strong>是否系统角色：</strong>${request.isSystemRole ? '是' : '否'}</p>
+                        <p><strong>申请制作人：</strong>${request.producerName}</p>
+                        <p><strong>原因类型：</strong>${request.reasonTypeDescription}</p>
+                        <p><strong>原因详情：</strong>${request.reason}</p>
+                        <p><strong>警告次数：</strong>${request.warningCount}</p>
+                        <p><strong>连续低分期数：</strong>${request.consecutiveLowScorePeriods}</p>
+                    </div>
+                `;
+
+                document.getElementById('dismissalComment').value = '';
+
+                const modal = new bootstrap.Modal(document.getElementById('dismissalModal'));
+                modal.show();
+            } catch (error) {
+                console.error('Failed to load dismissal detail:', error);
+            }
+        }
+
+        // 批准解雇
+        async function approveDismissal() {
+            if (!currentDismissalId) return;
+
+            const comment = document.getElementById('dismissalComment').value;
+
+            try {
+                const response = await fetch(
+                    `/api/performance-management/dismissals/${currentDismissalId}/approve?comment=${encodeURIComponent(comment)}`,
+                    { method: 'POST' }
+                );
+
+                const result = await response.json();
+
+                if (result.status === 'success') {
+                    alert('解雇申请已批准');
+                    bootstrap.Modal.getInstance(document.getElementById('dismissalModal')).hide();
+                    loadData();
+                } else {
+                    alert('批准失败: ' + result.message);
+                }
+            } catch (error) {
+                alert('请求失败: ' + error.message);
+            }
+        }
+
+        // 驳回解雇
+        async function rejectDismissal() {
+            if (!currentDismissalId) return;
+
+            const reason = document.getElementById('dismissalComment').value;
+            if (!reason.trim()) {
+                alert('请输入驳回原因');
+                return;
+            }
+
+            try {
+                const response = await fetch(
+                    `/api/performance-management/dismissals/${currentDismissalId}/reject?reason=${encodeURIComponent(reason)}`,
+                    { method: 'POST' }
+                );
+
+                const result = await response.json();
+
+                if (result.status === 'success') {
+                    alert('解雇申请已驳回');
+                    bootstrap.Modal.getInstance(document.getElementById('dismissalModal')).hide();
+                    loadData();
+                } else {
+                    alert('驳回失败: ' + result.message);
+                }
+            } catch (error) {
+                alert('请求失败: ' + error.message);
+            }
+        }
+
+        // 显示评审模态框
+        function showReviewModal() {
+            const modal = new bootstrap.Modal(document.getElementById('reviewModal'));
+            modal.show();
+        }
+
+        // 加载制作人列表（用于更换制作人）
+        async function loadProducersForReplacement() {
+            try {
+                const response = await fetch('/api/agent-scheduler/status');
+                const agents = await response.json();
+
+                const select = document.getElementById('replaceProducerId');
+                select.innerHTML = '<option value="">选择制作人</option>';
+
+                agents.filter(a => a.role === 'producer').forEach(agent => {
+                    const option = document.createElement('option');
+                    option.value = agent.id;
+                    option.textContent = `${agent.name} (${agent.id})`;
+                    select.appendChild(option);
+                });
+            } catch (error) {
+                console.error('Failed to load producers:', error);
+            }
+        }
+
+        // 加载更换历史
+        async function loadReplacementHistory() {
+            try {
+                const response = await fetch('/api/performance-management/producer/replacements');
+                const replacements = await response.json();
+
+                const tbody = document.getElementById('replacementHistory');
+                tbody.innerHTML = '';
+
+                replacements.forEach(r => {
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `
+                        <td><code>${r.replacementNo}</code></td>
+                        <td>${r.oldProducerName}</td>
+                        <td>${r.newProducerName || '待创建'}</td>
+                        <td><span class="badge bg-warning">${r.reasonTypeDescription}</span></td>
+                        <td>${new Date(r.executedAt).toLocaleDateString()}</td>
+                    `;
+                    // 点击行显示详情
+                    tr.style.cursor = 'pointer';
+                    tr.onclick = () => showReplacementDetail(r);
+                    tbody.appendChild(tr);
+                });
+            } catch (error) {
+                console.error('Failed to load replacement history:', error);
+            }
+        }
+
+        // 显示更换详情
+        function showReplacementDetail(replacement) {
+            const modal = document.createElement('div');
+            modal.className = 'modal fade';
+            modal.tabIndex = -1;
+            modal.innerHTML = `
+                <div class="modal-dialog modal-lg">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title">更换详情 - ${replacement.replacementNo}</h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <p><strong>原制作人：</strong>${replacement.oldProducerName}</p>
+                                    <p><strong>新制作人：</strong>${replacement.newProducerName || '待创建'}</p>
+                                </div>
+                                <div class="col-md-6">
+                                    <p><strong>原因类型：</strong><span class="badge bg-warning">${replacement.reasonTypeDescription}</span></p>
+                                    <p><strong>执行时间：</strong>${new Date(replacement.executedAt).toLocaleString()}</p>
+                                </div>
+                            </div>
+                            <div class="mb-3">
+                                <h6>更换原因</h6>
+                                <div class="bg-dark p-3 rounded">${replacement.reason}</div>
+                            </div>
+                            ${replacement.newGuidelines ? `
+                            <div class="mb-3">
+                                <h6>新规范/文档说明</h6>
+                                <div class="markdown-preview bg-dark p-3 rounded">${typeof marked !== 'undefined' ? marked.parse(replacement.newGuidelines) : replacement.newGuidelines}</div>
+                            </div>
+                            ` : ''}
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            document.body.appendChild(modal);
+            const bsModal = new bootstrap.Modal(modal);
+            bsModal.show();
+
+            // 模态框关闭后移除DOM
+            modal.addEventListener('hidden.bs.modal', () => {
+                modal.remove();
+            });
+        }
+
+        // 提交更换制作人
+        document.getElementById('replaceProducerForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const producerId = document.getElementById('replaceProducerId').value;
+            const projectId = document.getElementById('replaceProjectId').value;
+            const reasonType = document.getElementById('replaceReasonType').value;
+            const reason = document.getElementById('replaceReason').value;
+            // 从Markdown编辑器获取内容
+            const guidelinesEditor = document.querySelector('#replaceProducerForm .markdown-editor');
+            const newGuidelines = guidelinesEditor ? guidelinesEditor.querySelector('textarea').value : '';
+
+            if (!producerId || !projectId || !reasonType || !reason) {
+                alert('请填写所有必填字段');
+                return;
+            }
+
+            if (!confirm('确定要更换制作人吗？\n\n注意：这不是删除制作人角色，而是"重置"或"替换"制作人。\n新制作人会继承项目，但可能有不同的规范。')) {
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/performance-management/producer/replace', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        producerId,
+                        projectId,
+                        reasonType,
+                        reason,
+                        newGuidelines
+                    })
+                });
+
+                const result = await response.json();
+
+                if (result.status === 'success') {
+                    alert(`制作人已更换！\n\n更换编号: ${result.replacementNo}\n原制作人: ${result.oldProducerId}\n新制作人: ${result.newProducerId}`);
+                    document.getElementById('replaceProducerForm').reset();
+                    loadData();
+                } else {
+                    alert('更换失败: ' + result.message);
+                }
+            } catch (error) {
+                alert('请求失败: ' + error.message);
+            }
+        });
+
+        // 页面加载时加载制作人列表
+        loadProducersForReplacement();
+
+        // 获取状态徽章
+        function getStatusBadge(status) {
+            switch (status) {
+                case 'PENDING': return 'bg-warning text-dark';
+                case 'APPROVED': return 'bg-success';
+                case 'REJECTED': return 'bg-danger';
+                case 'EXECUTED': return 'bg-info';
+                case 'CANCELLED': return 'bg-secondary';
+                default: return 'bg-secondary';
+            }
+        }
+    </script>
+</body>
+</html>

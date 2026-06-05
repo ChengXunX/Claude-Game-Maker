@@ -14,6 +14,10 @@ public class AgentConfig {
     public Map<String, AgentDefinition> getDefinitions() { return definitions; }
     public void setDefinitions(Map<String, AgentDefinition> definitions) { this.definitions = definitions; }
     
+    /**
+     * Agent定义配置
+     * 用于在application.yml中配置每个Agent的属性
+     */
     public static class AgentDefinition {
         private String name;
         private String role;
@@ -23,29 +27,35 @@ public class AgentConfig {
         private String apiUrl;
         private String model;
         private boolean autoStart = false;
-        
+
+        /** Agent工作目录（相对于项目根目录） */
+        private String workDir;
+
         public String getName() { return name; }
         public void setName(String name) { this.name = name; }
-        
+
         public String getRole() { return role; }
         public void setRole(String role) { this.role = role; }
-        
+
         public String getDescription() { return description; }
         public void setDescription(String description) { this.description = description; }
-        
+
         public String getAgentsFile() { return agentsFile; }
         public void setAgentsFile(String agentsFile) { this.agentsFile = agentsFile; }
-        
+
         public String getApiKey() { return apiKey; }
         public void setApiKey(String apiKey) { this.apiKey = apiKey; }
-        
+
         public String getApiUrl() { return apiUrl; }
         public void setApiUrl(String apiUrl) { this.apiUrl = apiUrl; }
-        
+
         public String getModel() { return model; }
         public void setModel(String model) { this.model = model; }
-        
+
         public boolean isAutoStart() { return autoStart; }
         public void setAutoStart(boolean autoStart) { this.autoStart = autoStart; }
+
+        public String getWorkDir() { return workDir; }
+        public void setWorkDir(String workDir) { this.workDir = workDir; }
     }
 }

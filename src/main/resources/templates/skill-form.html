@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title th:text="${skill != null ? '编辑技能' : '创建技能'}">技能表单</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <link th:href="@{/css/markdown-editor.css}" rel="stylesheet">
+</head>
+<body class="bg-dark text-light">
+    <!-- Navbar -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-black border-bottom border-secondary">
+        <div class="container-fluid">
+            <a class="navbar-brand" th:href="@{/}">
+                <i class="bi bi-controller"></i> ChengXun Game Maker
+            </a>
+            <div class="collapse navbar-collapse">
+                <ul class="navbar-nav me-auto">
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/}">
+                            <i class="bi bi-speedometer2"></i> 仪表盘
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/agents}">
+                            <i class="bi bi-robot"></i> Agents
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/projects}">
+                            <i class="bi bi-folder"></i> 项目
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link active" th:href="@{/skills}">
+                            <i class="bi bi-lightning"></i> 技能
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/tokens}">
+                            <i class="bi bi-key"></i> Token 管理
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/monitor}">
+                            <i class="bi bi-graph-up"></i> 监控
+                        </a>
+                    </li>
+                    <li class="nav-item" sec:authorize="hasRole('ADMIN')">
+                        <a class="nav-link" th:href="@{/admin/users}">
+                            <i class="bi bi-people"></i> 用户管理
+                        </a>
+                    </li>
+                    <li class="nav-item" sec:authorize="hasAuthority('PERM_roles:manage')">
+                        <a class="nav-link" th:href="@{/roles}">
+                            <i class="bi bi-shield-lock"></i> 角色管理
+                        </a>
+                    </li>
+                </ul>
+                <ul class="navbar-nav">
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
+                            <i class="bi bi-person-circle"></i> <span th:text="${username}">User</span>
+                        </a>
+                        <ul class="dropdown-menu dropdown-menu-end dropdown-menu-dark">
+                            <li>
+                                <a class="dropdown-item" th:href="@{/profile}">
+                                    <i class="bi bi-person"></i> 个人中心
+                                </a>
+                            </li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li>
+                                <form th:action="@{/logout}" method="post">
+                                    <button class="dropdown-item" type="submit">
+                                        <i class="bi bi-box-arrow-right"></i> 退出登录
+                                    </button>
+                                </form>
+                            </li>
+                        </ul>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid mt-4">
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a th:href="@{/}" class="text-decoration-none">首页</a></li>
+                <li class="breadcrumb-item"><a th:href="@{/skills}" class="text-decoration-none">技能管理</a></li>
+                <li class="breadcrumb-item active" th:text="${skill != null ? '编辑技能' : '创建技能'}"></li>
+            </ol>
+        </nav>
+
+        <h2 class="mb-4">
+            <i class="bi bi-lightning"></i>
+            <span th:text="${skill != null ? '编辑技能: ' + skill.name : '创建新技能'}"></span>
+        </h2>
+
+        <!-- Alerts -->
+        <div th:if="${error}" class="alert alert-danger alert-dismissible fade show" role="alert">
+            <i class="bi bi-exclamation-circle"></i> <span th:text="${error}"></span>
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+
+        <div class="row">
+            <div class="col-md-8">
+                <div class="card bg-dark border-secondary">
+                    <div class="card-body">
+                        <form th:action="${skill != null ? '/skills/' + skill.id + '/edit' : '/skills/create'}"
+                              method="post">
+
+                            <div class="mb-3">
+                                <label class="form-label">技能名称 *</label>
+                                <input type="text" class="form-control bg-dark text-light border-secondary"
+                                       name="name" required placeholder="如: 代码审查"
+                                       th:value="${skill != null ? skill.name : ''}">
+                                <div class="form-text">名称将自动生成 ID（英文小写+连字符）</div>
+                            </div>
+
+                            <div class="mb-3">
+                                <label class="form-label">描述</label>
+                                <input type="text" class="form-control bg-dark text-light border-secondary"
+                                       name="description" placeholder="简短描述此技能的用途"
+                                       th:value="${skill != null ? skill.description : ''}">
+                            </div>
+
+                            <div class="mb-3">
+                                <label class="form-label">触发关键词 *</label>
+                                <input type="text" class="form-control bg-dark text-light border-secondary"
+                                       name="triggerPattern" required
+                                       placeholder="用逗号分隔，如: code review,审查代码,代码审查"
+                                       th:value="${skill != null ? skill.triggerPattern : ''}">
+                                <div class="form-text">当任务描述包含这些关键词时自动匹配此技能</div>
+                            </div>
+
+                            <div class="mb-3">
+                                <label class="form-label">提示词模板 * <small class="text-muted">(支持Markdown格式)</small></label>
+                                <div class="markdown-editor"
+                                     data-name="prompt"
+                                     data-rows="10"
+                                     data-placeholder="输入技能的提示词模板...&#10;&#10;示例：&#10;请对以下代码进行审查，关注：&#10;1. 代码质量&#10;2. 安全漏洞&#10;3. 性能问题"
+                                     data-required="true"
+                                     th:text="${skill != null ? skill.prompt : ''}"></div>
+                            </div>
+
+                            <div class="mb-3">
+                                <label class="form-label">示例（每行一个）</label>
+                                <textarea class="form-control bg-dark text-light border-secondary"
+                                          name="examples" rows="4"
+                                          placeholder="每行输入一个示例&#10;示例1: 用户说'审查这段代码'&#10;示例2: 用户说'检查安全漏洞'"
+                                          th:text="${skill != null and !skill.examples.isEmpty() ? #strings.listJoin(skill.examples, '&#10;') : ''}"></textarea>
+                            </div>
+
+                            <div class="d-flex gap-2">
+                                <button type="submit" class="btn btn-primary">
+                                    <i class="bi bi-check-circle"></i>
+                                    <span th:text="${skill != null ? '保存修改' : '创建技能'}"></span>
+                                </button>
+                                <a th:href="@{/skills}" class="btn btn-secondary">
+                                    <i class="bi bi-arrow-left"></i> 返回
+                                </a>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-4">
+                <div class="card bg-dark border-secondary">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-info-circle"></i> 说明</h5>
+                    </div>
+                    <div class="card-body">
+                        <h6>什么是技能？</h6>
+                        <p class="text-muted small">
+                            技能是预定义的提示词模板，当 Agent 处理任务时，系统会根据任务描述自动匹配相关技能。
+                        </p>
+
+                        <h6>触发关键词</h6>
+                        <p class="text-muted small">
+                            用逗号分隔多个关键词。当用户的任务描述中包含任一关键词时，此技能会被激活。
+                        </p>
+
+                        <h6>提示词模板</h6>
+                        <p class="text-muted small">
+                            这是发送给 AI 的指令模板。写清楚你希望 AI 如何处理这类任务。
+                        </p>
+
+                        <h6>技能类型</h6>
+                        <ul class="list-unstyled small">
+                            <li><span class="badge bg-primary">builtin</span> 内置技能（不可编辑/删除）</li>
+                            <li><span class="badge bg-success">learned</span> Agent 学习到的技能</li>
+                            <li><span class="badge bg-secondary">custom</span> 用户自定义技能</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script th:src="@{/js/markdown-editor.js}"></script>
+</body>
+</html>

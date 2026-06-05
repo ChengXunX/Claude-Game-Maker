@@ -1,6 +1,7 @@
 package com.chengxun.gamemaker.web.entity;
 
 import jakarta.persistence.*;
+import jakarta.validation.constraints.NotBlank;
 import java.time.LocalDateTime;
 import java.util.HashSet;
 import java.util.Set;
@@ -13,16 +14,17 @@ public class Role {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @NotBlank(message = "name 不能为空")
     @Column(unique = true, nullable = false, length = 50)
     private String name;
 
-    @Column(length = 100)
+    @Column(name = "display_name", length = 100)
     private String displayName;
 
-    @Column(length = 500)
+    @Column(length = 255)
     private String description;
 
-    @Column(nullable = false)
+    @Column(name = "is_system")
     private boolean system = false; // 系统内置角色不可删除
 
     @ElementCollection(fetch = FetchType.EAGER)

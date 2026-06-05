@@ -44,9 +44,11 @@ buildNumber.properties
 .mvn/timing.properties
 .mvn/wrapper/maven-wrapper.jar
 
-# Spring Boot
+# Spring Boot - 敏感配置文件
 application-local.yml
 application-secret.yml
+application-prod.yml
+application-dev.yml
 
 # Privacy sensitive files
 *.env
@@ -57,10 +59,26 @@ application-secret.yml
 # Claude CLI session files
 .claude/
 
-# Data directories (runtime)
+# Data directories (runtime data, contains user data and secrets)
+data/
 data/contexts/
 data/memory/
 data/projects/
+
+# Runtime settings (may contain API keys saved via admin panel)
+data/settings.properties
+
+# Keystore / SSL certificates
+*.p12
+*.jks
+*.keystore
+keystore.*
+
+# Docker compose (may contain default passwords)
+docker-compose.override.yml
+
+# CI/CD secrets
+.github/workflows/*.yml
 
 # OS specific
 .DS_Store

@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title th:text="${fileName} + ' - 代码查看'">代码查看</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        .code-container { font-family: 'Consolas', 'Courier New', monospace; font-size: 0.85rem; }
+        .code-line { display: flex; }
+        .line-number { width: 50px; text-align: right; padding-right: 12px; color: #6c757d; user-select: none; flex-shrink: 0; border-right: 1px solid #333; }
+        .line-content { padding-left: 12px; white-space: pre; overflow-x: auto; flex: 1; }
+        .line-highlight { background-color: rgba(255, 255, 0, 0.15); }
+        .search-match { background-color: rgba(255, 255, 0, 0.4); padding: 1px 2px; border-radius: 2px; }
+    </style>
+</head>
+<body class="bg-dark text-light">
+    <nav class="navbar navbar-expand-lg navbar-dark bg-black border-bottom border-secondary">
+        <div class="container-fluid">
+            <a class="navbar-brand" th:href="@{/}"><i class="bi bi-controller"></i> ChengXun Game Maker</a>
+            <div class="collapse navbar-collapse">
+                <ul class="navbar-nav me-auto">
+                    <li class="nav-item"><a class="nav-link" th:href="@{/}"><i class="bi bi-speedometer2"></i> 仪表盘</a></li>
+                    <li class="nav-item"><a class="nav-link" th:href="@{/code}"><i class="bi bi-code-slash"></i> 代码管理</a></li>
+                </ul>
+                <ul class="navbar-nav">
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
+                            <i class="bi bi-person-circle"></i> <span th:text="${username}">User</span>
+                        </a>
+                        <ul class="dropdown-menu dropdown-menu-end dropdown-menu-dark">
+                            <li><form th:action="@{/logout}" method="post"><button class="dropdown-item" type="submit"><i class="bi bi-box-arrow-right"></i> 退出</button></form></li>
+                        </ul>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid mt-3">
+        <!-- Header -->
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb mb-0">
+                    <li class="breadcrumb-item"><a th:href="@{/code}" class="text-decoration-none">代码管理</a></li>
+                    <li class="breadcrumb-item">
+                        <a th:href="@{/code/browse/{id}(id=${projectId})}" class="text-decoration-none" th:text="${project.name}"></a>
+                    </li>
+                    <li class="breadcrumb-item active" th:text="${filePath}"></li>
+                </ol>
+            </nav>
+            <div class="d-flex gap-2 align-items-center">
+                <span class="badge bg-secondary" th:text="${lineCount} + ' 行'"></span>
+                <span class="badge bg-secondary" th:text="${fileSize < 1024 ? fileSize + ' B' : (fileSize < 1048576 ? (fileSize/1024) + ' KB' : (fileSize/1048576) + ' MB')}"></span>
+                <!-- Search -->
+                <form th:action="@{/code/view/{id}(id=${projectId})}" method="get" class="d-flex gap-1">
+                    <input type="hidden" name="path" th:value="${filePath}">
+                    <input type="text" name="search" class="form-control form-control-sm bg-dark text-light border-secondary"
+                           th:value="${search}" placeholder="搜索..." style="width: 180px;">
+                    <button type="submit" class="btn btn-sm btn-outline-primary"><i class="bi bi-search"></i></button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Search results info -->
+        <div th:if="${search != null and !search.isEmpty()}" class="alert alert-info py-1 mb-2" role="alert">
+            <i class="bi bi-search"></i> 搜索 "<span th:text="${search}"></span>" 找到
+            <strong th:text="${matchLines.size()}">0</strong> 个匹配
+            <span th:if="${!matchLines.isEmpty()}">
+                (行: <span th:each="line, iter : ${matchLines}">
+                    <a th:href="'#L' + ${line}" class="text-decoration-none" th:text="${line}"></a><span th:unless="${iter.last}">, </span>
+                </span>)
+            </span>
+        </div>
+
+        <!-- Code -->
+        <div class="card bg-dark border-secondary">
+            <div class="card-body p-0">
+                <div class="code-container" style="max-height: 80vh; overflow-y: auto;">
+                    <div th:each="line, iter : ${content.split('\\n')}"
+                         th:class="'code-line' + (${matchLines.contains(iter.count)} ? ' line-highlight' : '')"
+                         th:id="'L' + ${iter.count}">
+                        <span class="line-number" th:text="${iter.count}"></span>
+                        <span class="line-content" th:text="${line}"></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

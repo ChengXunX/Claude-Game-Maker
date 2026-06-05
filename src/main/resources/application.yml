@@ -1,31 +1,139 @@
+# 开发环境配置
+# 生产环境请使用 application-prod.yml
+
 server:
   port: 9922
+  servlet:
+    session:
+      timeout: 30m  # 会话超时时间：30分钟
+      tracking-modes: cookie  # 会话跟踪模式：仅使用Cookie
+      cookie:
+        http-only: true  # Cookie仅通过HTTP访问，防止XSS攻击
+        secure: false  # 开发环境可设为false，生产环境必须设为true
+        name: GAME_MAKER_SESSION  # 自定义Cookie名称
+        max-age: 1800  # Cookie最大存活时间：30分钟（秒）
 
 spring:
+  main:
+    allow-circular-references: true
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:dev}
+    include:
+      - dev
   datasource:
-    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/${MYSQL_DB:game_maker}?useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+    url: jdbc:p6spy:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/${MYSQL_DB:game_maker}?useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
     username: ${MYSQL_USER:root}
     password: ${MYSQL_PASSWORD:}
-    driver-class-name: com.mysql.cj.jdbc.Driver
+    driver-class-name: com.p6spy.engine.spy.P6SpyDriver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 5
+      idle-timeout: 300000
+      max-lifetime: 600000
+      connection-timeout: 30000
+      pool-name: GameMakerHikariPool
+      auto-commit: true
   jpa:
     hibernate:
-      ddl-auto: update
+      ddl-auto: none  # 使用 Flyway 管理数据库 Schema
     show-sql: false
     properties:
       hibernate:
         dialect: org.hibernate.dialect.MySQLDialect
         format_sql: true
+        jdbc:
+          batch_size: 25
+          batch_versioned_data: true
+        order_inserts: true
+        order_updates: true
+    open-in-view: false  # 禁用OpenSessionInView，避免懒加载问题
+  mail:
+    host: ${MAIL_HOST:smtp.qq.com}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
   thymeleaf:
-    cache: false
+    cache: false  # 开发环境禁用缓存，生产环境应启用
     prefix: classpath:/templates/
     suffix: .html
     encoding: UTF-8
+  cache:
+    type: redis  # 使用Redis作为缓存后端
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      database: 0
+      timeout: 2000ms
+      lettuce:
+        pool:
+          max-active: 8
+          max-idle: 8
+          min-idle: 0
+          max-wait: -1ms
+  kafka:
+    bootstrap-servers: ${KAFKA_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      acks: all
+      retries: 3
+    consumer:
+      group-id: game-maker-consumer
+      auto-offset-reset: latest
+      enable-auto-commit: true
+      properties:
+        spring.json.trusted.packages: "com.chengxun.gamemaker.*"
+    listener:
+      concurrency: 3
+  session:
+    store-type: redis  # 使用Redis存储会话
+    timeout: 1800  # 会话超时时间：30分钟
+    redis:
+      namespace: game-maker:session  # Redis键命名空间
+      flush-mode: on_save  # 会话刷新模式
+      save-mode: on_set_attribute  # 会话保存模式
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+    baseline-version: 0
+    validate-on-migrate: false
+    out-of-order: true
+    table: flyway_schema_history
+    placeholder-prefix: "NOT_A_PLACEHOLDER{"
+    placeholder-suffix: "}"
+    clean-disabled: false
+    repair-on-migrate: true
+
+app:
+  email:
+    enabled: ${EMAIL_ENABLED:false}
+  messaging:
+    type: ${MESSAGING_TYPE:memory}  # 可选值: memory, kafka
+    kafka:
+      consumer-group: ${KAFKA_CONSUMER_GROUP:game-maker-consumer}
+      topics:
+        agent-messages: agent-messages
+        retry: agent-messages-retry
+        dead-letter: agent-messages-dlt
+  jwt:
+    secret: ${JWT_SECRET:GameMakerDefaultSecretKey2026!@#$%^&*()_+}  # JWT 密钥，生产环境请修改
+    expiration: ${JWT_EXPIRATION:86400000}  # Token 过期时间，24小时（毫秒）
 
 game-maker:
   data-dir: data
   projects-dir: data/projects
   contexts-dir: data/contexts
   memory-dir: data/memory
+  templates-dir: data/templates
 
   claude:
     api-key: ${CLAUDE_API_KEY:}
@@ -43,6 +151,11 @@ game-maker:
     encrypt-key: ${FEISHU_ENCRYPT_KEY:}
     enabled: ${FEISHU_ENABLED:false}
 
+  dingtalk:
+    webhook-url: ${DINGTALK_WEBHOOK_URL:}
+    secret: ${DINGTALK_SECRET:}
+    enabled: ${DINGTALK_ENABLED:false}
+
   skills:
     enabled: true
     auto-learn: true
@@ -53,12 +166,18 @@ game-maker:
     max-snapshots: 5
     recovery-enabled: true
 
+  security:
+    device-trust-enabled: true
+    device-trust-days: 7
+
   scheduler:
     enabled: true
     producer-interval-ms: 300000    # 5 minutes
     agent-interval-ms: 600000       # 10 minutes
 
   agents:
+    # 项目根目录，所有Agent工作目录必须在此目录下
+    project-root: ${GAME_PROJECT_ROOT:./game-projects}
     definitions:
       producer:
         name: "制作人"
@@ -66,9 +185,64 @@ game-maker:
         description: "管理整个游戏开发团队，向用户汇报进度"
         agents-file: "src/main/resources/agents/producer/AGENTS.md"
         auto-start: true
+        # 工作目录配置（相对于project-root）
+        work-dir: "producer"
       server-dev:
         name: "服务端开发"
         role: "server-dev"
         description: "负责游戏服务端开发，Java 技术栈"
         agents-file: "src/main/resources/agents/server-dev/AGENTS.md"
         auto-start: false
+        work-dir: "server-dev"
+      git-commit:
+        name: "Git 提交专员"
+        role: "git-commit"
+        description: "审核所有代码提交，确保代码质量、注释规范和作者信息正确"
+        agents-file: "src/main/resources/agents/git-commit/AGENTS.md"
+        auto-start: true
+        work-dir: "git-commit"
+      system-planner:
+        name: "系统策划"
+        role: "system-planner"
+        description: "负责游戏系统设计和规划，将创意转化为可实现的系统方案"
+        agents-file: "src/main/resources/agents/system-planner/AGENTS.md"
+        auto-start: true
+        work-dir: "system-planner"
+      numerical-planner:
+        name: "数值策划"
+        role: "numerical-planner"
+        description: "负责游戏数值设计和平衡性分析，设计经济、战斗、成长等核心数值"
+        agents-file: "src/main/resources/agents/numerical-planner/AGENTS.md"
+        auto-start: true
+        work-dir: "numerical-planner"
+
+# SpringDoc OpenAPI 配置
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: method
+  packages-to-scan: com.chengxun.gamemaker.web.controller
+
+# Actuator 监控配置
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus,env,beans,configprops,mappings
+      base-path: /actuator
+  endpoint:
+    health:
+      show-details: when-authorized
+      roles: ADMIN
+  metrics:
+    tags:
+      application: game-maker
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+      percentiles:
+        http.server.requests: 0.5, 0.9, 0.95, 0.99
+  prometheus:
+    enabled: true

@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>搜索结果 - ChengXun Game Maker</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <link th:href="@{/css/custom.css}" rel="stylesheet">
+    <style>
+        .search-result-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .search-result-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px var(--shadow-color);
+        }
+        .result-type-badge {
+            width: 80px;
+            text-align: center;
+        }
+        .type-agent { background-color: #0d6efd; }
+        .type-alert { background-color: #ffc107; color: #000; }
+        .type-review { background-color: #198754; }
+        .type-log { background-color: #6c757d; }
+    </style>
+</head>
+<body class="bg-dark text-light">
+    <div class="container-fluid mt-4">
+        <!-- 搜索框 -->
+        <div class="row mb-4">
+            <div class="col-lg-8 mx-auto">
+                <form th:action="@{/search}" method="get">
+                    <div class="input-group input-group-lg">
+                        <span class="input-group-text bg-dark border-secondary">
+                            <i class="bi bi-search"></i>
+                        </span>
+                        <input type="text" class="form-control bg-dark text-light border-secondary"
+                               name="q" th:value="${query}" placeholder="搜索Agent、告警、审查记录、日志..."
+                               autofocus>
+                        <button class="btn btn-primary" type="submit">搜索</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- 搜索结果 -->
+        <div th:if="${query}" class="row">
+            <div class="col-lg-8 mx-auto">
+                <!-- 结果统计 -->
+                <div class="mb-4">
+                    <h5>
+                        搜索 "<span th:text="${query}" class="text-primary"></span>" 的结果
+                        <span class="badge bg-secondary ms-2" th:text="${resultCount} + '条'">0条</span>
+                    </h5>
+                </div>
+
+                <!-- 无结果提示 -->
+                <div th:if="${results == null || results.isEmpty()}" class="text-center py-5">
+                    <i class="bi bi-search fs-1 text-muted"></i>
+                    <h4 class="mt-3">未找到相关结果</h4>
+                    <p class="text-muted">请尝试使用不同的关键词搜索</p>
+                </div>
+
+                <!-- Agent结果 -->
+                <div th:if="${results.containsKey('agents')}" class="mb-4">
+                    <h5 class="mb-3">
+                        <i class="bi bi-robot text-primary"></i> Agent
+                        <span class="badge bg-primary" th:text="${#lists.size(results.agents)}">0</span>
+                    </h5>
+                    <div class="list-group">
+                        <a th:each="item : ${results.agents}"
+                           th:href="${item.link}"
+                           class="list-group-item list-group-item-action search-result-card">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <h6 class="mb-1" th:text="${item.title}">Agent Name</h6>
+                                    <small class="text-muted" th:text="${item.subtitle}">Role</small>
+                                </div>
+                                <div>
+                                    <span class="badge bg-info" th:text="'评分: ' + ${item.score}">0</span>
+                                </div>
+                            </div>
+                        </a>
+                    </div>
+                </div>
+
+                <!-- 告警结果 -->
+                <div th:if="${results.containsKey('alerts')}" class="mb-4">
+                    <h5 class="mb-3">
+                        <i class="bi bi-bell text-warning"></i> 告警
+                        <span class="badge bg-warning text-dark" th:text="${#lists.size(results.alerts)}">0</span>
+                    </h5>
+                    <div class="list-group">
+                        <a th:each="item : ${results.alerts}"
+                           th:href="${item.link}"
+                           class="list-group-item list-group-item-action search-result-card">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <h6 class="mb-1" th:text="${item.title}">告警标题</h6>
+                                    <small class="text-muted" th:text="${item.subtitle}">优先级 - 状态</small>
+                                </div>
+                                <div>
+                                    <span class="badge"
+                                          th:classappend="${item.status == 'PENDING' ? 'bg-warning text-dark' : (item.status == 'RESOLVED' ? 'bg-success' : 'bg-info')}"
+                                          th:text="${item.status}">状态</span>
+                                </div>
+                            </div>
+                        </a>
+                    </div>
+                </div>
+
+                <!-- 代码审查结果 -->
+                <div th:if="${results.containsKey('reviews')}" class="mb-4">
+                    <h5 class="mb-3">
+                        <i class="bi bi-check2-square text-success"></i> 代码审查
+                        <span class="badge bg-success" th:text="${#lists.size(results.reviews)}">0</span>
+                    </h5>
+                    <div class="list-group">
+                        <a th:each="item : ${results.reviews}"
+                           th:href="${item.link}"
+                           class="list-group-item list-group-item-action search-result-card">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <h6 class="mb-1" th:text="${item.title}">审查标题</h6>
+                                    <small class="text-muted" th:text="${item.subtitle}">Agent - 状态</small>
+                                </div>
+                                <div>
+                                    <span class="badge"
+                                          th:classappend="${item.status == 'APPROVED' ? 'bg-success' : (item.status == 'PENDING' ? 'bg-warning text-dark' : 'bg-info')}"
+                                          th:text="${item.status}">状态</span>
+                                </div>
+                            </div>
+                        </a>
+                    </div>
+                </div>
+
+                <!-- 操作日志结果 -->
+                <div th:if="${results.containsKey('logs')}" class="mb-4">
+                    <h5 class="mb-3">
+                        <i class="bi bi-journal-text text-secondary"></i> 操作日志
+                        <span class="badge bg-secondary" th:text="${#lists.size(results.logs)}">0</span>
+                    </h5>
+                    <div class="list-group">
+                        <div th:each="item : ${results.logs}"
+                             class="list-group-item search-result-card">
+                            <div class="d-flex justify-content-between align-items-start">
+                                <div>
+                                    <h6 class="mb-1" th:text="${item.title}">操作类型</h6>
+                                    <small class="text-muted" th:text="${item.subtitle}">详情</small>
+                                    <br>
+                                    <small class="text-muted">
+                                        <i class="bi bi-person"></i>
+                                        <span th:text="${item.user}">用户</span>
+                                    </small>
+                                </div>
+                                <small class="text-muted" th:text="${item.time}">时间</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 搜索建议（无搜索词时显示） -->
+        <div th:unless="${query}" class="row">
+            <div class="col-lg-8 mx-auto text-center py-5">
+                <i class="bi bi-search fs-1 text-muted"></i>
+                <h3 class="mt-3">全局搜索</h3>
+                <p class="text-muted">搜索Agent、告警、代码审查、操作日志等</p>
+                <div class="mt-4">
+                    <h6>热门搜索：</h6>
+                    <div class="d-flex flex-wrap justify-content-center gap-2 mt-2">
+                        <a th:href="@{/search?q=Agent}" class="btn btn-outline-secondary btn-sm">Agent</a>
+                        <a th:href="@{/search?q=告警}" class="btn btn-outline-secondary btn-sm">告警</a>
+                        <a th:href="@{/search?q=审查}" class="btn btn-outline-secondary btn-sm">代码审查</a>
+                        <a th:href="@{/search?q=登录}" class="btn btn-outline-secondary btn-sm">登录</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

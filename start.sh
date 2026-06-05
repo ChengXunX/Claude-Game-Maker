@@ -1,29 +1,48 @@
 #!/bin/bash
+# ChengXun Game Maker 启动脚本
 
-# ChengXun Game Maker Startup Script
+echo "=========================================="
+echo "  ChengXun Game Maker 启动"
+echo "=========================================="
 
-echo "Starting ChengXun Game Maker..."
+# 颜色定义
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
 
-# Check if Java is installed
-if ! command -v java &> /dev/null; then
-    echo "Error: Java is not installed"
+# 检查依赖
+echo ""
+echo "检查依赖..."
+bash check-dependencies.sh
+CHECK_RESULT=$?
+
+if [ $CHECK_RESULT -ne 0 ]; then
+    echo -e "${RED}依赖检查失败，请先解决上述问题${NC}"
     exit 1
 fi
 
-# Check if Claude CLI is installed
-if ! command -v claude &> /dev/null; then
-    echo "Warning: Claude CLI is not installed at /usr/bin/claude"
+# 编译项目
+echo ""
+echo "编译项目..."
+mvn clean package -DskipTests
+
+if [ $? -ne 0 ]; then
+    echo -e "${RED}编译失败${NC}"
+    exit 1
 fi
 
-# Create data directories if they don't exist
-mkdir -p data/contexts data/memory data/projects
+echo -e "${GREEN}编译成功${NC}"
 
-# Build the project if needed
-if [ ! -f "target/game-maker-1.0-SNAPSHOT.jar" ]; then
-    echo "Building project..."
-    mvn clean package -DskipTests
-fi
+# 启动应用
+echo ""
+echo "启动应用..."
+echo "访问地址: http://localhost:9922"
+echo "默认账号: admin / admin123"
+echo ""
 
-# Run the application
-echo "Starting application..."
-java -jar target/game-maker-1.0-SNAPSHOT.jar
+# 设置JVM参数
+JAVA_OPTS="-Xms256m -Xmx512m -XX:+UseG1GC"
+
+# 启动
+java $JAVA_OPTS -jar target/game-maker-1.0-SNAPSHOT.jar

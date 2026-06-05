@@ -1,0 +1,85 @@
+/**
+ * 简体中文语言包
+ */
+export default {
+  common: {
+    ok: '确定',
+    cancel: '取消',
+    save: '保存',
+    delete: '删除',
+    edit: '编辑',
+    create: '创建',
+    search: '搜索',
+    reset: '重置',
+    refresh: '刷新',
+    back: '返回',
+    confirm: '确认',
+    loading: '加载中...',
+    noData: '暂无数据',
+    success: '操作成功',
+    error: '操作失败',
+    warning: '警告',
+    info: '提示'
+  },
+  menu: {
+    dashboard: '仪表盘',
+    agents: 'Agent管理',
+    projects: '项目管理',
+    monitoring: '监控中心',
+    alerts: '告警中心',
+    aiAssistant: 'AI助手',
+    skills: '技能管理',
+    notifications: '通知管理',
+    tokens: 'Token管理',
+    devices: '设备信任',
+    recruitment: 'Agent招聘',
+    interventions: 'Agent干预',
+    health: 'Agent健康',
+    performance: 'Agent绩效',
+    scheduler: 'Agent调度',
+    performanceMgmt: '绩效管理',
+    reviews: '代码审查',
+    git: 'Git仓库',
+    pipeline: 'CICD流水线',
+    workflow: '工作流',
+    search: '全局搜索',
+    templates: '通知模板',
+    resources: '资源用量',
+    dingtalk: '钉钉配置',
+    admin: '系统管理',
+    users: '用户管理',
+    roles: '角色管理',
+    settings: '系统设置',
+    pending: '待审批用户',
+    logs: '操作日志',
+    configs: '配置中心'
+  },
+  auth: {
+    login: '登录',
+    logout: '退出登录',
+    username: '用户名',
+    password: '密码',
+    rememberMe: '记住我',
+    forgotPassword: '忘记密码',
+    loginSuccess: '登录成功',
+    loginFailed: '登录失败',
+    logoutSuccess: '已退出登录'
+  },
+  agent: {
+    start: '启动',
+    stop: '停止',
+    restart: '重启',
+    status: '状态',
+    role: '角色',
+    task: '任务',
+    message: '消息'
+  },
+  project: {
+    name: '项目名称',
+    description: '项目描述',
+    workDir: '工作目录',
+    create: '创建项目',
+    edit: '编辑项目',
+    delete: '删除项目'
+  }
+}

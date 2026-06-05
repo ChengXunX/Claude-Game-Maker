@@ -1,5 +1,7 @@
 package com.chengxun.gamemaker.web.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.*;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
@@ -40,6 +42,10 @@ public class User {
     @Enumerated(EnumType.STRING)
     @Column(length = 20)
     private UserStatus status = UserStatus.PENDING;
+
+    /** 是否需要强制修改密码（首次登录或管理员重置密码后） */
+    @Column(name = "must_change_password")
+    private boolean mustChangePassword = false;
 
     @Column(name = "created_at")
     private LocalDateTime createdAt = LocalDateTime.now();
@@ -87,7 +93,13 @@ public class User {
     public Role getRole() { return role; }
     public void setRole(Role role) { this.role = role; }
 
+    public boolean isMustChangePassword() { return mustChangePassword; }
+    public void setMustChangePassword(boolean mustChangePassword) { this.mustChangePassword = mustChangePassword; }
+
+    @JsonIgnore
     public boolean isAdmin() { return role != null && "ADMIN".equals(role.getName()); }
+
+    @JsonIgnore
     public boolean isApproved() { return status == UserStatus.APPROVED; }
 
     public boolean hasPermission(String permission) {

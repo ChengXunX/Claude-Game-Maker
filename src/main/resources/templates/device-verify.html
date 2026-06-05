@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>设备验证 - ChengXun Game Maker</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        body {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+        }
+        .verify-card {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 15px;
+        }
+        .form-control {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            color: white;
+        }
+        .form-control:focus {
+            background: rgba(255, 255, 255, 0.15);
+            border-color: #0d6efd;
+            color: white;
+            box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+        }
+        .form-control::placeholder {
+            color: rgba(255, 255, 255, 0.5);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="row justify-content-center">
+            <div class="col-md-5">
+                <div class="text-center mb-4">
+                    <i class="bi bi-shield-lock text-warning" style="font-size: 3rem;"></i>
+                    <h2 class="text-white mt-2">设备验证</h2>
+                    <p class="text-light opacity-75">检测到您正在使用新设备登录</p>
+                </div>
+
+                <div class="verify-card p-4">
+                    <div th:if="${error}" class="alert alert-danger">
+                        <i class="bi bi-exclamation-circle"></i> <span th:text="${error}"></span>
+                    </div>
+
+                    <div th:if="${emailEnabled}" class="mb-3">
+                        <div class="alert alert-info">
+                            <i class="bi bi-info-circle"></i>
+                            验证码已发送到您的邮箱：<strong th:text="${email}"></strong>
+                            <br>
+                            <small>验证通过后，此设备将在 <span th:text="${trustDays}">7</span> 天内免验证登录</small>
+                        </div>
+
+                        <form th:action="@{/device/verify}" method="post">
+                            <div class="mb-3">
+                                <label class="form-label text-light">邮箱验证码</label>
+                                <div class="input-group">
+                                    <input type="text" class="form-control" name="verifyCode"
+                                           placeholder="请输入6位验证码" required maxlength="6"
+                                           autofocus autocomplete="off">
+                                    <button type="button" class="btn btn-outline-light" id="resendBtn"
+                                            onclick="resendCode()">
+                                        重新发送
+                                    </button>
+                                </div>
+                            </div>
+                            <button type="submit" class="btn btn-primary w-100 mb-3">
+                                <i class="bi bi-check-circle"></i> 验证并信任此设备
+                            </button>
+                        </form>
+                    </div>
+
+                    <div th:unless="${emailEnabled}" class="text-center">
+                        <div class="alert alert-warning">
+                            <i class="bi bi-exclamation-triangle"></i>
+                            邮件服务未启用，无法进行设备验证。
+                            <br>
+                            请联系管理员启用邮件服务，或使用已信任的设备登录。
+                        </div>
+                    </div>
+
+                    <div class="text-center mt-3">
+                        <a th:href="@{/login}" class="text-light opacity-75 text-decoration-none">
+                            <i class="bi bi-arrow-left"></i> 返回登录
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function resendCode() {
+            const btn = document.getElementById('resendBtn');
+            btn.disabled = true;
+            btn.textContent = '发送中...';
+
+            fetch('/device/send-code', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'}
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    let countdown = 60;
+                    const timer = setInterval(() => {
+                        countdown--;
+                        btn.textContent = countdown + 's';
+                        if (countdown <= 0) {
+                            clearInterval(timer);
+                            btn.textContent = '重新发送';
+                            btn.disabled = false;
+                        }
+                    }, 1000);
+                } else {
+                    alert(data.message);
+                    btn.textContent = '重新发送';
+                    btn.disabled = false;
+                }
+            })
+            .catch(() => {
+                btn.textContent = '重新发送';
+                btn.disabled = false;
+            });
+        }
+    </script>
+</body>
+</html>

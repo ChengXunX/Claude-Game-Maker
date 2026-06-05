@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security"
+      th:replace="~{layout :: main-content(~{::title}, ~{::section})}">
+<head>
+    <title>系统常量管理 - ChengXun Game Maker</title>
+</head>
+<body>
+<section>
+    <div class="container-fluid">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2><i class="bi bi-sliders"></i> 系统常量管理</h2>
+            <div>
+                <button class="btn btn-outline-warning btn-sm" onclick="resetAll()">
+                    <i class="bi bi-arrow-counterclockwise"></i> 全部恢复默认
+                </button>
+                <button class="btn btn-outline-primary btn-sm ms-2" onclick="reloadCache()">
+                    <i class="bi bi-arrow-clockwise"></i> 重新加载
+                </button>
+                <button class="btn btn-primary btn-sm ms-2" onclick="saveAll()">
+                    <i class="bi bi-check-lg"></i> 保存修改
+                </button>
+            </div>
+        </div>
+
+        <!-- 分组说明 -->
+        <div class="alert alert-info mb-4">
+            <div class="row">
+                <div class="col-md-2"><strong><i class="bi bi-robot"></i> Agent</strong><br><small>消息队列、调度间隔、重试策略、知识上限</small></div>
+                <div class="col-md-2"><strong><i class="bi bi-folder"></i> 文件</strong><br><small>单文件大小、存储配额、存储目录</small></div>
+                <div class="col-md-2"><strong><i class="bi bi-shield"></i> 安全</strong><br><small>登录限次、JWT有效期、会话超时</small></div>
+                <div class="col-md-2"><strong><i class="bi bi-speedometer"></i> 限流</strong><br><small>全局/认证/写操作每分钟请求数</small></div>
+                <div class="col-md-2"><strong><i class="bi bi-gauge"></i> 性能</strong><br><small>备份数、输出大小、压缩阈值</small></div>
+                <div class="col-md-2"><strong><i class="bi bi-bell"></i> 通知</strong><br><small>批量发送大小</small></div>
+            </div>
+        </div>
+
+        <!-- 分组标签 -->
+        <ul class="nav nav-pills mb-4" id="groupTabs">
+            <li class="nav-item">
+                <button class="nav-link active" onclick="filterGroup('')">全部</button>
+            </li>
+        </ul>
+
+        <!-- 常量列表 -->
+        <div class="card">
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>常量标识</th>
+                                <th>名称</th>
+                                <th>描述</th>
+                                <th>当前值</th>
+                                <th>默认值</th>
+                                <th>单位</th>
+                                <th>范围</th>
+                                <th>重启</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="constantTable">
+                            <tr>
+                                <td colspan="9" class="text-center text-muted">加载中...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let allConstants = [];
+        let currentGroup = '';
+        let changedValues = {};
+
+        // 加载常量
+        async function loadConstants() {
+            try {
+                const res = await fetch('/constants/api/all');
+                allConstants = await res.json();
+                renderGroupTabs();
+                renderTable();
+            } catch (e) {
+                console.error('Failed to load constants:', e);
+            }
+        }
+
+        // 渲染分组标签
+        function renderGroupTabs() {
+            const groups = [...new Set(allConstants.map(c => c.groupName))];
+            const groupLabels = {
+                'agent': 'Agent', 'file': '文件', 'security': '安全',
+                'rate-limit': '限流', 'performance': '性能', 'notification': '通知'
+            };
+
+            const tabs = document.getElementById('groupTabs');
+            tabs.innerHTML = `<li class="nav-item"><button class="nav-link ${currentGroup === '' ? 'active' : ''}" onclick="filterGroup('')">全部</button></li>`;
+            groups.forEach(g => {
+                tabs.innerHTML += `<li class="nav-item"><button class="nav-link ${currentGroup === g ? 'active' : ''}" onclick="filterGroup('${g}')">${groupLabels[g] || g}</button></li>`;
+            });
+        }
+
+        // 筛选分组
+        function filterGroup(group) {
+            currentGroup = group;
+            renderGroupTabs();
+            renderTable();
+        }
+
+        // 渲染表格
+        function renderTable() {
+            let filtered = allConstants;
+            if (currentGroup) filtered = filtered.filter(c => c.groupName === currentGroup);
+
+            const tbody = document.getElementById('constantTable');
+            if (filtered.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted">暂无常量</td></tr>';
+                return;
+            }
+
+            const groupLabels = {
+                'agent': 'Agent', 'file': '文件', 'security': '安全',
+                'rate-limit': '限流', 'performance': '性能', 'notification': '通知'
+            };
+
+            tbody.innerHTML = filtered.map(c => {
+                const isChanged = changedValues[c.constantKey] !== undefined;
+                const currentValue = isChanged ? changedValues[c.constantKey] : c.value;
+                const isDefault = currentValue === c.defaultValue;
+                const tooltip = `${c.description || ''}\n类型: ${c.valueType}\n${c.minValue != null ? '范围: ' + c.minValue + ' ~ ' + (c.maxValue || '∞') : ''}\n默认值: ${c.defaultValue}`;
+
+                return `
+                    <tr class="${isChanged ? 'table-warning' : ''}" title="${tooltip}">
+                        <td><code class="small">${c.constantKey}</code></td>
+                        <td>
+                            <strong>${c.displayName}</strong>
+                            <br><small class="text-muted">${c.description || ''}</small>
+                        </td>
+                        <td><small class="text-muted">${c.description || '-'}</small></td>
+                        <td>
+                            <input type="${c.valueType === 'boolean' ? 'checkbox' : 'text'}"
+                                   class="form-control form-control-sm"
+                                   style="width: 120px;"
+                                   value="${currentValue}"
+                                   ${c.valueType === 'boolean' && currentValue === 'true' ? 'checked' : ''}
+                                   onchange="onValueChange('${c.constantKey}', this.${c.valueType === 'boolean' ? 'checked' : 'value'})">
+                        </td>
+                        <td><small>${c.defaultValue}</small></td>
+                        <td><small>${c.unit || '-'}</small></td>
+                        <td><small>${c.minValue != null ? c.minValue + ' ~ ' + (c.maxValue || '∞') : '-'}</small></td>
+                        <td>${c.requireRestart ? '<span class="badge bg-warning">需重启</span>' : '<span class="badge bg-success">热更新</span>'}</td>
+                        <td>
+                            ${!isDefault ? `<button class="btn btn-sm btn-outline-secondary" onclick="resetOne('${c.constantKey}')" title="恢复默认">↺</button>` : ''}
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        // 值变更
+        function onValueChange(key, value) {
+            changedValues[key] = String(value);
+            renderTable();
+        }
+
+        // 保存所有修改
+        async function saveAll() {
+            if (Object.keys(changedValues).length === 0) {
+                alert('没有修改');
+                return;
+            }
+
+            try {
+                const res = await fetch('/constants/api/batch-update', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(changedValues)
+                });
+                const result = await res.json();
+                if (result.success) {
+                    changedValues = {};
+                    loadConstants();
+                    showToast('success', `已保存 ${result.updated} 个常量`);
+                }
+            } catch (e) {
+                showToast('danger', '保存失败: ' + e.message);
+            }
+        }
+
+        // 恢复单个默认值
+        async function resetOne(key) {
+            try {
+                await fetch(`/constants/api/reset/${key}`, { method: 'POST' });
+                delete changedValues[key];
+                loadConstants();
+            } catch (e) {
+                showToast('danger', '恢复失败');
+            }
+        }
+
+        // 全部恢复默认
+        async function resetAll() {
+            if (!confirm('确定要将所有常量恢复为默认值吗？')) return;
+            try {
+                await fetch('/constants/api/reset-all', { method: 'POST' });
+                changedValues = {};
+                loadConstants();
+                showToast('success', '已恢复所有默认值');
+            } catch (e) {
+                showToast('danger', '恢复失败');
+            }
+        }
+
+        // 重新加载缓存
+        async function reloadCache() {
+            try {
+                await fetch('/constants/api/reload', { method: 'POST' });
+                showToast('success', '缓存已重新加载');
+            } catch (e) {
+                showToast('danger', '加载失败');
+            }
+        }
+
+        function showToast(type, message) {
+            const toast = document.createElement('div');
+            toast.className = `alert alert-${type} position-fixed top-0 end-0 m-3`;
+            toast.style.zIndex = '9999';
+            toast.textContent = message;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 3000);
+        }
+
+        document.addEventListener('DOMContentLoaded', loadConstants);
+    </script>
+</section>
+</body>
+</html>

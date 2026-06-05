@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI助手 - ChengXun Game Maker</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <link th:href="@{/css/custom.css}" rel="stylesheet">
+    <style>
+        .chat-container {
+            height: calc(100vh - 300px);
+            min-height: 400px;
+            overflow-y: auto;
+            padding: 1.5rem;
+        }
+        .message {
+            margin-bottom: 1.25rem;
+            padding: 1rem 1.25rem;
+            border-radius: 12px;
+            max-width: 80%;
+            position: relative;
+            animation: messageIn 0.3s ease-out;
+        }
+        @keyframes messageIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .message-user {
+            background: linear-gradient(135deg, #0d6efd, #0a58ca);
+            color: white;
+            margin-left: auto;
+            border-bottom-right-radius: 4px;
+            box-shadow: 0 2px 8px rgba(13, 110, 253, 0.3);
+        }
+        .message-user:hover {
+            box-shadow: 0 4px 12px rgba(13, 110, 253, 0.4);
+        }
+        .message-assistant {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            margin-right: auto;
+            border-bottom-left-radius: 4px;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+        }
+        .message-assistant:hover {
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.15);
+        }
+        .message-time {
+            font-size: 0.75rem;
+            opacity: 0.7;
+            margin-top: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .message-user .message-time {
+            color: rgba(255, 255, 255, 0.8);
+            justify-content: flex-end;
+        }
+        .message-assistant .message-time {
+            color: var(--text-muted);
+        }
+        .message-duration {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+            background: rgba(255, 255, 255, 0.15);
+            padding: 0.15rem 0.5rem;
+            border-radius: 10px;
+            font-size: 0.7rem;
+        }
+        .message-assistant .message-duration {
+            background: rgba(40, 167, 69, 0.15);
+            color: #28a745;
+        }
+        .message-sender {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 0.5rem;
+        }
+        .message-sender-icon {
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.85rem;
+        }
+        .message-user .message-sender-icon {
+            background: rgba(255, 255, 255, 0.2);
+        }
+        .message-assistant .message-sender-icon {
+            background: var(--accent-color);
+            color: white;
+        }
+        .thinking-toggle {
+            cursor: pointer;
+            color: var(--text-muted);
+            font-size: 0.85em;
+            margin-top: 0.5rem;
+        }
+        .thinking-toggle:hover {
+            color: var(--text-primary);
+        }
+        .thinking-content {
+            background: var(--bg-secondary);
+            border-left: 3px solid var(--accent-color);
+            padding: 0.75rem;
+            margin-top: 0.5rem;
+            border-radius: 5px;
+            font-size: 0.9em;
+            display: none;
+            white-space: pre-wrap;
+        }
+        .thinking-content.show {
+            display: block;
+        }
+        .knowledge-item {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 0.75rem;
+        }
+        .knowledge-item:hover {
+            border-color: var(--accent-color);
+        }
+        .typing-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.75rem 1.25rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            margin-bottom: 1.25rem;
+            animation: messageIn 0.3s ease-out;
+        }
+        .typing-indicator .typing-text {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            margin-right: 0.25rem;
+        }
+        .typing-indicator .typing-duration {
+            font-size: 0.75rem;
+            color: var(--accent-color);
+            font-weight: 500;
+            min-width: 50px;
+        }
+        .typing-dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--text-muted);
+            margin: 0 2px;
+            animation: typing 1.4s infinite;
+        }
+        .typing-dot:nth-child(2) { animation-delay: 0.2s; }
+        .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+        @keyframes typing {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-5px); }
+        }
+        .suggestion-chip {
+            display: inline-block;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 20px;
+            padding: 0.4rem 0.8rem;
+            margin: 0.25rem;
+            cursor: pointer;
+            font-size: 0.85em;
+            transition: all 0.2s;
+        }
+        .suggestion-chip:hover {
+            background: var(--accent-color);
+            color: white;
+            border-color: var(--accent-color);
+        }
+    </style>
+</head>
+<body class="bg-dark text-light">
+    <div class="container-fluid mt-4">
+        <div class="row">
+            <!-- 左侧：聊天区域 -->
+            <div class="col-lg-9">
+                <div class="card" style="height: calc(100vh - 150px);">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <div>
+                            <h5 class="mb-0">
+                                <i class="bi bi-robot"></i> AI系统助手
+                                <span class="badge bg-success ms-2" style="font-size: 0.7em;">在线</span>
+                            </h5>
+                            <small class="text-muted">系统分析员 · 知识库自进化</small>
+                        </div>
+                        <div>
+                            <button class="btn btn-outline-secondary btn-sm" onclick="clearHistory()">
+                                <i class="bi bi-trash"></i> 清空历史
+                            </button>
+                            <button class="btn btn-outline-info btn-sm" onclick="showKnowledgeModal()">
+                                <i class="bi bi-book"></i> 知识库
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 聊天内容 -->
+                    <div class="card-body chat-container" id="chatContainer">
+                        <div class="message message-assistant">
+                            <div class="message-sender">
+                                <div class="message-sender-icon">
+                                    <i class="bi bi-robot"></i>
+                                </div>
+                                <strong>AI助手</strong>
+                            </div>
+                            <div class="mt-1">
+                                你好！我是ChengXun Game Maker的系统AI助手。
+
+                                我可以帮你：
+                                • 分析系统状态和性能
+                                • 解答系统功能问题
+                                • 提供优化建议
+                                • 协助故障排查
+
+                                有什么可以帮你的吗？
+                            </div>
+                            <div class="mt-2">
+                                <span class="suggestion-chip" onclick="askSuggestion('系统当前状态如何？')">系统状态</span>
+                                <span class="suggestion-chip" onclick="askSuggestion('如何优化Agent性能？')">性能优化</span>
+                                <span class="suggestion-chip" onclick="askSuggestion('解释代码审查功能')">代码审查</span>
+                                <span class="suggestion-chip" onclick="askSuggestion('如何配置告警规则？')">告警配置</span>
+                            </div>
+                            <div class="message-time">
+                                <i class="bi bi-clock"></i> <span id="welcomeTime"></span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 输入区域 -->
+                    <div class="card-footer">
+                        <div class="input-group">
+                            <textarea class="form-control" id="questionInput"
+                                      placeholder="输入你的问题..."
+                                      rows="2"
+                                      onkeydown="handleKeyDown(event)"></textarea>
+                            <button class="btn btn-primary" onclick="sendQuestion()" id="sendBtn">
+                                <i class="bi bi-send"></i> 发送
+                            </button>
+                        </div>
+                        <div class="form-text">
+                            按 Enter 发送，Shift+Enter 换行 · 支持显示思考过程
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 右侧：信息面板 -->
+            <div class="col-lg-3">
+                <!-- 知识库统计 -->
+                <div class="card mb-3">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="bi bi-database"></i> 知识库</h6>
+                    </div>
+                    <div class="card-body">
+                        <div id="knowledgeStats">
+                            <div class="d-flex justify-content-between mb-2">
+                                <span>系统知识</span>
+                                <span class="badge bg-primary" id="systemCount">-</span>
+                            </div>
+                            <div class="d-flex justify-content-between mb-2">
+                                <span>学习知识</span>
+                                <span class="badge bg-success" id="learnedCount">-</span>
+                            </div>
+                            <div class="d-flex justify-content-between">
+                                <span>总条目</span>
+                                <span class="badge bg-info" id="totalCount">-</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 快捷问题 -->
+                <div class="card mb-3">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="bi bi-lightning"></i> 快捷问题</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="d-grid gap-2">
+                            <button class="btn btn-outline-secondary btn-sm text-start"
+                                    onclick="askSuggestion('系统当前状态如何？')">
+                                <i class="bi bi-speedometer2"></i> 系统状态
+                            </button>
+                            <button class="btn btn-outline-secondary btn-sm text-start"
+                                    onclick="askSuggestion('如何优化Agent性能？')">
+                                <i class="bi bi-graph-up"></i> 性能优化
+                            </button>
+                            <button class="btn btn-outline-secondary btn-sm text-start"
+                                    onclick="askSuggestion('解释代码审查功能')">
+                                <i class="bi bi-check2-square"></i> 代码审查
+                            </button>
+                            <button class="btn btn-outline-secondary btn-sm text-start"
+                                    onclick="askSuggestion('如何配置告警规则？')">
+                                <i class="bi bi-bell"></i> 告警配置
+                            </button>
+                            <button class="btn btn-outline-secondary btn-sm text-start"
+                                    onclick="askSuggestion('Agent能力系统如何使用？')">
+                                <i class="bi bi-people"></i> Agent能力
+                            </button>
+                            <button class="btn btn-outline-secondary btn-sm text-start"
+                                    onclick="askSuggestion('如何创建游戏项目？')">
+                                <i class="bi bi-controller"></i> 项目创建
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 对话统计 -->
+                <div class="card mb-3">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="bi bi-chat-dots"></i> 对话统计</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between mb-2">
+                            <span>本次对话</span>
+                            <span id="currentSessionCount">0</span>
+                        </div>
+                        <button class="btn btn-outline-primary btn-sm w-100" onclick="analyzeSystem()">
+                            <i class="bi bi-clipboard-data"></i> 分析系统状态
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 知识库模态框 -->
+    <div class="modal fade" id="knowledgeModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-book"></i> 知识库管理</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <h6>知识条目</h6>
+                            <button class="btn btn-primary btn-sm" onclick="addKnowledge()">
+                                <i class="bi bi-plus"></i> 添加知识
+                            </button>
+                        </div>
+                        <div id="knowledgeList" style="max-height: 400px; overflow-y: auto;">
+                            <!-- 知识列表 -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        let currentSessionCount = 0;
+        let isLoading = false;
+        let requestStartTime = null;
+
+        // 格式化时间
+        function formatTime(date) {
+            const hours = date.getHours().toString().padStart(2, '0');
+            const minutes = date.getMinutes().toString().padStart(2, '0');
+            const seconds = date.getSeconds().toString().padStart(2, '0');
+            return `${hours}:${minutes}:${seconds}`;
+        }
+
+        // 计算耗时
+        function calculateDuration(startTime, endTime) {
+            const durationMs = endTime - startTime;
+            if (durationMs < 1000) {
+                return `${durationMs}ms`;
+            } else if (durationMs < 60000) {
+                return `${(durationMs / 1000).toFixed(1)}s`;
+            } else {
+                const minutes = Math.floor(durationMs / 60000);
+                const seconds = ((durationMs % 60000) / 1000).toFixed(0);
+                return `${minutes}m ${seconds}s`;
+            }
+        }
+
+        // 加载知识库统计
+        async function loadKnowledgeStats() {
+            try {
+                const response = await fetch('/api/ai-assistant/knowledge/stats');
+                const stats = await response.json();
+                document.getElementById('systemCount').textContent = stats.systemEntries;
+                document.getElementById('learnedCount').textContent = stats.learnedEntries;
+                document.getElementById('totalCount').textContent = stats.totalEntries;
+            } catch (error) {
+                console.error('Failed to load knowledge stats:', error);
+            }
+        }
+
+        // 发送问题
+        async function sendQuestion() {
+            const input = document.getElementById('questionInput');
+            const question = input.value.trim();
+
+            if (!question || isLoading) return;
+
+            isLoading = true;
+            document.getElementById('sendBtn').disabled = true;
+            requestStartTime = new Date();
+
+            // 显示用户消息
+            addMessage('user', question);
+            input.value = '';
+
+            // 显示加载状态
+            const loadingId = showLoading();
+
+            try {
+                const response = await fetch('/api/ai-assistant/ask', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ question: question })
+                });
+
+                const result = await response.json();
+                const responseTime = new Date();
+                const duration = calculateDuration(requestStartTime, responseTime);
+
+                // 移除加载状态
+                removeLoading(loadingId);
+
+                if (result.success) {
+                    addMessage('assistant', result.answer, result.thinking, duration);
+                } else {
+                    addMessage('assistant', '抱歉，出现问题：' + result.error, null, duration);
+                }
+
+                currentSessionCount++;
+                document.getElementById('currentSessionCount').textContent = currentSessionCount;
+
+            } catch (error) {
+                removeLoading(loadingId);
+                addMessage('assistant', '网络错误，请稍后重试。');
+                console.error('Failed to send question:', error);
+            } finally {
+                isLoading = false;
+                document.getElementById('sendBtn').disabled = false;
+            }
+        }
+
+        // 添加消息到聊天
+        function addMessage(role, content, thinking = null, duration = null) {
+            const container = document.getElementById('chatContainer');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message message-${role}`;
+            const currentTime = new Date();
+
+            let html = '';
+
+            if (role === 'user') {
+                html = `
+                    <div class="message-sender">
+                        <div class="message-sender-icon">
+                            <i class="bi bi-person"></i>
+                        </div>
+                        <strong>你</strong>
+                    </div>
+                    <div>${escapeHtml(content)}</div>
+                    <div class="message-time">
+                        <i class="bi bi-clock"></i> ${formatTime(currentTime)}
+                    </div>
+                `;
+            } else {
+                html = `
+                    <div class="message-sender">
+                        <div class="message-sender-icon">
+                            <i class="bi bi-robot"></i>
+                        </div>
+                        <strong>AI助手</strong>
+                    </div>
+                    <div class="mt-1">${formatContent(content)}</div>
+                    <div class="message-time">
+                        <i class="bi bi-clock"></i> ${formatTime(currentTime)}
+                        ${duration ? `<span class="message-duration"><i class="bi bi-lightning"></i> ${duration}</span>` : ''}
+                    </div>
+                `;
+
+                if (thinking) {
+                    const thinkingId = 'thinking-' + Date.now();
+                    html += `
+                        <div class="thinking-toggle" onclick="toggleThinking('${thinkingId}')">
+                            <i class="bi bi-chevron-right"></i> 查看思考过程
+                        </div>
+                        <div class="thinking-content" id="${thinkingId}">${escapeHtml(thinking)}</div>
+                    `;
+                }
+            }
+
+            messageDiv.innerHTML = html;
+            container.appendChild(messageDiv);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        // 格式化内容（支持Markdown）
+        function formatContent(content) {
+            // 简单的Markdown转换
+            let html = escapeHtml(content);
+            html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+            html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
+            html = html.replace(/`(.*?)`/g, '<code>$1</code>');
+            html = html.replace(/\n/g, '<br>');
+            return html;
+        }
+
+        // 转义HTML
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // 切换思考过程显示
+        function toggleThinking(id) {
+            const element = document.getElementById(id);
+            element.classList.toggle('show');
+            const toggle = element.previousElementSibling;
+            const icon = toggle.querySelector('i');
+            icon.className = element.classList.contains('show')
+                ? 'bi bi-chevron-down'
+                : 'bi bi-chevron-right';
+        }
+
+        // 显示加载状态
+        function showLoading() {
+            const container = document.getElementById('chatContainer');
+            const loadingDiv = document.createElement('div');
+            const id = 'loading-' + Date.now();
+            loadingDiv.id = id;
+            loadingDiv.innerHTML = `
+                <div class="typing-indicator">
+                    <span class="typing-text">AI思考中</span>
+                    <span class="typing-dot"></span>
+                    <span class="typing-dot"></span>
+                    <span class="typing-dot"></span>
+                    <span class="typing-duration" id="loadingDuration">0.0s</span>
+                </div>
+            `;
+            container.appendChild(loadingDiv);
+            container.scrollTop = container.scrollHeight;
+
+            // 启动计时器，实时更新耗时
+            const durationEl = loadingDiv.querySelector('.typing-duration');
+            const timer = setInterval(() => {
+                if (requestStartTime && durationEl) {
+                    const duration = calculateDuration(requestStartTime, new Date());
+                    durationEl.textContent = duration;
+                } else {
+                    clearInterval(timer);
+                }
+            }, 100);
+
+            // 存储计时器ID以便清理
+            loadingDiv.setAttribute('data-timer', timer);
+
+            return id;
+        }
+
+        // 移除加载状态
+        function removeLoading(id) {
+            const element = document.getElementById(id);
+            if (element) {
+                // 清理计时器
+                const timer = element.getAttribute('data-timer');
+                if (timer) {
+                    clearInterval(parseInt(timer));
+                }
+                element.remove();
+            }
+        }
+
+        // 快捷问题
+        function askSuggestion(question) {
+            document.getElementById('questionInput').value = question;
+            sendQuestion();
+        }
+
+        // 清空历史
+        async function clearHistory() {
+            if (!confirm('确定要清空对话历史吗？')) return;
+
+            try {
+                await fetch('/api/ai-assistant/history', { method: 'DELETE' });
+                const container = document.getElementById('chatContainer');
+                container.innerHTML = '';
+                currentSessionCount = 0;
+                document.getElementById('currentSessionCount').textContent = '0';
+                addMessage('assistant', '对话历史已清空。有什么可以帮你的吗？');
+            } catch (error) {
+                console.error('Failed to clear history:', error);
+            }
+        }
+
+        // 添加加载中的耗时显示
+        function updateLoadingDuration() {
+            if (!requestStartTime) return;
+            const loadingEl = document.querySelector('.typing-indicator');
+            if (loadingEl) {
+                const duration = calculateDuration(requestStartTime, new Date());
+                loadingEl.setAttribute('data-duration', duration);
+            }
+        }
+
+        // 显示知识库模态框
+        async function showKnowledgeModal() {
+            const modal = new bootstrap.Modal(document.getElementById('knowledgeModal'));
+            modal.show();
+            await loadKnowledgeList();
+        }
+
+        // 加载知识列表
+        async function loadKnowledgeList() {
+            try {
+                const response = await fetch('/api/ai-assistant/knowledge');
+                const knowledge = await response.json();
+
+                const listDiv = document.getElementById('knowledgeList');
+                listDiv.innerHTML = '';
+
+                for (const [key, content] of Object.entries(knowledge)) {
+                    const item = document.createElement('div');
+                    item.className = 'knowledge-item';
+                    item.innerHTML = `
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <strong>${escapeHtml(key)}</strong>
+                                <div class="text-muted small mt-1" style="max-height: 100px; overflow: hidden;">
+                                    ${escapeHtml(content.substring(0, 200))}${content.length > 200 ? '...' : ''}
+                                </div>
+                            </div>
+                            ${key.startsWith('learned_') ? `
+                                <button class="btn btn-outline-danger btn-sm" onclick="deleteKnowledge('${key}')">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            ` : ''}
+                        </div>
+                    `;
+                    listDiv.appendChild(item);
+                }
+            } catch (error) {
+                console.error('Failed to load knowledge:', error);
+            }
+        }
+
+        // 添加知识
+        function addKnowledge() {
+            const key = prompt('请输入知识标识：');
+            if (!key) return;
+            const content = prompt('请输入知识内容：');
+            if (!content) return;
+
+            fetch('/api/ai-assistant/knowledge', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ key: key, content: content })
+            }).then(() => {
+                loadKnowledgeList();
+                loadKnowledgeStats();
+            });
+        }
+
+        // 删除知识
+        async function deleteKnowledge(key) {
+            if (!confirm('确定要删除这条知识吗？')) return;
+
+            try {
+                await fetch(`/api/ai-assistant/knowledge/${key}`, { method: 'DELETE' });
+                loadKnowledgeList();
+                loadKnowledgeStats();
+            } catch (error) {
+                console.error('Failed to delete knowledge:', error);
+            }
+        }
+
+        // 分析系统
+        async function analyzeSystem() {
+            try {
+                const response = await fetch('/api/ai-assistant/analyze');
+                const result = await response.json();
+                if (result.status === 'success') {
+                    askSuggestion(result.analysis);
+                }
+            } catch (error) {
+                console.error('Failed to analyze system:', error);
+            }
+        }
+
+        // 处理键盘事件
+        function handleKeyDown(event) {
+            if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                sendQuestion();
+            }
+        }
+
+        // 页面加载时初始化
+        document.addEventListener('DOMContentLoaded', () => {
+            loadKnowledgeStats();
+            document.getElementById('welcomeTime').textContent = formatTime(new Date());
+        });
+    </script>
+</body>
+</html>

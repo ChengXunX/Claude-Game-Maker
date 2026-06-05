@@ -1,0 +1,85 @@
+/**
+ * English language pack
+ */
+export default {
+  common: {
+    ok: 'OK',
+    cancel: 'Cancel',
+    save: 'Save',
+    delete: 'Delete',
+    edit: 'Edit',
+    create: 'Create',
+    search: 'Search',
+    reset: 'Reset',
+    refresh: 'Refresh',
+    back: 'Back',
+    confirm: 'Confirm',
+    loading: 'Loading...',
+    noData: 'No Data',
+    success: 'Success',
+    error: 'Error',
+    warning: 'Warning',
+    info: 'Info'
+  },
+  menu: {
+    dashboard: 'Dashboard',
+    agents: 'Agents',
+    projects: 'Projects',
+    monitoring: 'Monitoring',
+    alerts: 'Alerts',
+    aiAssistant: 'AI Assistant',
+    skills: 'Skills',
+    notifications: 'Notifications',
+    tokens: 'Tokens',
+    devices: 'Devices',
+    recruitment: 'Recruitment',
+    interventions: 'Interventions',
+    health: 'Health',
+    performance: 'Performance',
+    scheduler: 'Scheduler',
+    performanceMgmt: 'Performance Mgmt',
+    reviews: 'Code Review',
+    git: 'Git',
+    pipeline: 'Pipeline',
+    workflow: 'Workflow',
+    search: 'Search',
+    templates: 'Templates',
+    resources: 'Resources',
+    dingtalk: 'DingTalk',
+    admin: 'Admin',
+    users: 'Users',
+    roles: 'Roles',
+    settings: 'Settings',
+    pending: 'Pending Users',
+    logs: 'Logs',
+    configs: 'Configs'
+  },
+  auth: {
+    login: 'Login',
+    logout: 'Logout',
+    username: 'Username',
+    password: 'Password',
+    rememberMe: 'Remember Me',
+    forgotPassword: 'Forgot Password',
+    loginSuccess: 'Login Success',
+    loginFailed: 'Login Failed',
+    logoutSuccess: 'Logged Out'
+  },
+  agent: {
+    start: 'Start',
+    stop: 'Stop',
+    restart: 'Restart',
+    status: 'Status',
+    role: 'Role',
+    task: 'Task',
+    message: 'Message'
+  },
+  project: {
+    name: 'Project Name',
+    description: 'Description',
+    workDir: 'Work Directory',
+    create: 'Create Project',
+    edit: 'Edit Project',
+    delete: 'Delete Project'
+  }
+}

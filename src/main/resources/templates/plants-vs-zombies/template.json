@@ -1,0 +1,87 @@
+{
+  "id": "plants-vs-zombies",
+  "name": "植物大战僵尸",
+  "description": "植物大战僵尸风格的塔防游戏，支持玩家DIY植物",
+  "version": "1.0.0",
+  "gameType": "PLANTS_VS_ZOMBIES",
+  "author": "ChengXun Game Maker",
+  "createdAt": "2026-05-30",
+
+  "templateStructure": {
+    "config/": "游戏配置文件（植物组件、僵尸模板、DIY配置等）",
+    "memory/": "模板预设记忆（知识库、最佳实践等）",
+    "skills/": "模板预设技能（设计技能、开发技能等）",
+    "design/": "设计文档目录",
+    "server/": "服务端代码目录",
+    "client/": "客户端代码目录"
+  },
+
+  "projectStructure": {
+    ".game-maker/": "系统配置目录（自动生成）",
+    ".game-maker/project.json": "项目配置文件",
+    ".game-maker/memory/": "项目记忆目录（Agent记忆存储）",
+    ".game-maker/skills/": "项目技能目录（可复用技能）",
+    ".game-maker/contexts/": "项目上下文目录（对话历史、快照）",
+    "config/": "游戏配置目录（从模板复制）",
+    "design/": "设计文档目录",
+    "server/": "服务端代码目录",
+    "client/": "客户端代码目录"
+  },
+
+  "agentRoles": [
+    {
+      "role": "producer",
+      "name": "制作人",
+      "description": "统筹管理、任务分配、团队协调"
+    },
+    {
+      "role": "plant-designer",
+      "name": "植物设计师",
+      "description": "植物设计、技能效果、DIY模板"
+    },
+    {
+      "role": "zombie-designer",
+      "name": "僵尸设计师",
+      "description": "僵尸设计、AI、波次、Boss"
+    },
+    {
+      "role": "diy-system-designer",
+      "name": "DIY系统设计师",
+      "description": "DIY系统、编辑器、组件、分享"
+    },
+    {
+      "role": "numerical-planner",
+      "name": "数值策划",
+      "description": "数值平衡、经济系统"
+    },
+    {
+      "role": "level-designer",
+      "name": "关卡策划",
+      "description": "关卡设计、难度曲线"
+    },
+    {
+      "role": "server-dev",
+      "name": "服务端开发",
+      "description": "后端逻辑、API接口"
+    },
+    {
+      "role": "client-dev",
+      "name": "客户端开发",
+      "description": "前端逻辑、交互实现"
+    },
+    {
+      "role": "tester",
+      "name": "测试工程师",
+      "description": "功能测试、性能测试"
+    }
+  ],
+
+  "features": [
+    "植物DIY系统",
+    "僵尸波次系统",
+    "阳光经济系统",
+    "关卡进度系统",
+    "植物收集系统",
+    "成就系统"
+  ]
+}

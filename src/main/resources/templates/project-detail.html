@@ -32,9 +32,29 @@
                             <i class="bi bi-folder"></i> 项目
                         </a>
                     </li>
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/skills}">
+                            <i class="bi bi-lightning"></i> 技能
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/tokens}">
+                            <i class="bi bi-key"></i> Token 管理
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/monitor}">
+                            <i class="bi bi-graph-up"></i> 监控
+                        </a>
+                    </li>
                     <li class="nav-item" sec:authorize="hasRole('ADMIN')">
                         <a class="nav-link" th:href="@{/admin/users}">
                             <i class="bi bi-people"></i> 用户管理
+                        </a>
+                    </li>
+                    <li class="nav-item" sec:authorize="hasAuthority('PERM_roles:manage')">
+                        <a class="nav-link" th:href="@{/roles}">
+                            <i class="bi bi-shield-lock"></i> 角色管理
                         </a>
                     </li>
                 </ul>
@@ -44,6 +64,12 @@
                             <i class="bi bi-person-circle"></i> <span th:text="${username}">User</span>
                         </a>
                         <ul class="dropdown-menu dropdown-menu-end dropdown-menu-dark">
+                            <li>
+                                <a class="dropdown-item" th:href="@{/profile}">
+                                    <i class="bi bi-person"></i> 个人中心
+                                </a>
+                            </li>
+                            <li><hr class="dropdown-divider"></li>
                             <li>
                                 <form th:action="@{/logout}" method="post">
                                     <button class="dropdown-item" type="submit">
@@ -90,6 +116,23 @@
                         <p><strong>最后活跃：</strong><br>
                             <small th:text="${#temporals.format(project.lastActiveAt, 'yyyy-MM-dd HH:mm:ss')}"></small>
                         </p>
+
+                        <!-- T24: 项目快捷入口 -->
+                        <hr class="border-secondary">
+                        <div class="d-grid gap-2">
+                            <a th:href="@{/agents/project/{id}(id=${project.id})}" class="btn btn-outline-primary btn-sm">
+                                <i class="bi bi-robot"></i> 管理 Agent
+                            </a>
+                            <a th:href="@{/monitor/project/{id}(id=${project.id})}" class="btn btn-outline-info btn-sm">
+                                <i class="bi bi-graph-up"></i> 监控
+                            </a>
+                            <a th:href="@{/code/git/{id}(id=${project.id})}" class="btn btn-outline-light btn-sm">
+                                <i class="bi bi-git"></i> Git 操作
+                            </a>
+                            <a th:href="@{/performance?projectId={id}(id=${project.id})}" class="btn btn-outline-warning btn-sm">
+                                <i class="bi bi-bar-chart"></i> 绩效
+                            </a>
+                        </div>
                     </div>
                 </div>
             </div>

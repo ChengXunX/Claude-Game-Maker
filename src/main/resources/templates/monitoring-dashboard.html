@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>监控中心 - ChengXun Game Maker</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="bg-dark text-light">
+    <div class="container-fluid mt-4">
+        <h2 class="mb-4"><i class="bi bi-graph-up"></i> 监控中心</h2>
+
+        <!-- 概览卡片 -->
+        <div class="row mb-4">
+            <div class="col-md-3">
+                <div class="card bg-primary text-white">
+                    <div class="card-body">
+                        <h5 class="card-title">API调用</h5>
+                        <h2 id="totalApiCalls">0</h2>
+                        <small>今日调用次数</small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card bg-success text-white">
+                    <div class="card-body">
+                        <h5 class="card-title">Agent任务</h5>
+                        <h2 id="totalAgentTasks">0</h2>
+                        <small>完成任务数</small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card bg-warning text-dark">
+                    <div class="card-body">
+                        <h5 class="card-title">活跃告警</h5>
+                        <h2 id="activeAlerts">0</h2>
+                        <small>需要处理</small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card bg-info text-white">
+                    <div class="card-body">
+                        <h5 class="card-title">Agent健康</h5>
+                        <h2 id="agentHealthRate">0%</h2>
+                        <small>健康率</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 图表区域 -->
+        <div class="row mb-4">
+            <div class="col-md-6">
+                <div class="card bg-dark">
+                    <div class="card-header">
+                        <i class="bi bi-bar-chart"></i> API调用统计
+                    </div>
+                    <div class="card-body">
+                        <canvas id="apiCallsChart" height="200"></canvas>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card bg-dark">
+                    <div class="card-header">
+                        <i class="bi bi-pie-chart"></i> Agent任务分布
+                    </div>
+                    <div class="card-body">
+                        <canvas id="agentTasksChart" height="200"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Agent健康状态 -->
+        <div class="row mb-4">
+            <div class="col-md-12">
+                <div class="card bg-dark">
+                    <div class="card-header">
+                        <i class="bi bi-heart-pulse"></i> Agent健康状态
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-dark table-striped">
+                                <thead>
+                                    <tr>
+                                        <th>Agent</th>
+                                        <th>状态</th>
+                                        <th>响应时间</th>
+                                        <th>错误率</th>
+                                        <th>健康分数</th>
+                                        <th>操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="agentHealthTable">
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 最近告警 -->
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card bg-dark">
+                    <div class="card-header">
+                        <i class="bi bi-bell"></i> 最近告警
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-dark table-striped">
+                                <thead>
+                                    <tr>
+                                        <th>时间</th>
+                                        <th>规则</th>
+                                        <th>级别</th>
+                                        <th>状态</th>
+                                        <th>详情</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="alertsTable">
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // 加载监控数据
+        async function loadMonitoringData() {
+            try {
+                const response = await fetch('/api/monitoring/overview');
+                const data = await response.json();
+
+                // 更新概览卡片
+                document.getElementById('totalApiCalls').textContent = data.apiCalls.totalCalls || 0;
+                document.getElementById('totalAgentTasks').textContent = data.agentTasks.totalTasks || 0;
+                document.getElementById('activeAlerts').textContent = data.alerts.activeAlerts || 0;
+                document.getElementById('agentHealthRate').textContent = (data.agentHealth.healthRate || 0) + '%';
+
+                // 更新图表
+                updateApiCallsChart(data.apiCalls.endpointCalls);
+                updateAgentTasksChart(data.agentTasks.agentTasks);
+
+                // 更新Agent健康表格
+                updateAgentHealthTable(data.agentHealth.agents);
+
+            } catch (error) {
+                console.error('Failed to load monitoring data:', error);
+            }
+        }
+
+        // 更新API调用图表
+        function updateApiCallsChart(data) {
+            const ctx = document.getElementById('apiCallsChart').getContext('2d');
+            const labels = Object.keys(data || {});
+            const values = Object.values(data || {});
+
+            new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: '调用次数',
+                        data: values,
+                        backgroundColor: 'rgba(54, 162, 235, 0.5)',
+                        borderColor: 'rgba(54, 162, 235, 1)',
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    scales: {
+                        y: {
+                            beginAtZero: true
+                        }
+                    }
+                }
+            });
+        }
+
+        // 更新Agent任务图表
+        function updateAgentTasksChart(data) {
+            const ctx = document.getElementById('agentTasksChart').getContext('2d');
+            const labels = Object.keys(data || {});
+            const values = Object.values(data || {});
+
+            new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        data: values,
+                        backgroundColor: [
+                            'rgba(255, 99, 132, 0.5)',
+                            'rgba(54, 162, 235, 0.5)',
+                            'rgba(255, 206, 86, 0.5)',
+                            'rgba(75, 192, 192, 0.5)',
+                            'rgba(153, 102, 255, 0.5)'
+                        ]
+                    }]
+                },
+                options: {
+                    responsive: true
+                }
+            });
+        }
+
+        // 更新Agent健康表格
+        function updateAgentHealthTable(agents) {
+            const tbody = document.getElementById('agentHealthTable');
+            tbody.innerHTML = '';
+
+            (agents || []).forEach(agent => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${agent.agentName || agent.agentId}</td>
+                    <td><span class="badge bg-${getStatusColor(agent.healthStatus)}">${agent.healthStatus}</span></td>
+                    <td>${agent.avgResponseTimeMs || 0}ms</td>
+                    <td>${agent.errorRate || 0}%</td>
+                    <td>${agent.healthScore || 0}</td>
+                    <td>
+                        <button class="btn btn-sm btn-outline-warning" onclick="restartAgent('${agent.agentId}')">重启</button>
+                    </td>
+                `;
+                tbody.appendChild(row);
+            });
+        }
+
+        // 获取状态颜色
+        function getStatusColor(status) {
+            switch (status) {
+                case 'HEALTHY': return 'success';
+                case 'WARNING': return 'warning';
+                case 'UNHEALTHY': return 'danger';
+                case 'OFFLINE': return 'secondary';
+                default: return 'info';
+            }
+        }
+
+        // 重启Agent
+        async function restartAgent(agentId) {
+            if (!confirm('确定要重启该Agent吗？')) return;
+
+            try {
+                const response = await fetch(`/api/health/agent/${agentId}/restart`, {
+                    method: 'POST'
+                });
+                const data = await response.json();
+
+                if (data.status === 'success') {
+                    alert('Agent已重启');
+                    loadMonitoringData();
+                } else {
+                    alert('重启失败: ' + data.message);
+                }
+            } catch (error) {
+                alert('重启失败: ' + error.message);
+            }
+        }
+
+        // 页面加载时获取数据
+        document.addEventListener('DOMContentLoaded', loadMonitoringData);
+
+        // 每30秒刷新一次
+        setInterval(loadMonitoringData, 30000);
+    </script>
+</body>
+</html>

@@ -1,0 +1,1013 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agent干预 - ChengXun Game Maker</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <link th:href="@{/css/custom.css}" rel="stylesheet">
+    <style>
+        .intervention-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            transition: all 0.2s;
+        }
+        .intervention-card:hover {
+            border-color: var(--accent-color);
+        }
+        .status-pending { border-left: 4px solid #ffc107; }
+        .status-acknowledged { border-left: 4px solid #0dcaf0; }
+        .status-executing { border-left: 4px solid #0d6efd; }
+        .status-completed { border-left: 4px solid #198754; }
+        .status-rejected { border-left: 4px solid #dc3545; }
+        .status-cancelled { border-left: 4px solid #6c757d; }
+        .type-badge {
+            font-size: 0.8em;
+            padding: 0.25rem 0.5rem;
+        }
+        /* Toast通知样式 */
+        .toast-container {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 9999;
+        }
+    </style>
+</head>
+<body class="bg-dark text-light">
+    <!-- Toast通知容器 -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <div class="container-fluid mt-4">
+        <!-- 页面标题 -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h2><i class="bi bi-hand-index-thumb"></i> Agent干预中心</h2>
+                        <p class="text-muted mb-0">人工干预Agent的决策和方向</p>
+                    </div>
+                    <div>
+                        <button class="btn btn-outline-primary" onclick="loadData()" id="btnRefresh">
+                            <i class="bi bi-arrow-clockwise"></i> 刷新
+                        </button>
+                        <button class="btn btn-primary" onclick="showInterventionModal()">
+                            <i class="bi bi-plus-circle"></i> 发送干预
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 统计卡片 -->
+        <div class="row mb-4">
+            <div class="col-md-3">
+                <div class="card bg-warning bg-gradient text-dark">
+                    <div class="card-body text-center">
+                        <h6 class="card-title">待处理</h6>
+                        <h2 id="pendingCount">0</h2>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card bg-success bg-gradient text-white">
+                    <div class="card-body text-center">
+                        <h6 class="card-title">已完成</h6>
+                        <h2 id="completedCount">0</h2>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card bg-danger bg-gradient text-white">
+                    <div class="card-body text-center">
+                        <h6 class="card-title">已拒绝</h6>
+                        <h2 id="rejectedCount">0</h2>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card bg-info bg-gradient text-white">
+                    <div class="card-body text-center">
+                        <h6 class="card-title">总干预数</h6>
+                        <h2 id="totalCount">0</h2>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab导航 -->
+        <ul class="nav nav-tabs mb-4" role="tablist">
+            <li class="nav-item">
+                <a class="nav-link active" data-bs-toggle="tab" href="#pending">待处理干预</a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link" data-bs-toggle="tab" href="#all">所有干预</a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link" data-bs-toggle="tab" href="#quick-actions">快捷操作</a>
+            </li>
+        </ul>
+
+        <!-- Tab内容 -->
+        <div class="tab-content">
+            <!-- 待处理干预 -->
+            <div class="tab-pane fade show active" id="pending">
+                <div id="pendingInterventions">
+                    <!-- 待处理干预列表 -->
+                </div>
+                <div id="noPending" class="text-center py-5" style="display: none;">
+                    <i class="bi bi-check-circle fs-1 text-success"></i>
+                    <h4 class="mt-3">暂无待处理干预</h4>
+                    <p class="text-muted">所有干预指令已处理</p>
+                </div>
+                <div id="pendingLoading" class="text-center py-5">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">加载中...</span>
+                    </div>
+                    <p class="mt-2 text-muted">加载中...</p>
+                </div>
+            </div>
+
+            <!-- 所有干预 -->
+            <div class="tab-pane fade" id="all">
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>干预编号</th>
+                                <th>Agent</th>
+                                <th>类型</th>
+                                <th>干预人</th>
+                                <th>状态</th>
+                                <th>时间</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="allInterventions">
+                            <!-- 所有干预列表 -->
+                        </tbody>
+                    </table>
+                </div>
+                <div id="allLoading" class="text-center py-5">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">加载中...</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 快捷操作 -->
+            <div class="tab-pane fade" id="quick-actions">
+                <div class="row">
+                    <!-- 指令干预 -->
+                    <div class="col-lg-6">
+                        <div class="card mb-4">
+                            <div class="card-header">
+                                <h5 class="mb-0"><i class="bi bi-chat-dots"></i> 指令干预</h5>
+                            </div>
+                            <div class="card-body">
+                                <form id="instructionForm">
+                                    <div class="mb-3">
+                                        <label class="form-label">选择Agent *</label>
+                                        <select class="form-select" id="instructionAgent" required>
+                                            <option value="">选择Agent</option>
+                                        </select>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label">指令内容 *</label>
+                                        <textarea class="form-control" id="instructionContent" rows="4"
+                                                  placeholder="输入要发送给Agent的指令..." required maxlength="10000"></textarea>
+                                        <div class="form-text"><span id="instructionContentCount">0</span>/10000</div>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label">干预原因</label>
+                                        <textarea class="form-control" id="instructionReason" rows="2"
+                                                  placeholder="说明为什么需要干预..." maxlength="2000"></textarea>
+                                    </div>
+                                    <button type="submit" class="btn btn-primary w-100" id="btnInstruction">
+                                        <i class="bi bi-send"></i> 发送指令
+                                    </button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 决策覆盖 -->
+                    <div class="col-lg-6">
+                        <div class="card mb-4">
+                            <div class="card-header">
+                                <h5 class="mb-0"><i class="bi bi-arrow-repeat"></i> 决策覆盖</h5>
+                            </div>
+                            <div class="card-body">
+                                <form id="overrideForm">
+                                    <div class="mb-3">
+                                        <label class="form-label">选择Agent *</label>
+                                        <select class="form-select" id="overrideAgent" required>
+                                            <option value="">选择Agent</option>
+                                        </select>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label">原决策</label>
+                                        <textarea class="form-control" id="originalDecision" rows="2"
+                                                  placeholder="Agent的原决策..." maxlength="10000"></textarea>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label">新决策 *</label>
+                                        <textarea class="form-control" id="newDecision" rows="2"
+                                                  placeholder="要覆盖的新决策..." required maxlength="10000"></textarea>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label">覆盖原因</label>
+                                        <textarea class="form-control" id="overrideReason" rows="2"
+                                                  placeholder="说明为什么要覆盖..." maxlength="2000"></textarea>
+                                    </div>
+                                    <button type="submit" class="btn btn-warning w-100" id="btnOverride">
+                                        <i class="bi bi-arrow-repeat"></i> 覆盖决策
+                                    </button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 暂停/恢复 -->
+                    <div class="col-lg-6">
+                        <div class="card mb-4">
+                            <div class="card-header">
+                                <h5 class="mb-0"><i class="bi bi-pause-circle"></i> 暂停/恢复Agent</h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="mb-3">
+                                    <label class="form-label">选择Agent *</label>
+                                    <select class="form-select" id="pauseResumeAgent">
+                                        <option value="">选择Agent</option>
+                                    </select>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">原因</label>
+                                    <input type="text" class="form-control" id="pauseResumeReason"
+                                           placeholder="操作原因..." maxlength="2000">
+                                </div>
+                                <div class="d-flex gap-2">
+                                    <button class="btn btn-danger flex-fill" onclick="pauseAgent()" id="btnPause">
+                                        <i class="bi bi-pause-fill"></i> 暂停
+                                    </button>
+                                    <button class="btn btn-success flex-fill" onclick="resumeAgent()" id="btnResume">
+                                        <i class="bi bi-play-fill"></i> 恢复
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 紧急指令 -->
+                    <div class="col-lg-6">
+                        <div class="card mb-4">
+                            <div class="card-header bg-danger text-white">
+                                <h5 class="mb-0"><i class="bi bi-exclamation-triangle"></i> 紧急指令</h5>
+                            </div>
+                            <div class="card-body">
+                                <form id="urgentForm">
+                                    <div class="mb-3">
+                                        <label class="form-label">选择Agent *</label>
+                                        <select class="form-select" id="urgentAgent" required>
+                                            <option value="">选择Agent</option>
+                                        </select>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label">紧急指令 *</label>
+                                        <textarea class="form-control" id="urgentInstruction" rows="4"
+                                                  placeholder="输入紧急指令..." required maxlength="10000"></textarea>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label">紧急原因 *</label>
+                                        <textarea class="form-control" id="urgentReason" rows="2"
+                                                  placeholder="说明紧急原因..." required maxlength="2000"></textarea>
+                                    </div>
+                                    <button type="submit" class="btn btn-danger w-100" id="btnUrgent">
+                                        <i class="bi bi-exclamation-triangle"></i> 发送紧急指令
+                                    </button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 干预详情模态框 -->
+    <div class="modal fade" id="interventionModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="modalTitle">干预详情</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="interventionDetail">
+                        <!-- 干预详情 -->
+                    </div>
+                    <hr>
+                    <div class="mb-3">
+                        <label class="form-label">处理意见</label>
+                        <textarea class="form-control" id="actionComment" rows="3"
+                                  placeholder="输入处理意见..." maxlength="5000"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-warning" onclick="cancelIntervention()" id="btnModalCancel">
+                        <i class="bi bi-x-circle"></i> 取消干预
+                    </button>
+                    <button type="button" class="btn btn-danger" onclick="rejectIntervention()" id="btnModalReject">
+                        <i class="bi bi-x"></i> 拒绝
+                    </button>
+                    <button type="button" class="btn btn-success" onclick="executeIntervention()" id="btnModalExecute">
+                        <i class="bi bi-check"></i> 执行
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 确认对话框 -->
+    <div class="modal fade" id="confirmModal" tabindex="-1">
+        <div class="modal-dialog modal-sm">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="confirmTitle">确认操作</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <p id="confirmMessage">确定要执行此操作吗？</p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" id="btnConfirmOk">确定</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        let currentInterventionId = null;
+        let agentLoadFailed = false;
+
+        // ===== 工具函数 =====
+
+        /**
+         * HTML转义，防止XSS
+         */
+        function escapeHtml(text) {
+            if (text == null) return '';
+            const div = document.createElement('div');
+            div.textContent = String(text);
+            return div.innerHTML;
+        }
+
+        /**
+         * 显示Toast通知
+         */
+        function showToast(message, type) {
+            type = type || 'info';
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            const bgClass = type === 'success' ? 'bg-success' : type === 'error' ? 'bg-danger' : type === 'warning' ? 'bg-warning text-dark' : 'bg-info';
+            toast.className = 'toast align-items-center ' + bgClass + ' text-white border-0 show';
+            toast.setAttribute('role', 'alert');
+            toast.innerHTML =
+                '<div class="d-flex">' +
+                    '<div class="toast-body">' + escapeHtml(message) + '</div>' +
+                    '<button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>' +
+                '</div>';
+            container.appendChild(toast);
+            setTimeout(function() {
+                toast.classList.remove('show');
+                setTimeout(function() { toast.remove(); }, 300);
+            }, 3000);
+        }
+
+        /**
+         * 显示确认对话框
+         * @returns {Promise<boolean>}
+         */
+        function showConfirm(title, message) {
+            return new Promise(function(resolve) {
+                document.getElementById('confirmTitle').textContent = title;
+                document.getElementById('confirmMessage').textContent = message;
+                var modal = new bootstrap.Modal(document.getElementById('confirmModal'));
+                var btnOk = document.getElementById('btnConfirmOk');
+                var resolved = false;
+                var cleanup = function() {
+                    btnOk.removeEventListener('click', onOk);
+                    document.getElementById('confirmModal').removeEventListener('hidden.bs.modal', onHidden);
+                };
+                var onOk = function() {
+                    if (resolved) return;
+                    resolved = true;
+                    cleanup();
+                    modal.hide();
+                    resolve(true);
+                };
+                var onHidden = function() {
+                    if (resolved) return;
+                    resolved = true;
+                    cleanup();
+                    resolve(false);
+                };
+                btnOk.addEventListener('click', onOk);
+                document.getElementById('confirmModal').addEventListener('hidden.bs.modal', onHidden);
+                modal.show();
+            });
+        }
+
+        /**
+         * 设置按钮loading状态
+         */
+        function setButtonLoading(btn, loading) {
+            if (loading) {
+                btn.disabled = true;
+                btn._originalHtml = btn.innerHTML;
+                var text = btn.textContent.trim();
+                btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>' + escapeHtml(text);
+            } else {
+                btn.disabled = false;
+                if (btn._originalHtml) {
+                    btn.innerHTML = btn._originalHtml;
+                }
+            }
+        }
+
+        // ===== 页面加载 =====
+
+        document.addEventListener('DOMContentLoaded', function() {
+            loadData();
+            loadAgentList();
+        });
+
+        // 加载数据
+        async function loadData() {
+            await Promise.all([
+                loadPendingInterventions(),
+                loadAllInterventions(),
+                loadStatistics()
+            ]);
+        }
+
+        // 加载Agent列表
+        async function loadAgentList() {
+            try {
+                const agents = await handleApiResponse(await fetch('/api/agent-scheduler/status'));
+
+                if (!Array.isArray(agents) || agents.length === 0) {
+                    agentLoadFailed = true;
+                    showAgentLoadError('暂无可用Agent');
+                    return;
+                }
+
+                var selects = ['instructionAgent', 'overrideAgent', 'pauseResumeAgent', 'urgentAgent'];
+                selects.forEach(function(selectId) {
+                    var select = document.getElementById(selectId);
+                    if (select) {
+                        select.innerHTML = '<option value="">选择Agent</option>';
+                        agents.forEach(function(agent) {
+                            var option = document.createElement('option');
+                            option.value = escapeHtml(agent.id);
+                            option.textContent = escapeHtml(agent.name) + ' (' + escapeHtml(agent.role) + ')';
+                            select.appendChild(option);
+                        });
+                    }
+                });
+                agentLoadFailed = false;
+            } catch (error) {
+                console.error('Failed to load agent list:', error);
+                agentLoadFailed = true;
+                showAgentLoadError('加载Agent列表失败: ' + error.message);
+            }
+        }
+
+        /**
+         * 显示Agent加载失败提示
+         */
+        function showAgentLoadError(message) {
+            var selects = ['instructionAgent', 'overrideAgent', 'pauseResumeAgent', 'urgentAgent'];
+            selects.forEach(function(selectId) {
+                var select = document.getElementById(selectId);
+                if (select) {
+                    select.innerHTML = '<option value="">' + escapeHtml(message) + '</option>';
+                }
+            });
+        }
+
+        // 加载待处理干预
+        async function loadPendingInterventions() {
+            var loadingEl = document.getElementById('pendingLoading');
+            var container = document.getElementById('pendingInterventions');
+            var noPending = document.getElementById('noPending');
+
+            try {
+                loadingEl.style.display = 'block';
+                container.innerHTML = '';
+
+                const interventions = await handleApiResponse(await fetch('/api/interventions/pending'));
+
+                loadingEl.style.display = 'none';
+
+                if (interventions.length === 0) {
+                    noPending.style.display = 'block';
+                    return;
+                }
+
+                noPending.style.display = 'none';
+
+                interventions.forEach(function(intervention) {
+                    var card = document.createElement('div');
+                    card.className = 'intervention-card p-3 mb-3 status-' + intervention.status.toLowerCase();
+                    card.innerHTML =
+                        '<div class="d-flex justify-content-between align-items-start mb-2">' +
+                            '<div>' +
+                                '<h5 class="mb-1">' + escapeHtml(intervention.interventionNo) + '</h5>' +
+                                '<p class="text-muted mb-0">' +
+                                    'Agent: ' + escapeHtml(intervention.agentName) + ' (' + escapeHtml(intervention.agentRole) + ') | ' +
+                                    '干预人: ' + escapeHtml(intervention.username) +
+                                '</p>' +
+                            '</div>' +
+                            '<span class="badge type-badge bg-warning">' + escapeHtml(intervention.interventionTypeDescription) + '</span>' +
+                        '</div>' +
+                        '<hr>' +
+                        '<div class="mb-2">' +
+                            '<strong>指令内容：</strong>' +
+                            '<p class="mt-1">' + escapeHtml(intervention.instruction || '-') + '</p>' +
+                        '</div>' +
+                        (intervention.reason ? '<div class="mb-2"><strong>干预原因：</strong><p class="text-muted mt-1">' + escapeHtml(intervention.reason) + '</p></div>' : '') +
+                        '<div class="d-flex justify-content-between align-items-center mt-3">' +
+                            '<small class="text-muted">' + new Date(intervention.createdAt).toLocaleString() + '</small>' +
+                            '<button class="btn btn-outline-primary btn-sm" onclick="openInterventionModal(' + intervention.id + ')">' +
+                                '处理' +
+                            '</button>' +
+                        '</div>';
+                    container.appendChild(card);
+                });
+            } catch (error) {
+                loadingEl.style.display = 'none';
+                console.error('Failed to load pending interventions:', error);
+                container.innerHTML = '<div class="text-center py-5"><i class="bi bi-exclamation-triangle fs-1 text-warning"></i><h4 class="mt-3">加载失败</h4><p class="text-muted">' + escapeHtml(error.message) + '</p><button class="btn btn-outline-primary btn-sm" onclick="loadPendingInterventions()">重试</button></div>';
+            }
+        }
+
+        // 加载所有干预
+        async function loadAllInterventions() {
+            var loadingEl = document.getElementById('allLoading');
+            var tbody = document.getElementById('allInterventions');
+
+            try {
+                loadingEl.style.display = 'block';
+                tbody.innerHTML = '';
+
+                const pageData = await handleApiResponse(await fetch('/api/interventions/all?size=100'));
+                const interventions = pageData.content || pageData;
+
+                loadingEl.style.display = 'none';
+
+                interventions.forEach(function(intervention) {
+                    var tr = document.createElement('tr');
+                    tr.innerHTML =
+                        '<td><code>' + escapeHtml(intervention.interventionNo) + '</code></td>' +
+                        '<td>' + escapeHtml(intervention.agentName) + '</td>' +
+                        '<td><span class="badge type-badge bg-secondary">' + escapeHtml(intervention.interventionTypeDescription) + '</span></td>' +
+                        '<td>' + escapeHtml(intervention.username) + '</td>' +
+                        '<td><span class="badge ' + getStatusBadge(intervention.status) + '">' + escapeHtml(intervention.statusDescription) + '</span></td>' +
+                        '<td>' + new Date(intervention.createdAt).toLocaleDateString() + '</td>' +
+                        '<td>' +
+                            '<button class="btn btn-outline-primary btn-sm" onclick="openInterventionModal(' + intervention.id + ')">' +
+                                '<i class="bi bi-eye"></i>' +
+                            '</button>' +
+                        '</td>';
+                    tbody.appendChild(tr);
+                });
+            } catch (error) {
+                loadingEl.style.display = 'none';
+                console.error('Failed to load all interventions:', error);
+                tbody.innerHTML = '<tr><td colspan="7" class="text-center py-4 text-muted">加载失败: ' + escapeHtml(error.message) + ' <button class="btn btn-outline-primary btn-sm ms-2" onclick="loadAllInterventions()">重试</button></td></tr>';
+            }
+        }
+
+        // 加载统计
+        async function loadStatistics() {
+            try {
+                const stats = await handleApiResponse(await fetch('/api/interventions/stats'));
+
+                document.getElementById('pendingCount').textContent = (stats.statusCounts && stats.statusCounts.PENDING) || 0;
+                document.getElementById('completedCount').textContent = (stats.statusCounts && stats.statusCounts.COMPLETED) || 0;
+                document.getElementById('rejectedCount').textContent = (stats.statusCounts && stats.statusCounts.REJECTED) || 0;
+                var total = 0;
+                if (stats.statusCounts) {
+                    Object.values(stats.statusCounts).forEach(function(v) { total += v; });
+                }
+                document.getElementById('totalCount').textContent = total;
+            } catch (error) {
+                console.error('Failed to load statistics:', error);
+            }
+        }
+
+        // 打开干预详情模态框
+        async function openInterventionModal(interventionId) {
+            currentInterventionId = interventionId;
+
+            try {
+                const intervention = await handleApiResponse(await fetch('/api/interventions/' + interventionId));
+
+                var detail = document.getElementById('interventionDetail');
+                detail.innerHTML =
+                    '<h6>干预编号：' + escapeHtml(intervention.interventionNo) + '</h6>' +
+                    '<div class="row mt-3">' +
+                        '<div class="col-6">' +
+                            '<p><strong>Agent：</strong>' + escapeHtml(intervention.agentName) + ' (' + escapeHtml(intervention.agentRole) + ')</p>' +
+                            '<p><strong>干预类型：</strong>' + escapeHtml(intervention.interventionTypeDescription) + '</p>' +
+                            '<p><strong>干预人：</strong>' + escapeHtml(intervention.username) + ' (' + escapeHtml(intervention.userRole) + ')</p>' +
+                        '</div>' +
+                        '<div class="col-6">' +
+                            '<p><strong>状态：</strong><span class="badge ' + getStatusBadge(intervention.status) + '">' + escapeHtml(intervention.statusDescription) + '</span></p>' +
+                            '<p><strong>创建时间：</strong>' + new Date(intervention.createdAt).toLocaleString() + '</p>' +
+                            (intervention.taskId ? '<p><strong>相关任务：</strong>' + escapeHtml(intervention.taskId) + '</p>' : '') +
+                        '</div>' +
+                    '</div>' +
+                    '<div class="mt-3">' +
+                        '<strong>指令内容：</strong>' +
+                        '<p class="mt-1">' + escapeHtml(intervention.instruction || '-') + '</p>' +
+                    '</div>' +
+                    (intervention.reason ? '<div class="mt-2"><strong>干预原因：</strong><p class="text-muted mt-1">' + escapeHtml(intervention.reason) + '</p></div>' : '') +
+                    (intervention.originalDecision ?
+                        '<div class="mt-2"><strong>原决策：</strong><p class="text-muted mt-1">' + escapeHtml(intervention.originalDecision) + '</p></div>' +
+                        '<div class="mt-2"><strong>新决策：</strong><p class="mt-1">' + escapeHtml(intervention.newDecision) + '</p></div>'
+                    : '') +
+                    // 显示Agent回复信息
+                    (intervention.acknowledgement ? '<div class="mt-2"><strong>Agent确认：</strong><p class="text-info mt-1">' + escapeHtml(intervention.acknowledgement) + '</p><small class="text-muted">确认时间: ' + (intervention.acknowledgedAt ? new Date(intervention.acknowledgedAt).toLocaleString() : '-') + '</small></div>' : '') +
+                    (intervention.executionResult ? '<div class="mt-2"><strong>执行结果：</strong><p class="text-success mt-1">' + escapeHtml(intervention.executionResult) + '</p></div>' : '');
+
+                document.getElementById('actionComment').value = '';
+
+                // 根据状态显示/隐藏操作按钮
+                var btnExecute = document.getElementById('btnModalExecute');
+                var btnReject = document.getElementById('btnModalReject');
+                var btnCancel = document.getElementById('btnModalCancel');
+
+                if (intervention.status === 'PENDING' || intervention.status === 'ACKNOWLEDGED') {
+                    btnExecute.style.display = '';
+                    btnReject.style.display = '';
+                    btnCancel.style.display = '';
+                } else if (intervention.status === 'EXECUTING') {
+                    // 执行中状态：允许取消
+                    btnExecute.style.display = 'none';
+                    btnReject.style.display = 'none';
+                    btnCancel.style.display = '';
+                } else {
+                    btnExecute.style.display = 'none';
+                    btnReject.style.display = 'none';
+                    btnCancel.style.display = 'none';
+                }
+
+                var modal = new bootstrap.Modal(document.getElementById('interventionModal'));
+                modal.show();
+            } catch (error) {
+                console.error('Failed to load intervention detail:', error);
+                showToast('加载干预详情失败: ' + error.message, 'error');
+            }
+        }
+
+        /**
+         * 统一处理API响应
+         * @returns {Promise<Object>} 响应数据
+         * @throws {Error} 当请求失败时抛出
+         */
+        async function handleApiResponse(response) {
+            if (!response.ok) {
+                var errorMsg = 'HTTP ' + response.status;
+                try {
+                    var errData = await response.json();
+                    errorMsg = errData.message || errData.error || errorMsg;
+                } catch (e) {
+                    // 非JSON响应，使用状态码
+                    try {
+                        var textData = await response.text();
+                        if (textData) {
+                            errorMsg = textData.substring(0, 200);
+                        }
+                    } catch (textErr) {
+                        // 无法读取响应体，使用状态码
+                    }
+                }
+                throw new Error(errorMsg);
+            }
+
+            // 检查响应是否为JSON格式
+            var contentType = response.headers.get('content-type');
+            if (contentType && contentType.includes('application/json')) {
+                return response.json();
+            }
+
+            // 尝试解析为JSON，如果失败则返回空对象
+            try {
+                return await response.json();
+            } catch (e) {
+                console.warn('Response is not JSON:', response.url);
+                return {};
+            }
+        }
+
+        // 执行干预
+        async function executeIntervention() {
+            if (!currentInterventionId) return;
+
+            var comment = document.getElementById('actionComment').value;
+            var btn = document.getElementById('btnModalExecute');
+            setButtonLoading(btn, true);
+
+            try {
+                const data = await handleApiResponse(await fetch('/api/interventions/' + currentInterventionId + '/execute', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ comment: comment || '已执行' })
+                }));
+
+                showToast('干预已执行', 'success');
+                bootstrap.Modal.getInstance(document.getElementById('interventionModal')).hide();
+                loadData();
+            } catch (error) {
+                showToast('执行失败: ' + error.message, 'error');
+            } finally {
+                setButtonLoading(btn, false);
+            }
+        }
+
+        // 拒绝干预
+        async function rejectIntervention() {
+            if (!currentInterventionId) return;
+
+            var reason = document.getElementById('actionComment').value;
+            if (!reason.trim()) {
+                showToast('请输入拒绝原因', 'warning');
+                return;
+            }
+
+            var btn = document.getElementById('btnModalReject');
+            setButtonLoading(btn, true);
+
+            try {
+                const data = await handleApiResponse(await fetch('/api/interventions/' + currentInterventionId + '/reject', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ comment: reason })
+                }));
+
+                showToast('干预已拒绝', 'success');
+                bootstrap.Modal.getInstance(document.getElementById('interventionModal')).hide();
+                loadData();
+            } catch (error) {
+                showToast('拒绝失败: ' + error.message, 'error');
+            } finally {
+                setButtonLoading(btn, false);
+            }
+        }
+
+        // 取消干预
+        async function cancelIntervention() {
+            if (!currentInterventionId) return;
+
+            var confirmed = await showConfirm('取消干预', '确定要取消此干预指令吗？');
+            if (!confirmed) return;
+
+            var comment = document.getElementById('actionComment').value;
+            var btn = document.getElementById('btnModalCancel');
+            setButtonLoading(btn, true);
+
+            try {
+                const data = await handleApiResponse(await fetch('/api/interventions/' + currentInterventionId + '/cancel', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ comment: comment || '管理员取消' })
+                }));
+
+                showToast('干预已取消', 'success');
+                bootstrap.Modal.getInstance(document.getElementById('interventionModal')).hide();
+                loadData();
+            } catch (error) {
+                showToast('取消失败: ' + error.message, 'error');
+            } finally {
+                setButtonLoading(btn, false);
+            }
+        }
+
+        // 发送指令
+        document.getElementById('instructionForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+
+            if (agentLoadFailed) {
+                showToast('无法发送指令：Agent列表加载失败', 'error');
+                return;
+            }
+
+            var agentId = document.getElementById('instructionAgent').value;
+            if (!agentId) {
+                showToast('请选择Agent', 'warning');
+                return;
+            }
+
+            var instruction = document.getElementById('instructionContent').value;
+            var reason = document.getElementById('instructionReason').value;
+            var btn = document.getElementById('btnInstruction');
+            setButtonLoading(btn, true);
+
+            try {
+                const data = await handleApiResponse(await fetch('/api/interventions/instruction', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ agentId: agentId, instruction: instruction, reason: reason })
+                }));
+
+                showToast('指令已发送！干预编号: ' + data.interventionNo, 'success');
+                document.getElementById('instructionForm').reset();
+                loadData();
+            } catch (error) {
+                showToast('发送失败: ' + error.message, 'error');
+            } finally {
+                setButtonLoading(btn, false);
+            }
+        });
+
+        // 覆盖决策
+        document.getElementById('overrideForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+
+            if (agentLoadFailed) {
+                showToast('无法发送指令：Agent列表加载失败', 'error');
+                return;
+            }
+
+            var agentId = document.getElementById('overrideAgent').value;
+            if (!agentId) {
+                showToast('请选择Agent', 'warning');
+                return;
+            }
+
+            var originalDecision = document.getElementById('originalDecision').value;
+            var newDecision = document.getElementById('newDecision').value;
+            var reason = document.getElementById('overrideReason').value;
+            var btn = document.getElementById('btnOverride');
+            setButtonLoading(btn, true);
+
+            try {
+                const data = await handleApiResponse(await fetch('/api/interventions/override-decision', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ agentId: agentId, originalDecision: originalDecision, newDecision: newDecision, reason: reason })
+                }));
+
+                showToast('决策已覆盖！干预编号: ' + data.interventionNo, 'success');
+                document.getElementById('overrideForm').reset();
+                loadData();
+            } catch (error) {
+                showToast('覆盖失败: ' + error.message, 'error');
+            } finally {
+                setButtonLoading(btn, false);
+            }
+        });
+
+        // 暂停Agent
+        async function pauseAgent() {
+            if (agentLoadFailed) {
+                showToast('无法操作：Agent列表加载失败', 'error');
+                return;
+            }
+
+            var agentId = document.getElementById('pauseResumeAgent').value;
+            var reason = document.getElementById('pauseResumeReason').value;
+
+            if (!agentId) {
+                showToast('请选择Agent', 'warning');
+                return;
+            }
+
+            var confirmed = await showConfirm('暂停Agent', '确定要暂停此Agent的工作吗？');
+            if (!confirmed) return;
+
+            var btn = document.getElementById('btnPause');
+            setButtonLoading(btn, true);
+
+            try {
+                const data = await handleApiResponse(await fetch('/api/interventions/pause/' + encodeURIComponent(agentId) + '?reason=' + encodeURIComponent(reason), {
+                    method: 'POST'
+                }));
+
+                showToast('Agent已暂停', 'success');
+                loadData();
+            } catch (error) {
+                showToast('暂停失败: ' + error.message, 'error');
+            } finally {
+                setButtonLoading(btn, false);
+            }
+        }
+
+        // 恢复Agent
+        async function resumeAgent() {
+            if (agentLoadFailed) {
+                showToast('无法操作：Agent列表加载失败', 'error');
+                return;
+            }
+
+            var agentId = document.getElementById('pauseResumeAgent').value;
+            var reason = document.getElementById('pauseResumeReason').value;
+
+            if (!agentId) {
+                showToast('请选择Agent', 'warning');
+                return;
+            }
+
+            var confirmed = await showConfirm('恢复Agent', '确定要恢复此Agent的工作吗？');
+            if (!confirmed) return;
+
+            var btn = document.getElementById('btnResume');
+            setButtonLoading(btn, true);
+
+            try {
+                const data = await handleApiResponse(await fetch('/api/interventions/resume/' + encodeURIComponent(agentId) + '?reason=' + encodeURIComponent(reason), {
+                    method: 'POST'
+                }));
+
+                showToast('Agent已恢复', 'success');
+                loadData();
+            } catch (error) {
+                showToast('恢复失败: ' + error.message, 'error');
+            } finally {
+                setButtonLoading(btn, false);
+            }
+        }
+
+        // 发送紧急指令
+        document.getElementById('urgentForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+
+            if (agentLoadFailed) {
+                showToast('无法发送指令：Agent列表加载失败', 'error');
+                return;
+            }
+
+            var agentId = document.getElementById('urgentAgent').value;
+            if (!agentId) {
+                showToast('请选择Agent', 'warning');
+                return;
+            }
+
+            var confirmed = await showConfirm('发送紧急指令', '确定要发送紧急指令吗？这将立即通知Agent。');
+            if (!confirmed) return;
+
+            var instruction = document.getElementById('urgentInstruction').value;
+            var reason = document.getElementById('urgentReason').value;
+            var btn = document.getElementById('btnUrgent');
+            setButtonLoading(btn, true);
+
+            try {
+                const data = await handleApiResponse(await fetch('/api/interventions/urgent', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ agentId: agentId, instruction: instruction, reason: reason })
+                }));
+
+                showToast('紧急指令已发送！干预编号: ' + data.interventionNo, 'success');
+                document.getElementById('urgentForm').reset();
+                loadData();
+            } catch (error) {
+                showToast('发送失败: ' + error.message, 'error');
+            } finally {
+                setButtonLoading(btn, false);
+            }
+        });
+
+        // 显示干预模态框
+        function showInterventionModal() {
+            // 切换到快捷操作Tab
+            document.querySelector('a[href="#quick-actions"]').click();
+        }
+
+        // 获取状态徽章
+        function getStatusBadge(status) {
+            switch (status) {
+                case 'PENDING': return 'bg-warning text-dark';
+                case 'ACKNOWLEDGED': return 'bg-info';
+                case 'EXECUTING': return 'bg-primary';
+                case 'COMPLETED': return 'bg-success';
+                case 'REJECTED': return 'bg-danger';
+                case 'CANCELLED': return 'bg-secondary';
+                default: return 'bg-secondary';
+            }
+        }
+
+        // 字符计数
+        document.getElementById('instructionContent').addEventListener('input', function() {
+            document.getElementById('instructionContentCount').textContent = this.value.length;
+        });
+    </script>
+</body>
+</html>

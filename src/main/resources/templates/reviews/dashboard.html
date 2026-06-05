@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>代码审查 - ChengXun Game Maker</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <link th:href="@{/css/custom.css}" rel="stylesheet">
+    <style>
+        .review-card {
+            background: linear-gradient(135deg, var(--bg-card) 0%, var(--bg-secondary) 100%);
+            border: 1px solid var(--border-color);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .review-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px var(--shadow-color);
+        }
+        .status-badge {
+            width: 80px;
+            text-align: center;
+        }
+        .status-PENDING { background-color: #ffc107; color: #000; }
+        .status-IN_REVIEW { background-color: #0dcaf0; }
+        .status-APPROVED { background-color: #198754; }
+        .status-CHANGES_REQUESTED { background-color: #fd7e14; }
+        .status-REJECTED { background-color: #dc3545; }
+    </style>
+</head>
+<body class="bg-dark text-light">
+    <div class="container-fluid mt-4">
+        <!-- 页面标题 -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h2><i class="bi bi-check2-square"></i> 代码审查</h2>
+                        <p class="text-muted mb-0">Agent提交代码的审查流程管理</p>
+                    </div>
+                    <div>
+                        <button class="btn btn-outline-primary" onclick="refreshData()">
+                            <i class="bi bi-arrow-clockwise"></i> 刷新
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 统计卡片 -->
+        <div class="row mb-4">
+            <div class="col-md-3">
+                <div class="card review-card">
+                    <div class="card-body text-center">
+                        <div class="display-6 text-warning" th:text="${statistics.pendingCount}">0</div>
+                        <div class="text-muted">待审查</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card review-card">
+                    <div class="card-body text-center">
+                        <div class="display-6 text-success"
+                             th:text="${statistics.statusCounts.getOrDefault('APPROVED', 0)}">0</div>
+                        <div class="text-muted">已通过</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card review-card">
+                    <div class="card-body text-center">
+                        <div class="display-6 text-info" th:text="${statistics.averageScore}">0</div>
+                        <div class="text-muted">平均评分</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card review-card">
+                    <div class="card-body text-center">
+                        <div class="display-6 text-primary" th:text="${#lists.size(recentReviews)}">0</div>
+                        <div class="text-muted">总审查数</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <!-- 左侧：待审查列表 -->
+            <div class="col-lg-8">
+                <div class="card mb-4">
+                    <div class="card-header bg-warning text-dark">
+                        <h5 class="mb-0">
+                            <i class="bi bi-clock-history"></i> 待审查队列
+                            <span class="badge bg-dark ms-2" th:text="${#lists.size(pendingReviews)}">0</span>
+                        </h5>
+                    </div>
+                    <div class="card-body p-0">
+                        <div th:if="${#lists.isEmpty(pendingReviews)}" class="p-4 text-center text-muted">
+                            <i class="bi bi-check-circle fs-1"></i>
+                            <p class="mt-2">暂无待审查代码</p>
+                        </div>
+                        <div class="list-group list-group-flush">
+                            <a th:each="review : ${pendingReviews}"
+                               th:href="@{/reviews/{id}(id=${review.id})}"
+                               class="list-group-item list-group-item-action">
+                                <div class="d-flex justify-content-between align-items-start">
+                                    <div>
+                                        <h6 class="mb-1" th:text="${review.title}">审查标题</h6>
+                                        <p class="text-muted mb-1" th:text="${review.description}">描述</p>
+                                        <small class="text-muted">
+                                            <i class="bi bi-robot"></i>
+                                            <span th:text="${review.agentName}">Agent</span>
+                                            <span class="ms-2">
+                                                <i class="bi bi-git"></i>
+                                                <span th:text="${review.branch}">branch</span>
+                                            </span>
+                                            <span class="ms-2">
+                                                <i class="bi bi-clock"></i>
+                                                <span th:text="${#temporals.format(review.submittedAt, 'yyyy-MM-dd HH:mm')}">2024-01-01</span>
+                                            </span>
+                                        </small>
+                                    </div>
+                                    <div>
+                                        <span class="status-badge badge"
+                                              th:classappend="'status-' + ${review.status}"
+                                              th:text="${review.statusDescription}">待审查</span>
+                                    </div>
+                                </div>
+                            </a>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 最近审查记录 -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-list"></i> 最近审查记录</h5>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="table-responsive">
+                            <table class="table table-hover mb-0">
+                                <thead>
+                                    <tr>
+                                        <th>标题</th>
+                                        <th>Agent</th>
+                                        <th>状态</th>
+                                        <th>评分</th>
+                                        <th>时间</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr th:each="review : ${recentReviews}">
+                                        <td>
+                                            <a th:href="@{/reviews/{id}(id=${review.id})}" class="text-decoration-none">
+                                                <strong th:text="${review.title}">标题</strong>
+                                            </a>
+                                        </td>
+                                        <td th:text="${review.agentName}">Agent</td>
+                                        <td>
+                                            <span class="status-badge badge"
+                                                  th:classappend="'status-' + ${review.status}"
+                                                  th:text="${review.statusDescription}">状态</span>
+                                        </td>
+                                        <td>
+                                            <span th:if="${review.score}" th:text="${review.score}">-</span>
+                                            <span th:unless="${review.score}" class="text-muted">-</span>
+                                        </td>
+                                        <td>
+                                            <small th:text="${#temporals.format(review.createdAt, 'MM-dd HH:mm')}">01-01 00:00</small>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 右侧：统计和Agent排名 -->
+            <div class="col-lg-4">
+                <!-- Agent审查统计 -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-people"></i> Agent审查统计</h5>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="list-group list-group-flush">
+                            <div th:each="agent : ${statistics.agentStats}" class="list-group-item">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <h6 class="mb-0" th:text="${agent.agentName}">Agent Name</h6>
+                                        <small class="text-muted" th:text="${agent.agentId}">agent-id</small>
+                                    </div>
+                                    <span class="badge bg-primary" th:text="${agent.count} + '次'">0次</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 审查说明 -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-info-circle"></i> 审查说明</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <h6>审查流程</h6>
+                            <small class="text-muted">
+                                1. Agent提交代码<br>
+                                2. 自动审查（代码质量检查）<br>
+                                3. 人工审查（可选）<br>
+                                4. 审查通过/修改
+                            </small>
+                        </div>
+                        <div class="mb-3">
+                            <h6>审查标准</h6>
+                            <small class="text-muted">
+                                - 代码规范性<br>
+                                - 安全性检查<br>
+                                - 性能考量<br>
+                                - 文档完整性
+                            </small>
+                        </div>
+                        <div>
+                            <h6>评分标准</h6>
+                            <small class="text-muted">
+                                90-100: 优秀<br>
+                                70-89: 良好<br>
+                                60-69: 一般<br>
+                                &lt;60: 需改进
+                            </small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        function refreshData() {
+            location.reload();
+        }
+    </script>
+</body>
+</html>

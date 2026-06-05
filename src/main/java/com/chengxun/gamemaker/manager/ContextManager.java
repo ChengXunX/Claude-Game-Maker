@@ -22,10 +22,11 @@ public class ContextManager {
     private static final DateTimeFormatter SNAPSHOT_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss");
 
     private final AppConfig appConfig;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper;
 
-    public ContextManager(AppConfig appConfig) {
+    public ContextManager(AppConfig appConfig, ObjectMapper objectMapper) {
         this.appConfig = appConfig;
+        this.objectMapper = objectMapper;
     }
 
     // ===== AgentContext 主文件 =====

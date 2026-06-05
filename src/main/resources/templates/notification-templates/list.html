@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>通知模板管理 - ChengXun Game Maker</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <link th:href="@{/css/custom.css}" rel="stylesheet">
+</head>
+<body class="bg-dark text-light">
+    <div class="container-fluid mt-4">
+        <!-- 页面标题 -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h2><i class="bi bi-envelope-paper"></i> 通知模板管理</h2>
+                        <p class="text-muted mb-0">管理邮件、飞书等渠道的通知模板</p>
+                    </div>
+                    <div>
+                        <a th:href="@{/notification-templates/create}" class="btn btn-primary">
+                            <i class="bi bi-plus-circle"></i> 创建模板
+                        </a>
+                        <a th:href="@{/dashboard}" class="btn btn-outline-secondary">
+                            <i class="bi bi-arrow-left"></i> 返回
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 成功/错误提示 -->
+        <div th:if="${success}" class="alert alert-success alert-dismissible fade show" role="alert">
+            <i class="bi bi-check-circle"></i> <span th:text="${success}"></span>
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+        <div th:if="${error}" class="alert alert-danger alert-dismissible fade show" role="alert">
+            <i class="bi bi-exclamation-circle"></i> <span th:text="${error}"></span>
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+
+        <!-- 模板列表 -->
+        <div class="card">
+            <div class="card-body p-0">
+                <div th:if="${#lists.isEmpty(templates)}" class="p-4 text-center text-muted">
+                    <i class="bi bi-inbox fs-1"></i>
+                    <p class="mt-2">暂无通知模板</p>
+                    <a th:href="@{/notification-templates/create}" class="btn btn-primary btn-sm">
+                        <i class="bi bi-plus"></i> 创建第一个模板
+                    </a>
+                </div>
+                <div th:if="${!#lists.isEmpty(templates)}" class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead>
+                            <tr>
+                                <th>模板编码</th>
+                                <th>模板名称</th>
+                                <th>渠道</th>
+                                <th>分类</th>
+                                <th>状态</th>
+                                <th>内置</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr th:each="template : ${templates}">
+                                <td>
+                                    <code th:text="${template.templateCode}">ALERT_EMAIL</code>
+                                </td>
+                                <td th:text="${template.templateName}">告警邮件模板</td>
+                                <td>
+                                    <span class="badge"
+                                          th:classappend="${template.channel.name() == 'EMAIL' ? 'bg-primary' : (template.channel.name() == 'FEISHU' ? 'bg-success' : (template.channel.name() == 'DINGTALK' ? 'bg-warning text-dark' : 'bg-info'))}"
+                                          th:text="${template.channel.name()}">EMAIL</span>
+                                </td>
+                                <td>
+                                    <span class="badge bg-secondary" th:text="${template.category.name()}">ALERT</span>
+                                </td>
+                                <td>
+                                    <span class="badge"
+                                          th:classappend="${template.enabled ? 'bg-success' : 'bg-warning text-dark'}"
+                                          th:text="${template.enabled ? '启用' : '禁用'}">启用</span>
+                                </td>
+                                <td>
+                                    <span th:if="${template.systemBuiltin}" class="badge bg-info">
+                                        <i class="bi bi-lock"></i> 内置
+                                    </span>
+                                </td>
+                                <td>
+                                    <div class="btn-group btn-group-sm">
+                                        <a th:href="@{/notification-templates/edit/{id}(id=${template.id})}"
+                                           class="btn btn-outline-primary" title="编辑">
+                                            <i class="bi bi-pencil"></i>
+                                        </a>
+                                        <form th:action="@{/notification-templates/toggle/{id}(id=${template.id})}"
+                                              method="post" style="display: inline;">
+                                            <input type="hidden" name="enabled" th:value="${!template.enabled}">
+                                            <button type="submit"
+                                                    class="btn btn-outline-warning"
+                                                    th:title="${template.enabled ? '禁用' : '启用'}">
+                                                <i class="bi" th:classappend="${template.enabled ? 'bi-pause' : 'bi-play'}"></i>
+                                            </button>
+                                        </form>
+                                        <form th:if="${!template.systemBuiltin}"
+                                              th:action="@{/notification-templates/delete/{id}(id=${template.id})}"
+                                              method="post" style="display: inline;"
+                                              onsubmit="return confirm('确定要删除此模板吗？')">
+                                            <button type="submit" class="btn btn-outline-danger" title="删除">
+                                                <i class="bi bi-trash"></i>
+                                            </button>
+                                        </form>
+                                    </div>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- 变量说明 -->
+        <div class="card mt-4">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-info-circle"></i> 变量说明</h5>
+            </div>
+            <div class="card-body">
+                <p class="text-muted mb-3">在模板中使用 <code>${variableName}</code> 格式引用变量，系统会自动替换为实际值。</p>
+                <div class="row">
+                    <div class="col-md-3">
+                        <h6>通用变量</h6>
+                        <ul class="list-unstyled">
+                            <li><code>${title}</code> - 标题</li>
+                            <li><code>${content}</code> - 内容</li>
+                            <li><code>${time}</code> - 当前时间</li>
+                            <li><code>${systemName}</code> - 系统名称</li>
+                        </ul>
+                    </div>
+                    <div class="col-md-3">
+                        <h6>告警变量</h6>
+                        <ul class="list-unstyled">
+                            <li><code>${priority}</code> - 优先级</li>
+                            <li><code>${priorityDesc}</code> - 优先级描述</li>
+                            <li><code>${ruleName}</code> - 规则名称</li>
+                            <li><code>${metric}</code> - 指标名称</li>
+                            <li><code>${triggerValue}</code> - 触发值</li>
+                            <li><code>${thresholdValue}</code> - 阈值</li>
+                        </ul>
+                    </div>
+                    <div class="col-md-3">
+                        <h6>其他变量</h6>
+                        <ul class="list-unstyled">
+                            <li><code>${agentId}</code> - Agent ID</li>
+                            <li><code>${agentName}</code> - Agent名称</li>
+                            <li><code>${taskTitle}</code> - 任务标题</li>
+                            <li><code>${taskResult}</code> - 任务结果</li>
+                            <li><code>${projectName}</code> - 项目名称</li>
+                            <li><code>${userName}</code> - 用户名称</li>
+                        </ul>
+                    </div>
+                    <div class="col-md-3">
+                        <h6>支持渠道</h6>
+                        <ul class="list-unstyled">
+                            <li><span class="badge bg-primary">EMAIL</span> 邮件通知</li>
+                            <li><span class="badge bg-success">FEISHU</span> 飞书通知</li>
+                            <li><span class="badge bg-warning text-dark">DINGTALK</span> 钉钉通知</li>
+                            <li><span class="badge bg-info">SYSTEM</span> 站内通知</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

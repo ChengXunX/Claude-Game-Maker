@@ -43,6 +43,7 @@ public class ServerDevAgent extends BaseAgent {
             case QUERY -> handleQuery(message);
             case RESPONSE -> handleResponse(message);
             case COMMAND -> handleCommand(message);
+            case REVIEW -> handleReview(message);
             default -> log.info("ServerDev received message: {}", message.getType());
         }
     }
@@ -212,5 +213,29 @@ public class ServerDevAgent extends BaseAgent {
             String.format("Command from %s: %s\nResult: %s",
                 message.getFromAgentId(), message.getContent(),
                 result.length() > 200 ? result.substring(0, 200) + "..." : result));
+    }
+
+    private void handleReview(AgentMessage message) {
+        log.info("Received review request from {}: {}", message.getFromAgentId(), message.getContent());
+
+        // 开发人员处理代码审查请求
+        String skillPrompt = buildSkillPrompt("代码审查");
+        String fullPrompt = skillPrompt + "\n\n请审查以下代码：\n\n" + message.getContent();
+        String reviewResult = sendMessage(fullPrompt);
+
+        // 保存审查记录
+        saveExperience("review_" + System.currentTimeMillis(),
+            String.format("Review from %s: %s\nResult: %s",
+                message.getFromAgentId(), message.getContent(),
+                reviewResult.length() > 500 ? reviewResult.substring(0, 500) + "..." : reviewResult));
+
+        // 返回审查结果
+        AgentMessage response = AgentMessage.builder()
+            .fromAgentId(getId())
+            .toAgentId(message.getFromAgentId())
+            .type(AgentMessage.MessageType.RESPONSE)
+            .content(reviewResult)
+            .build();
+        sendMessage(response);
     }
 }

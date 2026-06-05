@@ -1,0 +1,464 @@
+{
+  "version": "1.0.0",
+  "description": "植物大战僵尸 - 植物组件定义",
+  "components": {
+    "base": [
+      {
+        "id": "AppearanceComponent",
+        "name": "外观组件",
+        "description": "定义植物的视觉表现",
+        "properties": {
+          "sprite": {
+            "type": "string",
+            "description": "精灵图路径",
+            "required": true
+          },
+          "animation": {
+            "type": "string",
+            "description": "动画配置路径",
+            "required": false
+          },
+          "scale": {
+            "type": "float",
+            "description": "缩放比例",
+            "default": 1.0,
+            "min": 0.5,
+            "max": 2.0
+          },
+          "flipX": {
+            "type": "boolean",
+            "description": "水平翻转",
+            "default": false
+          },
+          "color": {
+            "type": "color",
+            "description": "颜色叠加",
+            "default": "#FFFFFF"
+          }
+        }
+      },
+      {
+        "id": "HealthComponent",
+        "name": "生命组件",
+        "description": "定义植物的生命值和防御",
+        "properties": {
+          "maxHealth": {
+            "type": "integer",
+            "description": "最大生命值",
+            "required": true,
+            "min": 1,
+            "max": 10000
+          },
+          "armor": {
+            "type": "integer",
+            "description": "护甲值",
+            "default": 0,
+            "min": 0,
+            "max": 1000
+          },
+          "regeneration": {
+            "type": "float",
+            "description": "每秒回复量",
+            "default": 0,
+            "min": 0,
+            "max": 100
+          },
+          "regenerationInterval": {
+            "type": "float",
+            "description": "回复间隔（秒）",
+            "default": 1.0,
+            "min": 0.1,
+            "max": 10.0
+          }
+        }
+      },
+      {
+        "id": "AttackComponent",
+        "name": "攻击组件",
+        "description": "定义植物的攻击能力",
+        "properties": {
+          "damage": {
+            "type": "integer",
+            "description": "基础伤害",
+            "required": true,
+            "min": 1,
+            "max": 9999
+          },
+          "attackSpeed": {
+            "type": "float",
+            "description": "攻击速度（次/秒）",
+            "default": 1.0,
+            "min": 0.1,
+            "max": 10.0
+          },
+          "range": {
+            "type": "enum",
+            "description": "攻击范围类型",
+            "values": ["straight", "area", "all", "closest"],
+            "default": "straight"
+          },
+          "rangeDistance": {
+            "type": "integer",
+            "description": "攻击距离（格）",
+            "default": -1,
+            "min": -1,
+            "max": 10,
+            "note": "-1表示全屏"
+          },
+          "canAttackFlying": {
+            "type": "boolean",
+            "description": "能否攻击飞行单位",
+            "default": false
+          }
+        }
+      },
+      {
+        "id": "SkillComponent",
+        "name": "技能组件",
+        "description": "定义植物的主动和被动技能",
+        "properties": {
+          "activeSkill": {
+            "type": "object",
+            "description": "主动技能",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "技能名称"
+              },
+              "description": {
+                "type": "string",
+                "description": "技能描述"
+              },
+              "cooldown": {
+                "type": "float",
+                "description": "冷却时间（秒）",
+                "min": 0,
+                "max": 300
+              },
+              "effect": {
+                "type": "string",
+                "description": "技能效果脚本"
+              }
+            }
+          },
+          "passiveSkills": {
+            "type": "array",
+            "description": "被动技能列表",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "description": "技能名称"
+                },
+                "trigger": {
+                  "type": "enum",
+                  "description": "触发条件",
+                  "values": ["onSpawn", "onDamage", "onKill", "onDeath", "always"]
+                },
+                "effect": {
+                  "type": "string",
+                  "description": "技能效果脚本"
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "SunComponent",
+        "name": "阳光组件",
+        "description": "定义植物的阳光产出或消耗",
+        "properties": {
+          "sunCost": {
+            "type": "integer",
+            "description": "种植阳光消耗",
+            "required": true,
+            "min": 0,
+            "max": 9999
+          },
+          "sunProduction": {
+            "type": "integer",
+            "description": "产出阳光数量",
+            "default": 0,
+            "min": 0,
+            "max": 100
+          },
+          "productionInterval": {
+            "type": "float",
+            "description": "产出间隔（秒）",
+            "default": 24.0,
+            "min": 1.0,
+            "max": 120.0
+          },
+          "initialDelay": {
+            "type": "float",
+            "description": "首次产出延迟（秒）",
+            "default": 0,
+            "min": 0,
+            "max": 60.0
+          }
+        }
+      }
+    ],
+    "advanced": [
+      {
+        "id": "ProjectileComponent",
+        "name": "投射物组件",
+        "description": "定义植物发射的投射物",
+        "properties": {
+          "type": {
+            "type": "enum",
+            "description": "投射物类型",
+            "values": ["pea", "fire_pea", "ice_pea", "star", "cabbage", "corn", "custom"],
+            "required": true
+          },
+          "speed": {
+            "type": "float",
+            "description": "飞行速度",
+            "default": 300,
+            "min": 50,
+            "max": 1000
+          },
+          "damage": {
+            "type": "integer",
+            "description": "投射物伤害",
+            "default": 0,
+            "note": "0表示使用AttackComponent的伤害"
+          },
+          "pierceCount": {
+            "type": "integer",
+            "description": "穿透数量",
+            "default": 0,
+            "min": 0,
+            "max": 100
+          },
+          "homing": {
+            "type": "boolean",
+            "description": "是否追踪",
+            "default": false
+          }
+        }
+      },
+      {
+        "id": "AreaComponent",
+        "name": "范围组件",
+        "description": "定义植物的范围效果",
+        "properties": {
+          "shape": {
+            "type": "enum",
+            "description": "范围形状",
+            "values": ["circle", "rectangle", "cone", "line"],
+            "default": "circle"
+          },
+          "radius": {
+            "type": "float",
+            "description": "范围半径",
+            "default": 50,
+            "min": 10,
+            "max": 500
+          },
+          "damage": {
+            "type": "integer",
+            "description": "范围伤害",
+            "default": 0
+          },
+          "duration": {
+            "type": "float",
+            "description": "持续时间（秒）",
+            "default": 0,
+            "note": "0表示瞬间效果"
+          },
+          "tickRate": {
+            "type": "float",
+            "description": "伤害频率（秒）",
+            "default": 1.0,
+            "min": 0.1,
+            "max": 5.0
+          }
+        }
+      },
+      {
+        "id": "ControlComponent",
+        "name": "控制组件",
+        "description": "定义植物的控制效果",
+        "properties": {
+          "slow": {
+            "type": "object",
+            "description": "减速效果",
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "default": false
+              },
+              "slowPercent": {
+                "type": "float",
+                "description": "减速百分比",
+                "min": 0.1,
+                "max": 0.9
+              },
+              "duration": {
+                "type": "float",
+                "description": "持续时间（秒）",
+                "min": 0.5,
+                "max": 30
+              }
+            }
+          },
+          "stun": {
+            "type": "object",
+            "description": "眩晕效果",
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "default": false
+              },
+              "duration": {
+                "type": "float",
+                "description": "持续时间（秒）",
+                "min": 0.5,
+                "max": 10
+              }
+            }
+          },
+          "knockback": {
+            "type": "object",
+            "description": "击退效果",
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "default": false
+              },
+              "distance": {
+                "type": "float",
+                "description": "击退距离",
+                "min": 10,
+                "max": 200
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "BuffComponent",
+        "name": "增益组件",
+        "description": "定义植物的增益效果",
+        "properties": {
+          "targetType": {
+            "type": "enum",
+            "description": "增益目标",
+            "values": ["self", "adjacent", "row", "all_plants"],
+            "default": "self"
+          },
+          "effects": {
+            "type": "array",
+            "description": "增益效果列表",
+            "items": {
+              "type": "object",
+              "properties": {
+                "stat": {
+                  "type": "enum",
+                  "description": "增益属性",
+                  "values": ["damage", "attackSpeed", "health", "armor", "sunProduction"]
+                },
+                "value": {
+                  "type": "float",
+                  "description": "增益数值"
+                },
+                "type": {
+                  "type": "enum",
+                  "description": "增益类型",
+                  "values": ["flat", "percent"]
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "SpecialComponent",
+        "name": "特殊组件",
+        "description": "定义植物的特殊能力",
+        "properties": {
+          "abilityType": {
+            "type": "string",
+            "description": "特殊能力类型标识"
+          },
+          "params": {
+            "type": "object",
+            "description": "能力参数",
+            "additionalProperties": true
+          },
+          "script": {
+            "type": "string",
+            "description": "自定义脚本路径"
+          }
+        }
+      }
+    ]
+  },
+  "categories": [
+    {
+      "id": "production",
+      "name": "生产类",
+      "description": "产出阳光的植物"
+    },
+    {
+      "id": "attack",
+      "name": "攻击类",
+      "description": "攻击僵尸的植物"
+    },
+    {
+      "id": "defense",
+      "name": "防御类",
+      "description": "阻挡僵尸的植物"
+    },
+    {
+      "id": "control",
+      "name": "控制类",
+      "description": "控制僵尸的植物"
+    },
+    {
+      "id": "support",
+      "name": "支持类",
+      "description": "辅助其他植物"
+    },
+    {
+      "id": "instant",
+      "name": "特殊类",
+      "description": "一次性使用的植物"
+    }
+  ],
+  "rarities": [
+    {
+      "id": "common",
+      "name": "普通",
+      "color": "#FFFFFF",
+      "dropRate": 0.6
+    },
+    {
+      "id": "uncommon",
+      "name": "优秀",
+      "color": "#00FF00",
+      "dropRate": 0.25
+    },
+    {
+      "id": "rare",
+      "name": "稀有",
+      "color": "#0080FF",
+      "dropRate": 0.1
+    },
+    {
+      "id": "epic",
+      "name": "史诗",
+      "color": "#8000FF",
+      "dropRate": 0.04
+    },
+    {
+      "id": "legendary",
+      "name": "传说",
+      "color": "#FFD700",
+      "dropRate": 0.01
+    }
+  ]
+}

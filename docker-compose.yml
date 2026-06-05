@@ -1,0 +1,115 @@
+version: '3.8'
+
+services:
+  # 应用服务
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: game-maker-app
+    restart: unless-stopped
+    ports:
+      - "19922:19922"
+    environment:
+      - SPRING_PROFILES_ACTIVE=prod
+      - MYSQL_HOST=mysql
+      - MYSQL_PORT=3306
+      - MYSQL_DB=game_maker
+      - MYSQL_USER=game_maker
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - CLAUDE_API_KEY=${CLAUDE_API_KEY}
+      - FEISHU_APP_ID=${FEISHU_APP_ID}
+      - FEISHU_APP_SECRET=${FEISHU_APP_SECRET}
+    volumes:
+      - ./data:/data/game-maker
+      - ./logs:/var/log/game-maker
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - game-maker-network
+
+  # MySQL 数据库（仅内部网络访问）
+  mysql:
+    image: mysql:8.0
+    container_name: game-maker-mysql
+    restart: unless-stopped
+    environment:
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
+      - MYSQL_DATABASE=game_maker
+      - MYSQL_USER=game_maker
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+    # 生产环境不暴露数据库端口到公网
+    # ports:
+    #   - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./src/main/resources/db/migration:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - game-maker-network
+
+  # Redis 缓存（仅内部网络访问）
+  redis:
+    image: redis:7-alpine
+    container_name: game-maker-redis
+    restart: unless-stopped
+    # 生产环境不暴露Redis端口到公网
+    # ports:
+    #   - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - game-maker-network
+
+  # Prometheus 监控（仅内部网络访问）
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: game-maker-prometheus
+    restart: unless-stopped
+    # 生产环境不暴露Prometheus端口到公网
+    # ports:
+    #   - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    networks:
+      - game-maker-network
+
+  # Grafana 可视化（仅内部网络访问）
+  grafana:
+    image: grafana/grafana:latest
+    container_name: game-maker-grafana
+    restart: unless-stopped
+    # 生产环境不暴露Grafana端口到公网
+    # ports:
+    #   - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
+    volumes:
+      - grafana-data:/var/lib/grafana
+    networks:
+      - game-maker-network
+
+volumes:
+  mysql-data:
+  redis-data:
+  prometheus-data:
+  grafana-data:
+
+networks:
+  game-maker-network:
+    driver: bridge

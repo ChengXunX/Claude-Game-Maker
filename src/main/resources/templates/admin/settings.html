@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>系统设置 - ChengXun Game Maker</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        .test-result { margin-top: 8px; padding: 8px; border-radius: 4px; font-size: 0.85rem; }
+        .test-success { background: #19875433; color: #75b798; border: 1px solid #198754; }
+        .test-fail { background: #dc354533; color: #ea868f; border: 1px solid #dc3545; }
+    </style>
+</head>
+<body class="bg-dark text-light">
+    <!-- Navbar -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-black border-bottom border-secondary">
+        <div class="container-fluid">
+            <a class="navbar-brand" th:href="@{/}">
+                <i class="bi bi-controller"></i> ChengXun Game Maker
+            </a>
+            <div class="collapse navbar-collapse">
+                <ul class="navbar-nav me-auto">
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/}">
+                            <i class="bi bi-speedometer2"></i> 仪表盘
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/agents}">
+                            <i class="bi bi-robot"></i> Agents
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/projects}">
+                            <i class="bi bi-folder"></i> 项目
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/skills}">
+                            <i class="bi bi-lightning"></i> 技能
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/tokens}">
+                            <i class="bi bi-key"></i> Token 管理
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/monitor}">
+                            <i class="bi bi-graph-up"></i> 监控
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/admin/users}">
+                            <i class="bi bi-people"></i> 用户管理
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/code}">
+                            <i class="bi bi-code-slash"></i> 代码管理
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/admin/agent-logs}">
+                            <i class="bi bi-journal-text"></i> Agent 日志
+                        </a>
+                    </li>
+                    <li class="nav-item" sec:authorize="hasAuthority('PERM_roles:manage')">
+                        <a class="nav-link" th:href="@{/roles}">
+                            <i class="bi bi-shield-lock"></i> 角色管理
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link active" th:href="@{/admin/settings}">
+                            <i class="bi bi-gear"></i> 设置
+                        </a>
+                    </li>
+                </ul>
+                <ul class="navbar-nav">
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
+                            <i class="bi bi-person-circle"></i> <span th:text="${username}">Admin</span>
+                        </a>
+                        <ul class="dropdown-menu dropdown-menu-end dropdown-menu-dark">
+                            <li>
+                                <a class="dropdown-item" th:href="@{/profile}">
+                                    <i class="bi bi-person"></i> 个人中心
+                                </a>
+                            </li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li>
+                                <form th:action="@{/logout}" method="post">
+                                    <button class="dropdown-item" type="submit">
+                                        <i class="bi bi-box-arrow-right"></i> 退出登录
+                                    </button>
+                                </form>
+                            </li>
+                        </ul>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid mt-4">
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a th:href="@{/}" class="text-decoration-none">首页</a></li>
+                <li class="breadcrumb-item active">系统设置</li>
+            </ol>
+        </nav>
+
+        <h2 class="mb-4"><i class="bi bi-gear"></i> 系统设置</h2>
+
+        <!-- Alerts -->
+        <div th:if="${success}" class="alert alert-success alert-dismissible fade show" role="alert">
+            <i class="bi bi-check-circle"></i> <span th:text="${success}"></span>
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+        <div th:if="${error}" class="alert alert-danger alert-dismissible fade show" role="alert">
+            <i class="bi bi-exclamation-circle"></i> <span th:text="${error}"></span>
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+
+        <div class="row">
+            <!-- Claude API Settings -->
+            <div class="col-md-6">
+                <div class="card bg-dark border-secondary mb-4">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0"><i class="bi bi-robot"></i> Claude API 配置</h5>
+                        <span class="badge" th:classappend="${claudeApiKeySet ? 'bg-success' : 'bg-danger'}"
+                              th:text="${claudeApiKeySet ? '已配置' : '未配置'}"></span>
+                    </div>
+                    <div class="card-body">
+                        <form th:action="@{/admin/settings/claude}" method="post">
+                            <div class="mb-3">
+                                <label class="form-label">API Key</label>
+                                <div class="input-group">
+                                    <input type="password" class="form-control bg-dark text-light border-secondary"
+                                           name="apiKey" id="claudeApiKey" placeholder="留空则保持不变">
+                                    <span class="input-group-text bg-dark border-secondary">
+                                        <i th:class="${claudeApiKeySet ? 'bi bi-check-circle text-success' : 'bi bi-x-circle text-danger'}"></i>
+                                    </span>
+                                </div>
+                                <div class="form-text" th:if="${claudeApiKeySet}">
+                                    当前: <code th:text="${claudeApiKeyMasked}"></code>
+                                </div>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">API URL</label>
+                                <input type="text" class="form-control bg-dark text-light border-secondary"
+                                       name="apiUrl" id="claudeApiUrl" th:value="${claudeApiUrl}" required>
+                            </div>
+                            <div class="row">
+                                <div class="col-md-6 mb-3">
+                                    <label class="form-label">模型</label>
+                                    <input type="text" class="form-control bg-dark text-light border-secondary"
+                                           name="model" id="claudeModel" th:value="${claudeModel}" required>
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <label class="form-label">Max Tokens</label>
+                                    <input type="number" class="form-control bg-dark text-light border-secondary"
+                                           name="maxTokens" th:value="${claudeMaxTokens}" required>
+                                </div>
+                            </div>
+                            <div id="claudeTestResult" class="test-result" style="display:none"></div>
+                            <div class="d-flex gap-2 mt-2">
+                                <button type="button" class="btn btn-outline-info" onclick="testClaude()">
+                                    <i class="bi bi-lightning"></i> 测试连接
+                                </button>
+                                <button type="submit" class="btn btn-primary">
+                                    <i class="bi bi-save"></i> 保存
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Feishu Settings -->
+                <div class="card bg-dark border-secondary mb-4">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0"><i class="bi bi-chat-dots"></i> 飞书集成配置</h5>
+                        <span class="badge" th:classappend="${feishuEnabled ? 'bg-success' : 'bg-secondary'}"
+                              th:text="${feishuEnabled ? '已启用' : '未启用'}"></span>
+                    </div>
+                    <div class="card-body">
+                        <form th:action="@{/admin/settings/feishu}" method="post">
+                            <div class="mb-3">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" name="enabled"
+                                           id="feishuEnabled" value="true" th:checked="${feishuEnabled}">
+                                    <label class="form-check-label" for="feishuEnabled">启用飞书集成</label>
+                                </div>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">App ID</label>
+                                <input type="text" class="form-control bg-dark text-light border-secondary"
+                                       name="appId" id="feishuAppId" th:value="${feishuAppId}" placeholder="飞书应用 App ID">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">App Secret</label>
+                                <input type="password" class="form-control bg-dark text-light border-secondary"
+                                       name="appSecret" id="feishuAppSecret" placeholder="留空则保持不变">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Webhook URL</label>
+                                <input type="text" class="form-control bg-dark text-light border-secondary"
+                                       name="webhookUrl" id="feishuWebhook" th:value="${feishuWebhookSet ? '' : ''}"
+                                       placeholder="飞书群机器人 Webhook 地址">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">默认群 ID</label>
+                                <input type="text" class="form-control bg-dark text-light border-secondary"
+                                       name="chatId" th:value="${feishuChatId}" placeholder="飞书群 chat_id">
+                            </div>
+                            <div class="row">
+                                <div class="col-md-6 mb-3">
+                                    <label class="form-label">Verify Token</label>
+                                    <input type="password" class="form-control bg-dark text-light border-secondary"
+                                           name="verifyToken" placeholder="留空则保持不变">
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <label class="form-label">Encrypt Key</label>
+                                    <input type="password" class="form-control bg-dark text-light border-secondary"
+                                           name="encryptKey" placeholder="留空则保持不变">
+                                </div>
+                            </div>
+                            <div id="feishuTestResult" class="test-result" style="display:none"></div>
+                            <div class="d-flex gap-2 mt-2">
+                                <button type="button" class="btn btn-outline-info" onclick="testFeishu()">
+                                    <i class="bi bi-lightning"></i> 测试连接
+                                </button>
+                                <button type="submit" class="btn btn-primary">
+                                    <i class="bi bi-save"></i> 保存
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-6">
+                <!-- Security Settings -->
+                <div class="card bg-dark border-secondary mb-4">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0"><i class="bi bi-shield-lock"></i> 安全配置</h5>
+                        <span class="badge" th:classappend="${deviceTrustEnabled ? 'bg-success' : 'bg-secondary'}"
+                              th:text="${deviceTrustEnabled ? '已启用' : '未启用'}"></span>
+                    </div>
+                    <div class="card-body">
+                        <form th:action="@{/admin/settings/security}" method="post">
+                            <div class="mb-3">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" name="deviceTrustEnabled"
+                                           id="deviceTrustEnabled" value="true" th:checked="${deviceTrustEnabled}">
+                                    <label class="form-check-label" for="deviceTrustEnabled">
+                                        启用设备信任验证
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">设备信任有效期（天）</label>
+                                <input type="number" class="form-control bg-dark text-light border-secondary"
+                                       name="deviceTrustDays" th:value="${deviceTrustDays}" min="1" max="365" required>
+                            </div>
+                            <button type="submit" class="btn btn-primary">
+                                <i class="bi bi-save"></i> 保存安全配置
+                            </button>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Email Config -->
+                <div class="card bg-dark border-secondary mb-4">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0"><i class="bi bi-envelope"></i> 邮件服务配置</h5>
+                        <span class="badge" th:classappend="${emailEnabled ? 'bg-success' : 'bg-secondary'}"
+                              th:text="${emailEnabled ? '已启用' : '未启用'}"></span>
+                    </div>
+                    <div class="card-body">
+                        <form th:action="@{/admin/settings/email}" method="post">
+                            <div class="mb-3">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" name="emailEnabled"
+                                           id="emailEnabled" value="true" th:checked="${emailEnabled}">
+                                    <label class="form-check-label" for="emailEnabled">启用邮件服务</label>
+                                </div>
+                            </div>
+                            <div class="row mb-3">
+                                <div class="col-8">
+                                    <label class="form-label">SMTP 服务器</label>
+                                    <input type="text" class="form-control bg-dark text-light border-secondary"
+                                           name="smtpHost" id="smtpHost" th:value="${smtpHost}" placeholder="smtp.example.com">
+                                </div>
+                                <div class="col-4">
+                                    <label class="form-label">端口</label>
+                                    <input type="number" class="form-control bg-dark text-light border-secondary"
+                                           name="smtpPort" id="smtpPort" th:value="${smtpPort}" value="587">
+                                </div>
+                            </div>
+                            <div class="row mb-3">
+                                <div class="col-6">
+                                    <label class="form-label">用户名</label>
+                                    <input type="text" class="form-control bg-dark text-light border-secondary"
+                                           name="smtpUsername" id="smtpUser" th:value="${smtpUsername}">
+                                </div>
+                                <div class="col-6">
+                                    <label class="form-label">密码</label>
+                                    <input type="password" class="form-control bg-dark text-light border-secondary"
+                                           name="smtpPassword" id="smtpPass" placeholder="留空则保持不变">
+                                </div>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">发件人地址</label>
+                                <input type="email" class="form-control bg-dark text-light border-secondary"
+                                       name="emailFrom" th:value="${emailFrom}" placeholder="noreply@example.com">
+                            </div>
+                            <div id="emailTestResult" class="test-result" style="display:none"></div>
+                            <div class="d-flex gap-2 mt-2">
+                                <button type="button" class="btn btn-outline-info" onclick="testEmail()">
+                                    <i class="bi bi-lightning"></i> 测试连接
+                                </button>
+                                <button type="submit" class="btn btn-primary">
+                                    <i class="bi bi-save"></i> 保存
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Scheduler Config -->
+                <div class="card bg-dark border-secondary mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-clock"></i> 调度器配置</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <span>调度器状态</span>
+                            <span th:class="${schedulerEnabled ? 'badge bg-success' : 'badge bg-danger'}"
+                                  th:text="${schedulerEnabled ? '已启用' : '已禁用'}"></span>
+                        </div>
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span>Producer 调度间隔</span>
+                            <span class="badge bg-info" th:text="${producerIntervalMs / 60000} + ' 分钟'"></span>
+                        </div>
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span>Agent 调度间隔</span>
+                            <span class="badge bg-info" th:text="${agentIntervalMs / 60000} + ' 分钟'"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Data Directory -->
+                <div class="card bg-dark border-secondary">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-folder2-open"></i> 数据目录</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-2">
+                            <label class="form-label text-muted">数据根目录</label>
+                            <code class="d-block" th:text="${dataDir}"></code>
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label text-muted">项目目录</label>
+                            <code class="d-block" th:text="${projectsDir}"></code>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        function showResult(id, data) {
+            const el = document.getElementById(id);
+            el.style.display = 'block';
+            if (data.success) {
+                el.className = 'test-result test-success';
+                el.innerHTML = '<i class="bi bi-check-circle"></i> ' + (data.message || '连接成功');
+            } else {
+                el.className = 'test-result test-fail';
+                el.innerHTML = '<i class="bi bi-x-circle"></i> ' + (data.error || '连接失败');
+            }
+        }
+
+        async function testClaude() {
+            const apiKey = document.getElementById('claudeApiKey').value;
+            const apiUrl = document.getElementById('claudeApiUrl').value;
+            if (!apiKey) { alert('请输入 API Key'); return; }
+
+            const resp = await fetch('/api/install/test-claude', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ apiKey, apiUrl })
+            });
+            showResult('claudeTestResult', await resp.json());
+        }
+
+        async function testFeishu() {
+            const webhookUrl = document.getElementById('feishuWebhook').value;
+            if (!webhookUrl) { alert('请输入 Webhook URL'); return; }
+
+            const resp = await fetch('/api/install/test-feishu', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ webhookUrl })
+            });
+            showResult('feishuTestResult', await resp.json());
+        }
+
+        async function testEmail() {
+            const host = document.getElementById('smtpHost').value;
+            const port = parseInt(document.getElementById('smtpPort').value);
+            const username = document.getElementById('smtpUser').value;
+            const password = document.getElementById('smtpPass').value;
+            if (!host) { alert('请输入 SMTP 服务器'); return; }
+
+            const resp = await fetch('/api/install/test-email', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ host, port, username, password })
+            });
+            showResult('emailTestResult', await resp.json());
+        }
+    </script>
+</body>
+</html>

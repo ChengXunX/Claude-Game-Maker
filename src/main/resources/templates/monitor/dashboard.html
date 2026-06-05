@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>性能监控 - ChengXun Game Maker</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <link th:href="@{/css/custom.css}" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        .monitor-card {
+            background: linear-gradient(135deg, var(--bg-card) 0%, var(--bg-secondary) 100%);
+            border: 1px solid var(--border-color);
+        }
+        .stat-value {
+            font-size: 2rem;
+            font-weight: bold;
+        }
+        .stat-label {
+            color: var(--text-muted);
+            font-size: 0.9rem;
+        }
+        .trend-up { color: var(--danger-color); }
+        .trend-down { color: var(--success-color); }
+        .trend-stable { color: var(--text-muted); }
+    </style>
+</head>
+<body class="bg-dark text-light">
+    <div class="container-fluid mt-4">
+        <!-- 页面标题 -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h2><i class="bi bi-speedometer2"></i> 性能监控</h2>
+                        <p class="text-muted mb-0">实时监控系统和Agent性能指标</p>
+                    </div>
+                    <div>
+                        <select class="form-select form-select-sm d-inline-block" style="width: auto;" id="timeRange">
+                            <option value="1">最近1小时</option>
+                            <option value="6">最近6小时</option>
+                            <option value="24" selected>最近24小时</option>
+                            <option value="168">最近7天</option>
+                        </select>
+                        <button class="btn btn-outline-primary ms-2" onclick="refreshData()">
+                            <i class="bi bi-arrow-clockwise"></i> 刷新
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 核心指标卡片 -->
+        <div class="row mb-4">
+            <div class="col-md-3">
+                <div class="card monitor-card">
+                    <div class="card-body text-center">
+                        <div class="stat-value text-primary" th:text="${responseTimeStats.average}">0</div>
+                        <div class="stat-label">平均响应时间 (ms)</div>
+                        <div class="mt-2">
+                            <small class="text-muted">
+                                最大: <span th:text="${responseTimeStats.max}">0</span> ms
+                            </small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card monitor-card">
+                    <div class="card-body text-center">
+                        <div class="stat-value text-success" th:text="${#lists.size(apiStats)}">0</div>
+                        <div class="stat-label">活跃API数量</div>
+                        <div class="mt-2">
+                            <small class="text-muted">
+                                总调用: <span th:text="${apiStats.stream().mapToInt(s -> (Integer)s.get('callCount')).sum()}">0</span>
+                            </small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card monitor-card">
+                    <div class="card-body text-center">
+                        <div class="stat-value text-warning">
+                            <i class="bi bi-cpu"></i>
+                        </div>
+                        <div class="stat-label">系统资源</div>
+                        <div class="mt-2">
+                            <small class="text-muted">运行正常</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card monitor-card">
+                    <div class="card-body text-center">
+                        <div class="stat-value text-info">
+                            <i class="bi bi-shield-check"></i>
+                        </div>
+                        <div class="stat-label">系统状态</div>
+                        <div class="mt-2">
+                            <small class="text-success">健康</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <!-- 左侧：图表 -->
+            <div class="col-lg-8">
+                <!-- 响应时间趋势 -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-graph-up"></i> 响应时间趋势</h5>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="responseTimeChart" height="300"></canvas>
+                    </div>
+                </div>
+
+                <!-- API性能排名 -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-bar-chart"></i> API性能排名</h5>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="table-responsive">
+                            <table class="table table-hover mb-0">
+                                <thead>
+                                    <tr>
+                                        <th>排名</th>
+                                        <th>API路径</th>
+                                        <th>平均响应时间</th>
+                                        <th>调用次数</th>
+                                        <th>状态</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr th:each="stat, iter : ${apiStats}">
+                                        <td>
+                                            <span class="badge bg-primary" th:text="${iter.count}">1</span>
+                                        </td>
+                                        <td>
+                                            <code th:text="${stat.apiPath}">/api/xxx</code>
+                                        </td>
+                                        <td>
+                                            <span th:text="${stat.avgResponseTime}">0</span> ms
+                                        </td>
+                                        <td th:text="${stat.callCount}">0</td>
+                                        <td>
+                                            <span class="badge"
+                                                  th:classappend="${stat.avgResponseTime < 100 ? 'bg-success' : (stat.avgResponseTime < 500 ? 'bg-warning text-dark' : 'bg-danger')}"
+                                                  th:text="${stat.avgResponseTime < 100 ? '正常' : (stat.avgResponseTime < 500 ? '较慢' : '慢')}">
+                                                正常
+                                            </span>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 右侧：统计和Agent列表 -->
+            <div class="col-lg-4">
+                <!-- 响应时间分布 -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-pie-chart"></i> 响应时间分布</h5>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="responseDistributionChart" height="250"></canvas>
+                    </div>
+                </div>
+
+                <!-- 慢请求列表 -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-exclamation-triangle"></i> 慢请求警告</h5>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="list-group list-group-flush">
+                            <div th:each="stat : ${apiStats}"
+                                 th:if="${stat.avgResponseTime >= 500}"
+                                 class="list-group-item list-group-item-action">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <code th:text="${stat.apiPath}">/api/xxx</code>
+                                        <br>
+                                        <small class="text-muted" th:text="${stat.callCount} + ' 次调用'">0 次调用</small>
+                                    </div>
+                                    <span class="badge bg-danger" th:text="${stat.avgResponseTime} + ' ms'">0 ms</span>
+                                </div>
+                            </div>
+                            <div th:if="${!apiStats.stream().anyMatch(s -> (Double)s.get('avgResponseTime') >= 500)}"
+                                 class="p-3 text-center text-muted">
+                                <i class="bi bi-check-circle fs-4"></i>
+                                <p class="mt-2 mb-0">暂无慢请求</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 监控说明 -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-info-circle"></i> 监控说明</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <h6>响应时间标准</h6>
+                            <div class="d-flex align-items-center mb-1">
+                                <span class="badge bg-success me-2">正常</span>
+                                <small>&lt; 100ms</small>
+                            </div>
+                            <div class="d-flex align-items-center mb-1">
+                                <span class="badge bg-warning text-dark me-2">较慢</span>
+                                <small>100ms - 500ms</small>
+                            </div>
+                            <div class="d-flex align-items-center">
+                                <span class="badge bg-danger me-2">慢</span>
+                                <small>&gt; 500ms</small>
+                            </div>
+                        </div>
+                        <div>
+                            <h6>告警规则</h6>
+                            <small class="text-muted">
+                                响应时间超过阈值时自动触发告警，请在告警中心查看和处理。
+                            </small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script th:inline="javascript">
+        // 初始化图表
+        document.addEventListener('DOMContentLoaded', function() {
+            initResponseTimeChart();
+            initDistributionChart();
+        });
+
+        function initResponseTimeChart() {
+            const ctx = document.getElementById('responseTimeChart').getContext('2d');
+            const trendData = [[${responseTimeTrend}]];
+
+            const labels = Object.keys(trendData);
+            const data = Object.values(trendData);
+
+            new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: '平均响应时间 (ms)',
+                        data: data,
+                        borderColor: 'rgb(75, 192, 192)',
+                        backgroundColor: 'rgba(75, 192, 192, 0.1)',
+                        tension: 0.1,
+                        fill: true
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            labels: {
+                                color: '#adb5bd'
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            ticks: { color: '#adb5bd' },
+                            grid: { color: 'rgba(255,255,255,0.1)' }
+                        },
+                        y: {
+                            ticks: { color: '#adb5bd' },
+                            grid: { color: 'rgba(255,255,255,0.1)' },
+                            beginAtZero: true
+                        }
+                    }
+                }
+            });
+        }
+
+        function initDistributionChart() {
+            const ctx = document.getElementById('responseDistributionChart').getContext('2d');
+            const apiStats = [[${apiStats}]];
+
+            const fast = apiStats.filter(s => s.avgResponseTime < 100).length;
+            const medium = apiStats.filter(s => s.avgResponseTime >= 100 && s.avgResponseTime < 500).length;
+            const slow = apiStats.filter(s => s.avgResponseTime >= 500).length;
+
+            new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['正常 (<100ms)', '较慢 (100-500ms)', '慢 (>500ms)'],
+                    datasets: [{
+                        data: [fast, medium, slow],
+                        backgroundColor: [
+                            'rgba(25, 135, 84, 0.8)',
+                            'rgba(255, 193, 7, 0.8)',
+                            'rgba(220, 53, 69, 0.8)'
+                        ],
+                        borderWidth: 0
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'bottom',
+                            labels: {
+                                color: '#adb5bd',
+                                padding: 10
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function refreshData() {
+            location.reload();
+        }
+
+        // 自动刷新（每30秒）
+        setInterval(refreshData, 30000);
+    </script>
+</body>
+</html>

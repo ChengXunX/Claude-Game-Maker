@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>资源使用统计 - ChengXun Game Maker</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <link th:href="@{/css/custom.css}" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        .resource-card {
+            background: linear-gradient(135deg, var(--bg-card) 0%, var(--bg-secondary) 100%);
+            border: 1px solid var(--border-color);
+        }
+        .quota-bar {
+            height: 20px;
+            border-radius: 10px;
+            background: var(--bg-tertiary);
+            overflow: hidden;
+        }
+        .quota-fill {
+            height: 100%;
+            border-radius: 10px;
+            transition: width 0.3s ease;
+        }
+        .quota-low { background: linear-gradient(90deg, #32cd32, #90ee90); }
+        .quota-medium { background: linear-gradient(90deg, #ffa500, #ffd700); }
+        .quota-high { background: linear-gradient(90deg, #ff6347, #ff7f7f); }
+    </style>
+</head>
+<body class="bg-dark text-light">
+    <div class="container-fluid mt-4">
+        <!-- 页面标题 -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h2><i class="bi bi-cpu"></i> 资源使用统计</h2>
+                        <p class="text-muted mb-0">监控Token消耗、API配额和系统资源使用情况</p>
+                    </div>
+                    <div>
+                        <select class="form-select form-select-sm d-inline-block" style="width: auto;" id="timeRange">
+                            <option value="7" selected>最近7天</option>
+                            <option value="30">最近30天</option>
+                            <option value="90">最近90天</option>
+                        </select>
+                        <button class="btn btn-outline-primary ms-2" onclick="refreshData()">
+                            <i class="bi bi-arrow-clockwise"></i> 刷新
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 今日统计卡片 -->
+        <div class="row mb-4">
+            <div class="col-md-3">
+                <div class="card resource-card">
+                    <div class="card-body text-center">
+                        <div class="display-6 text-primary" th:text="${todayStats.totalTokens}">0</div>
+                        <div class="text-muted">今日Token消耗</div>
+                        <small class="text-muted">
+                            输入: <span th:text="${todayStats.inputTokens}">0</span> |
+                            输出: <span th:text="${todayStats.outputTokens}">0</span>
+                        </small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card resource-card">
+                    <div class="card-body text-center">
+                        <div class="display-6 text-success" th:text="${todayStats.totalCalls}">0</div>
+                        <div class="text-muted">今日调用次数</div>
+                        <small class="text-muted">
+                            Agent数: <span th:text="${todayStats.agentCount}">0</span>
+                        </small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card resource-card">
+                    <div class="card-body text-center">
+                        <div class="display-6 text-warning">$<span th:text="${todayStats.totalCost}">0.00</span></div>
+                        <div class="text-muted">今日估算成本</div>
+                        <small class="text-muted">基于Token单价估算</small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card resource-card">
+                    <div class="card-body text-center">
+                        <div class="display-6 text-info">
+                            <span th:text="${monthlyStats.usagePercent}">0</span>%
+                        </div>
+                        <div class="text-muted">月度配额使用</div>
+                        <small class="text-muted">
+                            剩余: <span th:text="${monthlyStats.remaining}">0</span> tokens
+                        </small>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 月度配额进度 -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card resource-card">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between mb-2">
+                            <h5 class="mb-0">月度配额使用情况</h5>
+                            <span>
+                                <span th:text="${monthlyStats.totalTokens}">0</span> /
+                                <span th:text="${monthlyStats.monthlyQuota}">1,000,000</span> tokens
+                            </span>
+                        </div>
+                        <div class="quota-bar">
+                            <div class="quota-fill"
+                                 th:classappend="${monthlyStats.usagePercent < 50 ? 'quota-low' : (monthlyStats.usagePercent < 80 ? 'quota-medium' : 'quota-high')}"
+                                 th:style="'width: ' + ${monthlyStats.usagePercent} + '%'">
+                            </div>
+                        </div>
+                        <div class="d-flex justify-content-between mt-2">
+                            <small class="text-muted">0%</small>
+                            <small class="text-muted">50%</small>
+                            <small class="text-muted">100%</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <!-- 左侧：图表 -->
+            <div class="col-lg-8">
+                <!-- Token使用趋势 -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-graph-up"></i> Token使用趋势</h5>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="tokenTrendChart" height="300"></canvas>
+                    </div>
+                </div>
+
+                <!-- 每日使用详情 -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-calendar"></i> 每日使用详情</h5>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="table-responsive">
+                            <table class="table table-hover mb-0">
+                                <thead>
+                                    <tr>
+                                        <th>日期</th>
+                                        <th>Token消耗</th>
+                                        <th>估算成本</th>
+                                        <th>占比</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr th:each="day : ${weeklyTrend.dailyStats}">
+                                        <td th:text="${day.date}">2024-01-01</td>
+                                        <td th:text="${day.tokens}">0</td>
+                                        <td>$<span th:text="${#numbers.formatDecimal(day.cost, 1, 2)}">0.00</span></td>
+                                        <td>
+                                            <div class="progress" style="height: 6px; width: 100px;">
+                                                <div class="progress-bar bg-primary"
+                                                     th:style="'width: ' + ${(day.tokens * 100) / (weeklyTrend.totalTokens > 0 ? weeklyTrend.totalTokens : 1)} + '%'">
+                                                </div>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 右侧：Agent排名和统计 -->
+            <div class="col-lg-4">
+                <!-- Agent Token使用排名 -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-trophy"></i> Agent使用排名</h5>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="list-group list-group-flush">
+                            <div th:each="agent, iter : ${agentRanking}"
+                                 class="list-group-item">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <span class="badge bg-primary me-2" th:text="${iter.count}">1</span>
+                                        <strong th:text="${agent.agentName}">Agent Name</strong>
+                                        <br>
+                                        <small class="text-muted" th:text="${agent.agentId}">agent-id</small>
+                                    </div>
+                                    <div class="text-end">
+                                        <div th:text="${agent.tokens}">0</div>
+                                        <small class="text-muted">$<span th:text="${#numbers.formatDecimal(agent.cost, 1, 2)}">0.00</span></small>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 月度统计摘要 -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-calendar-month"></i> 月度统计</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <div class="d-flex justify-content-between mb-1">
+                                <span>总Token消耗</span>
+                                <strong th:text="${monthlyStats.totalTokens}">0</strong>
+                            </div>
+                            <div class="d-flex justify-content-between mb-1">
+                                <span>总成本</span>
+                                <strong>$<span th:text="${monthlyStats.totalCost}">0.00</span></strong>
+                            </div>
+                            <div class="d-flex justify-content-between">
+                                <span>日均消耗</span>
+                                <strong th:text="${monthlyStats.totalTokens / 30}">0</strong>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 使用说明 -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-info-circle"></i> 使用说明</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <h6>Token计算</h6>
+                            <small class="text-muted">
+                                输入和输出Token分别计算，总消耗为两者之和。
+                            </small>
+                        </div>
+                        <div class="mb-3">
+                            <h6>成本估算</h6>
+                            <small class="text-muted">
+                                基于标准API定价估算：输入$0.01/1K tokens，输出$0.03/1K tokens。
+                            </small>
+                        </div>
+                        <div>
+                            <h6>配额管理</h6>
+                            <small class="text-muted">
+                                月度配额为100万tokens，使用超过90%将触发告警。
+                            </small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script th:inline="javascript">
+        // 初始化图表
+        document.addEventListener('DOMContentLoaded', function() {
+            initTokenTrendChart();
+        });
+
+        function initTokenTrendChart() {
+            const ctx = document.getElementById('tokenTrendChart').getContext('2d');
+            const trendData = [[${tokenTrend}]];
+
+            const labels = Object.keys(trendData).map(date => {
+                const d = new Date(date);
+                return (d.getMonth() + 1) + '/' + d.getDate();
+            });
+            const data = Object.values(trendData);
+
+            new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Token消耗',
+                        data: data,
+                        backgroundColor: 'rgba(75, 192, 192, 0.6)',
+                        borderColor: 'rgba(75, 192, 192, 1)',
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            labels: {
+                                color: '#adb5bd'
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            ticks: { color: '#adb5bd' },
+                            grid: { color: 'rgba(255,255,255,0.1)' }
+                        },
+                        y: {
+                            ticks: { color: '#adb5bd' },
+                            grid: { color: 'rgba(255,255,255,0.1)' },
+                            beginAtZero: true
+                        }
+                    }
+                }
+            });
+        }
+
+        function refreshData() {
+            location.reload();
+        }
+    </script>
+</body>
+</html>

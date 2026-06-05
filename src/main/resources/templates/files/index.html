@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security"
+      th:replace="~{layout :: main-content(~{::title}, ~{::section})}">
+<head>
+    <title>文件管理 - ChengXun Game Maker</title>
+</head>
+<body>
+<section>
+    <div class="container-fluid">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2><i class="bi bi-folder2-open"></i> Agent 文件管理</h2>
+            <div>
+                <button class="btn btn-primary btn-sm" onclick="showUploadModal()">
+                    <i class="bi bi-upload"></i> 上传文件
+                </button>
+            </div>
+        </div>
+
+        <!-- 筛选栏 -->
+        <div class="card mb-4">
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-3">
+                        <label class="form-label">Agent ID</label>
+                        <input type="text" class="form-control" id="filterAgentId"
+                               placeholder="输入 Agent ID" onchange="loadFiles()">
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">项目 ID</label>
+                        <input type="text" class="form-control" id="filterProjectId"
+                               placeholder="输入项目 ID" onchange="loadFiles()">
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">搜索文件名</label>
+                        <input type="text" class="form-control" id="filterKeyword"
+                               placeholder="搜索..." onkeyup="debounceSearch()">
+                    </div>
+                    <div class="col-md-3 d-flex align-items-end">
+                        <button class="btn btn-primary w-100" onclick="loadFiles()">
+                            <i class="bi bi-search"></i> 查询
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 配额信息 -->
+        <div class="row mb-4" id="quotaSection" style="display: none;">
+            <div class="col-md-4">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <h4 id="usedMB">0</h4>
+                        <small class="text-muted">已用 (MB)</small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <h4 id="quotaMB">500</h4>
+                        <small class="text-muted">配额 (MB)</small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <h4 id="fileCount">0</h4>
+                        <small class="text-muted">文件数</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 文件列表 -->
+        <div class="card">
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>文件名</th>
+                                <th>大小</th>
+                                <th>版本</th>
+                                <th>来源</th>
+                                <th>方向</th>
+                                <th>上传者</th>
+                                <th>时间</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="fileTable">
+                            <tr>
+                                <td colspan="8" class="text-center text-muted">
+                                    请输入 Agent ID 或项目 ID 查询文件
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- 分页 -->
+                <div class="d-flex justify-content-between align-items-center mt-3">
+                    <small class="text-muted" id="pageInfo"></small>
+                    <div class="btn-group btn-group-sm">
+                        <button class="btn btn-outline-secondary" id="prevBtn" onclick="changePage(-1)" disabled>上一页</button>
+                        <button class="btn btn-outline-secondary" id="nextBtn" onclick="changePage(1)" disabled>下一页</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 上传弹窗 -->
+    <div class="modal fade" id="uploadModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">上传文件到 Agent</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="uploadForm" enctype="multipart/form-data">
+                        <div class="mb-3">
+                            <label class="form-label">Agent ID *</label>
+                            <input type="text" class="form-control" id="uploadAgentId" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">项目 ID *</label>
+                            <input type="text" class="form-control" id="uploadProjectId" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">选择文件 *</label>
+                            <input type="file" class="form-control" id="uploadFile" required>
+                            <div class="form-text">最大 50MB</div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">备注</label>
+                            <input type="text" class="form-control" id="uploadRemark" placeholder="可选">
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" onclick="doUpload()">上传</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 版本历史弹窗 -->
+    <div class="modal fade" id="versionModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">版本历史</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body" id="versionBody">
+                    <!-- 版本列表 -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentPage = 0;
+        let totalPages = 0;
+        let searchTimer = null;
+
+        // 防抖搜索
+        function debounceSearch() {
+            if (searchTimer) clearTimeout(searchTimer);
+            searchTimer = setTimeout(loadFiles, 500);
+        }
+
+        // 加载文件列表
+        async function loadFiles() {
+            const agentId = document.getElementById('filterAgentId').value.trim();
+            const projectId = document.getElementById('filterProjectId').value.trim();
+            const keyword = document.getElementById('filterKeyword').value.trim();
+
+            if (!agentId && !projectId) {
+                document.getElementById('fileTable').innerHTML =
+                    '<tr><td colspan="8" class="text-center text-muted">请输入 Agent ID 或项目 ID</td></tr>';
+                return;
+            }
+
+            try {
+                let url;
+                if (keyword && agentId) {
+                    url = `/api/files/search/${encodeURIComponent(agentId)}?keyword=${encodeURIComponent(keyword)}&page=${currentPage}&size=20`;
+                } else if (agentId) {
+                    url = `/api/files/agent/${encodeURIComponent(agentId)}?page=${currentPage}&size=20`;
+                } else {
+                    url = `/api/files/project/${encodeURIComponent(projectId)}?page=${currentPage}&size=20`;
+                }
+
+                const res = await fetch(url);
+                const data = await res.json();
+
+                totalPages = data.totalPages || 0;
+                document.getElementById('pageInfo').textContent =
+                    `第 ${currentPage + 1} / ${totalPages} 页，共 ${data.totalElements || 0} 个文件`;
+                document.getElementById('prevBtn').disabled = currentPage <= 0;
+                document.getElementById('nextBtn').disabled = currentPage >= totalPages - 1;
+
+                const files = data.content || [];
+                const tbody = document.getElementById('fileTable');
+
+                if (files.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">暂无文件</td></tr>';
+                    return;
+                }
+
+                const sourceLabels = {
+                    USER_UPLOAD: '用户上传', AGENT_GENERATED: 'Agent生成',
+                    MCP: 'MCP', AGENT_TRANSFER: 'Agent传输'
+                };
+                const sourceColors = {
+                    USER_UPLOAD: 'primary', AGENT_GENERATED: 'success',
+                    MCP: 'info', AGENT_TRANSFER: 'warning'
+                };
+
+                tbody.innerHTML = files.map(f => `
+                    <tr>
+                        <td><i class="bi bi-file-earmark me-1"></i>${f.fileName}</td>
+                        <td>${formatSize(f.fileSize)}</td>
+                        <td><span class="badge bg-secondary">v${f.version}</span></td>
+                        <td><span class="badge bg-${sourceColors[f.source] || 'secondary'}">${sourceLabels[f.source] || f.source}</span></td>
+                        <td>${f.direction === 'INBOUND' ? '← 入站' : '→ 出站'}</td>
+                        <td>${f.createdBy || '-'}</td>
+                        <td><small>${new Date(f.createdAt).toLocaleString()}</small></td>
+                        <td>
+                            <a href="/api/files/${f.id}/download" class="btn btn-sm btn-outline-primary" title="下载">
+                                <i class="bi bi-download"></i>
+                            </a>
+                            <button class="btn btn-sm btn-outline-info ms-1" onclick="showVersions('${f.agentId}', '${f.fileName}')" title="版本历史">
+                                <i class="bi bi-clock-history"></i>
+                            </button>
+                            <button class="btn btn-sm btn-outline-danger ms-1" onclick="deleteFile(${f.id})" title="删除">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </td>
+                    </tr>
+                `).join('');
+
+                // 加载配额
+                if (agentId) loadQuota(agentId);
+
+            } catch (e) {
+                console.error('Failed to load files:', e);
+            }
+        }
+
+        // 加载配额
+        async function loadQuota(agentId) {
+            try {
+                const res = await fetch(`/api/files/usage/${encodeURIComponent(agentId)}`);
+                const usage = await res.json();
+
+                document.getElementById('quotaSection').style.display = 'flex';
+                document.getElementById('usedMB').textContent = usage.usedMB || 0;
+                document.getElementById('quotaMB').textContent = usage.quotaMB || 500;
+                document.getElementById('fileCount').textContent = usage.fileCount || 0;
+            } catch (e) {
+                console.error('Failed to load quota:', e);
+            }
+        }
+
+        // 格式化文件大小
+        function formatSize(bytes) {
+            if (!bytes) return '0 B';
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+        }
+
+        // 分页
+        function changePage(delta) {
+            currentPage = Math.max(0, Math.min(currentPage + delta, totalPages - 1));
+            loadFiles();
+        }
+
+        // 上传
+        function showUploadModal() {
+            document.getElementById('uploadForm').reset();
+            // 预填当前筛选的 Agent ID 和项目 ID
+            document.getElementById('uploadAgentId').value = document.getElementById('filterAgentId').value;
+            document.getElementById('uploadProjectId').value = document.getElementById('filterProjectId').value;
+            new bootstrap.Modal(document.getElementById('uploadModal')).show();
+        }
+
+        async function doUpload() {
+            const agentId = document.getElementById('uploadAgentId').value;
+            const projectId = document.getElementById('uploadProjectId').value;
+            const file = document.getElementById('uploadFile').files[0];
+            const remark = document.getElementById('uploadRemark').value;
+
+            if (!agentId || !projectId || !file) {
+                alert('请填写必填字段');
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('agentId', agentId);
+            formData.append('projectId', projectId);
+            formData.append('remark', remark);
+
+            try {
+                const res = await fetch('/api/files/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (res.ok) {
+                    bootstrap.Modal.getInstance(document.getElementById('uploadModal')).hide();
+                    loadFiles();
+                } else {
+                    const err = await res.json();
+                    alert(err.message || '上传失败');
+                }
+            } catch (e) {
+                alert('上传失败: ' + e.message);
+            }
+        }
+
+        // 版本历史
+        async function showVersions(agentId, fileName) {
+            try {
+                const res = await fetch(`/api/files/${encodeURIComponent(agentId)}/versions?fileName=${encodeURIComponent(fileName)}`);
+                const versions = await res.json();
+
+                const body = document.getElementById('versionBody');
+                if (versions.length === 0) {
+                    body.innerHTML = '<p class="text-muted">无版本历史</p>';
+                } else {
+                    body.innerHTML = `
+                        <div class="table-responsive">
+                            <table class="table table-sm">
+                                <thead><tr><th>版本</th><th>大小</th><th>哈希</th><th>上传者</th><th>时间</th><th>操作</th></tr></thead>
+                                <tbody>${versions.map(v => `
+                                    <tr>
+                                        <td><span class="badge bg-primary">v${v.version}</span></td>
+                                        <td>${formatSize(v.fileSize)}</td>
+                                        <td><code class="small">${(v.fileHash || '-').substring(0, 12)}...</code></td>
+                                        <td>${v.createdBy || '-'}</td>
+                                        <td><small>${new Date(v.createdAt).toLocaleString()}</small></td>
+                                        <td><a href="/api/files/${v.id}/download" class="btn btn-sm btn-outline-primary"><i class="bi bi-download"></i></a></td>
+                                    </tr>
+                                `).join('')}</tbody>
+                            </table>
+                        </div>
+                    `;
+                }
+
+                new bootstrap.Modal(document.getElementById('versionModal')).show();
+            } catch (e) {
+                console.error('Failed to load versions:', e);
+            }
+        }
+
+        // 删除文件
+        async function deleteFile(id) {
+            if (!confirm('确定要删除此文件吗？')) return;
+
+            try {
+                await fetch(`/api/files/${id}`, { method: 'DELETE' });
+                loadFiles();
+            } catch (e) {
+                alert('删除失败');
+            }
+        }
+    </script>
+</section>
+</body>
+</html>

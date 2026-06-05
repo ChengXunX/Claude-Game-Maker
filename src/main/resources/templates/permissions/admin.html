@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security"
+      th:replace="~{layout :: main-content(~{::title}, ~{::section})}">
+<head>
+    <title>权限审批 - ChengXun Game Maker</title>
+</head>
+<body>
+<section>
+    <div class="container-fluid">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2><i class="bi bi-shield-check"></i> 权限审批</h2>
+            <div>
+                <span th:if="${pendingCount > 0}" class="badge bg-danger fs-6" th:text="${pendingCount + ' 个待审批'}"></span>
+                <a href="/permissions/admin/users" class="btn btn-outline-primary btn-sm ms-2">
+                    <i class="bi bi-people"></i> 用户权限管理
+                </a>
+                <a href="/permissions/request" class="btn btn-outline-secondary btn-sm ms-2">
+                    <i class="bi bi-person"></i> 我的权限申请
+                </a>
+            </div>
+        </div>
+
+        <!-- 待审批列表 -->
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">待审批申请</h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>申请人</th>
+                                <th>申请权限</th>
+                                <th>权限说明</th>
+                                <th>申请原因</th>
+                                <th>申请时间</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr th:each="req : ${pendingRequests}">
+                                <td>
+                                    <strong th:text="${req.username}">-</strong>
+                                </td>
+                                <td><code th:text="${req.permission}">-</code></td>
+                                <td>
+                                    <span th:text="${availablePermissions.getOrDefault(req.permission, '-')}">-</span>
+                                </td>
+                                <td><small th:text="${req.reason ?: '未填写'}">-</small></td>
+                                <td><small th:text="${#temporals.format(req.createdAt, 'yyyy-MM-dd HH:mm')}">-</small></td>
+                                <td>
+                                    <button class="btn btn-sm btn-success" th:onclick="'approveRequest(' + ${req.id} + ')'">
+                                        <i class="bi bi-check-lg"></i> 批准
+                                    </button>
+                                    <button class="btn btn-sm btn-danger ms-1" th:onclick="'showRejectModal(' + ${req.id} + ')'">
+                                        <i class="bi bi-x-lg"></i> 拒绝
+                                    </button>
+                                </td>
+                            </tr>
+                            <tr th:if="${#lists.isEmpty(pendingRequests)}">
+                                <td colspan="6" class="text-center text-muted py-4">
+                                    <i class="bi bi-check-circle" style="font-size: 2rem;"></i>
+                                    <p class="mt-2">暂无待审批申请</p>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 拒绝原因弹窗 -->
+    <div class="modal fade" id="rejectModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">拒绝权限申请</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="rejectRequestId">
+                    <div class="mb-3">
+                        <label class="form-label">拒绝原因 <span class="text-danger">*</span></label>
+                        <textarea class="form-control" id="rejectComment" rows="3" placeholder="请说明拒绝原因"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-danger" onclick="rejectRequest()">确认拒绝</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        async function approveRequest(id) {
+            if (!confirm('确定批准此权限申请吗？')) return;
+
+            try {
+                const response = await fetch(`/permissions/api/approve/${id}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ comment: '申请已批准' })
+                });
+                const result = await response.json();
+                if (result.success) {
+                    alert(result.message);
+                    location.reload();
+                } else {
+                    alert(result.error || '操作失败');
+                }
+            } catch (e) {
+                alert('请求失败: ' + e.message);
+            }
+        }
+
+        function showRejectModal(id) {
+            document.getElementById('rejectRequestId').value = id;
+            document.getElementById('rejectComment').value = '';
+            new bootstrap.Modal(document.getElementById('rejectModal')).show();
+        }
+
+        async function rejectRequest() {
+            const id = document.getElementById('rejectRequestId').value;
+            const comment = document.getElementById('rejectComment').value;
+
+            if (!comment.trim()) {
+                alert('请填写拒绝原因');
+                return;
+            }
+
+            try {
+                const response = await fetch(`/permissions/api/reject/${id}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ comment })
+                });
+                const result = await response.json();
+                if (result.success) {
+                    bootstrap.Modal.getInstance(document.getElementById('rejectModal')).hide();
+                    alert(result.message);
+                    location.reload();
+                } else {
+                    alert(result.error || '操作失败');
+                }
+            } catch (e) {
+                alert('请求失败: ' + e.message);
+            }
+        }
+    </script>
+</section>
+</body>
+</html>

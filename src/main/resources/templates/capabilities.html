@@ -1,0 +1,811 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security"
+      th:replace="~{layout :: main-content(~{::title}, ~{::section})}">
+<head>
+    <title>能力管理 - ChengXun Game Maker</title>
+</head>
+<body>
+<section>
+    <!-- 传递权限变量到 JavaScript -->
+    <script th:inline="javascript">
+        const canManageCapabilities = /*[[${canManageCapabilities}]]*/ false;
+        const canMonitorContext = /*[[${canMonitorContext}]]*/ false;
+        const isAdmin = /*[[${isAdmin}]]*/ false;
+    </script>
+    <div class="container-fluid">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2><i class="bi bi-puzzle"></i> Agent 能力与技能管理</h2>
+            <div>
+                <button class="btn btn-outline-primary btn-sm" onclick="reloadCapabilities()"
+                        th:if="${canManageCapabilities}">
+                    <i class="bi bi-arrow-clockwise"></i> 重新加载缓存
+                </button>
+            </div>
+        </div>
+
+        <!-- 概念说明 -->
+        <div class="alert alert-info mb-4">
+            <div class="row">
+                <div class="col-md-6">
+                    <strong><i class="bi bi-lightning-charge"></i> 能力 (Capability)</strong> — Agent <strong>能做什么</strong>（系统操作）
+                    <br><small class="text-muted">如：创建Agent、提交代码、发送任务。通过结构化JSON调用，有执行器，敏感能力需审批。</small>
+                </div>
+                <div class="col-md-6">
+                    <strong><i class="bi bi-book"></i> 技能 (Skill)</strong> — Agent <strong>怎么做更好</strong>（知识/经验）
+                    <br><small class="text-muted">如：代码审查技巧、Git提交规范。注入prompt增强AI能力，可自动学习。</small>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab 导航 -->
+        <ul class="nav nav-tabs mb-4" role="tablist">
+            <li class="nav-item">
+                <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#capabilitiesTab">
+                    <i class="bi bi-lightning-charge"></i> 能力管理
+                </button>
+            </li>
+            <li class="nav-item">
+                <button class="nav-link" data-bs-toggle="tab" data-bs-target="#skillsTab">
+                    <i class="bi bi-book"></i> 技能管理
+                </button>
+            </li>
+            <li class="nav-item">
+                <button class="nav-link" data-bs-toggle="tab" data-bs-target="#healthTab">
+                    <i class="bi bi-heart-pulse"></i> 上下文监控
+                </button>
+            </li>
+        </ul>
+
+        <!-- Tab 内容 -->
+        <div class="tab-content">
+            <!-- 能力管理 Tab -->
+            <div class="tab-pane fade show active" id="capabilitiesTab">
+                <!-- 筛选栏 -->
+                <div class="card mb-4">
+                    <div class="card-body">
+                        <div class="row g-3">
+                            <div class="col-md-3">
+                                <label class="form-label">角色筛选</label>
+                                <select id="roleFilter" class="form-select" onchange="loadCapabilities()">
+                                    <option value="">全部角色</option>
+                                </select>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label">分类筛选</label>
+                                <select id="categoryFilter" class="form-select" onchange="loadCapabilities()">
+                                    <option value="">全部分类</option>
+                                    <option value="agent_management">Agent 管理</option>
+                                    <option value="api_config">API 配置</option>
+                                    <option value="task">任务</option>
+                                    <option value="communication">通信</option>
+                                    <option value="monitoring">监控</option>
+                                    <option value="project">项目</option>
+                                </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">状态筛选</label>
+                        <select id="statusFilter" class="form-select" onchange="loadCapabilities()">
+                            <option value="">全部状态</option>
+                            <option value="enabled">已启用</option>
+                            <option value="disabled">已禁用</option>
+                            <option value="approval">需要审批</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3 d-flex align-items-end">
+                        <button class="btn btn-primary w-100" onclick="loadCapabilities()">
+                            <i class="bi bi-search"></i> 查询
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 操作栏 -->
+        <div class="d-flex justify-content-end mb-3" th:if="${canManageCapabilities}">
+            <button class="btn btn-primary" onclick="showCreateModal()">
+                <i class="bi bi-plus-lg"></i> 新增能力
+            </button>
+        </div>
+
+        <!-- 能力列表 -->
+        <div class="card">
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>能力名称</th>
+                                <th>显示名称</th>
+                                <th>角色</th>
+                                <th>执行方式</th>
+                                <th>关联技能</th>
+                                <th>需要审批</th>
+                                <th>状态</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="capabilityTable">
+                            <tr>
+                                <td colspan="8" class="text-center text-muted">加载中...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+            </div><!-- end capabilitiesTab -->
+
+            <!-- 技能管理 Tab -->
+            <div class="tab-pane fade" id="skillsTab">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0"><i class="bi bi-book"></i> 技能列表</h5>
+                        <small class="text-muted">技能是注入 prompt 的知识/经验，帮助 AI 更好地执行能力</small>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-hover">
+                                <thead>
+                                    <tr>
+                                        <th>技能名称</th>
+                                        <th>描述</th>
+                                        <th>分类</th>
+                                        <th>触发词</th>
+                                        <th>关联能力</th>
+                                        <th>使用次数</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="skillTable">
+                                    <tr>
+                                        <td colspan="6" class="text-center text-muted">加载中...</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div><!-- end skillsTab -->
+
+            <!-- 上下文监控 Tab -->
+            <div class="tab-pane fade" id="healthTab">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-heart-pulse"></i> Agent 上下文健康状态</h5>
+                    </div>
+                    <div class="card-body">
+                        <div id="healthSummary" class="row mb-3">
+                            <!-- 健康统计卡片 -->
+                        </div>
+                        <div class="table-responsive">
+                            <table class="table table-sm">
+                                <thead>
+                                    <tr>
+                                        <th>Agent ID</th>
+                                        <th>状态</th>
+                                        <th>问题</th>
+                                        <th>上次检查</th>
+                                        <th>操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="healthTable">
+                                    <tr>
+                                        <td colspan="5" class="text-center text-muted">加载中...</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div><!-- end healthTab -->
+
+        </div><!-- end tab-content -->
+    </div>
+
+    <script>
+        // 加载角色列表
+        async function loadRoles() {
+            try {
+                const response = await fetch('/capabilities/api/roles');
+                const roles = await response.json();
+                const select = document.getElementById('roleFilter');
+                roles.forEach(role => {
+                    const option = document.createElement('option');
+                    option.value = role;
+                    option.textContent = role;
+                    select.appendChild(option);
+                });
+            } catch (e) {
+                console.error('Failed to load roles:', e);
+            }
+        }
+
+        // 加载能力列表
+        async function loadCapabilities() {
+            try {
+                const response = await fetch('/capabilities/api/all');
+                let capabilities = await response.json();
+
+                // 应用筛选
+                const roleFilter = document.getElementById('roleFilter').value;
+                const categoryFilter = document.getElementById('categoryFilter').value;
+                const statusFilter = document.getElementById('statusFilter').value;
+
+                if (roleFilter) capabilities = capabilities.filter(c => c.agentRole === roleFilter);
+                if (categoryFilter) capabilities = capabilities.filter(c => c.category === categoryFilter);
+                if (statusFilter === 'enabled') capabilities = capabilities.filter(c => c.enabled);
+                if (statusFilter === 'disabled') capabilities = capabilities.filter(c => !c.enabled);
+                if (statusFilter === 'approval') capabilities = capabilities.filter(c => c.requiresApproval);
+
+                const tbody = document.getElementById('capabilityTable');
+                if (capabilities.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">暂无数据</td></tr>';
+                    return;
+                }
+
+                const executionTypeLabels = { java: 'Java', prompt: 'Prompt', message: '消息' };
+                const executionTypeColors = { java: 'primary', prompt: 'info', message: 'success' };
+
+                tbody.innerHTML = capabilities.map(cap => {
+                    // 解析关联技能
+                    const relatedSkills = cap.relatedSkillIds
+                        ? cap.relatedSkillIds.split(',').map(s => s.trim()).filter(s => s)
+                        : [];
+                    const skillBadges = relatedSkills.length > 0
+                        ? relatedSkills.map(s => `<span class="badge bg-info text-dark">${s}</span>`).join(' ')
+                        : '<span class="text-muted">-</span>';
+
+                    return `
+                    <tr>
+                        <td><code>${cap.capabilityName}</code></td>
+                        <td>${cap.displayName || '-'}</td>
+                        <td><span class="badge bg-secondary">${cap.agentRole}</span></td>
+                        <td><span class="badge bg-${executionTypeColors[cap.executionType] || 'secondary'}">${executionTypeLabels[cap.executionType] || cap.executionType}</span></td>
+                        <td>${skillBadges}</td>
+                        <td>${cap.requiresApproval ? '<span class="badge bg-warning">是</span>' : '<span class="badge bg-success">否</span>'}</td>
+                        <td>${cap.enabled ? '<span class="badge bg-success">启用</span>' : '<span class="badge bg-danger">禁用</span>'}</td>
+                        <td>
+                            ${canManageCapabilities ? `
+                            <button class="btn btn-sm btn-outline-${cap.enabled ? 'warning' : 'success'}"
+                                    onclick="toggleCapability(${cap.id})">
+                                ${cap.enabled ? '禁用' : '启用'}
+                            </button>
+                            <button class="btn btn-sm btn-outline-primary ms-1"
+                                    onclick="editCapability(${cap.id})" title="编辑">
+                                <i class="bi bi-pencil"></i>
+                            </button>
+                            ` : '<span class="text-muted small">仅查看</span>'}
+                        </td>
+                    </tr>`;
+                }).join('');
+            } catch (e) {
+                console.error('Failed to load capabilities:', e);
+            }
+        }
+
+        // 切换能力启用状态
+        async function toggleCapability(id) {
+            if (!confirm('确定要切换此能力的启用状态吗？')) return;
+            try {
+                await fetch(`/capabilities/api/${id}/toggle`, { method: 'POST' });
+                loadCapabilities();
+            } catch (e) {
+                console.error('Failed to toggle capability:', e);
+            }
+        }
+
+        // 重新加载缓存
+        async function reloadCapabilities() {
+            try {
+                const response = await fetch('/capabilities/api/reload', { method: 'POST' });
+                const result = await response.json();
+                alert(result.message);
+                loadCapabilities();
+            } catch (e) {
+                console.error('Failed to reload capabilities:', e);
+            }
+        }
+
+        // 加载健康状态
+        async function loadHealthStatus() {
+            try {
+                const [summaryRes, statusRes] = await Promise.all([
+                    fetch('/capabilities/api/health/summary'),
+                    fetch('/capabilities/api/health')
+                ]);
+                const summary = await summaryRes.json();
+                const statuses = await statusRes.json();
+
+                // 健康统计
+                document.getElementById('healthSummary').innerHTML = `
+                    <div class="col-md-3"><div class="card text-center"><div class="card-body">
+                        <h3 class="text-success">${summary.healthy || 0}</h3><small>健康</small>
+                    </div></div></div>
+                    <div class="col-md-3"><div class="card text-center"><div class="card-body">
+                        <h3 class="text-warning">${summary.warning || 0}</h3><small>警告</small>
+                    </div></div></div>
+                    <div class="col-md-3"><div class="card text-center"><div class="card-body">
+                        <h3 class="text-danger">${summary.error || 0}</h3><small>错误</small>
+                    </div></div></div>
+                    <div class="col-md-3"><div class="card text-center"><div class="card-body">
+                        <h3 class="text-dark">${summary.critical || 0}</h3><small>严重</small>
+                    </div></div></div>
+                `;
+
+                // 健康列表
+                const tbody = document.getElementById('healthTable');
+                const entries = Object.entries(statuses);
+                if (entries.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">暂无 Agent 运行</td></tr>';
+                    return;
+                }
+
+                tbody.innerHTML = entries.map(([id, status]) => `
+                    <tr>
+                        <td><code>${id}</code></td>
+                        <td>${status.healthy ?
+                            '<span class="badge bg-success">健康</span>' :
+                            `<span class="badge bg-${status.severity === 'WARNING' ? 'warning' : status.severity === 'CRITICAL' ? 'dark' : 'danger'}">${status.severity}</span>`
+                        }</td>
+                        <td>${status.issue || '-'}</td>
+                        <td>${status.lastCheck ? new Date(status.lastCheck).toLocaleString() : '-'}</td>
+                        <td>
+                            ${!status.healthy && canMonitorContext ? `<button class="btn btn-sm btn-outline-primary" onclick="recoverAgent('${id}')">恢复</button>` : ''}
+                        </td>
+                    </tr>
+                `).join('');
+            } catch (e) {
+                console.error('Failed to load health status:', e);
+            }
+        }
+
+        // 手动恢复 Agent
+        async function recoverAgent(agentId) {
+            try {
+                const response = await fetch(`/capabilities/api/health/${agentId}/recover`, { method: 'POST' });
+                const result = await response.json();
+                alert(result.message);
+                loadHealthStatus();
+            } catch (e) {
+                console.error('Failed to recover agent:', e);
+            }
+        }
+
+        // 加载技能列表
+        async function loadSkills() {
+            try {
+                const [skillsRes, capsRes] = await Promise.all([
+                    fetch('/skills/api/all'),
+                    fetch('/capabilities/api/all')
+                ]);
+                const skills = await skillsRes.json();
+                const capabilities = await capsRes.json();
+
+                // 构建技能ID到关联能力的映射（从能力的 relatedSkillIds 反查）
+                const skillToCaps = {};
+                capabilities.forEach(cap => {
+                    if (cap.relatedSkillIds) {
+                        cap.relatedSkillIds.split(',').forEach(skillId => {
+                            skillId = skillId.trim();
+                            if (skillId) {
+                                if (!skillToCaps[skillId]) skillToCaps[skillId] = [];
+                                skillToCaps[skillId].push(cap.capabilityName);
+                            }
+                        });
+                    }
+                });
+
+                const tbody = document.getElementById('skillTable');
+                if (!skills || skills.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">暂无技能数据</td></tr>';
+                    return;
+                }
+
+                tbody.innerHTML = skills.map(skill => {
+                    // 从能力的 relatedSkillIds 反查关联能力
+                    const relatedCaps = skillToCaps[skill.id] || [];
+                    const capBadges = relatedCaps.length > 0
+                        ? relatedCaps.map(c => `<span class="badge bg-primary">${c}</span>`).join(' ')
+                        : '<span class="text-muted">未关联</span>';
+
+                    return `
+                        <tr>
+                            <td><strong>${skill.name || skill.skillName || '-'}</strong></td>
+                            <td>${skill.description || '-'}</td>
+                            <td><span class="badge bg-info">${skill.category || '通用'}</span></td>
+                            <td><small>${skill.triggerPattern || skill.trigger || '-'}</small></td>
+                            <td>${capBadges}</td>
+                            <td>${skill.usageCount || 0}</td>
+                        </tr>
+                    `;
+                }).join('');
+            } catch (e) {
+                console.error('Failed to load skills:', e);
+                document.getElementById('skillTable').innerHTML =
+                    '<tr><td colspan="6" class="text-center text-danger">加载失败</td></tr>';
+            }
+        }
+
+        // 初始化
+        document.addEventListener('DOMContentLoaded', () => {
+            loadRoles();
+            loadCapabilities();
+            loadSkills();
+            loadHealthStatus();
+
+            // 监听 Tab 切换，懒加载数据
+            document.querySelectorAll('[data-bs-toggle="tab"]').forEach(tab => {
+                tab.addEventListener('shown.bs.tab', (e) => {
+                    const target = e.target.getAttribute('data-bs-target');
+                    if (target === '#skillsTab') loadSkills();
+                    if (target === '#healthTab') loadHealthStatus();
+                });
+            });
+
+            // 每 30 秒刷新健康状态
+            setInterval(loadHealthStatus, 30000);
+        });
+
+        // ===== 新增/编辑能力 =====
+
+        function showCreateModal() {
+            document.getElementById('capabilityModalTitle').textContent = '新增能力';
+            document.getElementById('capabilityForm').reset();
+            document.getElementById('capabilityId').value = '';
+            document.getElementById('promptTemplateGroup').style.display = 'none';
+            document.getElementById('targetAgentRoleGroup').style.display = 'none';
+            initSkillSelector('');
+            new bootstrap.Modal(document.getElementById('capabilityModal')).show();
+        }
+
+        function editCapability(id) {
+            // 从列表中获取能力数据
+            fetch('/capabilities/api/all')
+                .then(r => r.json())
+                .then(capabilities => {
+                    const cap = capabilities.find(c => c.id === id);
+                    if (!cap) return;
+
+                    document.getElementById('capabilityModalTitle').textContent = '编辑能力';
+                    document.getElementById('capabilityId').value = cap.id;
+                    document.getElementById('capabilityName').value = cap.capabilityName;
+                    document.getElementById('displayName').value = cap.displayName || '';
+                    document.getElementById('agentRole').value = cap.agentRole;
+                    document.getElementById('executionType').value = cap.executionType || 'java';
+                    document.getElementById('description').value = cap.description || '';
+                    document.getElementById('paramSchema').value = cap.paramSchema || '';
+                    document.getElementById('promptTemplate').value = cap.promptTemplate || '';
+                    document.getElementById('targetAgentRole').value = cap.targetAgentRole || '';
+                    document.getElementById('category').value = cap.category || '';
+                    document.getElementById('priority').value = cap.priority || 5;
+                    document.getElementById('requiresApproval').checked = cap.requiresApproval;
+                    document.getElementById('approvalType').value = cap.approvalType || '';
+
+                    toggleExecutionTypeFields();
+                    initSkillSelector(cap.relatedSkillIds || '');
+                    new bootstrap.Modal(document.getElementById('capabilityModal')).show();
+                });
+        }
+
+        // ===== 技能树形选择器 =====
+
+        let allSkillsCache = [];
+        let selectedSkillIds = new Set();
+
+        // 加载技能树
+        async function loadSkillTree() {
+            const treeContainer = document.getElementById('skillTree');
+            const loadingEl = document.getElementById('skillTreeLoading');
+
+            try {
+                const response = await fetch('/skills/api/all');
+                const skills = await response.json();
+                allSkillsCache = skills || [];
+
+                if (allSkillsCache.length === 0) {
+                    loadingEl.innerHTML = '<span class="text-muted">暂无可用技能</span>';
+                    return;
+                }
+
+                // 按分类分组
+                const grouped = {};
+                allSkillsCache.forEach(skill => {
+                    const cat = skill.category || '未分类';
+                    if (!grouped[cat]) grouped[cat] = [];
+                    grouped[cat].push(skill);
+                });
+
+                // 分类中文映射
+                const catLabels = {
+                    'builtin': '内置技能',
+                    'learned': '学习习得',
+                    'project': '项目技能',
+                    'custom': '自定义',
+                    '未分类': '未分类'
+                };
+
+                // 构建树形 HTML
+                let html = '';
+                Object.entries(grouped).forEach(([cat, skills], idx) => {
+                    const catId = `skillCat_${idx}`;
+                    const catLabel = catLabels[cat] || cat;
+                    const catIcon = cat === 'builtin' ? 'bi-gear' :
+                                   cat === 'learned' ? 'bi-lightbulb' :
+                                   cat === 'project' ? 'bi-folder' : 'bi-book';
+
+                    html += `
+                        <div class="skill-category mb-2">
+                            <div class="d-flex align-items-center py-1 px-2 rounded cursor-pointer"
+                                 style="cursor: pointer; background: #e9ecef;"
+                                 onclick="toggleSkillCategory('${catId}')">
+                                <i class="bi bi-chevron-right me-2 category-arrow" id="arrow_${catId}" style="font-size: 0.7rem; transition: transform 0.2s;"></i>
+                                <i class="bi ${catIcon} me-2 text-primary"></i>
+                                <strong class="small">${catLabel}</strong>
+                                <span class="badge bg-secondary ms-2" style="font-size: 0.65rem;">${skills.length}</span>
+                            </div>
+                            <div class="collapse ps-4 mt-1" id="${catId}">
+                    `;
+
+                    skills.forEach(skill => {
+                        const checked = selectedSkillIds.has(skill.id) ? 'checked' : '';
+                        html += `
+                            <div class="form-check py-1">
+                                <input class="form-check-input skill-checkbox" type="checkbox"
+                                       value="${skill.id}" id="skill_${skill.id}"
+                                       ${checked}
+                                       onchange="onSkillCheckboxChange()">
+                                <label class="form-check-label small" for="skill_${skill.id}">
+                                    ${skill.name || skill.id}
+                                    ${skill.description ? `<br><span class="text-muted" style="font-size: 0.7rem;">${skill.description.substring(0, 50)}${skill.description.length > 50 ? '...' : ''}</span>` : ''}
+                                </label>
+                            </div>
+                        `;
+                    });
+
+                    html += `
+                            </div>
+                        </div>
+                    `;
+                });
+
+                treeContainer.innerHTML = html;
+                treeContainer.style.display = 'block';
+                loadingEl.style.display = 'none';
+
+            } catch (e) {
+                console.error('Failed to load skill tree:', e);
+                loadingEl.innerHTML = '<span class="text-danger">加载失败</span>';
+            }
+        }
+
+        // 展开/折叠分类
+        function toggleSkillCategory(catId) {
+            const el = document.getElementById(catId);
+            const arrow = document.getElementById('arrow_' + catId);
+            if (el.classList.contains('show')) {
+                el.classList.remove('show');
+                arrow.style.transform = 'rotate(0deg)';
+            } else {
+                el.classList.add('show');
+                arrow.style.transform = 'rotate(90deg)';
+            }
+        }
+
+        // 复选框变化
+        function onSkillCheckboxChange() {
+            selectedSkillIds.clear();
+            document.querySelectorAll('.skill-checkbox:checked').forEach(cb => {
+                selectedSkillIds.add(cb.value);
+            });
+            updateSelectedBadges();
+            document.getElementById('relatedSkillIds').value = Array.from(selectedSkillIds).join(',');
+        }
+
+        // 更新已选技能标签
+        function updateSelectedBadges() {
+            const container = document.getElementById('selectedSkillsBadges');
+            if (selectedSkillIds.size === 0) {
+                container.innerHTML = '<span class="text-muted small">未选择任何技能</span>';
+                return;
+            }
+
+            const badges = Array.from(selectedSkillIds).map(id => {
+                const skill = allSkillsCache.find(s => s.id === id);
+                const name = skill ? (skill.name || id) : id;
+                return `<span class="badge bg-primary me-1 mb-1">
+                    ${name}
+                    <i class="bi bi-x ms-1" style="cursor: pointer;" onclick="removeSkillSelection('${id}')"></i>
+                </span>`;
+            }).join('');
+
+            container.innerHTML = badges;
+        }
+
+        // 移除技能选择
+        function removeSkillSelection(skillId) {
+            selectedSkillIds.delete(skillId);
+            const cb = document.getElementById('skill_' + skillId);
+            if (cb) cb.checked = false;
+            onSkillCheckboxChange();
+        }
+
+        // 初始化技能选择器（编辑时调用）
+        function initSkillSelector(relatedSkillIdsStr) {
+            selectedSkillIds.clear();
+            if (relatedSkillIdsStr) {
+                relatedSkillIdsStr.split(',').forEach(id => {
+                    id = id.trim();
+                    if (id) selectedSkillIds.add(id);
+                });
+            }
+            document.getElementById('relatedSkillIds').value = relatedSkillIdsStr || '';
+            loadSkillTree().then(() => {
+                // 同步复选框状态
+                selectedSkillIds.forEach(id => {
+                    const cb = document.getElementById('skill_' + id);
+                    if (cb) cb.checked = true;
+                });
+                updateSelectedBadges();
+            });
+        }
+
+        function toggleExecutionTypeFields() {
+            const type = document.getElementById('executionType').value;
+            document.getElementById('promptTemplateGroup').style.display = type === 'prompt' ? 'block' : 'none';
+            document.getElementById('targetAgentRoleGroup').style.display = type === 'message' ? 'block' : 'none';
+        }
+
+        async function saveCapability() {
+            const id = document.getElementById('capabilityId').value;
+            const data = {
+                capabilityName: document.getElementById('capabilityName').value,
+                displayName: document.getElementById('displayName').value,
+                agentRole: document.getElementById('agentRole').value,
+                executionType: document.getElementById('executionType').value,
+                description: document.getElementById('description').value,
+                paramSchema: document.getElementById('paramSchema').value,
+                promptTemplate: document.getElementById('promptTemplate').value,
+                targetAgentRole: document.getElementById('targetAgentRole').value,
+                category: document.getElementById('category').value,
+                priority: parseInt(document.getElementById('priority').value) || 5,
+                requiresApproval: document.getElementById('requiresApproval').checked,
+                approvalType: document.getElementById('approvalType').value,
+                relatedSkillIds: document.getElementById('relatedSkillIds').value,
+                enabled: true
+            };
+
+            try {
+                const url = id ? `/capabilities/api/${id}/update` : '/capabilities/api/create';
+                const method = id ? 'PUT' : 'POST';
+                const response = await fetch(url, {
+                    method: method,
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+                const result = await response.json();
+                bootstrap.Modal.getInstance(document.getElementById('capabilityModal')).hide();
+                loadCapabilities();
+            } catch (e) {
+                alert('保存失败: ' + e.message);
+            }
+        }
+    </script>
+
+    <!-- 能力编辑弹窗 -->
+    <div class="modal fade" id="capabilityModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="capabilityModalTitle">新增能力</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="capabilityForm">
+                        <input type="hidden" id="capabilityId">
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <label class="form-label">能力名称 *</label>
+                                <input type="text" class="form-control" id="capabilityName" required placeholder="如: viewUIDesign">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">显示名称</label>
+                                <input type="text" class="form-control" id="displayName" placeholder="如: 查看 UI 设计">
+                            </div>
+                        </div>
+                        <div class="row mb-3">
+                            <div class="col-md-4">
+                                <label class="form-label">角色 *</label>
+                                <select class="form-select" id="agentRole" required>
+                                    <option value="producer">producer</option>
+                                    <option value="server-dev">server-dev</option>
+                                    <option value="system-planner">system-planner</option>
+                                    <option value="numerical-planner">numerical-planner</option>
+                                    <option value="git-commit">git-commit</option>
+                                    <option value="ui-dev">ui-dev</option>
+                                </select>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">执行方式</label>
+                                <select class="form-select" id="executionType" onchange="toggleExecutionTypeFields()">
+                                    <option value="java">Java 执行器</option>
+                                    <option value="prompt">Prompt 模板（纯 AI）</option>
+                                    <option value="message">消息发送</option>
+                                </select>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">分类</label>
+                                <select class="form-select" id="category">
+                                    <option value="task">任务</option>
+                                    <option value="communication">通信</option>
+                                    <option value="monitoring">监控</option>
+                                    <option value="agent_management">Agent 管理</option>
+                                    <option value="api_config">API 配置</option>
+                                    <option value="project">项目</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">描述</label>
+                            <textarea class="form-control" id="description" rows="2" placeholder="能力描述（会注入到 AI prompt 中）"></textarea>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">参数 Schema (JSON)</label>
+                            <textarea class="form-control" id="paramSchema" rows="2" placeholder='如: {"name":"string|required","role":"enum:server-dev,client-dev|required"}'></textarea>
+                        </div>
+                        <div class="mb-3" id="promptTemplateGroup" style="display:none">
+                            <label class="form-label">Prompt 模板</label>
+                            <textarea class="form-control" id="promptTemplate" rows="4" placeholder="支持 {paramName} 占位符&#10;如: 请为系统 {systemName} 创建 UI 设计方案，需求：{requirements}"></textarea>
+                        </div>
+                        <div class="mb-3" id="targetAgentRoleGroup" style="display:none">
+                            <label class="form-label">目标 Agent 角色</label>
+                            <input type="text" class="form-control" id="targetAgentRole" placeholder="如: ui-dev">
+                        </div>
+                        <div class="row mb-3">
+                            <div class="col-md-4">
+                                <label class="form-label">优先级</label>
+                                <input type="number" class="form-control" id="priority" value="5" min="1" max="100">
+                            </div>
+                            <div class="col-md-4">
+                                <div class="form-check mt-4">
+                                    <input class="form-check-input" type="checkbox" id="requiresApproval">
+                                    <label class="form-check-label">需要审批</label>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">审批类型</label>
+                                <input type="text" class="form-control" id="approvalType" placeholder="如: CREATE_AGENT">
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">关联技能</label>
+                            <div class="form-text mb-2">选择执行能力时 AI 自动参考的技能知识。关联后，AI 执行该能力时会自动注入这些技能的 prompt。</div>
+
+                            <!-- 已选技能标签 -->
+                            <div id="selectedSkillsBadges" class="mb-2" style="min-height: 32px;">
+                                <span class="text-muted small">未选择任何技能</span>
+                            </div>
+
+                            <!-- 树形选择器 -->
+                            <div class="skill-tree-container p-2">
+                                <div id="skillTreeLoading" class="text-center text-muted py-3">
+                                    <div class="spinner-border spinner-border-sm me-2"></div>加载技能列表...
+                                </div>
+                                <div id="skillTree" style="display: none;"></div>
+                            </div>
+
+                            <!-- 隐藏字段存储选中的技能 ID -->
+                            <input type="hidden" id="relatedSkillIds">
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" onclick="saveCapability()">保存</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+</body>
+</html>

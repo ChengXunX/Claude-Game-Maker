@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security"
+      th:replace="~{layout :: main-content(~{::title}, ~{::section})}">
+<head>
+    <title>权限申请 - ChengXun Game Maker</title>
+</head>
+<body>
+<section>
+    <div class="container-fluid">
+        <h2 class="mb-4"><i class="bi bi-shield-lock"></i> 权限申请</h2>
+
+        <div class="row">
+            <!-- 申请表单 -->
+            <div class="col-md-6">
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0">申请新权限</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label class="form-label">选择权限</label>
+                            <select class="form-select" id="permissionSelect" onchange="onPermissionSelect()">
+                                <option value="">-- 请选择要申请的权限 --</option>
+                                <th:block th:each="entry : ${availablePermissions}">
+                                    <option th:if="${!userPermissions.contains(entry.key)}"
+                                            th:value="${entry.key}"
+                                            th:text="${entry.value + ' (' + entry.key + ')'}">
+                                    </option>
+                                </th:block>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">申请原因</label>
+                            <textarea class="form-control" id="reason" rows="3"
+                                      placeholder="请说明申请该权限的原因和使用场景"></textarea>
+                        </div>
+                        <button class="btn btn-primary" onclick="submitRequest()">
+                            <i class="bi bi-send"></i> 提交申请
+                        </button>
+                        <div id="requestResult" class="mt-3"></div>
+                    </div>
+                </div>
+
+                <!-- 我的当前权限 -->
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">我的额外权限</h5>
+                    </div>
+                    <div class="card-body">
+                        <th:block th:if="${#lists.isEmpty(userPermissions)}">
+                            <p class="text-muted">暂无额外权限</p>
+                        </th:block>
+                        <th:block th:unless="${#lists.isEmpty(userPermissions)}">
+                            <th:block th:each="perm : ${userPermissions}">
+                                <span class="badge bg-success me-1 mb-1" th:text="${perm}"></span>
+                            </th:block>
+                        </th:block>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 申请历史 -->
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">我的申请记录</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-sm">
+                                <thead>
+                                    <tr>
+                                        <th>权限</th>
+                                        <th>原因</th>
+                                        <th>状态</th>
+                                        <th>时间</th>
+                                        <th>操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr th:each="req : ${pendingRequests.content}">
+                                        <td><code th:text="${req.permission}">-</code></td>
+                                        <td><small th:text="${req.reason}">-</small></td>
+                                        <td>
+                                            <span th:if="${req.status.name() == 'PENDING'}" class="badge bg-warning">待审批</span>
+                                            <span th:if="${req.status.name() == 'APPROVED'}" class="badge bg-success">已批准</span>
+                                            <span th:if="${req.status.name() == 'REJECTED'}" class="badge bg-danger">已拒绝</span>
+                                            <span th:if="${req.status.name() == 'CANCELLED'}" class="badge bg-secondary">已取消</span>
+                                        </td>
+                                        <td><small th:text="${#temporals.format(req.createdAt, 'MM-dd HH:mm')}">-</small></td>
+                                        <td>
+                                            <button th:if="${req.status.name() == 'PENDING'}"
+                                                    class="btn btn-sm btn-outline-danger"
+                                                    th:onclick="'cancelRequest(' + ${req.id} + ')'">取消</button>
+                                            <span th:if="${req.status.name() == 'REJECTED' and req.approvalComment != null}"
+                                                  class="text-danger small" th:text="'原因: ' + ${req.approvalComment}"></span>
+                                        </td>
+                                    </tr>
+                                    <tr th:if="${#lists.isEmpty(pendingRequests.content)}">
+                                        <td colspan="5" class="text-center text-muted">暂无申请记录</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        async function submitRequest() {
+            const permission = document.getElementById('permissionSelect').value;
+            const reason = document.getElementById('reason').value;
+
+            if (!permission) {
+                document.getElementById('requestResult').innerHTML =
+                    '<div class="alert alert-warning">请选择要申请的权限</div>';
+                return;
+            }
+
+            try {
+                const response = await fetch('/permissions/api/request', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ permission, reason })
+                });
+                const result = await response.json();
+
+                if (result.success) {
+                    document.getElementById('requestResult').innerHTML =
+                        '<div class="alert alert-success">' + result.message + '</div>';
+                    setTimeout(() => location.reload(), 1500);
+                } else {
+                    document.getElementById('requestResult').innerHTML =
+                        '<div class="alert alert-danger">' + (result.error || '提交失败') + '</div>';
+                }
+            } catch (e) {
+                document.getElementById('requestResult').innerHTML =
+                    '<div class="alert alert-danger">请求失败: ' + e.message + '</div>';
+            }
+        }
+
+        async function cancelRequest(id) {
+            if (!confirm('确定要取消此申请吗？')) return;
+
+            try {
+                const response = await fetch(`/permissions/api/request/${id}/cancel`, { method: 'POST' });
+                const result = await response.json();
+                if (result.success) {
+                    location.reload();
+                } else {
+                    alert(result.error || '取消失败');
+                }
+            } catch (e) {
+                alert('请求失败: ' + e.message);
+            }
+        }
+    </script>
+</section>
+</body>
+</html>

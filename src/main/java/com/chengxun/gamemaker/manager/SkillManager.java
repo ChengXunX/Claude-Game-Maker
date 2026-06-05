@@ -11,7 +11,13 @@ import jakarta.annotation.PostConstruct;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
@@ -22,7 +28,7 @@ public class SkillManager {
 
     private final AppConfig appConfig;
     private final ObjectMapper objectMapper = new ObjectMapper();
-    private final Map<String, Skill> globalSkills = new LinkedHashMap<>();
+    private final Map<String, Skill> globalSkills = new ConcurrentHashMap<>();
     private final Map<String, Map<String, Skill>> projectSkills = new ConcurrentHashMap<>();
 
     public SkillManager(AppConfig appConfig) {
@@ -32,6 +38,7 @@ public class SkillManager {
     @PostConstruct
     public void init() {
         loadBuiltinSkills();
+        loadCustomGlobalSkills();
     }
 
     private void loadBuiltinSkills() {
@@ -119,6 +126,65 @@ public class SkillManager {
         return new ArrayList<>(globalSkills.values());
     }
 
+    public void removeGlobalSkill(String skillId) {
+        globalSkills.remove(skillId);
+        log.info("Global skill removed: {}", skillId);
+    }
+
+    public void saveGlobalSkillToFile(Skill skill) {
+        String skillDir = appConfig.getDataDir() + "/skills";
+        try {
+            Path dir = Path.of(skillDir);
+            Files.createDirectories(dir);
+
+            String examplesStr = skill.getExamples() != null ? String.join(" | ", skill.getExamples()) : "";
+            String content = String.format("---\nname: %s\ndescription: %s\ntrigger: %s\nexamples: %s\n---\n\n%s",
+                skill.getName(), skill.getDescription(), skill.getTriggerPattern(), examplesStr, skill.getPrompt());
+
+            Path skillPath = dir.resolve(skill.getId() + ".md");
+            Files.writeString(skillPath, content);
+            log.info("Global skill saved to file: {}", skillPath);
+        } catch (IOException e) {
+            log.error("Failed to save global skill to file: {}", skill.getId(), e);
+        }
+    }
+
+    public void deleteGlobalSkillFile(String skillId) {
+        String skillDir = appConfig.getDataDir() + "/skills";
+        try {
+            Path skillPath = Path.of(skillDir, skillId + ".md");
+            if (Files.exists(skillPath)) {
+                Files.delete(skillPath);
+                log.info("Global skill file deleted: {}", skillPath);
+            }
+        } catch (IOException e) {
+            log.error("Failed to delete global skill file: {}", skillId, e);
+        }
+    }
+
+    public void loadCustomGlobalSkills() {
+        String skillDir = appConfig.getDataDir() + "/skills";
+        Path dir = Path.of(skillDir);
+        if (!Files.exists(dir)) {
+            return;
+        }
+
+        try {
+            Files.list(dir)
+                .filter(p -> p.toString().endsWith(".md"))
+                .forEach(path -> {
+                    Skill skill = loadSkillFromPath(path);
+                    if (skill != null) {
+                        skill.setCategory("custom");
+                        globalSkills.put(skill.getId(), skill);
+                    }
+                });
+            log.info("Loaded custom global skills from: {}", skillDir);
+        } catch (IOException e) {
+            log.error("Failed to load custom global skills", e);
+        }
+    }
+
     // ===== 项目级别 SKILL 操作 =====
 
     public void loadProjectSkills(String projectId, String projectSkillsDir) {
@@ -183,6 +249,15 @@ public class SkillManager {
         return projectSkills.getOrDefault(projectId, new LinkedHashMap<>());
     }
 
+    /**
+     * 获取所有项目的技能映射
+     *
+     * @return 所有项目技能的映射，key为项目ID
+     */
+    public Map<String, Map<String, Skill>> getAllProjectSkills() {
+        return projectSkills;
+    }
+
     // ===== SKILL 匹配和查询 =====
 
     public List<Skill> matchSkills(String taskDescription, String projectId) {
@@ -221,9 +296,11 @@ public class SkillManager {
         List<Skill> all = new ArrayList<>();
 
         // 项目级别 SKILL
-        Map<String, Skill> projSkills = projectSkills.get(projectId);
-        if (projSkills != null) {
-            all.addAll(projSkills.values());
+        if (projectId != null && !projectId.isEmpty()) {
+            Map<String, Skill> projSkills = projectSkills.get(projectId);
+            if (projSkills != null) {
+                all.addAll(projSkills.values());
+            }
         }
 
         // 全局 SKILL

@@ -8,18 +8,43 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
     <link th:href="@{/css/custom.css}" rel="stylesheet">
+    <!-- 立即应用主题到html元素，避免页面闪烁 -->
+    <script>
+        (function() {
+            const theme = localStorage.getItem('theme') || 'dark';
+            document.documentElement.setAttribute('data-theme', theme);
+        })();
+    </script>
 </head>
-<body class="bg-dark text-light">
+<body id="page-body">
     <!-- Navbar -->
-    <nav class="navbar navbar-expand-lg navbar-dark bg-black border-bottom border-secondary">
+    <nav class="navbar navbar-expand-lg border-bottom" style="background-color: var(--bg-navbar); border-color: var(--border-color) !important;">
         <div class="container-fluid">
             <a class="navbar-brand" th:href="@{/}">
                 <i class="bi bi-controller"></i> ChengXun Game Maker
             </a>
-            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
-                <span class="navbar-toggler-icon"></span>
-            </button>
+            <!-- 移动端右侧按钮组 -->
+            <div class="d-flex d-lg-none align-items-center">
+                <button class="theme-toggle btn btn-link nav-link me-2" onclick="toggleTheme()" title="切换主题">
+                    <i class="bi bi-moon-stars-fill" id="theme-icon-mobile"></i>
+                </button>
+                <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                    <span class="navbar-toggler-icon"></span>
+                </button>
+            </div>
             <div class="collapse navbar-collapse" id="navbarNav">
+                <!-- 搜索框 - 移动端显示在顶部 -->
+                <div class="d-lg-none mb-3 mt-2">
+                    <form th:action="@{/search}" method="get">
+                        <div class="input-group input-group-sm">
+                            <input type="text" class="form-control bg-dark text-light border-secondary"
+                                   name="q" placeholder="搜索...">
+                            <button class="btn btn-outline-secondary" type="submit">
+                                <i class="bi bi-search"></i>
+                            </button>
+                        </div>
+                    </form>
+                </div>
                 <ul class="navbar-nav me-auto">
                     <li class="nav-item">
                         <a class="nav-link" th:href="@{/}">
@@ -32,8 +57,123 @@
                         </a>
                     </li>
                     <li class="nav-item">
+                        <a class="nav-link" th:href="@{/recruitment}">
+                            <i class="bi bi-person-plus"></i> 招聘
+                        </a>
+                    </li>
+                    <li class="nav-item" sec:authorize="hasAuthority('PERM_admin:manage')">
+                        <a class="nav-link" th:href="@{/recruitment-approval}">
+                            <i class="bi bi-person-check"></i> 招聘审批
+                        </a>
+                    </li>
+                    <li class="nav-item">
                         <a class="nav-link" th:href="@{/projects}">
                             <i class="bi bi-folder"></i> 项目
+                        </a>
+                    </li>
+                    <li class="nav-item" sec:authorize="hasAnyAuthority('PERM_skills:view', 'PERM_skills:manage', 'PERM_admin:manage')">
+                        <a class="nav-link" th:href="@{/skills}">
+                            <i class="bi bi-lightning"></i> 技能
+                        </a>
+                    </li>
+                    <li class="nav-item" sec:authorize="hasAnyAuthority('PERM_agents:manage', 'PERM_admin:manage')">
+                        <a class="nav-link" th:href="@{/capabilities}">
+                            <i class="bi bi-puzzle"></i> 能力管理
+                        </a>
+                    </li>
+                    <li class="nav-item" sec:authorize="hasAnyAuthority('PERM_agents:manage', 'PERM_admin:manage')">
+                        <a class="nav-link" th:href="@{/mcp}">
+                            <i class="bi bi-plug"></i> MCP 管理
+                        </a>
+                    </li>
+                    <li class="nav-item" sec:authorize="hasAnyAuthority('PERM_agents:view', 'PERM_agents:manage', 'PERM_admin:manage')">
+                        <a class="nav-link" th:href="@{/files}">
+                            <i class="bi bi-folder2-open"></i> 文件管理
+                        </a>
+                    </li>
+                    <li class="nav-item" sec:authorize="hasAuthority('PERM_admin:manage')">
+                        <a class="nav-link" th:href="@{/constants}">
+                            <i class="bi bi-sliders"></i> 系统常量
+                        </a>
+                    </li>
+                    <li class="nav-item" sec:authorize="hasAnyAuthority('PERM_agents:manage', 'PERM_system:monitor', 'PERM_admin:manage')">
+                        <a class="nav-link" th:href="@{/context-health}">
+                            <i class="bi bi-heart-pulse"></i> 上下文监控
+                        </a>
+                    </li>
+                    <li class="nav-item" sec:authorize="hasAnyAuthority('PERM_logs:view', 'PERM_admin:manage')">
+                        <a class="nav-link" th:href="@{/admin/agent-logs}">
+                            <i class="bi bi-journal-text"></i> Agent日志
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/tokens}">
+                            <i class="bi bi-key"></i> Token 管理
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/monitor}">
+                            <i class="bi bi-graph-up"></i> 监控
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/ai-assistant}">
+                            <i class="bi bi-robot"></i> AI助手
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/performance}">
+                            <i class="bi bi-trophy"></i> 能力评估
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/performance-management}">
+                            <i class="bi bi-clipboard-data"></i> 绩效管理
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/agent-intervention}">
+                            <i class="bi bi-hand-index-thumb"></i> 干预中心
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/alerts}">
+                            <i class="bi bi-bell"></i> 告警中心
+                        </a>
+                    </li>
+                    <li class="nav-item" sec:authorize="hasAuthority('PERM_notification:view')">
+                        <a class="nav-link" th:href="@{/notification-templates}">
+                            <i class="bi bi-envelope-paper"></i> 通知模板
+                        </a>
+                    </li>
+                    <li class="nav-item" sec:authorize="hasAuthority('PERM_system:manage')">
+                        <a class="nav-link" th:href="@{/dingtalk/config}">
+                            <i class="bi bi-robot"></i> 钉钉配置
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/resources}">
+                            <i class="bi bi-cpu"></i> 资源统计
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/api-docs}">
+                            <i class="bi bi-filetype-json"></i> API文档
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/reviews}">
+                            <i class="bi bi-check2-square"></i> 代码审查
+                        </a>
+                    </li>
+                    <li class="nav-item" sec:authorize="hasAuthority('PERM_pipeline:view')">
+                        <a class="nav-link" th:href="@{/pipelines}">
+                            <i class="bi bi-gear-wide-connected"></i> CICD流水线
+                        </a>
+                    </li>
+                    <li class="nav-item" sec:authorize="hasAuthority('PERM_system:monitor')">
+                        <a class="nav-link" th:href="@{/monitoring}">
+                            <i class="bi bi-graph-up"></i> 监控中心
                         </a>
                     </li>
                     <li class="nav-item" sec:authorize="hasRole('ADMIN')">
@@ -41,13 +181,93 @@
                             <i class="bi bi-people"></i> 用户管理
                         </a>
                     </li>
+                    <li class="nav-item" sec:authorize="hasAuthority('PERM_roles:manage')">
+                        <a class="nav-link" th:href="@{/roles}">
+                            <i class="bi bi-shield-lock"></i> 角色管理
+                        </a>
+                    </li>
+                    <li class="nav-item" sec:authorize="hasAuthority('PERM_admin:manage')">
+                        <a class="nav-link" th:href="@{/permissions/admin}">
+                            <i class="bi bi-shield-check"></i> 权限审批
+                        </a>
+                    </li>
+                    <li class="nav-item" sec:authorize="hasAuthority('PERM_admin:manage')">
+                        <a class="nav-link" th:href="@{/permissions/admin/definitions}">
+                            <i class="bi bi-shield-lock"></i> 权限定义
+                        </a>
+                    </li>
+                    <li class="nav-item" sec:authorize="isAuthenticated()">
+                        <a class="nav-link" th:href="@{/permissions/request}">
+                            <i class="bi bi-key"></i> 权限申请
+                        </a>
+                    </li>
+                    <!-- 移动端显示用户菜单 -->
+                    <li class="nav-item d-lg-none">
+                        <hr class="dropdown-divider border-secondary my-2">
+                    </li>
+                    <li class="nav-item d-lg-none">
+                        <a class="nav-link" th:href="@{/profile}">
+                            <i class="bi bi-person"></i> 个人中心
+                        </a>
+                    </li>
+                    <li class="nav-item d-lg-none">
+                        <a class="nav-link" th:href="@{/devices}">
+                            <i class="bi bi-laptop"></i> 设备管理
+                        </a>
+                    </li>
+                    <li class="nav-item d-lg-none">
+                        <form th:action="@{/logout}" method="post">
+                            <button class="nav-link btn btn-link w-100 text-start" type="submit">
+                                <i class="bi bi-box-arrow-right"></i> 退出登录
+                            </button>
+                        </form>
+                    </li>
                 </ul>
-                <ul class="navbar-nav">
+                <ul class="navbar-nav align-items-center d-none d-lg-flex">
+                    <!-- 搜索框 - 桌面端 -->
+                    <li class="nav-item me-2">
+                        <form class="d-flex" th:action="@{/search}" method="get">
+                            <div class="input-group input-group-sm">
+                                <input type="text" class="form-control bg-dark text-light border-secondary"
+                                       name="q" placeholder="搜索..." style="width: 200px;">
+                                <button class="btn btn-outline-secondary" type="submit">
+                                    <i class="bi bi-search"></i>
+                                </button>
+                            </div>
+                        </form>
+                    </li>
+                    <!-- 主题切换按钮 -->
+                    <li class="nav-item me-2">
+                        <button class="theme-toggle btn btn-link nav-link" onclick="toggleTheme()" title="切换主题">
+                            <i class="bi bi-moon-stars-fill" id="theme-icon"></i>
+                        </button>
+                    </li>
                     <li class="nav-item dropdown">
                         <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
                             <i class="bi bi-person-circle"></i> <span th:text="${username}">User</span>
                         </a>
                         <ul class="dropdown-menu dropdown-menu-end dropdown-menu-dark">
+                            <li>
+                                <a class="dropdown-item" th:href="@{/profile}">
+                                    <i class="bi bi-person"></i> 个人中心
+                                </a>
+                            </li>
+                            <li>
+                                <a class="dropdown-item" th:href="@{/devices}">
+                                    <i class="bi bi-laptop"></i> 设备管理
+                                </a>
+                            </li>
+                            <li>
+                                <a class="dropdown-item" th:href="@{/notification-preferences}">
+                                    <i class="bi bi-bell"></i> 通知设置
+                                </a>
+                            </li>
+                            <li>
+                                <a class="dropdown-item" th:href="@{/permissions/request}">
+                                    <i class="bi bi-key"></i> 权限申请
+                                </a>
+                            </li>
+                            <li><hr class="dropdown-divider"></li>
                             <li>
                                 <form th:action="@{/logout}" method="post">
                                     <button class="dropdown-item" type="submit">
@@ -79,6 +299,10 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script th:src="@{/js/security.js}"></script>
     <script th:src="@{/js/app.js}"></script>
+
+    <!-- 新手引导 -->
+    <div th:replace="~{components/tour-guide :: guide}"></div>
 </body>
 </html>

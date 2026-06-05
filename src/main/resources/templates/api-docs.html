@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>API文档 - ChengXun Game Maker</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <link th:href="@{/css/custom.css}" rel="stylesheet">
+    <style>
+        .api-card {
+            background: linear-gradient(135deg, var(--bg-card) 0%, var(--bg-secondary) 100%);
+            border: 1px solid var(--border-color);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .api-card:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 6px 15px var(--shadow-color);
+        }
+    </style>
+</head>
+<body class="bg-dark text-light">
+    <div class="container-fluid mt-4">
+        <!-- 页面标题 -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h2><i class="bi bi-filetype-json"></i> API文档</h2>
+                        <p class="text-muted mb-0">系统API接口文档和测试工具</p>
+                    </div>
+                    <div>
+                        <a href="/swagger-ui.html" target="_blank" class="btn btn-primary">
+                            <i class="bi bi-box-arrow-up-right"></i> 打开Swagger UI
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- API概览 -->
+        <div class="row mb-4">
+            <div class="col-md-3">
+                <div class="card api-card">
+                    <div class="card-body text-center">
+                        <i class="bi bi-robot fs-1 text-primary"></i>
+                        <h5 class="mt-2">Agent API</h5>
+                        <p class="text-muted">Agent管理和监控</p>
+                        <a href="/swagger-ui.html#/Agent" target="_blank" class="btn btn-outline-primary btn-sm">
+                            查看文档
+                        </a>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card api-card">
+                    <div class="card-body text-center">
+                        <i class="bi bi-folder fs-1 text-success"></i>
+                        <h5 class="mt-2">Project API</h5>
+                        <p class="text-muted">项目管理</p>
+                        <a href="/swagger-ui.html#/Project" target="_blank" class="btn btn-outline-success btn-sm">
+                            查看文档
+                        </a>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card api-card">
+                    <div class="card-body text-center">
+                        <i class="bi bi-bell fs-1 text-warning"></i>
+                        <h5 class="mt-2">Alert API</h5>
+                        <p class="text-muted">告警管理</p>
+                        <a href="/swagger-ui.html#/Alert" target="_blank" class="btn btn-outline-warning btn-sm">
+                            查看文档
+                        </a>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card api-card">
+                    <div class="card-body text-center">
+                        <i class="bi bi-graph-up fs-1 text-info"></i>
+                        <h5 class="mt-2">Performance API</h5>
+                        <p class="text-muted">性能监控</p>
+                        <a href="/swagger-ui.html#/Performance" target="_blank" class="btn btn-outline-info btn-sm">
+                            查看文档
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- API分类 -->
+        <div class="row">
+            <div class="col-lg-8">
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-list"></i> API分类</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="accordion" id="apiAccordion">
+                            <!-- Agent API -->
+                            <div class="accordion-item">
+                                <h2 class="accordion-header">
+                                    <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#agentApi">
+                                        <i class="bi bi-robot me-2"></i> Agent API
+                                    </button>
+                                </h2>
+                                <div id="agentApi" class="accordion-collapse collapse show" data-bs-parent="#apiAccordion">
+                                    <div class="accordion-body">
+                                        <ul class="list-unstyled">
+                                            <li class="mb-2">
+                                                <code class="method-get">GET</code>
+                                                <code>/agents</code>
+                                                <span class="text-muted">- 获取所有Agent</span>
+                                            </li>
+                                            <li class="mb-2">
+                                                <code class="method-get">GET</code>
+                                                <code>/agents/{id}</code>
+                                                <span class="text-muted">- 获取Agent详情</span>
+                                            </li>
+                                            <li class="mb-2">
+                                                <code class="method-post">POST</code>
+                                                <code>/agents</code>
+                                                <span class="text-muted">- 创建Agent</span>
+                                            </li>
+                                            <li class="mb-2">
+                                                <code class="method-put">PUT</code>
+                                                <code>/agents/{id}</code>
+                                                <span class="text-muted">- 更新Agent</span>
+                                            </li>
+                                            <li class="mb-2">
+                                                <code class="method-delete">DELETE</code>
+                                                <code>/agents/{id}</code>
+                                                <span class="text-muted">- 删除Agent</span>
+                                            </li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Performance API -->
+                            <div class="accordion-item">
+                                <h2 class="accordion-header">
+                                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#perfApi">
+                                        <i class="bi bi-graph-up me-2"></i> Performance API
+                                    </button>
+                                </h2>
+                                <div id="perfApi" class="accordion-collapse collapse" data-bs-parent="#apiAccordion">
+                                    <div class="accordion-body">
+                                        <ul class="list-unstyled">
+                                            <li class="mb-2">
+                                                <code class="method-get">GET</code>
+                                                <code>/performance/api/all</code>
+                                                <span class="text-muted">- 获取所有性能数据</span>
+                                            </li>
+                                            <li class="mb-2">
+                                                <code class="method-get">GET</code>
+                                                <code>/performance/api/summary</code>
+                                                <span class="text-muted">- 获取统计摘要</span>
+                                            </li>
+                                            <li class="mb-2">
+                                                <code class="method-post">POST</code>
+                                                <code>/performance/api/record/completion</code>
+                                                <span class="text-muted">- 记录任务完成</span>
+                                            </li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Alert API -->
+                            <div class="accordion-item">
+                                <h2 class="accordion-header">
+                                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#alertApi">
+                                        <i class="bi bi-bell me-2"></i> Alert API
+                                    </button>
+                                </h2>
+                                <div id="alertApi" class="accordion-collapse collapse" data-bs-parent="#apiAccordion">
+                                    <div class="accordion-body">
+                                        <ul class="list-unstyled">
+                                            <li class="mb-2">
+                                                <code class="method-get">GET</code>
+                                                <code>/alerts/api/statistics</code>
+                                                <span class="text-muted">- 获取告警统计</span>
+                                            </li>
+                                            <li class="mb-2">
+                                                <code class="method-get">GET</code>
+                                                <code>/alerts/api/pending</code>
+                                                <span class="text-muted">- 获取待处理告警</span>
+                                            </li>
+                                            <li class="mb-2">
+                                                <code class="method-post">POST</code>
+                                                <code>/alerts/api/{id}/acknowledge</code>
+                                                <span class="text-muted">- 确认告警</span>
+                                            </li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Resource API -->
+                            <div class="accordion-item">
+                                <h2 class="accordion-header">
+                                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#resourceApi">
+                                        <i class="bi bi-cpu me-2"></i> Resource API
+                                    </button>
+                                </h2>
+                                <div id="resourceApi" class="accordion-collapse collapse" data-bs-parent="#apiAccordion">
+                                    <div class="accordion-body">
+                                        <ul class="list-unstyled">
+                                            <li class="mb-2">
+                                                <code class="method-get">GET</code>
+                                                <code>/resources/api/today</code>
+                                                <span class="text-muted">- 获取今日统计</span>
+                                            </li>
+                                            <li class="mb-2">
+                                                <code class="method-get">GET</code>
+                                                <code>/resources/api/monthly-stats</code>
+                                                <span class="text-muted">- 获取月度统计</span>
+                                            </li>
+                                            <li class="mb-2">
+                                                <code class="method-get">GET</code>
+                                                <code>/resources/api/agents</code>
+                                                <span class="text-muted">- 获取Agent排名</span>
+                                            </li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 右侧：快速链接和说明 -->
+            <div class="col-lg-4">
+                <!-- 快速链接 -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-link-45deg"></i> 快速链接</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="d-grid gap-2">
+                            <a href="/swagger-ui.html" target="_blank" class="btn btn-outline-primary">
+                                <i class="bi bi-filetype-json"></i> Swagger UI
+                            </a>
+                            <a href="/v3/api-docs" target="_blank" class="btn btn-outline-secondary">
+                                <i class="bi bi-download"></i> OpenAPI JSON
+                            </a>
+                            <a href="/v3/api-docs.yaml" target="_blank" class="btn btn-outline-secondary">
+                                <i class="bi bi-download"></i> OpenAPI YAML
+                            </a>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 认证说明 -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-shield-lock"></i> 认证说明</h5>
+                    </div>
+                    <div class="card-body">
+                        <p class="mb-3">所有API需要JWT Token认证：</p>
+                        <div class="bg-dark p-3 rounded">
+                            <code class="text-success">
+                                Authorization: Bearer &lt;your-token&gt;
+                            </code>
+                        </div>
+                        <p class="text-muted mt-3 mb-0">
+                            <small>在Swagger UI中点击 "Authorize" 按钮输入Token</small>
+                        </p>
+                    </div>
+                </div>
+
+                <!-- 响应格式 -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-filetype-json"></i> 响应格式</h5>
+                    </div>
+                    <div class="card-body">
+                        <p class="mb-2">成功响应：</p>
+                        <div class="bg-dark p-2 rounded mb-3">
+                            <pre class="mb-0"><code class="text-success">{
+  "status": "success",
+  "data": { ... }
+}</code></pre>
+                        </div>
+                        <p class="mb-2">错误响应：</p>
+                        <div class="bg-dark p-2 rounded">
+                            <pre class="mb-0"><code class="text-danger">{
+  "status": "error",
+  "message": "错误信息"
+}</code></pre>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <style>
+        .method-get { background-color: #198754; color: white; padding: 2px 6px; border-radius: 3px; font-size: 0.8em; }
+        .method-post { background-color: #0d6efd; color: white; padding: 2px 6px; border-radius: 3px; font-size: 0.8em; }
+        .method-put { background-color: #ffc107; color: black; padding: 2px 6px; border-radius: 3px; font-size: 0.8em; }
+        .method-delete { background-color: #dc3545; color: white; padding: 2px 6px; border-radius: 3px; font-size: 0.8em; }
+    </style>
+</body>
+</html>

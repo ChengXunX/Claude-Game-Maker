@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<!--
+    通用图表组件
+    基于 Chart.js，提供折线图、柱状图、饼图、仪表盘等
+
+    使用方式:
+    1. 引入 Chart.js CDN
+    2. 使用 th:replace 引入图表容器
+    3. 调用 initChart() 初始化
+-->
+<body>
+<!-- 图表容器 -->
+<div th:fragment="container(id, title, type)" class="card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h6 class="mb-0" th:text="${title}">图表标题</h6>
+        <div class="btn-group btn-group-sm">
+            <button class="btn btn-outline-secondary btn-sm" th:onclick="'refreshChart(\'' + ${id} + '\')'">
+                <i class="bi bi-arrow-clockwise"></i>
+            </button>
+        </div>
+    </div>
+    <div class="card-body">
+        <canvas th:id="${id}" style="max-height: 300px;"></canvas>
+    </div>
+</div>
+
+<!-- 仪表盘卡片 -->
+<div th:fragment="gauge-card(id, title, value, unit, icon)" class="col-md-3 col-sm-6 mb-3">
+    <div class="card text-center">
+        <div class="card-body">
+            <i th:class="'bi ' + ${icon} + ' fs-3 text-primary mb-2'"></i>
+            <h3 th:id="${id}" th:text="${value}">0</h3>
+            <small class="text-muted" th:text="${title}">指标</small>
+            <small class="text-muted" th:if="${unit}" th:text="' ' + ${unit}"></small>
+        </div>
+    </div>
+</div>
+
+<script th:inline="none">
+    // ===== 图表管理器 =====
+
+    const chartInstances = {};
+
+    /**
+     * 初始化折线图
+     */
+    function initLineChart(canvasId, labels, datasets, options = {}) {
+        const ctx = document.getElementById(canvasId);
+        if (!ctx) return;
+
+        if (chartInstances[canvasId]) {
+            chartInstances[canvasId].destroy();
+        }
+
+        chartInstances[canvasId] = new Chart(ctx, {
+            type: 'line',
+            data: { labels, datasets },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { intersect: false, mode: 'index' },
+                plugins: { legend: { position: 'top' } },
+                scales: {
+                    y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.1)' } },
+                    x: { grid: { color: 'rgba(255,255,255,0.1)' } }
+                },
+                ...options
+            }
+        });
+        return chartInstances[canvasId];
+    }
+
+    /**
+     * 初始化柱状图
+     */
+    function initBarChart(canvasId, labels, datasets, options = {}) {
+        const ctx = document.getElementById(canvasId);
+        if (!ctx) return;
+
+        if (chartInstances[canvasId]) {
+            chartInstances[canvasId].destroy();
+        }
+
+        chartInstances[canvasId] = new Chart(ctx, {
+            type: 'bar',
+            data: { labels, datasets },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { position: 'top' } },
+                scales: {
+                    y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.1)' } },
+                    x: { grid: { color: 'rgba(255,255,255,0.1)' } }
+                },
+                ...options
+            }
+        });
+        return chartInstances[canvasId];
+    }
+
+    /**
+     * 初始化饼图/环形图
+     */
+    function initDoughnutChart(canvasId, labels, data, colors, options = {}) {
+        const ctx = document.getElementById(canvasId);
+        if (!ctx) return;
+
+        if (chartInstances[canvasId]) {
+            chartInstances[canvasId].destroy();
+        }
+
+        chartInstances[canvasId] = new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels,
+                datasets: [{
+                    data,
+                    backgroundColor: colors || [
+                        'rgba(54, 162, 235, 0.7)',
+                        'rgba(255, 99, 132, 0.7)',
+                        'rgba(255, 206, 86, 0.7)',
+                        'rgba(75, 192, 192, 0.7)',
+                        'rgba(153, 102, 255, 0.7)'
+                    ],
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { position: 'right' } },
+                ...options
+            }
+        });
+        return chartInstances[canvasId];
+    }
+
+    /**
+     * 初始化仪表盘图
+     */
+    function initGaugeChart(canvasId, value, max, color, options = {}) {
+        const ctx = document.getElementById(canvasId);
+        if (!ctx) return;
+
+        if (chartInstances[canvasId]) {
+            chartInstances[canvasId].destroy();
+        }
+
+        const percentage = (value / max) * 100;
+        const remaining = 100 - percentage;
+
+        chartInstances[canvasId] = new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: ['已用', '剩余'],
+                datasets: [{
+                    data: [percentage, remaining],
+                    backgroundColor: [color || 'rgba(54, 162, 235, 0.7)', 'rgba(200, 200, 200, 0.2)'],
+                    borderWidth: 0
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                circumference: 180,
+                rotation: 270,
+                cutout: '75%',
+                plugins: {
+                    legend: { display: false },
+                    tooltip: { enabled: false }
+                },
+                ...options
+            }
+        });
+        return chartInstances[canvasId];
+    }
+
+    /**
+     * 更新图表数据
+     */
+    function updateChart(canvasId, labels, datasets) {
+        const chart = chartInstances[canvasId];
+        if (!chart) return;
+
+        chart.data.labels = labels;
+        if (Array.isArray(datasets)) {
+            datasets.forEach((ds, i) => {
+                if (chart.data.datasets[i]) {
+                    chart.data.datasets[i].data = ds.data;
+                    if (ds.label) chart.data.datasets[i].label = ds.label;
+                }
+            });
+        }
+        chart.update();
+    }
+
+    /**
+     * 刷新图表
+     */
+    function refreshChart(canvasId) {
+        const chart = chartInstances[canvasId];
+        if (chart) chart.update();
+    }
+
+    /**
+     * 生成模拟数据（用于 demo）
+     */
+    function generateTimeLabels(count, intervalMinutes = 5) {
+        const labels = [];
+        const now = new Date();
+        for (let i = count - 1; i >= 0; i--) {
+            const time = new Date(now - i * intervalMinutes * 60000);
+            labels.push(time.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }));
+        }
+        return labels;
+    }
+
+    function generateRandomData(count, min, max) {
+        return Array.from({ length: count }, () => Math.floor(Math.random() * (max - min + 1)) + min);
+    }
+</script>
+</body>
+</html>

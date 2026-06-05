@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security"
+      th:replace="~{layout :: main-content(~{::title}, ~{::section})}">
+<head>
+    <title>用户权限管理 - ChengXun Game Maker</title>
+</head>
+<body>
+<section>
+    <div class="container-fluid">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2><i class="bi bi-people-fill"></i> 用户权限管理</h2>
+            <a href="/permissions/admin" class="btn btn-outline-primary btn-sm">
+                <i class="bi bi-arrow-left"></i> 返回审批
+            </a>
+        </div>
+
+        <!-- 用户列表 -->
+        <div class="card">
+            <div class="card-header d-flex justify-content-between">
+                <h5 class="mb-0">用户列表</h5>
+                <div>
+                    <input type="text" class="form-control form-control-sm" id="searchUser"
+                           placeholder="搜索用户名..." onkeyup="filterUsers()">
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-hover" id="userTable">
+                        <thead>
+                            <tr>
+                                <th>用户名</th>
+                                <th>角色</th>
+                                <th>额外权限</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="userTableBody">
+                            <tr>
+                                <td colspan="4" class="text-center text-muted">加载中...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 授权弹窗 -->
+    <div class="modal fade" id="grantModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">授予权限</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="grantUserId">
+                    <input type="hidden" id="grantUsername">
+                    <p>为用户 <strong id="grantUsernameDisplay"></strong> 授予以下权限：</p>
+                    <div class="mb-3">
+                        <label class="form-label">选择权限</label>
+                        <select class="form-select" id="grantPermission">
+                            <th:block th:each="entry : ${availablePermissions}">
+                                <option th:value="${entry.key}" th:text="${entry.value + ' (' + entry.key + ')'}"></option>
+                            </th:block>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">授权原因</label>
+                        <textarea class="form-control" id="grantReason" rows="2" placeholder="授权原因（可选）"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" onclick="grantPermission()">确认授予</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let allUsers = [];
+
+        async function loadUsers() {
+            try {
+                const response = await fetch('/api/admin/users');
+                allUsers = await response.json();
+                renderUsers(allUsers);
+            } catch (e) {
+                console.error('Failed to load users:', e);
+                document.getElementById('userTableBody').innerHTML =
+                    '<tr><td colspan="4" class="text-center text-danger">加载失败</td></tr>';
+            }
+        }
+
+        function renderUsers(users) {
+            const tbody = document.getElementById('userTableBody');
+            if (!users || users.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">暂无用户</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = users.map(user => `
+                <tr class="user-row" data-username="${(user.username || '').toLowerCase()}">
+                    <td><strong>${user.username || '-'}</strong></td>
+                    <td><span class="badge bg-secondary">${user.role || '-'}</span></td>
+                    <td id="extraPerms_${user.id}">
+                        <button class="btn btn-sm btn-outline-info" onclick="loadUserPermissions(${user.id})">
+                            查看权限
+                        </button>
+                    </td>
+                    <td>
+                        <button class="btn btn-sm btn-outline-primary" onclick="showGrantModal(${user.id}, '${user.username}')">
+                            <i class="bi bi-plus-lg"></i> 授权
+                        </button>
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        function filterUsers() {
+            const keyword = document.getElementById('searchUser').value.toLowerCase();
+            document.querySelectorAll('.user-row').forEach(row => {
+                const username = row.getAttribute('data-username');
+                row.style.display = username.includes(keyword) ? '' : 'none';
+            });
+        }
+
+        async function loadUserPermissions(userId) {
+            try {
+                const response = await fetch(`/permissions/api/user/${userId}`);
+                const permissions = await response.json();
+
+                const container = document.getElementById(`extraPerms_${userId}`);
+                if (!permissions || permissions.length === 0) {
+                    container.innerHTML = '<span class="text-muted small">无额外权限</span>';
+                    return;
+                }
+
+                container.innerHTML = permissions.map(p => `
+                    <span class="badge bg-success me-1 mb-1">
+                        ${p.permission}
+                        <i class="bi bi-x ms-1" style="cursor: pointer;"
+                           onclick="revokePermission(${userId}, '${p.permission}')" title="撤销"></i>
+                    </span>
+                `).join('');
+            } catch (e) {
+                console.error('Failed to load permissions:', e);
+            }
+        }
+
+        function showGrantModal(userId, username) {
+            document.getElementById('grantUserId').value = userId;
+            document.getElementById('grantUsername').value = username;
+            document.getElementById('grantUsernameDisplay').textContent = username;
+            document.getElementById('grantReason').value = '';
+            new bootstrap.Modal(document.getElementById('grantModal')).show();
+        }
+
+        async function grantPermission() {
+            const userId = document.getElementById('grantUserId').value;
+            const permission = document.getElementById('grantPermission').value;
+            const reason = document.getElementById('grantReason').value;
+
+            try {
+                const response = await fetch('/permissions/api/grant', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userId: parseInt(userId), permission, reason })
+                });
+                const result = await response.json();
+
+                if (result.success) {
+                    bootstrap.Modal.getInstance(document.getElementById('grantModal')).hide();
+                    loadUserPermissions(parseInt(userId));
+                } else {
+                    alert(result.error || '授权失败');
+                }
+            } catch (e) {
+                alert('请求失败: ' + e.message);
+            }
+        }
+
+        async function revokePermission(userId, permission) {
+            if (!confirm(`确定要撤销该用户的 ${permission} 权限吗？`)) return;
+
+            try {
+                const response = await fetch('/permissions/api/revoke', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userId, permission })
+                });
+                const result = await response.json();
+
+                if (result.success) {
+                    loadUserPermissions(userId);
+                } else {
+                    alert(result.error || '撤销失败');
+                }
+            } catch (e) {
+                alert('请求失败: ' + e.message);
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', loadUsers);
+    </script>
+</section>
+</body>
+</html>

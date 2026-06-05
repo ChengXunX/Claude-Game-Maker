@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<!--
+    批量操作组件
+    使用方式: 在表格中添加复选框，引入此组件即可
+
+    需要的变量:
+    - batchSelected: 已选中的 ID 数组
+    - batchAction(action): 执行批量操作的函数
+-->
+<body>
+<!-- 批量操作工具栏 -->
+<div th:fragment="toolbar(actions)" id="batchToolbar" style="display: none;" class="mb-3">
+    <div class="card border-primary">
+        <div class="card-body py-2 d-flex align-items-center justify-content-between">
+            <div>
+                <span class="badge bg-primary me-2" id="batchCount">0</span>
+                <span class="text-muted">已选择</span>
+            </div>
+            <div class="btn-group btn-group-sm">
+                <th:block th:each="action : ${actions}">
+                    <button class="btn btn-outline-primary"
+                            th:onclick="'batchAction(\'' + ${action.key} + '\')'"
+                            th:text="${action.value}">
+                    </button>
+                </th:block>
+                <button class="btn btn-outline-secondary" onclick="batchClearSelection()">取消选择</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 全选复选框表头 -->
+<div th:fragment="select-all-header">
+    <th style="width: 40px;">
+        <input type="checkbox" class="form-check-input" id="selectAll" onchange="toggleSelectAll()">
+    </th>
+</div>
+
+<!-- 行选择复选框 -->
+<div th:fragment="select-row(id)">
+    <td>
+        <input type="checkbox" class="form-check-input batch-checkbox"
+               th:value="${id}" onchange="updateBatchSelection()">
+    </td>
+</div>
+
+<script th:inline="none">
+    // ===== 批量选择管理 =====
+
+    let batchSelected = [];
+
+    // 全选/取消全选
+    function toggleSelectAll() {
+        const selectAll = document.getElementById('selectAll');
+        const checkboxes = document.querySelectorAll('.batch-checkbox');
+
+        checkboxes.forEach(cb => {
+            cb.checked = selectAll.checked;
+        });
+
+        updateBatchSelection();
+    }
+
+    // 更新选择状态
+    function updateBatchSelection() {
+        const checkboxes = document.querySelectorAll('.batch-checkbox:checked');
+        batchSelected = Array.from(checkboxes).map(cb => cb.value);
+
+        const toolbar = document.getElementById('batchToolbar');
+        const countEl = document.getElementById('batchCount');
+
+        if (toolbar) {
+            toolbar.style.display = batchSelected.length > 0 ? 'block' : 'none';
+        }
+        if (countEl) {
+            countEl.textContent = batchSelected.length;
+        }
+
+        // 更新全选框状态
+        const selectAll = document.getElementById('selectAll');
+        const allCheckboxes = document.querySelectorAll('.batch-checkbox');
+        if (selectAll && allCheckboxes.length > 0) {
+            selectAll.checked = batchSelected.length === allCheckboxes.length;
+            selectAll.indeterminate = batchSelected.length > 0 && batchSelected.length < allCheckboxes.length;
+        }
+    }
+
+    // 清除选择
+    function batchClearSelection() {
+        document.querySelectorAll('.batch-checkbox').forEach(cb => cb.checked = false);
+        const selectAll = document.getElementById('selectAll');
+        if (selectAll) selectAll.checked = false;
+        updateBatchSelection();
+    }
+
+    // 执行批量操作
+    async function batchAction(action) {
+        if (batchSelected.length === 0) {
+            alert('请先选择要操作的项目');
+            return;
+        }
+
+        if (!confirm(`确定要对 ${batchSelected.length} 个项目执行 [${action}] 操作吗？`)) {
+            return;
+        }
+
+        // 触发自定义事件，由页面处理实际操作
+        const event = new CustomEvent('batch-action', {
+            detail: { action: action, ids: batchSelected }
+        });
+        document.dispatchEvent(event);
+    }
+
+    // 获取选中的 ID 列表
+    function getBatchSelected() {
+        return [...batchSelected];
+    }
+</script>
+</body>
+</html>

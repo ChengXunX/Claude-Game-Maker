@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security"
+      th:replace="~{layout :: main-content(~{::title}, ~{::section})}">
+<head>
+    <title>权限定义管理 - ChengXun Game Maker</title>
+</head>
+<body>
+<section>
+    <div class="container-fluid">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2><i class="bi bi-shield-lock"></i> 权限定义管理</h2>
+            <div>
+                <button class="btn btn-primary btn-sm" onclick="showCreateModal()">
+                    <i class="bi bi-plus-lg"></i> 新增权限
+                </button>
+                <a href="/permissions/admin" class="btn btn-outline-secondary btn-sm ms-2">
+                    <i class="bi bi-arrow-left"></i> 返回审批
+                </a>
+            </div>
+        </div>
+
+        <!-- 权限定义列表 -->
+        <div class="card">
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>权限标识</th>
+                                <th>名称</th>
+                                <th>描述</th>
+                                <th>分类</th>
+                                <th>系统内置</th>
+                                <th>状态</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr th:each="def : ${definitions}">
+                                <td><code th:text="${def.permissionKey}">-</code></td>
+                                <td th:text="${def.name}">-</td>
+                                <td><small th:text="${def.description}">-</small></td>
+                                <td><span class="badge bg-info" th:text="${def.category}">-</span></td>
+                                <td>
+                                    <span th:if="${def.system}" class="badge bg-warning">内置</span>
+                                    <span th:unless="${def.system}" class="badge bg-secondary">自定义</span>
+                                </td>
+                                <td>
+                                    <span th:if="${def.enabled}" class="badge bg-success">启用</span>
+                                    <span th:unless="${def.enabled}" class="badge bg-danger">禁用</span>
+                                </td>
+                                <td>
+                                    <button class="btn btn-sm btn-outline-warning"
+                                            th:onclick="'toggleDefinition(' + ${def.id} + ')'"
+                                            th:text="${def.enabled ? '禁用' : '启用'}">-</button>
+                                    <button class="btn btn-sm btn-outline-primary ms-1"
+                                            th:onclick="'editDefinition(' + ${def.id} + ')'"
+                                            th:unless="${def.system}">
+                                        <i class="bi bi-pencil"></i>
+                                    </button>
+                                    <button class="btn btn-sm btn-outline-danger ms-1"
+                                            th:onclick="'deleteDefinition(' + ${def.id} + ')'"
+                                            th:unless="${def.system}">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 新增/编辑弹窗 -->
+    <div class="modal fade" id="definitionModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="modalTitle">新增权限定义</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="definitionId">
+                    <div class="mb-3">
+                        <label class="form-label">权限标识 *</label>
+                        <input type="text" class="form-control" id="permissionKey"
+                               placeholder="如: PERM_custom:view">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">名称 *</label>
+                        <input type="text" class="form-control" id="name" placeholder="如: 自定义功能查看">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">描述</label>
+                        <input type="text" class="form-control" id="description" placeholder="权限描述">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">分类 *</label>
+                        <input type="text" class="form-control" id="category"
+                               placeholder="如: Agent, 技能, 系统"
+                               list="categoryList">
+                        <datalist id="categoryList">
+                            <option th:each="cat : ${categories}" th:value="${cat}" th:text="${cat}"></option>
+                        </datalist>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">排序</label>
+                        <input type="number" class="form-control" id="sortOrder" value="0" min="0">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" onclick="saveDefinition()">保存</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function showCreateModal() {
+            document.getElementById('modalTitle').textContent = '新增权限定义';
+            document.getElementById('definitionId').value = '';
+            document.getElementById('permissionKey').value = '';
+            document.getElementById('name').value = '';
+            document.getElementById('description').value = '';
+            document.getElementById('category').value = '';
+            document.getElementById('sortOrder').value = '0';
+            document.getElementById('permissionKey').disabled = false;
+            new bootstrap.Modal(document.getElementById('definitionModal')).show();
+        }
+
+        async function editDefinition(id) {
+            const response = await fetch('/permissions/api/definitions');
+            const definitions = await response.json();
+            const def = definitions.find(d => d.id === id);
+            if (!def) return;
+
+            document.getElementById('modalTitle').textContent = '编辑权限定义';
+            document.getElementById('definitionId').value = def.id;
+            document.getElementById('permissionKey').value = def.permissionKey;
+            document.getElementById('permissionKey').disabled = true;
+            document.getElementById('name').value = def.name;
+            document.getElementById('description').value = def.description || '';
+            document.getElementById('category').value = def.category;
+            document.getElementById('sortOrder').value = def.sortOrder || 0;
+            new bootstrap.Modal(document.getElementById('definitionModal')).show();
+        }
+
+        async function saveDefinition() {
+            const id = document.getElementById('definitionId').value;
+            const data = {
+                permissionKey: document.getElementById('permissionKey').value,
+                name: document.getElementById('name').value,
+                description: document.getElementById('description').value,
+                category: document.getElementById('category').value,
+                sortOrder: parseInt(document.getElementById('sortOrder').value) || 0
+            };
+
+            if (!data.permissionKey || !data.name || !data.category) {
+                alert('请填写必填字段');
+                return;
+            }
+
+            try {
+                const url = id ? `/permissions/api/definitions/${id}` : '/permissions/api/definitions';
+                const method = id ? 'PUT' : 'POST';
+                const response = await fetch(url, {
+                    method,
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+                const result = await response.json();
+                if (result.error) {
+                    alert(result.error);
+                } else {
+                    bootstrap.Modal.getInstance(document.getElementById('definitionModal')).hide();
+                    location.reload();
+                }
+            } catch (e) {
+                alert('保存失败: ' + e.message);
+            }
+        }
+
+        async function toggleDefinition(id) {
+            try {
+                await fetch(`/permissions/api/definitions/${id}/toggle`, { method: 'POST' });
+                location.reload();
+            } catch (e) {
+                alert('操作失败');
+            }
+        }
+
+        async function deleteDefinition(id) {
+            if (!confirm('确定要删除此权限定义吗？')) return;
+            try {
+                const response = await fetch(`/permissions/api/definitions/${id}`, { method: 'DELETE' });
+                const result = await response.json();
+                if (result.error) {
+                    alert(result.error);
+                } else {
+                    location.reload();
+                }
+            } catch (e) {
+                alert('删除失败');
+            }
+        }
+    </script>
+</section>
+</body>
+</html>

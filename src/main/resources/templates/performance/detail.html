@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title th:text="'Agent 性能详情 - ' + ${performance.agentName}">Agent 性能详情</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <link th:href="@{/css/custom.css}" rel="stylesheet">
+    <style>
+        .performance-card {
+            background: linear-gradient(135deg, var(--bg-card) 0%, var(--bg-secondary) 100%);
+            border: 1px solid var(--border-color);
+        }
+        .grade-badge-large {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 2.5rem;
+        }
+        .grade-S { background: linear-gradient(135deg, #ffd700, #ffed4e); color: #000; }
+        .grade-A { background: linear-gradient(135deg, #00bfff, #87cefa); color: #fff; }
+        .grade-B { background: linear-gradient(135deg, #32cd32, #90ee90); color: #fff; }
+        .grade-C { background: linear-gradient(135deg, #ffa500, #ffd700); color: #000; }
+        .grade-D { background: linear-gradient(135deg, #ff6347, #ff7f7f); color: #fff; }
+        .stat-item {
+            background: var(--bg-card);
+            border-radius: 10px;
+            padding: 1.5rem;
+            text-align: center;
+            border: 1px solid var(--border-color);
+        }
+        .stat-value {
+            font-size: 2rem;
+            font-weight: bold;
+            color: var(--accent-color);
+        }
+        .stat-label {
+            color: var(--text-muted);
+            font-size: 0.9rem;
+        }
+        .score-bar {
+            height: 10px;
+            border-radius: 5px;
+            background: var(--bg-tertiary);
+            overflow: hidden;
+        }
+        .score-fill {
+            height: 100%;
+            border-radius: 5px;
+            transition: width 0.3s ease;
+        }
+        .score-excellent { background: linear-gradient(90deg, #32cd32, #90ee90); }
+        .score-good { background: linear-gradient(90deg, #00bfff, #87cefa); }
+        .score-average { background: linear-gradient(90deg, #ffa500, #ffd700); }
+        .score-poor { background: linear-gradient(90deg, #ff6347, #ff7f7f); }
+    </style>
+</head>
+<body class="bg-dark text-light">
+    <div class="container-fluid mt-4">
+        <!-- 面包屑导航 -->
+        <nav aria-label="breadcrumb" class="mb-4">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item">
+                    <a th:href="@{/performance}" class="text-decoration-none">
+                        <i class="bi bi-graph-up"></i> 性能评估
+                    </a>
+                </li>
+                <li class="breadcrumb-item active" th:text="${performance.agentName}">Agent Name</li>
+            </ol>
+        </nav>
+
+        <!-- Agent信息头部 -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card performance-card">
+                    <div class="card-body">
+                        <div class="row align-items-center">
+                            <div class="col-md-2 text-center">
+                                <div class="grade-badge-large mx-auto mb-2"
+                                     th:classappend="'grade-' + ${performance.performanceGrade}"
+                                     th:text="${performance.performanceGrade}">A</div>
+                                <h5 th:text="${performance.statusDescription}">状态</h5>
+                            </div>
+                            <div class="col-md-4">
+                                <h2 th:text="${performance.agentName}">Agent Name</h2>
+                                <p class="text-muted mb-1">
+                                    <i class="bi bi-tag"></i> <span th:text="${performance.agentRole}">role</span>
+                                </p>
+                                <p class="text-muted mb-1">
+                                    <i class="bi bi-key"></i> <span th:text="${performance.agentId}">agent-id</span>
+                                </p>
+                                <p class="text-muted mb-0">
+                                    <i class="bi bi-calendar"></i>
+                                    加入时间: <span th:text="${#temporals.format(performance.firstTaskAt, 'yyyy-MM-dd')}">2024-01-01</span>
+                                </p>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="row">
+                                    <div class="col-4">
+                                        <div class="stat-item">
+                                            <div class="stat-value" th:text="${#numbers.formatDecimal(performance.overallScore, 1, 1)}">0.0</div>
+                                            <div class="stat-label">综合评分</div>
+                                        </div>
+                                    </div>
+                                    <div class="col-4">
+                                        <div class="stat-item">
+                                            <div class="stat-value" th:text="${#numbers.formatDecimal(performance.reliabilityScore, 1, 1)}">0.0</div>
+                                            <div class="stat-label">可靠性评分</div>
+                                        </div>
+                                    </div>
+                                    <div class="col-4">
+                                        <div class="stat-item">
+                                            <div class="stat-value" th:text="${#numbers.formatDecimal(performance.efficiencyScore, 1, 1)}">0.0</div>
+                                            <div class="stat-label">效率评分</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <!-- 左侧：详细统计 -->
+            <div class="col-lg-8">
+                <!-- 任务统计 -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-list-task"></i> 任务统计</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-3">
+                                <div class="stat-item">
+                                    <div class="stat-value" th:text="${performance.totalTasks}">0</div>
+                                    <div class="stat-label">总任务数</div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="stat-item">
+                                    <div class="stat-value text-success" th:text="${performance.completedTasks}">0</div>
+                                    <div class="stat-label">已完成</div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="stat-item">
+                                    <div class="stat-value text-danger" th:text="${performance.failedTasks}">0</div>
+                                    <div class="stat-label">失败</div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="stat-item">
+                                    <div class="stat-value text-warning" th:text="${performance.inProgressTasks}">0</div>
+                                    <div class="stat-label">进行中</div>
+                                </div>
+                            </div>
+                        </div>
+                        <hr>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h6>完成率</h6>
+                                <div class="score-bar">
+                                    <div class="score-fill"
+                                         th:classappend="${performance.completionRate >= 80 ? 'score-excellent' : (performance.completionRate >= 60 ? 'score-good' : (performance.completionRate >= 40 ? 'score-average' : 'score-poor'))}"
+                                         th:style="'width: ' + ${performance.completionRate} + '%'">
+                                    </div>
+                                </div>
+                                <small class="text-muted" th:text="${#numbers.formatDecimal(performance.completionRate, 1, 1)} + '%'">0.0%</small>
+                            </div>
+                            <div class="col-md-6">
+                                <h6>失败率</h6>
+                                <div class="score-bar">
+                                    <div class="score-fill score-poor"
+                                         th:style="'width: ' + ${performance.failureRate} + '%'">
+                                    </div>
+                                </div>
+                                <small class="text-muted" th:text="${#numbers.formatDecimal(performance.failureRate, 1, 1)} + '%'">0.0%</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 效率指标 -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-speedometer2"></i> 效率指标</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-4">
+                                <div class="stat-item">
+                                    <div class="stat-value" th:text="${performance.avgCompletionTimeMs / 1000}">0</div>
+                                    <div class="stat-label">平均完成时间（秒）</div>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="stat-item">
+                                    <div class="stat-value text-success" th:text="${performance.minCompletionTimeMs / 1000}">0</div>
+                                    <div class="stat-label">最快完成时间（秒）</div>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="stat-item">
+                                    <div class="stat-value text-warning" th:text="${performance.maxCompletionTimeMs / 1000}">0</div>
+                                    <div class="stat-label">最慢完成时间（秒）</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 质量指标 -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-star"></i> 质量指标</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-4">
+                                <div class="stat-item">
+                                    <div class="stat-value" th:text="${#numbers.formatDecimal(performance.avgQualityScore, 1, 1)}">0.0</div>
+                                    <div class="stat-label">平均质量评分</div>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="stat-item">
+                                    <div class="stat-value text-success" th:text="${#numbers.formatDecimal(performance.maxQualityScore, 1, 1)}">0.0</div>
+                                    <div class="stat-label">最高质量评分</div>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="stat-item">
+                                    <div class="stat-value text-warning" th:text="${#numbers.formatDecimal(performance.minQualityScore, 1, 1)}">0.0</div>
+                                    <div class="stat-label">最低质量评分</div>
+                                </div>
+                            </div>
+                        </div>
+                        <hr>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h6>代码审查通过率</h6>
+                                <div class="score-bar">
+                                    <div class="score-fill"
+                                         th:classappend="${performance.reviewPassRate >= 80 ? 'score-excellent' : (performance.reviewPassRate >= 60 ? 'score-good' : (performance.reviewPassRate >= 40 ? 'score-average' : 'score-poor'))}"
+                                         th:style="'width: ' + ${performance.reviewPassRate} + '%'">
+                                    </div>
+                                </div>
+                                <small class="text-muted" th:text="${#numbers.formatDecimal(performance.reviewPassRate, 1, 1)} + '%'">0.0%</small>
+                            </div>
+                            <div class="col-md-6">
+                                <h6>综合评分</h6>
+                                <div class="score-bar">
+                                    <div class="score-fill"
+                                         th:classappend="${performance.overallScore >= 80 ? 'score-excellent' : (performance.overallScore >= 60 ? 'score-good' : (performance.overallScore >= 40 ? 'score-average' : 'score-poor'))}"
+                                         th:style="'width: ' + ${performance.overallScore} + '%'">
+                                    </div>
+                                </div>
+                                <small class="text-muted" th:text="${#numbers.formatDecimal(performance.overallScore, 1, 1)} + '%'">0.0%</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 右侧：负载和时间信息 -->
+            <div class="col-lg-4">
+                <!-- 负载状态 -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-cpu"></i> 负载状态</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="text-center mb-3">
+                            <div class="display-4" th:text="${performance.currentLoad} + '%'">0%</div>
+                            <p class="text-muted">当前负载</p>
+                        </div>
+                        <div class="score-bar mb-2">
+                            <div class="score-fill"
+                                 th:classappend="${performance.currentLoad < 50 ? 'score-excellent' : (performance.currentLoad < 80 ? 'score-average' : 'score-poor')}"
+                                 th:style="'width: ' + ${performance.currentLoad} + '%'">
+                            </div>
+                        </div>
+                        <div class="row text-center">
+                            <div class="col-6">
+                                <small class="text-muted">历史平均负载</small>
+                                <div th:text="${#numbers.formatDecimal(performance.avgLoad, 1, 1)} + '%'">0.0%</div>
+                            </div>
+                            <div class="col-6">
+                                <small class="text-muted">状态</small>
+                                <div th:text="${performance.statusDescription}">正常</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 时间信息 -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-clock"></i> 时间信息</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <small class="text-muted">首次任务</small>
+                            <div th:text="${#temporals.format(performance.firstTaskAt, 'yyyy-MM-dd HH:mm')}">2024-01-01 00:00</div>
+                        </div>
+                        <div class="mb-3">
+                            <small class="text-muted">最后任务</small>
+                            <div th:text="${#temporals.format(performance.lastTaskAt, 'yyyy-MM-dd HH:mm')}">2024-01-01 00:00</div>
+                        </div>
+                        <div class="mb-3">
+                            <small class="text-muted">最后评估</small>
+                            <div th:text="${performance.lastEvaluatedAt != null ? #temporals.format(performance.lastEvaluatedAt, 'yyyy-MM-dd HH:mm') : '未评估'}">未评估</div>
+                        </div>
+                        <div>
+                            <small class="text-muted">记录更新</small>
+                            <div th:text="${#temporals.format(performance.updatedAt, 'yyyy-MM-dd HH:mm')}">2024-01-01 00:00</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 操作按钮 -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-gear"></i> 操作</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="d-grid gap-2">
+                            <button class="btn btn-outline-primary" onclick="resetPerformance()">
+                                <i class="bi bi-arrow-counterclockwise"></i> 重置数据
+                            </button>
+                            <button class="btn btn-outline-danger" onclick="deletePerformance()">
+                                <i class="bi bi-trash"></i> 删除记录
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script th:inline="javascript">
+        const agentId = [[${performance.agentId}]];
+
+        function resetPerformance() {
+            if (confirm('确定要重置该Agent的性能数据吗？此操作不可恢复。')) {
+                fetch(`/performance/api/reset/${agentId}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    }
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        alert('性能数据已重置。');
+                        location.reload();
+                    } else {
+                        alert('错误: ' + data.message);
+                    }
+                })
+                .catch(error => {
+                    alert('请求失败: ' + error);
+                });
+            }
+        }
+
+        function deletePerformance() {
+            if (confirm('确定要删除该Agent的性能记录吗？此操作不可恢复。')) {
+                fetch(`/performance/api/delete/${agentId}`, {
+                    method: 'DELETE',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    }
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        alert('性能记录已删除。');
+                        window.location.href = '/performance';
+                    } else {
+                        alert('错误: ' + data.message);
+                    }
+                })
+                .catch(error => {
+                    alert('请求失败: ' + error);
+                });
+            }
+        }
+    </script>
+</body>
+</html>

@@ -38,6 +38,21 @@
                             <i class="bi bi-key"></i> Token 管理
                         </a>
                     </li>
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/skills}">
+                            <i class="bi bi-lightning"></i> 技能
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/monitor}">
+                            <i class="bi bi-graph-up"></i> 监控
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/ai-assistant}">
+                            <i class="bi bi-robot"></i> AI助手
+                        </a>
+                    </li>
                     <li class="nav-item" sec:authorize="hasRole('ADMIN')">
                         <a class="nav-link" th:href="@{/admin/users}">
                             <i class="bi bi-people"></i> 用户管理
@@ -56,6 +71,12 @@
                         </a>
                         <ul class="dropdown-menu dropdown-menu-end dropdown-menu-dark">
                             <li>
+                                <a class="dropdown-item" th:href="@{/profile}">
+                                    <i class="bi bi-person"></i> 个人中心
+                                </a>
+                            </li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li>
                                 <form th:action="@{/logout}" method="post">
                                     <button class="dropdown-item" type="submit">
                                         <i class="bi bi-box-arrow-right"></i> 退出登录
@@ -70,6 +91,71 @@
     </nav>
 
     <div class="container-fluid mt-4">
+        <!-- 项目选择器 -->
+        <div class="row mb-3" th:if="${#lists.size(projects) > 0}">
+            <div class="col-12">
+                <div class="card bg-dark border-secondary">
+                    <div class="card-body py-2">
+                        <form class="row align-items-center" method="get" th:action="@{/}">
+                            <div class="col-auto">
+                                <label class="col-form-label text-muted">
+                                    <i class="bi bi-funnel"></i> 筛选项目:
+                                </label>
+                            </div>
+                            <div class="col-auto">
+                                <select name="projectId" class="form-select form-select-sm bg-dark text-light border-secondary" onchange="this.form.submit()">
+                                    <option value="">全部项目</option>
+                                    <option th:each="p : ${projects}"
+                                            th:value="${p.id}"
+                                            th:text="${p.name}"
+                                            th:selected="${p.id == selectedProjectId}"></option>
+                                </select>
+                            </div>
+                            <div class="col-auto" th:if="${selectedProject != null}">
+                                <span class="badge bg-info">
+                                    <i class="bi bi-folder"></i>
+                                    <span th:text="${selectedProject.name}"></span>
+                                    <span th:if="${selectedProject.goal != null}" th:text="' - ' + ${selectedProject.goal}"></span>
+                                </span>
+                                <span th:if="${selectedProject.goalStatus != null}" class="badge"
+                                      th:classappend="${selectedProject.goalStatus.name() == 'COMPLETED' ? 'bg-success' : (selectedProject.goalStatus.name() == 'IN_PROGRESS' ? 'bg-warning' : 'bg-secondary')}"
+                                      th:text="${selectedProject.goalStatus.name()}"></span>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- AI Assistant Banner -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card bg-gradient" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+                    <div class="card-body">
+                        <div class="row align-items-center">
+                            <div class="col-md-8">
+                                <h4 class="text-white mb-1">
+                                    <i class="bi bi-robot"></i> AI系统助手
+                                    <span class="badge bg-light text-dark ms-2" style="font-size: 0.7em;">智能分析</span>
+                                </h4>
+                                <p class="text-white-50 mb-2">
+                                    系统分析员 · 知识库自进化 · 支持思考过程展示
+                                </p>
+                                <p class="text-white mb-0" style="font-size: 0.9em;">
+                                    我可以帮你分析系统状态、解答功能问题、提供优化建议、协助故障排查
+                                </p>
+                            </div>
+                            <div class="col-md-4 text-end">
+                                <a th:href="@{/ai-assistant}" class="btn btn-light btn-lg">
+                                    <i class="bi bi-chat-dots"></i> 开始对话
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Stats Cards -->
         <div class="row mb-4">
             <div class="col-md-3">
@@ -126,12 +212,48 @@
             </div>
         </div>
 
+        <!-- 项目目标进度（选中项目时显示） -->
+        <div class="row mb-4" th:if="${selectedProject != null and selectedProject.hasGoal()}">
+            <div class="col-12">
+                <div class="card bg-dark border-secondary">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <i class="bi bi-bullseye"></i> 项目目标
+                            <span class="badge bg-info ms-2" th:text="${selectedProject.goalStatus.name()}"></span>
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <p th:text="${selectedProject.goal}"></p>
+                        <div class="progress mb-3" style="height: 25px;">
+                            <div class="progress-bar bg-success" role="progressbar"
+                                 th:style="'width: ' + ${selectedProject.goalProgress} + '%'"
+                                 th:text="${selectedProject.goalProgress} + '%'"></div>
+                        </div>
+                        <div th:if="${selectedProject.milestones != null}">
+                            <div th:each="ms : ${selectedProject.milestones}" class="d-flex align-items-center mb-2">
+                                <span class="badge me-2" th:classappend="${ms.status.name() == 'COMPLETED' ? 'bg-success' : (ms.status.name() == 'IN_PROGRESS' ? 'bg-warning' : 'bg-secondary')}"
+                                      th:text="${ms.status.name()}"></span>
+                                <span th:text="${ms.title}" class="me-2"></span>
+                                <span class="text-muted small" th:text="'(' + ${ms.assignedAgentRole} + ')'"></span>
+                                <div class="progress flex-grow-1 ms-2" style="height: 8px; max-width: 200px;">
+                                    <div class="progress-bar" th:style="'width: ' + ${ms.progress} + '%'"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <div class="row">
             <!-- Agent Status -->
             <div class="col-md-8">
                 <div class="card bg-dark border-secondary">
                     <div class="card-header d-flex justify-content-between align-items-center">
-                        <h5 class="mb-0"><i class="bi bi-robot"></i> Agent 状态</h5>
+                        <h5 class="mb-0">
+                            <i class="bi bi-robot"></i> Agent 状态
+                            <span th:if="${selectedProject != null}" class="badge bg-info ms-2" th:text="${selectedProject.name}"></span>
+                        </h5>
                         <a th:href="@{/agents}" class="btn btn-sm btn-outline-primary">查看全部</a>
                     </div>
                     <div class="card-body">
@@ -142,7 +264,7 @@
                                         <th>名称</th>
                                         <th>角色</th>
                                         <th>状态</th>
-                                        <th>工作目录</th>
+                                        <th>所属项目</th>
                                         <th>操作</th>
                                     </tr>
                                 </thead>
@@ -158,10 +280,12 @@
                                             <span th:if="${agent.busy}" class="badge bg-warning">忙碌</span>
                                         </td>
                                         <td>
-                                            <code th:text="${agent.definition.workDir ?: '未设置'}"></code>
+                                            <span th:if="${agent.definition.projectId != null}" class="badge bg-dark border border-secondary" th:text="${agent.definition.projectId}"></span>
+                                            <span th:else class="text-muted">-</span>
                                         </td>
                                         <td>
-                                            <a th:href="@{/agents/{id}(id=${agent.id})}"
+                                            <a th:if="${agent.definition.projectId != null}"
+                                               th:href="@{/agents/project/{projectId}/{role}(projectId=${agent.definition.projectId}, role=${agent.role})}"
                                                class="btn btn-sm btn-outline-primary">
                                                 <i class="bi bi-eye"></i>
                                             </a>
@@ -170,6 +294,7 @@
                                 </tbody>
                             </table>
                         </div>
+                        <p th:if="${#lists.isEmpty(agents)}" class="text-muted text-center mb-0">暂无 Agent</p>
                     </div>
                 </div>
             </div>

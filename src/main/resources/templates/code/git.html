@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title th:text="'Git 管理 - ' + ${project.name}">Git 管理</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        .git-output { font-family: 'Consolas', 'Courier New', monospace; font-size: 0.85rem; white-space: pre-wrap; max-height: 500px; overflow-y: auto; }
+        .git-cmd { background: #1a1a2e; padding: 2px 6px; border-radius: 3px; font-family: monospace; color: #0dcaf0; }
+    </style>
+</head>
+<body class="bg-dark text-light">
+    <nav class="navbar navbar-expand-lg navbar-dark bg-black border-bottom border-secondary">
+        <div class="container-fluid">
+            <a class="navbar-brand" th:href="@{/}"><i class="bi bi-controller"></i> ChengXun Game Maker</a>
+            <div class="collapse navbar-collapse">
+                <ul class="navbar-nav me-auto">
+                    <li class="nav-item"><a class="nav-link" th:href="@{/}"><i class="bi bi-speedometer2"></i> 仪表盘</a></li>
+                    <li class="nav-item"><a class="nav-link" th:href="@{/code}"><i class="bi bi-code-slash"></i> 代码管理</a></li>
+                    <li class="nav-item"><a class="nav-link" th:href="@{/admin/agent-logs}"><i class="bi bi-journal-text"></i> Agent 日志</a></li>
+                </ul>
+                <ul class="navbar-nav">
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
+                            <i class="bi bi-person-circle"></i> <span th:text="${username}">User</span>
+                        </a>
+                        <ul class="dropdown-menu dropdown-menu-end dropdown-menu-dark">
+                            <li><form th:action="@{/logout}" method="post"><button class="dropdown-item" type="submit"><i class="bi bi-box-arrow-right"></i> 退出</button></form></li>
+                        </ul>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid mt-4">
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a th:href="@{/code}" class="text-decoration-none">代码管理</a></li>
+                <li class="breadcrumb-item"><a th:href="@{/code/browse/{id}(id=${projectId})}" class="text-decoration-none" th:text="${project.name}"></a></li>
+                <li class="breadcrumb-item active">Git 管理</li>
+            </ol>
+        </nav>
+
+        <div th:if="${!gitAvailable}" class="alert alert-warning">
+            <i class="bi bi-exclamation-triangle"></i> 此项目目录不是 Git 仓库，请先执行 <code>git init</code>
+        </div>
+
+        <div th:if="${gitAvailable}">
+            <!-- Alerts -->
+            <div th:if="${success}" class="alert alert-success alert-dismissible fade show" role="alert">
+                <i class="bi bi-check-circle"></i> <span th:text="${success}"></span>
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+            <div th:if="${error}" class="alert alert-danger alert-dismissible fade show" role="alert">
+                <i class="bi bi-exclamation-circle"></i> <span th:text="${error}"></span>
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+
+            <!-- Quick Actions -->
+            <div class="d-flex gap-2 mb-3">
+                <form th:action="@{/code/git/{id}/add(id=${projectId})}" method="post">
+                    <input type="hidden" name="files" value=".">
+                    <button type="submit" class="btn btn-success btn-sm">
+                        <i class="bi bi-plus-circle"></i> git add .
+                    </button>
+                </form>
+                <form th:action="@{/code/git/{id}/pull(id=${projectId})}" method="post">
+                    <button type="submit" class="btn btn-info btn-sm">
+                        <i class="bi bi-download"></i> git pull
+                    </button>
+                </form>
+                <a th:href="@{/code/browse/{id}(id=${projectId})}" class="btn btn-outline-secondary btn-sm">
+                    <i class="bi bi-folder2-open"></i> 浏览文件
+                </a>
+            </div>
+
+            <!-- Tabs -->
+            <ul class="nav nav-tabs" role="tablist">
+                <li class="nav-item">
+                    <a class="nav-link" th:classappend="${activeTab == 'status' ? 'active' : ''}"
+                       th:href="@{/code/git/{id}(id=${projectId}, tab='status')}">
+                        <i class="bi bi-list-check"></i> Status
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" th:classappend="${activeTab == 'log' ? 'active' : ''}"
+                       th:href="@{/code/git/{id}(id=${projectId}, tab='log')}">
+                        <i class="bi bi-clock-history"></i> Log
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" th:classappend="${activeTab == 'branch' ? 'active' : ''}"
+                       th:href="@{/code/git/{id}(id=${projectId}, tab='branch')}">
+                        <i class="bi bi-diagram-3"></i> Branch
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" th:classappend="${activeTab == 'diff' ? 'active' : ''}"
+                       th:href="@{/code/git/{id}(id=${projectId}, tab='diff')}">
+                        <i class="bi bi-file-diff"></i> Diff
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" th:classappend="${activeTab == 'settings' ? 'active' : ''}"
+                       th:href="@{/code/git/{id}(id=${projectId}, tab='settings')}">
+                        <i class="bi bi-gear"></i> Settings
+                    </a>
+                </li>
+            </ul>
+
+            <div class="tab-content mt-3">
+                <!-- Status Tab -->
+                <div class="tab-pane fade" th:classappend="${activeTab == 'status' ? 'show active' : ''}">
+                    <div class="row">
+                        <div class="col-md-8">
+                            <div class="card bg-dark border-secondary">
+                                <div class="card-header d-flex justify-content-between">
+                                    <h6 class="mb-0"><span class="git-cmd">git status --short</span></h6>
+                                </div>
+                                <div class="card-body">
+                                    <pre class="git-output mb-0" th:text="${gitStatus ?: '(无变更)'}"></pre>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <!-- Commit Form -->
+                            <div class="card bg-dark border-secondary">
+                                <div class="card-header">
+                                    <h6 class="mb-0"><i class="bi bi-send"></i> 提交更改</h6>
+                                </div>
+                                <div class="card-body">
+                                    <form th:action="@{/code/git/{id}/commit(id=${projectId})}" method="post">
+                                        <div class="mb-3">
+                                            <textarea class="form-control bg-dark text-light border-secondary"
+                                                      name="message" rows="3" required
+                                                      placeholder="输入提交信息..."></textarea>
+                                        </div>
+                                        <button type="submit" class="btn btn-primary w-100">
+                                            <i class="bi bi-check-circle"></i> git commit
+                                        </button>
+                                    </form>
+                                </div>
+                            </div>
+                            <div th:if="${commitResult}" class="card bg-dark border-secondary mt-3">
+                                <div class="card-body">
+                                    <pre class="git-output mb-0 small" th:text="${commitResult}"></pre>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Log Tab -->
+                <div class="tab-pane fade" th:classappend="${activeTab == 'log' ? 'show active' : ''}">
+                    <div class="card bg-dark border-secondary">
+                        <div class="card-header">
+                            <h6 class="mb-0"><span class="git-cmd">git log --oneline -30</span></h6>
+                        </div>
+                        <div class="card-body">
+                            <pre class="git-output mb-0" th:text="${gitLog ?: '(无提交记录)'}"></pre>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Branch Tab -->
+                <div class="tab-pane fade" th:classappend="${activeTab == 'branch' ? 'show active' : ''}">
+                    <div class="card bg-dark border-secondary">
+                        <div class="card-header">
+                            <h6 class="mb-0"><span class="git-cmd">git branch -a</span></h6>
+                        </div>
+                        <div class="card-body">
+                            <pre class="git-output mb-0" th:text="${gitBranch ?: '(无分支)'}"></pre>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Diff Tab -->
+                <div class="tab-pane fade" th:classappend="${activeTab == 'diff' ? 'show active' : ''}">
+                    <div class="card bg-dark border-secondary mb-3">
+                        <div class="card-header">
+                            <h6 class="mb-0"><span class="git-cmd">git diff</span> (未暂存)</h6>
+                        </div>
+                        <div class="card-body">
+                            <pre class="git-output mb-0" th:text="${gitDiff ?: '(无差异)'}"></pre>
+                        </div>
+                    </div>
+                    <div class="card bg-dark border-secondary">
+                        <div class="card-header">
+                            <h6 class="mb-0"><span class="git-cmd">git diff --staged</span> (已暂存)</h6>
+                        </div>
+                        <div class="card-body">
+                            <pre class="git-output mb-0" th:text="${gitDiffStaged ?: '(无差异)'}"></pre>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Settings Tab -->
+                <div class="tab-pane fade" th:classappend="${activeTab == 'settings' ? 'show active' : ''}">
+                    <div class="row">
+                        <!-- SSH Key -->
+                        <div class="col-md-6">
+                            <div class="card bg-dark border-secondary mb-4">
+                                <div class="card-header">
+                                    <h6 class="mb-0"><i class="bi bi-key"></i> SSH Key</h6>
+                                </div>
+                                <div class="card-body">
+                                    <div th:if="${sshPubKey}" class="mb-3">
+                                        <label class="form-label text-muted">当前公钥</label>
+                                        <div class="bg-black rounded p-2">
+                                            <code class="small text-break" th:text="${sshPubKey}"></code>
+                                        </div>
+                                        <div class="form-text">将此公钥添加到 GitHub/GitLab 的 SSH Keys 设置中</div>
+                                    </div>
+                                    <form th:action="@{/code/git/{id}/ssh-key(id=${projectId})}" method="post">
+                                        <div class="row mb-3">
+                                            <div class="col-6">
+                                                <label class="form-label">密钥类型</label>
+                                                <select name="keyType" class="form-select form-select-sm bg-dark text-light border-secondary">
+                                                    <option value="rsa" th:selected="${sshKeyType == 'rsa'}">RSA</option>
+                                                    <option value="ed25519" th:selected="${sshKeyType == 'ed25519'}">ED25519</option>
+                                                </select>
+                                            </div>
+                                            <div class="col-6">
+                                                <label class="form-label">备注</label>
+                                                <input type="text" name="comment" class="form-control form-control-sm bg-dark text-light border-secondary"
+                                                       placeholder="可选">
+                                            </div>
+                                        </div>
+                                        <button type="submit" class="btn btn-warning btn-sm"
+                                                onclick="return confirm('生成新密钥会覆盖已有密钥，确定吗？')">
+                                            <i class="bi bi-key"></i> 生成 SSH Key
+                                        </button>
+                                    </form>
+                                </div>
+                            </div>
+
+                            <!-- Remote -->
+                            <div class="card bg-dark border-secondary mb-4">
+                                <div class="card-header">
+                                    <h6 class="mb-0"><i class="bi bi-cloud"></i> 远程仓库</h6>
+                                </div>
+                                <div class="card-body">
+                                    <div th:if="${gitRemoteUrl != null and !gitRemoteUrl.isEmpty()}" class="mb-3">
+                                        <label class="form-label text-muted">当前远程地址</label>
+                                        <code class="d-block" th:text="${gitRemoteUrl}"></code>
+                                    </div>
+                                    <form th:action="@{/code/git/{id}/remote(id=${projectId})}" method="post">
+                                        <div class="mb-3">
+                                            <label class="form-label">SSH 地址</label>
+                                            <input type="text" name="remoteUrl" class="form-control form-control-sm bg-dark text-light border-secondary"
+                                                   th:value="${gitRemoteUrl}" placeholder="git@github.com:user/repo.git">
+                                        </div>
+                                        <button type="submit" class="btn btn-primary btn-sm">
+                                            <i class="bi bi-check-circle"></i> 设置远程仓库
+                                        </button>
+                                    </form>
+                                    <form th:action="@{/code/git/{id}/push(id=${projectId})}" method="post" class="mt-2 d-flex gap-2">
+                                        <button type="submit" class="btn btn-success btn-sm">
+                                            <i class="bi bi-upload"></i> Push
+                                        </button>
+                                        <button type="submit" class="btn btn-outline-danger btn-sm"
+                                                formaction="@{/code/git/{id}/push(id=${projectId}, force=true)}"
+                                                onclick="return confirm('强制推送可能覆盖远程提交，确定吗？')">
+                                            <i class="bi bi-exclamation-triangle"></i> Force Push
+                                        </button>
+                                    </form>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Commit Config -->
+                        <div class="col-md-6">
+                            <div class="card bg-dark border-secondary mb-4">
+                                <div class="card-header">
+                                    <h6 class="mb-0"><i class="bi bi-chat-text"></i> 提交信息模板</h6>
+                                </div>
+                                <div class="card-body">
+                                    <form th:action="@{/code/git/{id}/commit-config(id=${projectId})}" method="post">
+                                        <div class="mb-3">
+                                            <label class="form-label">默认提交信息模板</label>
+                                            <textarea name="commitTemplate" class="form-control bg-dark text-light border-secondary"
+                                                      rows="4" placeholder="feat: {{message}}&#10;&#10;支持的变量：&#10;{{message}} - 提交信息&#10;{{date}} - 日期&#10;{{agent}} - Agent 名称"
+                                                      th:text="${commitTemplate}"></textarea>
+                                            <div class="form-text">创建提交时会使用此模板，留空则手动输入</div>
+                                        </div>
+                                        <button type="submit" class="btn btn-primary btn-sm">
+                                            <i class="bi bi-save"></i> 保存模板
+                                        </button>
+                                    </form>
+                                </div>
+                            </div>
+
+                            <div class="card bg-dark border-secondary">
+                                <div class="card-header">
+                                    <h6 class="mb-0"><i class="bi bi-list-check"></i> 提交规则</h6>
+                                </div>
+                                <div class="card-body">
+                                    <form th:action="@{/code/git/{id}/commit-config(id=${projectId})}" method="post">
+                                        <div class="mb-3">
+                                            <label class="form-label">提交规则 (Gitignore 风格)</label>
+                                            <textarea name="commitRules" class="form-control bg-dark text-light border-secondary"
+                                                      rows="6" placeholder="# 排除的文件模式（每行一个）&#10;*.log&#10;*.tmp&#10;target/&#10;.env&#10;&#10;# 必须包含的文件&#10;!README.md"
+                                                      th:text="${commitRules}"></textarea>
+                                            <div class="form-text">定义提交时的文件过滤规则</div>
+                                        </div>
+                                        <button type="submit" class="btn btn-primary btn-sm">
+                                            <i class="bi bi-save"></i> 保存规则
+                                        </button>
+                                    </form>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

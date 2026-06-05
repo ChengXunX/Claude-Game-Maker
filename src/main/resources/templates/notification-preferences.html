@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security"
+      th:replace="~{layout :: main-content(~{::title}, ~{::section})}">
+<head>
+    <title>通知偏好设置 - ChengXun Game Maker</title>
+</head>
+<body>
+<section>
+    <div class="container-fluid">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2><i class="bi bi-gear"></i> 通知偏好设置</h2>
+            <div>
+                <button class="btn btn-outline-warning btn-sm" onclick="resetToDefaults()">
+                    <i class="bi bi-arrow-counterclockwise"></i> 恢复默认
+                </button>
+                <button class="btn btn-primary btn-sm ms-2" onclick="saveAll()">
+                    <i class="bi bi-check-lg"></i> 保存设置
+                </button>
+            </div>
+        </div>
+
+        <!-- 说明 -->
+        <div class="alert alert-info mb-4">
+            <i class="bi bi-info-circle"></i>
+            <strong>通知偏好说明：</strong>
+            根据您的权限，以下显示了您可以配置的通知类型。
+            勾选表示启用该渠道的通知接收，取消勾选表示屏蔽。
+            设置后点击「保存设置」生效。
+        </div>
+
+        <!-- 通知偏好表格 -->
+        <div class="card">
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-bordered table-hover mb-0 notification-pref-table">
+                        <thead class="table-light">
+                            <tr>
+                                <th style="min-width: 200px;">通知类型</th>
+                                <th style="min-width: 100px;">说明</th>
+                                <th class="text-center" style="width: 80px;"
+                                    th:each="channel : ${channels}">
+                                    <i th:class="${channelIcons.get(channel.name())}"></i>
+                                    <br><small th:text="${channelLabels.get(channel.name())}">-</small>
+                                </th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <th:block th:each="entry : ${groupedTypes}">
+                                <!-- 分类标题 -->
+                                <tr class="category-header">
+                                    <td colspan="99">
+                                        <i class="bi bi-folder me-2"></i>
+                                        <span th:text="${entry.key}">-</span>
+                                        <span class="badge bg-secondary ms-2" th:text="${#lists.size(entry.value)} + ' 项'"></span>
+                                    </td>
+                                </tr>
+                                <!-- 通知类型行 -->
+                                <tr th:each="type : ${entry.value}" th:id="'row_' + ${type.key}">
+                                    <td>
+                                        <strong th:text="${type.label}">-</strong>
+                                    </td>
+                                    <td>
+                                        <small class="text-muted" th:text="${type.description}">-</small>
+                                    </td>
+                                    <td class="text-center" th:each="channel : ${channels}">
+                                        <input type="checkbox" class="form-check-input pref-checkbox"
+                                               th:id="${type.key + '_' + channel.name()}"
+                                               th:data-type="${type.key}"
+                                               th:data-channel="${channel.name()}"
+                                               th:checked="${userPreferences.containsKey(type.key) and
+                                                   userPreferences.get(type.key).containsKey(channel.name()) and
+                                                   userPreferences.get(type.key).get(channel.name())}">
+                                    </td>
+                                </tr>
+                            </th:block>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- 快捷操作 -->
+        <div class="quick-actions mt-4">
+            <h6 class="mb-3"><i class="bi bi-lightning"></i> 快捷操作</h6>
+            <div class="d-flex flex-wrap gap-2">
+                <div class="btn-group">
+                    <button class="btn btn-sm btn-outline-secondary" onclick="toggleAllChannel('IN_APP', true)">
+                        <i class="bi bi-bell"></i> 全开站内信
+                    </button>
+                    <button class="btn btn-sm btn-outline-secondary" onclick="toggleAllChannel('IN_APP', false)">
+                        全关站内信
+                    </button>
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-sm btn-outline-secondary" onclick="toggleAllChannel('EMAIL', true)">
+                        <i class="bi bi-envelope"></i> 全开邮件
+                    </button>
+                    <button class="btn btn-sm btn-outline-secondary" onclick="toggleAllChannel('EMAIL', false)">
+                        全关邮件
+                    </button>
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-sm btn-outline-secondary" onclick="toggleAllChannel('DINGTALK', true)">
+                        <i class="bi bi-chat-dots"></i> 全开钉钉
+                    </button>
+                    <button class="btn btn-sm btn-outline-secondary" onclick="toggleAllChannel('DINGTALK', false)">
+                        全关钉钉
+                    </button>
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-sm btn-outline-info" onclick="toggleCategory('审批', true)">
+                        <i class="bi bi-check-circle"></i> 全开审批通知
+                    </button>
+                    <button class="btn btn-sm btn-outline-info" onclick="toggleCategory('任务', true)">
+                        <i class="bi bi-list-task"></i> 全开任务通知
+                    </button>
+                    <button class="btn btn-sm btn-outline-warning" onclick="toggleCategory('Agent', true)">
+                        <i class="bi bi-robot"></i> 全开 Agent 通知
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 切换某渠道所有通知
+        function toggleAllChannel(channel, enabled) {
+            document.querySelectorAll(`.pref-checkbox[data-channel="${channel}"]`).forEach(cb => {
+                cb.checked = enabled;
+            });
+        }
+
+        // 切换某分类所有通知
+        function toggleCategory(category, enabled) {
+            // 遍历所有行，找到匹配的分类
+            document.querySelectorAll('.pref-checkbox').forEach(cb => {
+                const row = cb.closest('tr');
+                if (row && row.previousElementSibling) {
+                    const catRow = row.previousElementSibling;
+                    if (catRow.classList.contains('table-secondary')) {
+                        const catText = catRow.textContent.trim();
+                        if (catText.includes(category)) {
+                            cb.checked = enabled;
+                        }
+                    }
+                }
+            });
+        }
+
+        // 保存所有设置
+        async function saveAll() {
+            const preferences = [];
+            document.querySelectorAll('.pref-checkbox').forEach(cb => {
+                preferences.push({
+                    notificationType: cb.dataset.type,
+                    channel: cb.dataset.channel,
+                    enabled: cb.checked
+                });
+            });
+
+            try {
+                const response = await fetch('/notification-preferences/api/batch-update', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ preferences })
+                });
+                const result = await response.json();
+                if (result.success) {
+                    showToast('success', result.message || '保存成功');
+                } else {
+                    showToast('danger', result.error || '保存失败');
+                }
+            } catch (e) {
+                showToast('danger', '请求失败: ' + e.message);
+            }
+        }
+
+        // 恢复默认设置
+        async function resetToDefaults() {
+            if (!confirm('确定要恢复默认通知设置吗？当前设置将被覆盖。')) return;
+
+            try {
+                const response = await fetch('/notification-preferences/api/reset', { method: 'POST' });
+                const result = await response.json();
+                if (result.success) {
+                    showToast('success', '已恢复默认设置');
+                    setTimeout(() => location.reload(), 1000);
+                } else {
+                    showToast('danger', result.error || '操作失败');
+                }
+            } catch (e) {
+                showToast('danger', '请求失败: ' + e.message);
+            }
+        }
+
+        // Toast 提示
+        function showToast(type, message) {
+            const toast = document.createElement('div');
+            toast.className = `alert alert-${type} position-fixed top-0 end-0 m-3`;
+            toast.style.zIndex = '9999';
+            toast.style.minWidth = '300px';
+            toast.innerHTML = message;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 3000);
+        }
+    </script>
+</section>
+</body>
+</html>

@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>告警中心 - ChengXun Game Maker</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <link th:href="@{/css/custom.css}" rel="stylesheet">
+    <style>
+        .alert-card {
+            background: linear-gradient(135deg, var(--bg-card) 0%, var(--bg-secondary) 100%);
+            border: 1px solid var(--border-color);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .alert-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px var(--shadow-color);
+        }
+        .priority-badge {
+            width: 60px;
+            text-align: center;
+        }
+        .priority-LOW { background-color: #6c757d; }
+        .priority-MEDIUM { background-color: #ffc107; color: #000; }
+        .priority-HIGH { background-color: #fd7e14; }
+        .priority-CRITICAL { background-color: #dc3545; }
+        .status-PENDING { border-left: 4px solid #ffc107; }
+        .status-ACKNOWLEDGED { border-left: 4px solid #0dcaf0; }
+        .status-IN_PROGRESS { border-left: primary; }
+        .status-RESOLVED { border-left: 4px solid #198754; }
+        .status-IGNORED { border-left: 4px solid #6c757d; }
+        .stat-card {
+            background: var(--bg-card);
+            border-radius: 10px;
+            padding: 1.5rem;
+            text-align: center;
+            border: 1px solid var(--border-color);
+        }
+        .stat-value {
+            font-size: 2.5rem;
+            font-weight: bold;
+        }
+        .stat-label {
+            color: var(--text-muted);
+            font-size: 0.9rem;
+        }
+    </style>
+</head>
+<body class="bg-dark text-light">
+    <div class="container-fluid mt-4">
+        <!-- 页面标题 -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h2><i class="bi bi-bell"></i> 告警中心</h2>
+                        <p class="text-muted mb-0">监控系统异常，及时响应告警</p>
+                    </div>
+                    <div>
+                        <a th:href="@{/alerts/rules}" class="btn btn-outline-primary">
+                            <i class="bi bi-gear"></i> 告警规则
+                        </a>
+                        <button class="btn btn-primary" onclick="refreshData()">
+                            <i class="bi bi-arrow-clockwise"></i> 刷新
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 统计卡片 -->
+        <div class="row mb-4">
+            <div class="col-md-3">
+                <div class="stat-card">
+                    <div class="stat-value text-danger" th:text="${statistics.pending}">0</div>
+                    <div class="stat-label">待处理告警</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="stat-card">
+                    <div class="stat-value text-warning" th:text="${statistics.last24Hours}">0</div>
+                    <div class="stat-label">最近24小时</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="stat-card">
+                    <div class="stat-value text-success"
+                         th:text="${statistics.statusCounts.getOrDefault('RESOLVED', 0)}">0</div>
+                    <div class="stat-label">已解决</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="stat-card">
+                    <div class="stat-value text-info" th:text="${#lists.size(rules)}">0</div>
+                    <div class="stat-label">告警规则</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <!-- 左侧：待处理和高优先级告警 -->
+            <div class="col-lg-8">
+                <!-- 待处理告警 -->
+                <div class="card mb-4">
+                    <div class="card-header bg-warning text-dark">
+                        <h5 class="mb-0">
+                            <i class="bi bi-exclamation-triangle"></i> 待处理告警
+                            <span class="badge bg-dark ms-2" th:text="${#lists.size(pendingAlerts)}">0</span>
+                        </h5>
+                    </div>
+                    <div class="card-body p-0">
+                        <div th:if="${#lists.isEmpty(pendingAlerts)}" class="p-4 text-center text-muted">
+                            <i class="bi bi-check-circle fs-1"></i>
+                            <p class="mt-2">暂无待处理告警</p>
+                        </div>
+                        <div class="list-group list-group-flush">
+                            <div th:each="alert : ${pendingAlerts}"
+                                 class="list-group-item list-group-item-action"
+                                 th:classappend="'status-' + ${alert.status}">
+                                <div class="d-flex justify-content-between align-items-start">
+                                    <div class="flex-grow-1">
+                                        <div class="d-flex align-items-center mb-1">
+                                            <span class="priority-badge badge me-2"
+                                                  th:classappend="'priority-' + ${alert.priority}"
+                                                  th:text="${alert.priorityDescription}">中</span>
+                                            <h6 class="mb-0" th:text="${alert.title}">告警标题</h6>
+                                        </div>
+                                        <p class="text-muted mb-1" th:text="${alert.detail}">告警详情</p>
+                                        <small class="text-muted">
+                                            <i class="bi bi-clock"></i>
+                                            <span th:text="${#temporals.format(alert.createdAt, 'yyyy-MM-dd HH:mm')}">2024-01-01 00:00</span>
+                                            <span th:if="${alert.agentName}" class="ms-2">
+                                                <i class="bi bi-robot"></i>
+                                                <span th:text="${alert.agentName}">Agent</span>
+                                            </span>
+                                        </small>
+                                    </div>
+                                    <div class="btn-group btn-group-sm">
+                                        <button class="btn btn-outline-primary" th:onclick="'acknowledgeAlert(' + ${alert.id} + ')'">
+                                            <i class="bi bi-check"></i> 确认
+                                        </button>
+                                        <button class="btn btn-outline-success" th:onclick="'resolveAlert(' + ${alert.id} + ')'">
+                                            <i class="bi bi-check-all"></i> 解决
+                                        </button>
+                                        <button class="btn btn-outline-secondary" th:onclick="'ignoreAlert(' + ${alert.id} + ')'">
+                                            <i class="bi bi-x"></i> 忽略
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 高优先级告警 -->
+                <div class="card mb-4">
+                    <div class="card-header bg-danger text-white">
+                        <h5 class="mb-0">
+                            <i class="bi bi-exclamation-octagon"></i> 高优先级告警
+                        </h5>
+                    </div>
+                    <div class="card-body p-0">
+                        <div th:if="${#lists.isEmpty(highPriorityAlerts)}" class="p-4 text-center text-muted">
+                            <i class="bi bi-shield-check fs-1"></i>
+                            <p class="mt-2">暂无高优先级告警</p>
+                        </div>
+                        <div class="list-group list-group-flush">
+                            <a th:each="alert : ${highPriorityAlerts}"
+                               th:href="@{/alerts/{id}(id=${alert.id})}"
+                               class="list-group-item list-group-item-action">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <span class="priority-badge badge me-2"
+                                              th:classappend="'priority-' + ${alert.priority}"
+                                              th:text="${alert.priorityDescription}">高</span>
+                                        <strong th:text="${alert.title}">告警标题</strong>
+                                    </div>
+                                    <div>
+                                        <span class="badge"
+                                              th:classappend="${alert.status == 'RESOLVED' ? 'bg-success' : (alert.status == 'PENDING' ? 'bg-warning text-dark' : 'bg-info')}"
+                                              th:text="${alert.statusDescription}">状态</span>
+                                        <small class="text-muted ms-2" th:text="${#temporals.format(alert.createdAt, 'HH:mm')}">00:00</small>
+                                    </div>
+                                </div>
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 右侧：统计和规则 -->
+            <div class="col-lg-4">
+                <!-- 优先级分布 -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-pie-chart"></i> 优先级分布</h5>
+                    </div>
+                    <div class="card-body">
+                        <div th:each="entry : ${statistics.priorityCounts}" class="mb-3">
+                            <div class="d-flex justify-content-between mb-1">
+                                <span>
+                                    <span class="priority-badge badge"
+                                          th:classappend="'priority-' + ${entry.key}"
+                                          th:text="${entry.key}">LOW</span>
+                                </span>
+                                <span th:text="${entry.value} + '个'">0个</span>
+                            </div>
+                            <div class="progress" style="height: 8px;">
+                                <div class="progress-bar"
+                                     th:classappend="${entry.key == 'CRITICAL' ? 'bg-danger' : (entry.key == 'HIGH' ? 'bg-warning' : (entry.key == 'MEDIUM' ? 'bg-info' : 'bg-secondary'))}"
+                                     th:style="'width: ' + ${(entry.value * 100) / (statistics.statusCounts.values().stream().mapToLong(Long::longValue).sum() > 0 ? statistics.statusCounts.values().stream().mapToLong(Long::longValue).sum() : 1)} + '%'">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 告警规则快速查看 -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <i class="bi bi-list-check"></i> 告警规则
+                            <span class="badge bg-primary ms-2" th:text="${#lists.size(rules)}">0</span>
+                        </h5>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="list-group list-group-flush">
+                            <div th:each="rule : ${rules}" class="list-group-item">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <h6 class="mb-0" th:text="${rule.name}">规则名称</h6>
+                                        <small class="text-muted" th:text="${rule.ruleType}">规则类型</small>
+                                    </div>
+                                    <div>
+                                        <span class="badge"
+                                              th:classappend="${rule.enabled ? 'bg-success' : 'bg-secondary'}"
+                                              th:text="${rule.enabled ? '启用' : '禁用'}">启用</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-footer">
+                        <a th:href="@{/alerts/rules}" class="btn btn-outline-primary btn-sm w-100">
+                            <i class="bi bi-gear"></i> 管理规则
+                        </a>
+                    </div>
+                </div>
+
+                <!-- 快捷操作 -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-lightning"></i> 快捷操作</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="d-grid gap-2">
+                            <a th:href="@{/alerts/rules}" class="btn btn-outline-primary">
+                                <i class="bi bi-plus-circle"></i> 创建告警规则
+                            </a>
+                            <button class="btn btn-outline-warning" onclick="acknowledgeAll()">
+                                <i class="bi bi-check-all"></i> 批量确认待处理
+                            </button>
+                            <button class="btn btn-outline-info" onclick="exportAlerts()">
+                                <i class="bi bi-download"></i> 导出告警记录
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 确认对话框 -->
+    <div class="modal fade" id="resolveModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">解决告警</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">解决方案</label>
+                        <textarea class="form-control" id="resolution" rows="3" placeholder="请描述解决方案..."></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-success" onclick="confirmResolve()">确认解决</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        let currentAlertId = null;
+
+        function refreshData() {
+            location.reload();
+        }
+
+        function acknowledgeAlert(id) {
+            if (confirm('确定要确认此告警吗？')) {
+                fetch(`/alerts/api/${id}/acknowledge`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        location.reload();
+                    } else {
+                        alert('操作失败: ' + data.message);
+                    }
+                })
+                .catch(error => alert('请求失败: ' + error));
+            }
+        }
+
+        function resolveAlert(id) {
+            currentAlertId = id;
+            const modal = new bootstrap.Modal(document.getElementById('resolveModal'));
+            modal.show();
+        }
+
+        function confirmResolve() {
+            const resolution = document.getElementById('resolution').value;
+            if (!resolution.trim()) {
+                alert('请输入解决方案');
+                return;
+            }
+
+            fetch(`/alerts/api/${currentAlertId}/resolve?resolution=${encodeURIComponent(resolution)}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    location.reload();
+                } else {
+                    alert('操作失败: ' + data.message);
+                }
+            })
+            .catch(error => alert('请求失败: ' + error));
+        }
+
+        function ignoreAlert(id) {
+            if (confirm('确定要忽略此告警吗？')) {
+                fetch(`/alerts/api/${id}/ignore`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        location.reload();
+                    } else {
+                        alert('操作失败: ' + data.message);
+                    }
+                })
+                .catch(error => alert('请求失败: ' + error));
+            }
+        }
+
+        function acknowledgeAll() {
+            if (confirm('确定要批量确认所有待处理告警吗？')) {
+                fetch('/alerts/api/acknowledge-all', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        alert(data.message);
+                        location.reload();
+                    } else {
+                        alert('操作失败: ' + data.message);
+                    }
+                })
+                .catch(error => alert('请求失败: ' + error));
+            }
+        }
+
+        function exportAlerts() {
+            const days = prompt('请输入导出最近多少天的告警记录（默认30天）:', '30');
+            if (days !== null) {
+                window.location.href = `/alerts/api/export?days=${days || 30}`;
+            }
+        }
+    </script>
+</body>
+</html>

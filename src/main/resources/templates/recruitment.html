@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agent招聘 - ChengXun Game Maker</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <link th:href="@{/css/custom.css}" rel="stylesheet">
+    <style>
+        .role-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            transition: all 0.2s;
+            cursor: pointer;
+        }
+        .role-card:hover {
+            border-color: var(--accent-color);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px var(--shadow-color);
+        }
+        .role-card.selected {
+            border-color: var(--accent-color);
+            background: rgba(74, 158, 255, 0.1);
+        }
+        .core-badge {
+            background: linear-gradient(135deg, #ffd700, #ffed4e);
+            color: #000;
+        }
+        .recruited-badge {
+            background: linear-gradient(135deg, #32cd32, #90ee90);
+        }
+        .capability-tag {
+            display: inline-block;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 15px;
+            padding: 0.25rem 0.5rem;
+            margin: 0.15rem;
+            font-size: 0.8em;
+        }
+    </style>
+</head>
+<body class="bg-dark text-light">
+    <div class="container-fluid mt-4">
+        <!-- 页面标题 -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h2><i class="bi bi-person-plus"></i> Agent招聘中心</h2>
+                        <p class="text-muted mb-0">制作人Agent可以在此招聘新员工，分配能力</p>
+                    </div>
+                    <div>
+                        <span class="badge core-badge me-2">
+                            <i class="bi bi-shield-check"></i> 制作人是核心角色
+                        </span>
+                        <button class="btn btn-outline-primary" onclick="loadData()">
+                            <i class="bi bi-arrow-clockwise"></i> 刷新
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <!-- 左侧：角色选择 -->
+            <div class="col-lg-8">
+                <!-- 预设角色 -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-grid"></i> 预设角色模板</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row" id="presetRoles">
+                            <!-- 预设角色卡片 -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 自定义角色 -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-pencil-square"></i> 自定义角色招聘</h5>
+                    </div>
+                    <div class="card-body">
+                        <form id="customRecruitForm">
+                            <div class="row">
+                                <div class="col-md-6 mb-3">
+                                    <label class="form-label">角色名称 *</label>
+                                    <input type="text" class="form-control" id="customRole" placeholder="例如：音效设计师" required>
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <label class="form-label">员工姓名 *</label>
+                                    <input type="text" class="form-control" id="customName" placeholder="例如：张三" required>
+                                </div>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">角色描述</label>
+                                <textarea class="form-control" id="customDescription" rows="2" placeholder="描述该角色的职责..."></textarea>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">能力标签</label>
+                                <input type="text" class="form-control" id="customCapabilities" placeholder="用逗号分隔，例如：sound_design, music_composition">
+                                <div class="form-text">输入能力标签，用逗号分隔</div>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">支持的文件类型</label>
+                                <input type="text" class="form-control" id="customFileTypes" placeholder="例如：mp3, wav, ogg">
+                            </div>
+                            <button type="submit" class="btn btn-primary">
+                                <i class="bi bi-person-plus"></i> 招聘自定义角色
+                            </button>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- 已招聘的Agent -->
+                <div class="card mb-4">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0"><i class="bi bi-people"></i> 已招聘的员工</h5>
+                        <span class="badge bg-primary" id="recruitedCount">0</span>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="table-responsive">
+                            <table class="table table-hover mb-0">
+                                <thead>
+                                    <tr>
+                                        <th>姓名</th>
+                                        <th>角色</th>
+                                        <th>能力</th>
+                                        <th>招聘人</th>
+                                        <th>状态</th>
+                                        <th>操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="recruitedList">
+                                    <!-- 已招聘列表 -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 右侧：招聘表单和统计 -->
+            <div class="col-lg-4">
+                <!-- 招聘表单 -->
+                <div class="card mb-4" id="recruitFormCard" style="display: none;">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-person-plus"></i> 招聘新员工</h5>
+                    </div>
+                    <div class="card-body">
+                        <form id="recruitForm">
+                            <input type="hidden" id="selectedRole">
+                            <div class="mb-3">
+                                <label class="form-label">选择的角色</label>
+                                <input type="text" class="form-control" id="displayRole" readonly>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">员工姓名 *</label>
+                                <input type="text" class="form-control" id="recruitName" placeholder="输入员工姓名" required>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">工作目录 *</label>
+                                <input type="text" class="form-control" id="recruitWorkDir" placeholder="例如：/project/server" required>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">描述</label>
+                                <textarea class="form-control" id="recruitDescription" rows="2"></textarea>
+                            </div>
+                            <button type="submit" class="btn btn-success w-100">
+                                <i class="bi bi-check-circle"></i> 确认招聘
+                            </button>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- 招聘统计 -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-bar-chart"></i> 招聘统计</h5>
+                    </div>
+                    <div class="card-body">
+                        <div id="recruitmentStats">
+                            <div class="d-flex justify-content-between mb-2">
+                                <span>总员工数</span>
+                                <span class="badge bg-primary" id="totalAgents">-</span>
+                            </div>
+                            <div class="d-flex justify-content-between mb-2">
+                                <span>已招聘员工</span>
+                                <span class="badge bg-success" id="recruitedAgents">-</span>
+                            </div>
+                            <div class="d-flex justify-content-between mb-2">
+                                <span>核心角色</span>
+                                <span class="badge core-badge" id="coreAgents">-</span>
+                            </div>
+                            <hr>
+                            <h6>角色分布</h6>
+                            <div id="roleDistribution">
+                                <!-- 角色分布 -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 说明 -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-info-circle"></i> 招聘说明</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <h6>核心角色</h6>
+                            <small class="text-muted">
+                                <span class="badge core-badge">制作人</span> 是核心角色，不可删除。
+                                只有制作人Agent可以招聘新员工。
+                            </small>
+                        </div>
+                        <div class="mb-3">
+                            <h6>预设角色</h6>
+                            <small class="text-muted">
+                                系统提供7种预设角色模板，包含默认能力和文件类型支持。
+                            </small>
+                        </div>
+                        <div class="mb-3">
+                            <h6>自定义角色</h6>
+                            <small class="text-muted">
+                                如果预设角色不满足需求，可以创建自定义角色，自由配置能力和标签。
+                            </small>
+                        </div>
+                        <div>
+                            <h6>能力分配</h6>
+                            <small class="text-muted">
+                                招聘后可以随时为员工添加或修改能力标签。
+                            </small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        let selectedRole = null;
+        let producerId = null;
+
+        // 页面加载
+        document.addEventListener('DOMContentLoaded', () => {
+            loadData();
+            findProducerId();
+        });
+
+        // 查找制作人Agent ID
+        async function findProducerId() {
+            try {
+                const response = await fetch('/api/agent-scheduler/status');
+                const agents = await response.json();
+                const producer = agents.find(a => a.role === 'producer');
+                if (producer) {
+                    producerId = producer.id;
+                }
+            } catch (error) {
+                console.error('Failed to find producer:', error);
+            }
+        }
+
+        // 加载数据
+        async function loadData() {
+            await Promise.all([
+                loadPresetRoles(),
+                loadRecruitedAgents(),
+                loadRecruitmentStats()
+            ]);
+        }
+
+        // 加载预设角色
+        async function loadPresetRoles() {
+            try {
+                const response = await fetch('/api/recruitment/roles');
+                const roles = await response.json();
+
+                const container = document.getElementById('presetRoles');
+                container.innerHTML = '';
+
+                roles.forEach(role => {
+                    const card = document.createElement('div');
+                    card.className = 'col-md-6 col-lg-4 mb-3';
+                    card.innerHTML = `
+                        <div class="role-card p-3" onclick="selectRole('${role.role}', '${role.name}')">
+                            <h6 class="mb-1">${role.name}</h6>
+                            <small class="text-muted d-block mb-2">${role.description}</small>
+                            <div>
+                                ${role.capabilities.map(cap =>
+                                    `<span class="capability-tag">${cap}</span>`
+                                ).join('')}
+                            </div>
+                        </div>
+                    `;
+                    container.appendChild(card);
+                });
+            } catch (error) {
+                console.error('Failed to load roles:', error);
+            }
+        }
+
+        // 选择角色
+        function selectRole(role, name) {
+            selectedRole = role;
+
+            // 更新UI
+            document.querySelectorAll('.role-card').forEach(card => {
+                card.classList.remove('selected');
+            });
+            event.currentTarget.classList.add('selected');
+
+            // 显示招聘表单
+            document.getElementById('recruitFormCard').style.display = 'block';
+            document.getElementById('selectedRole').value = role;
+            document.getElementById('displayRole').value = name;
+
+            // 滚动到表单
+            document.getElementById('recruitFormCard').scrollIntoView({ behavior: 'smooth' });
+        }
+
+        // 提交招聘
+        document.getElementById('recruitForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            if (!producerId) {
+                alert('未找到制作人Agent，无法招聘');
+                return;
+            }
+
+            const role = document.getElementById('selectedRole').value;
+            const name = document.getElementById('recruitName').value;
+            const workDir = document.getElementById('recruitWorkDir').value;
+            const description = document.getElementById('recruitDescription').value;
+
+            try {
+                const response = await fetch(`/api/recruitment/recruit?producerId=${producerId}&role=${role}&name=${encodeURIComponent(name)}&workDir=${encodeURIComponent(workDir)}`, {
+                    method: 'POST'
+                });
+
+                const result = await response.json();
+
+                if (result.status === 'success') {
+                    alert(`招聘成功！Agent ID: ${result.agentId}`);
+                    document.getElementById('recruitForm').reset();
+                    document.getElementById('recruitFormCard').style.display = 'none';
+                    loadData();
+                } else {
+                    alert('招聘失败: ' + result.message);
+                }
+            } catch (error) {
+                alert('请求失败: ' + error.message);
+            }
+        });
+
+        // 自定义角色招聘
+        document.getElementById('customRecruitForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            if (!producerId) {
+                alert('未找到制作人Agent，无法招聘');
+                return;
+            }
+
+            const role = document.getElementById('customRole').value;
+            const name = document.getElementById('customName').value;
+            const description = document.getElementById('customDescription').value;
+            const capabilities = document.getElementById('customCapabilities').value.split(',').map(s => s.trim()).filter(s => s);
+            const fileTypes = document.getElementById('customFileTypes').value.split(',').map(s => s.trim()).filter(s => s);
+
+            try {
+                const response = await fetch(`/api/recruitment/recruit-full?producerId=${producerId}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: name,
+                        role: role,
+                        description: description,
+                        capabilities: capabilities,
+                        supportedFileTypes: fileTypes,
+                        workDir: '/project/' + role
+                    })
+                });
+
+                const result = await response.json();
+
+                if (result.status === 'success') {
+                    alert(`自定义角色招聘成功！Agent ID: ${result.agentId}`);
+                    document.getElementById('customRecruitForm').reset();
+                    loadData();
+                } else {
+                    alert('招聘失败: ' + result.message);
+                }
+            } catch (error) {
+                alert('请求失败: ' + error.message);
+            }
+        });
+
+        // 加载已招聘Agent
+        async function loadRecruitedAgents() {
+            try {
+                const response = await fetch('/api/recruitment/recruited');
+                const agents = await response.json();
+
+                document.getElementById('recruitedCount').textContent = agents.length;
+
+                const tbody = document.getElementById('recruitedList');
+                tbody.innerHTML = '';
+
+                agents.forEach(agent => {
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `
+                        <td>${agent.name}</td>
+                        <td><span class="badge bg-secondary">${agent.role}</span></td>
+                        <td>
+                            ${agent.capabilities.map(cap =>
+                                `<span class="capability-tag">${cap}</span>`
+                            ).join('')}
+                        </td>
+                        <td><small class="text-muted">${agent.recruitedBy || '-'}</small></td>
+                        <td>
+                            ${agent.isCore ?
+                                '<span class="badge core-badge">核心</span>' :
+                                '<span class="badge recruited-badge">已招聘</span>'
+                            }
+                        </td>
+                        <td>
+                            ${!agent.isCore ? `
+                                <button class="btn btn-outline-danger btn-sm" onclick="dismissAgent('${agent.id}')">
+                                    <i class="bi bi-person-x"></i>
+                                </button>
+                            ` : ''}
+                        </td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+            } catch (error) {
+                console.error('Failed to load recruited agents:', error);
+            }
+        }
+
+        // 加载招聘统计
+        async function loadRecruitmentStats() {
+            try {
+                const response = await fetch('/api/recruitment/stats');
+                const stats = await response.json();
+
+                document.getElementById('totalAgents').textContent = stats.totalAgents;
+                document.getElementById('recruitedAgents').textContent = stats.recruitedAgents;
+                document.getElementById('coreAgents').textContent = stats.coreAgents;
+
+                // 角色分布
+                const distribution = document.getElementById('roleDistribution');
+                distribution.innerHTML = '';
+
+                if (stats.roleCounts) {
+                    for (const [role, count] of Object.entries(stats.roleCounts)) {
+                        const div = document.createElement('div');
+                        div.className = 'd-flex justify-content-between mb-1';
+                        div.innerHTML = `
+                            <span>${role}</span>
+                            <span class="badge bg-info">${count}</span>
+                        `;
+                        distribution.appendChild(div);
+                    }
+                }
+            } catch (error) {
+                console.error('Failed to load stats:', error);
+            }
+        }
+
+        // 解雇Agent
+        async function dismissAgent(agentId) {
+            if (!confirm('确定要解雇该员工吗？')) return;
+            if (!producerId) {
+                alert('未找到制作人Agent');
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/recruitment/${agentId}?producerId=${producerId}`, {
+                    method: 'DELETE'
+                });
+
+                const result = await response.json();
+
+                if (result.status === 'success') {
+                    alert('已解雇');
+                    loadData();
+                } else {
+                    alert('解雇失败: ' + result.message);
+                }
+            } catch (error) {
+                alert('请求失败: ' + error.message);
+            }
+        }
+    </script>
+</body>
+</html>

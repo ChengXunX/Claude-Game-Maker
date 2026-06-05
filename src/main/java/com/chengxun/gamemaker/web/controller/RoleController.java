@@ -18,7 +18,7 @@ import java.util.List;
 import java.util.Set;
 
 @Controller
-@RequestMapping("/roles")
+@RequestMapping({"/roles", "/api/roles"})
 @PreAuthorize("hasAuthority('PERM_roles:manage')")
 public class RoleController {
 

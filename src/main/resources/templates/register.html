@@ -33,6 +33,11 @@
         .form-control::placeholder {
             color: rgba(255, 255, 255, 0.5);
         }
+        .captcha-img {
+            cursor: pointer;
+            border-radius: 5px;
+            height: 44px;
+        }
     </style>
 </head>
 <body>
@@ -62,14 +67,41 @@
                                    placeholder="至少6个字符" required minlength="6">
                         </div>
                         <div class="mb-3">
-                            <label class="form-label text-light">邮箱</label>
-                            <input type="email" class="form-control" name="email"
-                                   placeholder="可选">
+                            <label class="form-label text-light">邮箱 <span th:if="${emailEnabled}" class="text-danger">*</span></label>
+                            <div class="input-group">
+                                <input type="email" class="form-control" name="email"
+                                       th:placeholder="${emailEnabled ? '必填，用于接收验证码' : '可选'}"
+                                       th:required="${emailEnabled}" id="emailInput">
+                                <button type="button" class="btn btn-outline-light" id="sendCodeBtn"
+                                        onclick="sendEmailCode()" th:if="${emailEnabled}">
+                                    发送验证码
+                                </button>
+                            </div>
+                        </div>
+                        <div class="mb-3" th:if="${emailEnabled}" id="emailCodeGroup">
+                            <label class="form-label text-light">邮箱验证码 *</label>
+                            <input type="text" class="form-control" name="emailCode"
+                                   placeholder="请输入邮箱收到的6位验证码" maxlength="6">
                         </div>
                         <div class="mb-3">
                             <label class="form-label text-light">昵称</label>
                             <input type="text" class="form-control" name="nickname"
                                    placeholder="可选，默认为用户名">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label text-light">验证码 *</label>
+                            <div class="input-group">
+                                <input type="text" class="form-control" name="captchaCode"
+                                       placeholder="请输入验证码" required maxlength="5"
+                                       style="max-width: 120px;">
+                                <input type="hidden" name="captchaId" th:value="${captchaId}">
+                                <img th:src="${captchaImage}" class="captcha-img ms-2" id="captchaImg"
+                                     onclick="refreshCaptcha()" title="点击刷新验证码">
+                                <button type="button" class="btn btn-outline-light btn-sm ms-1"
+                                        onclick="refreshCaptcha()" title="刷新验证码">
+                                    <i class="bi bi-arrow-clockwise"></i>
+                                </button>
+                            </div>
                         </div>
                         <button type="submit" class="btn btn-primary w-100 mb-3">
                             <i class="bi bi-person-plus"></i> 注册
@@ -85,5 +117,57 @@
             </div>
         </div>
     </div>
+
+    <script>
+        function refreshCaptcha() {
+            fetch('/captcha/generate')
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('captchaImg').src = data.image;
+                    document.querySelector('input[name="captchaId"]').value = data.captchaId;
+                });
+        }
+
+        function sendEmailCode() {
+            const email = document.getElementById('emailInput').value;
+            if (!email || !email.includes('@')) {
+                alert('请输入有效的邮箱地址');
+                return;
+            }
+
+            const btn = document.getElementById('sendCodeBtn');
+            btn.disabled = true;
+            btn.textContent = '发送中...';
+
+            fetch('/email/send-code', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                body: 'email=' + encodeURIComponent(email)
+            })
+            .then(response => response.json())
+            .then(data => {
+                alert(data.message);
+                if (data.success) {
+                    let countdown = 60;
+                    const timer = setInterval(() => {
+                        countdown--;
+                        btn.textContent = countdown + 's';
+                        if (countdown <= 0) {
+                            clearInterval(timer);
+                            btn.textContent = '发送验证码';
+                            btn.disabled = false;
+                        }
+                    }, 1000);
+                } else {
+                    btn.textContent = '发送验证码';
+                    btn.disabled = false;
+                }
+            })
+            .catch(() => {
+                btn.textContent = '发送验证码';
+                btn.disabled = false;
+            });
+        }
+    </script>
 </body>
 </html>

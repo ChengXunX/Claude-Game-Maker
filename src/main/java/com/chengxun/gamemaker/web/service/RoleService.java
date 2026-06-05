@@ -2,9 +2,13 @@ package com.chengxun.gamemaker.web.service;
 
 import com.chengxun.gamemaker.web.entity.Role;
 import com.chengxun.gamemaker.web.repository.RoleRepository;
+import org.hibernate.Hibernate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Arrays;
 import java.util.HashSet;
@@ -12,6 +16,7 @@ import java.util.List;
 import java.util.Set;
 
 @Service
+@Transactional
 public class RoleService {
 
     private static final Logger log = LoggerFactory.getLogger(RoleService.class);
@@ -30,6 +35,35 @@ public class RoleService {
     public static final String PERM_USERS_MANAGE = "users:manage";
     public static final String PERM_ROLES_MANAGE = "roles:manage";
     public static final String PERM_LOGS_VIEW = "logs:view";
+
+    // CICD流水线权限
+    public static final String PERM_PIPELINE_VIEW = "pipeline:view";
+    public static final String PERM_PIPELINE_CREATE = "pipeline:create";
+    public static final String PERM_PIPELINE_MANAGE = "pipeline:manage";
+    public static final String PERM_PIPELINE_EXECUTE = "pipeline:execute";
+    public static final String PERM_PIPELINE_APPROVE = "pipeline:approve";
+    public static final String PERM_PIPELINE_INTERVENE = "pipeline:intervene";
+
+    // 监控权限
+    public static final String PERM_MONITOR_VIEW = "system:monitor";
+    public static final String PERM_MONITOR_MANAGE = "system:monitor:manage";
+
+    // 工作流权限
+    public static final String PERM_WORKFLOW_VIEW = "workflow:view";
+    public static final String PERM_WORKFLOW_MANAGE = "workflow:manage";
+
+    // 代码审查权限
+    public static final String PERM_CODE_REVIEW = "code:review";
+
+    // 通知管理权限
+    public static final String PERM_NOTIFICATION_MANAGE = "notification:manage";
+
+    // AI 助手权限
+    public static final String PERM_AI_USE = "ai:use";
+
+    // 终端权限
+    public static final String PERM_TERMINAL_USE = "terminal:use";
+
     public static final String PERM_ALL = "*";
 
     // 所有可用权限
@@ -46,7 +80,28 @@ public class RoleService {
         PERM_USERS_VIEW,
         PERM_USERS_MANAGE,
         PERM_ROLES_MANAGE,
-        PERM_LOGS_VIEW
+        PERM_LOGS_VIEW,
+        // CICD流水线权限
+        PERM_PIPELINE_VIEW,
+        PERM_PIPELINE_CREATE,
+        PERM_PIPELINE_MANAGE,
+        PERM_PIPELINE_EXECUTE,
+        PERM_PIPELINE_APPROVE,
+        PERM_PIPELINE_INTERVENE,
+        // 监控权限
+        PERM_MONITOR_VIEW,
+        PERM_MONITOR_MANAGE,
+        // 工作流权限
+        PERM_WORKFLOW_VIEW,
+        PERM_WORKFLOW_MANAGE,
+        // 代码审查权限
+        PERM_CODE_REVIEW,
+        // 通知管理权限
+        PERM_NOTIFICATION_MANAGE,
+        // AI 助手权限
+        PERM_AI_USE,
+        // 终端权限
+        PERM_TERMINAL_USE
     );
 
     // 权限描述
@@ -65,6 +120,27 @@ public class RoleService {
             case PERM_USERS_MANAGE -> "管理用户";
             case PERM_ROLES_MANAGE -> "管理角色";
             case PERM_LOGS_VIEW -> "查看操作日志";
+            // CICD流水线权限
+            case PERM_PIPELINE_VIEW -> "查看流水线";
+            case PERM_PIPELINE_CREATE -> "创建流水线";
+            case PERM_PIPELINE_MANAGE -> "管理流水线";
+            case PERM_PIPELINE_EXECUTE -> "执行流水线";
+            case PERM_PIPELINE_APPROVE -> "审批流水线";
+            case PERM_PIPELINE_INTERVENE -> "干预流水线";
+            // 监控权限
+            case PERM_MONITOR_VIEW -> "查看监控";
+            case PERM_MONITOR_MANAGE -> "管理监控";
+            // 工作流权限
+            case PERM_WORKFLOW_VIEW -> "查看工作流";
+            case PERM_WORKFLOW_MANAGE -> "管理工作流";
+            // 代码审查权限
+            case PERM_CODE_REVIEW -> "代码审查";
+            // 通知管理权限
+            case PERM_NOTIFICATION_MANAGE -> "管理通知模板";
+            // AI 助手权限
+            case PERM_AI_USE -> "使用 AI 助手";
+            // 终端权限
+            case PERM_TERMINAL_USE -> "使用系统终端";
             case PERM_ALL -> "所有权限";
             default -> permission;
         };
@@ -81,7 +157,7 @@ public class RoleService {
         createRoleIfNotExists("ADMIN", "超级管理员", "系统超级管理员，拥有所有权限", true,
             new HashSet<>(Arrays.asList(PERM_ALL)));
 
-        // 项目经理 - 管理项目和 Agent
+        // 项目经理 - 管理项目、Agent和流水线
         createRoleIfNotExists("PROJECT_MANAGER", "项目经理", "负责项目管理和 Agent 调度", true,
             new HashSet<>(Arrays.asList(
                 PERM_DASHBOARD_VIEW,
@@ -91,17 +167,63 @@ public class RoleService {
                 PERM_PROJECTS_VIEW,
                 PERM_PROJECTS_MANAGE,
                 PERM_PROJECTS_EDIT,
-                PERM_SKILLS_VIEW
+                PERM_SKILLS_VIEW,
+                // CICD流水线权限
+                PERM_PIPELINE_VIEW,
+                PERM_PIPELINE_CREATE,
+                PERM_PIPELINE_MANAGE,
+                PERM_PIPELINE_EXECUTE,
+                PERM_PIPELINE_APPROVE,
+                PERM_PIPELINE_INTERVENE,
+                // 监控权限
+                PERM_MONITOR_VIEW,
+                // 工作流权限
+                PERM_WORKFLOW_VIEW,
+                PERM_WORKFLOW_MANAGE,
+                // 代码审查权限
+                PERM_CODE_REVIEW,
+                // 通知管理权限
+                PERM_NOTIFICATION_MANAGE,
+                // AI 助手权限
+                PERM_AI_USE
             )));
 
-        // 开发者 - 查看和使用 Agent
+        // 开发者 - 查看和使用 Agent，执行流水线
         createRoleIfNotExists("DEVELOPER", "开发者", "使用 Agent 进行开发工作", true,
             new HashSet<>(Arrays.asList(
                 PERM_DASHBOARD_VIEW,
                 PERM_AGENTS_VIEW,
                 PERM_AGENTS_TASK,
                 PERM_PROJECTS_VIEW,
-                PERM_SKILLS_VIEW
+                PERM_SKILLS_VIEW,
+                // CICD流水线权限
+                PERM_PIPELINE_VIEW,
+                PERM_PIPELINE_EXECUTE,
+                // 代码审查权限
+                PERM_CODE_REVIEW,
+                // AI 助手权限
+                PERM_AI_USE
+            )));
+
+        // 运维工程师 - 管理流水线和监控
+        createRoleIfNotExists("OPS_ENGINEER", "运维工程师", "负责系统运维和部署", true,
+            new HashSet<>(Arrays.asList(
+                PERM_DASHBOARD_VIEW,
+                PERM_AGENTS_VIEW,
+                PERM_PROJECTS_VIEW,
+                // CICD流水线权限
+                PERM_PIPELINE_VIEW,
+                PERM_PIPELINE_CREATE,
+                PERM_PIPELINE_MANAGE,
+                PERM_PIPELINE_EXECUTE,
+                PERM_PIPELINE_APPROVE,
+                PERM_PIPELINE_INTERVENE,
+                // 监控权限
+                PERM_MONITOR_VIEW,
+                PERM_MONITOR_MANAGE,
+                // 工作流权限
+                PERM_WORKFLOW_VIEW,
+                PERM_WORKFLOW_MANAGE
             )));
 
         // 观察者 - 只读权限
@@ -110,7 +232,13 @@ public class RoleService {
                 PERM_DASHBOARD_VIEW,
                 PERM_AGENTS_VIEW,
                 PERM_PROJECTS_VIEW,
-                PERM_SKILLS_VIEW
+                PERM_SKILLS_VIEW,
+                // CICD流水线权限（只读）
+                PERM_PIPELINE_VIEW,
+                // 监控权限（只读）
+                PERM_MONITOR_VIEW,
+                // AI 助手权限
+                PERM_AI_USE
             )));
 
         // 普通用户 - 基础权限
@@ -137,18 +265,75 @@ public class RoleService {
         }
     }
 
+    /**
+     * 根据角色名获取角色
+     * 使用缓存提高查询效率
+     *
+     * @param name 角色名称
+     * @return 角色信息，不存在返回null
+     */
+    @Transactional(readOnly = true)
+    @Cacheable(value = "roles", key = "#name")
     public Role getRoleByName(String name) {
-        return roleRepository.findByName(name).orElse(null);
+        Role role = roleRepository.findByName(name).orElse(null);
+        if (role != null) {
+            // 强制初始化懒加载的permissions集合，确保缓存序列化时不会出错
+            Hibernate.initialize(role.getPermissions());
+            // 创建新Set避免代理对象问题
+            role.setPermissions(new HashSet<>(role.getPermissions()));
+        }
+        return role;
     }
 
+    /**
+     * 获取所有角色
+     * 使用缓存提高查询效率
+     *
+     * @return 角色列表
+     */
+    @Transactional(readOnly = true)
+    @Cacheable(value = "roles", key = "'all'")
     public List<Role> getAllRoles() {
-        return roleRepository.findAll();
+        List<Role> roles = roleRepository.findAll();
+        // 强制初始化每个角色的permissions集合，确保缓存序列化时不会出错
+        for (Role role : roles) {
+            Hibernate.initialize(role.getPermissions());
+            role.setPermissions(new HashSet<>(role.getPermissions()));
+        }
+        return roles;
     }
 
+    /**
+     * 根据ID获取角色
+     * 使用缓存提高查询效率
+     *
+     * @param id 角色ID
+     * @return 角色信息，不存在返回null
+     */
+    @Transactional(readOnly = true)
+    @Cacheable(value = "roles", key = "#id")
     public Role getRoleById(Long id) {
-        return roleRepository.findById(id).orElse(null);
+        Role role = roleRepository.findById(id).orElse(null);
+        if (role != null) {
+            // 强制初始化懒加载的permissions集合，确保缓存序列化时不会出错
+            Hibernate.initialize(role.getPermissions());
+            role.setPermissions(new HashSet<>(role.getPermissions()));
+        }
+        return role;
     }
 
+    /**
+     * 创建新角色
+     * 创建成功后清除角色缓存
+     *
+     * @param name 角色名称
+     * @param displayName 显示名称
+     * @param description 角色描述
+     * @param permissions 权限集合
+     * @return 创建的角色
+     * @throws RuntimeException 当角色名已存在时抛出
+     */
+    @CacheEvict(value = "roles", allEntries = true)
     public Role createRole(String name, String displayName, String description, Set<String> permissions) {
         if (roleRepository.existsByName(name)) {
             throw new RuntimeException("角色名已存在: " + name);
@@ -166,6 +351,18 @@ public class RoleService {
         return saved;
     }
 
+    /**
+     * 更新角色信息
+     * 更新成功后清除角色缓存
+     *
+     * @param id 角色ID
+     * @param displayName 显示名称
+     * @param description 角色描述
+     * @param permissions 权限集合
+     * @return 更新后的角色
+     * @throws RuntimeException 当角色不存在或为系统内置角色时抛出
+     */
+    @CacheEvict(value = "roles", allEntries = true)
     public Role updateRole(Long id, String displayName, String description, Set<String> permissions) {
         Role role = roleRepository.findById(id)
             .orElseThrow(() -> new RuntimeException("Role not found"));
@@ -183,6 +380,14 @@ public class RoleService {
         return saved;
     }
 
+    /**
+     * 删除角色
+     * 删除成功后清除角色缓存
+     *
+     * @param id 角色ID
+     * @throws RuntimeException 当角色不存在或为系统内置角色时抛出
+     */
+    @CacheEvict(value = "roles", allEntries = true)
     public void deleteRole(Long id) {
         Role role = roleRepository.findById(id)
             .orElseThrow(() -> new RuntimeException("Role not found"));

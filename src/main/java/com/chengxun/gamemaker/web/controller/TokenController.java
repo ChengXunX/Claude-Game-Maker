@@ -74,7 +74,8 @@ public class TokenController {
                 tokenService.assignToken(token.getId(), assignAgentId);
             }
 
-            logService.log(getUserId(authentication), "CREATE_TOKEN", name, "Created API token", null);
+            logService.log(getUserId(authentication), "CREATE_TOKEN", name,
+                "Created API token (key: " + maskApiKey(apiKey) + ")", null);
             redirectAttributes.addFlashAttribute("success", "Token 创建成功");
             return "redirect:/tokens";
         } catch (Exception e) {
@@ -135,16 +136,47 @@ public class TokenController {
         return "redirect:/tokens";
     }
 
+    /**
+     * T22: 测试 Token 连接
+     */
+    @PostMapping("/{id}/test")
+    public String testToken(@PathVariable Long id,
+                            Authentication authentication,
+                            RedirectAttributes redirectAttributes) {
+        try {
+            ApiToken token = tokenService.getTokenById(id);
+            if (token == null) {
+                redirectAttributes.addFlashAttribute("error", "Token 不存在");
+                return "redirect:/tokens";
+            }
+
+            // 简单测试：检查 API Key 格式
+            if (token.getApiKey() == null || token.getApiKey().isBlank()) {
+                redirectAttributes.addFlashAttribute("error", "API Key 为空");
+            } else if (token.getApiKey().length() < 10) {
+                redirectAttributes.addFlashAttribute("warning", "API Key 格式可能不正确（长度过短）");
+            } else {
+                redirectAttributes.addFlashAttribute("success", "Token 格式检查通过");
+            }
+        } catch (Exception e) {
+            redirectAttributes.addFlashAttribute("error", "测试失败: " + e.getMessage());
+        }
+        return "redirect:/tokens";
+    }
+
     @PostMapping("/{id}/assign")
     public String assignToken(@PathVariable Long id,
                              @RequestParam String agentId,
+                             @RequestParam(defaultValue = "immediate") String activation,
                              Authentication authentication,
                              RedirectAttributes redirectAttributes) {
         try {
-            ApiToken token = tokenService.assignToken(id, agentId);
+            ApiToken token = tokenService.assignToken(id, agentId, activation);
+            String activationLabel = "pending".equals(activation) ? "等待任务完成" : "立即";
             logService.log(getUserId(authentication), "ASSIGN_TOKEN",
-                token.getName(), "Assigned to agent: " + agentId, null);
-            redirectAttributes.addFlashAttribute("success", "Token 已分配给 Agent");
+                token.getName(), "Assigned to agent: " + agentId + " (" + activationLabel + ")", null);
+            redirectAttributes.addFlashAttribute("success",
+                "Token 已分配给 Agent（" + activationLabel + "生效）");
         } catch (Exception e) {
             redirectAttributes.addFlashAttribute("error", e.getMessage());
         }
@@ -183,5 +215,13 @@ public class TokenController {
     private Long getUserId(Authentication authentication) {
         User user = userService.getUserByUsername(authentication.getName());
         return user != null ? user.getId() : null;
+    }
+
+    /**
+     * S03: API Key 脱敏
+     */
+    private String maskApiKey(String apiKey) {
+        if (apiKey == null || apiKey.length() < 8) return "****";
+        return apiKey.substring(0, 4) + "****" + apiKey.substring(apiKey.length() - 4);
     }
 }

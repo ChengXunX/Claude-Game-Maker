@@ -15,9 +15,27 @@ public class TaskAssignment {
     private LocalDateTime updatedAt;
     private LocalDateTime completedAt;
     private String result;
-    
+
+    /** 重试次数 */
+    private Integer retryCount = 0;
+
+    /** 错误信息 */
+    private String error;
+
+    /** 开始时间（毫秒时间戳） */
+    private Long startedAt;
+
+    /** 创建时间（毫秒时间戳） */
+    private Long createdAtMs;
+
+    /** 完成时间（毫秒时间戳） */
+    private Long completedAtMs;
+
+    /** 优先级数值（用于队列排序） */
+    private Integer priorityValue = 5;
+
     public enum TaskStatus {
-        PENDING, IN_PROGRESS, COMPLETED, FAILED, CANCELLED
+        PENDING, IN_PROGRESS, PROCESSING, COMPLETED, FAILED, CANCELLED, RETRYING, REJECTED
     }
     
     public enum TaskPriority {
@@ -85,4 +103,22 @@ public class TaskAssignment {
     
     public String getResult() { return result; }
     public void setResult(String result) { this.result = result; }
+
+    public Integer getRetryCount() { return retryCount; }
+    public void setRetryCount(Integer retryCount) { this.retryCount = retryCount; }
+
+    public String getError() { return error; }
+    public void setError(String error) { this.error = error; }
+
+    public Long getStartedAt() { return startedAt; }
+    public void setStartedAt(Long startedAt) { this.startedAt = startedAt; }
+
+    public Long getCreatedAtMs() { return createdAtMs; }
+    public void setCreatedAtMs(Long createdAtMs) { this.createdAtMs = createdAtMs; }
+
+    public Long getCompletedAtMs() { return completedAtMs; }
+    public void setCompletedAtMs(Long completedAtMs) { this.completedAtMs = completedAtMs; }
+
+    public Integer getPriorityValue() { return priorityValue; }
+    public void setPriorityValue(Integer priorityValue) { this.priorityValue = priorityValue; }
 }

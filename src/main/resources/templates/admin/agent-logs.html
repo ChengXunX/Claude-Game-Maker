@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agent 日志 - ChengXun Game Maker</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        .log-detail { max-width: 400px; word-break: break-all; }
+        .log-decision { max-width: 300px; white-space: pre-wrap; font-size: 0.8rem; }
+        .level-DEBUG { color: #6c757d; }
+        .level-INFO { color: #0dcaf0; }
+        .level-WARN { color: #ffc107; }
+        .level-ERROR { color: #dc3545; }
+    </style>
+</head>
+<body class="bg-dark text-light">
+    <!-- Navbar -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-black border-bottom border-secondary">
+        <div class="container-fluid">
+            <a class="navbar-brand" th:href="@{/}">
+                <i class="bi bi-controller"></i> ChengXun Game Maker
+            </a>
+            <div class="collapse navbar-collapse">
+                <ul class="navbar-nav me-auto">
+                    <li class="nav-item"><a class="nav-link" th:href="@{/}"><i class="bi bi-speedometer2"></i> 仪表盘</a></li>
+                    <li class="nav-item"><a class="nav-link" th:href="@{/agents}"><i class="bi bi-robot"></i> Agents</a></li>
+                    <li class="nav-item"><a class="nav-link" th:href="@{/projects}"><i class="bi bi-folder"></i> 项目</a></li>
+                    <li class="nav-item"><a class="nav-link" th:href="@{/skills}"><i class="bi bi-lightning"></i> 技能</a></li>
+                    <li class="nav-item"><a class="nav-link" th:href="@{/tokens}"><i class="bi bi-key"></i> Token 管理</a></li>
+                    <li class="nav-item"><a class="nav-link" th:href="@{/monitor}"><i class="bi bi-graph-up"></i> 监控</a></li>
+                    <li class="nav-item"><a class="nav-link" th:href="@{/admin/users}"><i class="bi bi-people"></i> 用户管理</a></li>
+                    <li class="nav-item"><a class="nav-link" th:href="@{/code}"><i class="bi bi-code-slash"></i> 代码管理</a></li>
+                    <li class="nav-item"><a class="nav-link active" th:href="@{/admin/agent-logs}"><i class="bi bi-journal-text"></i> Agent 日志</a></li>
+                    <li class="nav-item"><a class="nav-link" th:href="@{/admin/settings}"><i class="bi bi-gear"></i> 设置</a></li>
+                </ul>
+                <ul class="navbar-nav">
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
+                            <i class="bi bi-person-circle"></i> <span th:text="${username}">Admin</span>
+                        </a>
+                        <ul class="dropdown-menu dropdown-menu-end dropdown-menu-dark">
+                            <li><a class="dropdown-item" th:href="@{/profile}"><i class="bi bi-person"></i> 个人中心</a></li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li>
+                                <form th:action="@{/logout}" method="post">
+                                    <button class="dropdown-item" type="submit"><i class="bi bi-box-arrow-right"></i> 退出登录</button>
+                                </form>
+                            </li>
+                        </ul>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid mt-4">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h2><i class="bi bi-journal-text"></i> Agent 运行日志</h2>
+            <span class="badge bg-info fs-6" th:text="'共 ' + ${totalCount} + ' 条'">0</span>
+        </div>
+
+        <!-- Stats -->
+        <div class="row mb-4">
+            <div class="col-md-6">
+                <div class="card bg-dark border-secondary">
+                    <div class="card-header"><h6 class="mb-0">按动作统计</h6></div>
+                    <div class="card-body p-2">
+                        <div class="d-flex flex-wrap gap-2">
+                            <span th:each="stat : ${statsByAction}" class="badge bg-secondary">
+                                <span th:text="${stat[0]}"></span>: <span th:text="${stat[1]}"></span>
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card bg-dark border-secondary">
+                    <div class="card-header"><h6 class="mb-0">按 Agent 统计</h6></div>
+                    <div class="card-body p-2">
+                        <div class="d-flex flex-wrap gap-2">
+                            <span th:each="stat : ${statsByAgent}" class="badge bg-primary">
+                                <span th:text="${stat[0]}"></span>: <span th:text="${stat[1]}"></span>
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Filter -->
+        <div class="card bg-dark border-secondary mb-4">
+            <div class="card-body">
+                <form th:action="@{/admin/agent-logs}" method="get" class="row g-2 align-items-end">
+                    <div class="col-md-2">
+                        <label class="form-label small">Agent</label>
+                        <select name="agentId" class="form-select form-select-sm bg-dark text-light border-secondary">
+                            <option value="">全部</option>
+                            <option th:each="agent : ${agents}" th:value="${agent.id}" th:text="${agent.name}"
+                                    th:selected="${filterAgentId == agent.id}"></option>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label small">动作</label>
+                        <select name="action" class="form-select form-select-sm bg-dark text-light border-secondary">
+                            <option value="">全部</option>
+                            <option th:each="act : ${actions}" th:value="${act.name()}" th:text="${act.name()}"
+                                    th:selected="${filterAction == act.name()}"></option>
+                        </select>
+                    </div>
+                    <div class="col-md-1">
+                        <label class="form-label small">级别</label>
+                        <select name="level" class="form-select form-select-sm bg-dark text-light border-secondary">
+                            <option value="">全部</option>
+                            <option th:each="lv : ${levels}" th:value="${lv.name()}" th:text="${lv.name()}"
+                                    th:selected="${filterLevel == lv.name()}"></option>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label small">关键词</label>
+                        <input type="text" name="keyword" class="form-control form-control-sm bg-dark text-light border-secondary"
+                               th:value="${filterKeyword}" placeholder="搜索摘要/详情">
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label small">开始时间</label>
+                        <input type="datetime-local" name="startTime" class="form-control form-control-sm bg-dark text-light border-secondary">
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label small">结束时间</label>
+                        <input type="datetime-local" name="endTime" class="form-control form-control-sm bg-dark text-light border-secondary">
+                    </div>
+                    <div class="col-md-1">
+                        <button type="submit" class="btn btn-primary btn-sm w-100">
+                            <i class="bi bi-search"></i> 查询
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Log Table -->
+        <div class="card bg-dark border-secondary">
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-dark table-hover table-sm mb-0">
+                        <thead>
+                            <tr>
+                                <th style="width: 160px;">时间</th>
+                                <th style="width: 100px;">Agent</th>
+                                <th style="width: 130px;">动作</th>
+                                <th style="width: 60px;">级别</th>
+                                <th>摘要</th>
+                                <th>详情</th>
+                                <th>决策</th>
+                                <th style="width: 80px;">耗时</th>
+                                <th style="width: 60px;">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr th:each="log : ${logs}">
+                                <td class="text-nowrap small">
+                                    <span th:text="${#temporals.format(log.createdAt, 'MM-dd HH:mm:ss')}"></span>
+                                </td>
+                                <td>
+                                    <span class="badge bg-primary" th:text="${log.agentName ?: log.agentId}"></span>
+                                </td>
+                                <td>
+                                    <span class="badge bg-secondary" th:text="${log.action}"></span>
+                                </td>
+                                <td>
+                                    <span th:class="'level-' + ${log.level}" th:text="${log.level}"
+                                          style="font-weight: bold;"></span>
+                                </td>
+                                <td th:text="${log.summary}"></td>
+                                <td class="log-detail">
+                                    <small th:text="${log.detail}" th:title="${log.detail}"></small>
+                                </td>
+                                <td class="log-decision">
+                                    <small th:text="${log.decision}" th:title="${log.decision}"></small>
+                                </td>
+                                <td>
+                                    <span th:if="${log.durationMs != null}" class="badge bg-info"
+                                          th:text="${log.durationMs} + 'ms'"></span>
+                                </td>
+                                <td>
+                                    <a th:href="@{/admin/agent-logs/{id}(id=${log.id})}"
+                                       class="btn btn-outline-primary btn-sm" title="查看详情">
+                                        <i class="bi bi-eye"></i>
+                                    </a>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <p th:if="${#lists.isEmpty(logs)}" class="text-muted text-center py-4 mb-0">暂无日志记录</p>
+            </div>
+        </div>
+
+        <!-- Pagination -->
+        <div th:if="${logPage.totalPages > 1}" class="d-flex justify-content-center mt-3">
+            <nav>
+                <ul class="pagination pagination-sm">
+                    <li class="page-item" th:classappend="${logPage.first ? 'disabled' : ''}">
+                        <a class="page-link bg-dark text-light border-secondary"
+                           th:href="@{/admin/agent-logs(page=${logPage.number - 1}, agentId=${filterAgentId}, action=${filterAction}, level=${filterLevel}, keyword=${filterKeyword})}">上一页</a>
+                    </li>
+                    <li th:each="i : ${#numbers.sequence(0, logPage.totalPages - 1)}"
+                        class="page-item" th:classappend="${i == logPage.number ? 'active' : ''}"
+                        th:if="${i >= logPage.number - 2 and i <= logPage.number + 2}">
+                        <a class="page-link bg-dark text-light border-secondary"
+                           th:href="@{/admin/agent-logs(page=${i}, agentId=${filterAgentId}, action=${filterAction}, level=${filterLevel}, keyword=${filterKeyword})}"
+                           th:text="${i + 1}"></a>
+                    </li>
+                    <li class="page-item" th:classappend="${logPage.last ? 'disabled' : ''}">
+                        <a class="page-link bg-dark text-light border-secondary"
+                           th:href="@{/admin/agent-logs(page=${logPage.number + 1}, agentId=${filterAgentId}, action=${filterAction}, level=${filterLevel}, keyword=${filterKeyword})}">下一页</a>
+                    </li>
+                </ul>
+            </nav>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

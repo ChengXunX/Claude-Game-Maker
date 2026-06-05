@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>通知中心 - ChengXun Game Maker</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+</head>
+<body class="bg-dark text-light">
+    <!-- Navbar -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-black border-bottom border-secondary">
+        <div class="container-fluid">
+            <a class="navbar-brand" th:href="@{/}">
+                <i class="bi bi-controller"></i> ChengXun Game Maker
+            </a>
+            <div class="collapse navbar-collapse">
+                <ul class="navbar-nav me-auto">
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/}">
+                            <i class="bi bi-speedometer2"></i> 仪表盘
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/agents}">
+                            <i class="bi bi-robot"></i> Agents
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/projects}">
+                            <i class="bi bi-folder"></i> 项目
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/skills}">
+                            <i class="bi bi-lightning"></i> 技能
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/tokens}">
+                            <i class="bi bi-key"></i> Token 管理
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/monitor}">
+                            <i class="bi bi-graph-up"></i> 监控
+                        </a>
+                    </li>
+                    <li class="nav-item" sec:authorize="hasRole('ADMIN')">
+                        <a class="nav-link" th:href="@{/admin/users}">
+                            <i class="bi bi-people"></i> 用户管理
+                        </a>
+                    </li>
+                    <li class="nav-item" sec:authorize="hasAuthority('PERM_roles:manage')">
+                        <a class="nav-link" th:href="@{/roles}">
+                            <i class="bi bi-shield-lock"></i> 角色管理
+                        </a>
+                    </li>
+                </ul>
+                <ul class="navbar-nav">
+                    <li class="nav-item">
+                        <a class="nav-link active" th:href="@{/notifications}">
+                            <i class="bi bi-bell"></i> 通知
+                            <span th:if="${unreadCount > 0}" class="badge bg-danger" th:text="${unreadCount}"></span>
+                        </a>
+                    </li>
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
+                            <i class="bi bi-person-circle"></i> <span th:text="${username}">User</span>
+                        </a>
+                        <ul class="dropdown-menu dropdown-menu-end dropdown-menu-dark">
+                            <li>
+                                <a class="dropdown-item" th:href="@{/profile}">
+                                    <i class="bi bi-person"></i> 个人中心
+                                </a>
+                            </li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li>
+                                <form th:action="@{/logout}" method="post">
+                                    <button class="dropdown-item" type="submit">
+                                        <i class="bi bi-box-arrow-right"></i> 退出登录
+                                    </button>
+                                </form>
+                            </li>
+                        </ul>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid mt-4">
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a th:href="@{/}" class="text-decoration-none">首页</a></li>
+                <li class="breadcrumb-item active">通知中心</li>
+            </ol>
+        </nav>
+
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2><i class="bi bi-bell"></i> 通知中心</h2>
+            <div>
+                <button class="btn btn-outline-primary me-2" onclick="markAllAsRead()">
+                    <i class="bi bi-check-all"></i> 全部标为已读
+                </button>
+            </div>
+        </div>
+
+        <!-- 通知列表 -->
+        <div class="card bg-dark border-secondary">
+            <div class="card-body">
+                <div th:if="${#lists.isEmpty(notifications)}" class="text-center py-5">
+                    <i class="bi bi-bell-slash text-muted" style="font-size: 3rem;"></i>
+                    <p class="text-muted mt-3">暂无通知</p>
+                </div>
+
+                <div th:unless="${#lists.isEmpty(notifications)}" class="list-group">
+                    <div th:each="notification : ${notifications}"
+                         class="list-group-item bg-dark border-secondary d-flex justify-content-between align-items-start"
+                         th:classappend="${!notification.read ? 'list-group-item-primary' : ''}"
+                         style="cursor: pointer;"
+                         th:onclick="'markAsRead(' + ${notification.id} + ')'">
+                        <div class="ms-2 me-auto">
+                            <div class="d-flex align-items-center">
+                                <i th:switch="${notification.type.name()}"
+                                   th:case="'INFO'" class="bi bi-info-circle text-info me-2"></i>
+                                <i th:case="'WARNING'" class="bi bi-exclamation-triangle text-warning me-2"></i>
+                                <i th:case="'ERROR'" class="bi bi-x-circle text-danger me-2"></i>
+                                <i th:case="'SUCCESS'" class="bi bi-check-circle text-success me-2"></i>
+                                <i th:case="'TASK'" class="bi bi-list-task text-primary me-2"></i>
+                                <i th:case="'AGENT'" class="bi bi-robot text-purple me-2"></i>
+                                <i th:case="'SYSTEM'" class="bi bi-gear text-secondary me-2"></i>
+                                <i th:case="*" class="bi bi-bell text-muted me-2"></i>
+                                <h6 class="mb-0" th:text="${notification.title}">通知标题</h6>
+                            </div>
+                            <p class="mb-1 text-muted small" th:text="${notification.content}">通知内容</p>
+                            <small class="text-muted" th:text="${#temporals.format(notification.createdAt, 'yyyy-MM-dd HH:mm')}"></small>
+                        </div>
+                        <div class="d-flex align-items-center">
+                            <span th:unless="${notification.read}" class="badge bg-primary rounded-pill me-2">新</span>
+                            <button class="btn btn-sm btn-outline-danger" th:onclick="'deleteNotification(' + ${notification.id} + ')'"
+                                    onclick="event.stopPropagation();">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 分页 -->
+                <nav th:if="${notificationPage.totalPages > 1}" class="mt-4">
+                    <ul class="pagination justify-content-center">
+                        <li class="page-item" th:classappend="${notificationPage.first ? 'disabled' : ''}">
+                            <a class="page-link" th:href="@{/notifications(page=${notificationPage.number - 1})}">
+                                <i class="bi bi-chevron-left"></i>
+                            </a>
+                        </li>
+                        <li th:each="i : ${#numbers.sequence(0, notificationPage.totalPages - 1)}"
+                            class="page-item" th:classappend="${i == notificationPage.number ? 'active' : ''}">
+                            <a class="page-link" th:href="@{/notifications(page=${i})}" th:text="${i + 1}"></a>
+                        </li>
+                        <li class="page-item" th:classappend="${notificationPage.last ? 'disabled' : ''}">
+                            <a class="page-link" th:href="@{/notifications(page=${notificationPage.number + 1})}">
+                                <i class="bi bi-chevron-right"></i>
+                            </a>
+                        </li>
+                    </ul>
+                </nav>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        function markAsRead(id) {
+            fetch('/notifications/' + id + '/read', { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        location.reload();
+                    }
+                });
+        }
+
+        function markAllAsRead() {
+            fetch('/notifications/read-all', { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        location.reload();
+                    }
+                });
+        }
+
+        function deleteNotification(id) {
+            if (confirm('确定要删除此通知吗？')) {
+                fetch('/notifications/' + id, { method: 'DELETE' })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            location.reload();
+                        }
+                    });
+            }
+        }
+    </script>
+</body>
+</html>

@@ -33,6 +33,11 @@
         .form-control::placeholder {
             color: rgba(255, 255, 255, 0.5);
         }
+        .captcha-img {
+            cursor: pointer;
+            border-radius: 5px;
+            height: 44px;
+        }
     </style>
 </head>
 <body>
@@ -46,11 +51,17 @@
                 </div>
 
                 <div class="login-card p-4">
-                    <div th:if="${param.error}" class="alert alert-danger">
+                    <div th:if="${param.error == 'captcha'}" class="alert alert-danger">
+                        <i class="bi bi-exclamation-circle"></i> 验证码错误或已过期
+                    </div>
+                    <div th:if="${param.error == 'true'}" class="alert alert-danger">
                         <i class="bi bi-exclamation-circle"></i> 用户名或密码错误，或账号未审核
                     </div>
                     <div th:if="${param.logout}" class="alert alert-info">
                         <i class="bi bi-info-circle"></i> 已成功退出登录
+                    </div>
+                    <div th:if="${param.expired}" class="alert alert-warning">
+                        <i class="bi bi-clock-history"></i> 会话已过期，请重新登录
                     </div>
                     <div th:if="${success}" class="alert alert-success">
                         <i class="bi bi-check-circle"></i> <span th:text="${success}"></span>
@@ -77,6 +88,21 @@
                                        placeholder="请输入密码" required>
                             </div>
                         </div>
+                        <div class="mb-3">
+                            <label class="form-label text-light">验证码</label>
+                            <div class="input-group">
+                                <input type="text" class="form-control" name="captchaCode"
+                                       placeholder="请输入验证码" required maxlength="5"
+                                       style="max-width: 120px;">
+                                <input type="hidden" name="captchaId" th:value="${captchaId}">
+                                <img th:src="${captchaImage}" class="captcha-img ms-2" id="captchaImg"
+                                     onclick="refreshCaptcha()" title="点击刷新验证码">
+                                <button type="button" class="btn btn-outline-light btn-sm ms-1"
+                                        onclick="refreshCaptcha()" title="刷新验证码">
+                                    <i class="bi bi-arrow-clockwise"></i>
+                                </button>
+                            </div>
+                        </div>
                         <button type="submit" class="btn btn-primary w-100 mb-3">
                             <i class="bi bi-box-arrow-in-right"></i> 登录
                         </button>
@@ -91,5 +117,16 @@
             </div>
         </div>
     </div>
+
+    <script>
+        function refreshCaptcha() {
+            fetch('/captcha/generate')
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('captchaImg').src = data.image;
+                    document.querySelector('input[name="captchaId"]').value = data.captchaId;
+                });
+        }
+    </script>
 </body>
 </html>

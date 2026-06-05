@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title th:text="${skill.name} + ' - 技能详情'">技能详情</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <link th:href="@{/css/markdown-editor.css}" rel="stylesheet">
+    <style>
+        .skill-prompt { white-space: pre-wrap; font-family: 'Courier New', monospace; font-size: 0.9rem; }
+    </style>
+</head>
+<body class="bg-dark text-light">
+    <!-- Navbar -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-black border-bottom border-secondary">
+        <div class="container-fluid">
+            <a class="navbar-brand" th:href="@{/}">
+                <i class="bi bi-controller"></i> ChengXun Game Maker
+            </a>
+            <div class="collapse navbar-collapse">
+                <ul class="navbar-nav me-auto">
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/}">
+                            <i class="bi bi-speedometer2"></i> 仪表盘
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/agents}">
+                            <i class="bi bi-robot"></i> Agents
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/projects}">
+                            <i class="bi bi-folder"></i> 项目
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link active" th:href="@{/skills}">
+                            <i class="bi bi-lightning"></i> 技能
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/tokens}">
+                            <i class="bi bi-key"></i> Token 管理
+                        </a>
+                    </li>
+                    <li class="nav-item" sec:authorize="hasRole('ADMIN')">
+                        <a class="nav-link" th:href="@{/admin/users}">
+                            <i class="bi bi-people"></i> 用户管理
+                        </a>
+                    </li>
+                    <li class="nav-item" sec:authorize="hasAuthority('PERM_roles:manage')">
+                        <a class="nav-link" th:href="@{/roles}">
+                            <i class="bi bi-shield-lock"></i> 角色管理
+                        </a>
+                    </li>
+                </ul>
+                <ul class="navbar-nav">
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
+                            <i class="bi bi-person-circle"></i> <span th:text="${username}">User</span>
+                        </a>
+                        <ul class="dropdown-menu dropdown-menu-end dropdown-menu-dark">
+                            <li>
+                                <a class="dropdown-item" th:href="@{/profile}">
+                                    <i class="bi bi-person"></i> 个人中心
+                                </a>
+                            </li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li>
+                                <form th:action="@{/logout}" method="post">
+                                    <button class="dropdown-item" type="submit">
+                                        <i class="bi bi-box-arrow-right"></i> 退出登录
+                                    </button>
+                                </form>
+                            </li>
+                        </ul>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid mt-4">
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a th:href="@{/}" class="text-decoration-none">首页</a></li>
+                <li class="breadcrumb-item"><a th:href="@{/skills}" class="text-decoration-none">技能管理</a></li>
+                <li class="breadcrumb-item active" th:text="${skill.name}"></li>
+            </ol>
+        </nav>
+
+        <div class="row">
+            <!-- Skill Info -->
+            <div class="col-md-4">
+                <div class="card bg-dark border-secondary mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-lightning"></i> <span th:text="${skill.name}"></span></h5>
+                    </div>
+                    <div class="card-body">
+                        <p><strong>ID：</strong><code th:text="${skill.id}"></code></p>
+                        <p><strong>类型：</strong>
+                            <span class="badge" th:classappend="${skill.category == 'builtin' ? 'bg-primary' : (skill.category == 'learned' ? 'bg-success' : 'bg-secondary')}"
+                                  th:text="${skill.category}"></span>
+                        </p>
+                        <p><strong>描述：</strong><br>
+                            <span th:text="${skill.description ?: '无'}"></span>
+                        </p>
+                        <p><strong>触发关键词：</strong><br>
+                            <code th:text="${skill.triggerPattern ?: '-'}"></code>
+                        </p>
+                        <p><strong>使用次数：</strong>
+                            <span class="badge bg-info" th:text="${skill.usageCount}">0</span>
+                        </p>
+                        <p><strong>创建时间：</strong><br>
+                            <small th:text="${#temporals.format(skill.createdAt, 'yyyy-MM-dd HH:mm:ss')}"></small>
+                        </p>
+                        <p th:if="${skill.lastUsedAt}"><strong>最后使用：</strong><br>
+                            <small th:text="${#temporals.format(skill.lastUsedAt, 'yyyy-MM-dd HH:mm:ss')}"></small>
+                        </p>
+                    </div>
+                    <div class="card-footer d-flex gap-2" th:unless="${skill.category == 'builtin'}"
+                         sec:authorize="hasAuthority('PERM_skills:manage')">
+                        <a th:href="@{/skills/{id}/edit(id=${skill.id})}" class="btn btn-sm btn-warning flex-fill">
+                            <i class="bi bi-pencil"></i> 编辑
+                        </a>
+                        <form th:action="@{/skills/{id}/delete(id=${skill.id})}" method="post"
+                              onsubmit="return confirm('确定要删除此技能吗？')">
+                            <button type="submit" class="btn btn-sm btn-danger">
+                                <i class="bi bi-trash"></i> 删除
+                            </button>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Examples -->
+                <div class="card bg-dark border-secondary" th:if="${!skill.examples.isEmpty()}">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-list-ul"></i> 示例</h5>
+                    </div>
+                    <div class="card-body">
+                        <div th:each="example : ${skill.examples}" class="border-bottom border-secondary pb-2 mb-2">
+                            <small th:text="${example}"></small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Skill Prompt -->
+            <div class="col-md-8">
+                <div class="card bg-dark border-secondary">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0"><i class="bi bi-file-text"></i> 技能提示词模板</h5>
+                        <div class="btn-group btn-group-sm">
+                            <button type="button" class="btn btn-outline-secondary active" id="btn-preview" onclick="togglePromptView('preview')">
+                                <i class="bi bi-eye"></i> 预览
+                            </button>
+                            <button type="button" class="btn btn-outline-secondary" id="btn-code" onclick="togglePromptView('code')">
+                                <i class="bi bi-code"></i> 代码
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div id="prompt-preview" class="markdown-preview bg-black rounded p-3"></div>
+                        <div id="prompt-code" class="bg-black rounded p-3" style="display: none;">
+                            <pre class="skill-prompt text-light mb-0" th:text="${skill.prompt}"></pre>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script th:inline="javascript">
+        // 提示词内容
+        const promptContent = [[${skill.prompt}]];
+
+        // 渲染Markdown预览
+        function renderMarkdownPreview() {
+            const preview = document.getElementById('prompt-preview');
+            if (typeof marked !== 'undefined' && promptContent) {
+                preview.innerHTML = marked.parse(promptContent);
+            } else {
+                preview.textContent = promptContent;
+            }
+        }
+
+        // 切换视图模式
+        function togglePromptView(mode) {
+            const preview = document.getElementById('prompt-preview');
+            const code = document.getElementById('prompt-code');
+            const btnPreview = document.getElementById('btn-preview');
+            const btnCode = document.getElementById('btn-code');
+
+            if (mode === 'preview') {
+                preview.style.display = 'block';
+                code.style.display = 'none';
+                btnPreview.classList.add('active');
+                btnCode.classList.remove('active');
+            } else {
+                preview.style.display = 'none';
+                code.style.display = 'block';
+                btnPreview.classList.remove('active');
+                btnCode.classList.add('active');
+            }
+        }
+
+        // 页面加载时渲染预览
+        document.addEventListener('DOMContentLoaded', renderMarkdownPreview);
+    </script>
+</body>
+</html>

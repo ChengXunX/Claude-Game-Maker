@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security"
+      th:replace="~{layout :: main-content(~{::title}, ~{::section})}">
+<head>
+    <title>MCP 管理 - ChengXun Game Maker</title>
+</head>
+<body>
+<section>
+    <div class="container-fluid">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2><i class="bi bi-plug"></i> MCP 管理</h2>
+            <div>
+                <button class="btn btn-primary btn-sm" onclick="showCreateModal()">
+                    <i class="bi bi-plus-lg"></i> 新增 Server
+                </button>
+                <button class="btn btn-outline-primary btn-sm ms-2" onclick="showTemplateModal()">
+                    <i class="bi bi-box"></i> 从模板安装
+                </button>
+            </div>
+        </div>
+
+        <!-- 概念说明 -->
+        <div class="alert alert-info mb-4">
+            <strong>MCP (Model Context Protocol)</strong> — 让 AI Agent 可以调用外部工具和数据源。
+            安装 MCP Server 后，Agent 可以使用文件操作、数据库查询、API 调用等能力。
+        </div>
+
+        <!-- Tab 导航 -->
+        <ul class="nav nav-tabs mb-4" role="tablist">
+            <li class="nav-item">
+                <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#serversTab">
+                    <i class="bi bi-server"></i> Server 列表
+                </button>
+            </li>
+            <li class="nav-item">
+                <button class="nav-link" data-bs-toggle="tab" data-bs-target="#bindingsTab" onclick="loadBindings()">
+                    <i class="bi bi-link"></i> 工具分配
+                </button>
+            </li>
+        </ul>
+
+        <!-- Tab 内容 -->
+        <div class="tab-content">
+            <!-- Server 列表 Tab -->
+            <div class="tab-pane fade show active" id="serversTab">
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>名称</th>
+                                <th>描述</th>
+                                <th>传输方式</th>
+                                <th>工具数</th>
+                                <th>状态</th>
+                                <th>类型</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="serverTable">
+                            <tr>
+                                <td colspan="7" class="text-center text-muted">加载中...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 工具分配 Tab -->
+            <div class="tab-pane fade" id="bindingsTab">
+                <div class="row mb-3">
+                    <div class="col-md-3">
+                        <label class="form-label">项目</label>
+                        <select class="form-select" id="bindingProject" onchange="loadBindings()">
+                            <option value="">选择项目</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">Agent 角色</label>
+                        <select class="form-select" id="bindingRole" onchange="loadBindings()">
+                            <option value="producer">producer</option>
+                            <option value="server-dev">server-dev</option>
+                            <option value="system-planner">system-planner</option>
+                            <option value="numerical-planner">numerical-planner</option>
+                            <option value="git-commit">git-commit</option>
+                            <option value="ui-dev">ui-dev</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="row">
+                    <!-- 可用工具 -->
+                    <div class="col-md-5">
+                        <div class="card">
+                            <div class="card-header"><h6 class="mb-0">可用工具</h6></div>
+                            <div class="card-body" id="availableTools" style="max-height: 400px; overflow-y: auto;">
+                                <p class="text-muted">选择项目后显示可用工具</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 操作按钮 -->
+                    <div class="col-md-2 d-flex flex-column align-items-center justify-content-center">
+                        <button class="btn btn-outline-primary mb-2" onclick="bindSelected()">分配 →</button>
+                        <button class="btn btn-outline-secondary" onclick="unbindSelected()">← 移除</button>
+                    </div>
+
+                    <!-- 已分配工具 -->
+                    <div class="col-md-5">
+                        <div class="card">
+                            <div class="card-header"><h6 class="mb-0">已分配工具</h6></div>
+                            <div class="card-body" id="boundTools" style="max-height: 400px; overflow-y: auto;">
+                                <p class="text-muted">选择项目和角色后显示已分配工具</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 模板安装弹窗 -->
+    <div class="modal fade" id="templateModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">从模板安装 MCP Server</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">项目 ID</label>
+                        <input type="text" class="form-control" id="templateProjectId" placeholder="留空为全局">
+                    </div>
+                    <div class="row" id="templateList">
+                        <!-- 模板卡片 -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Server 详情/工具弹窗 -->
+    <div class="modal fade" id="serverDetailModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="serverDetailTitle">Server 详情</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body" id="serverDetailBody">
+                    <!-- 工具列表 -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 加载 Server 列表
+        async function loadServers() {
+            try {
+                const res = await fetch('/mcp/api/servers');
+                const servers = await res.json();
+
+                const tbody = document.getElementById('serverTable');
+                if (servers.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">暂无 MCP Server</td></tr>';
+                    return;
+                }
+
+                const typeLabels = { STDIO: '本地进程', SSE: 'SSE', STREAMABLE_HTTP: 'HTTP' };
+                const typeColors = { STDIO: 'primary', SSE: 'info', STREAMABLE_HTTP: 'success' };
+
+                tbody.innerHTML = servers.map(s => `
+                    <tr>
+                        <td><strong>${s.name}</strong></td>
+                        <td><small>${s.description || '-'}</small></td>
+                        <td><span class="badge bg-${typeColors[s.transportType] || 'secondary'}">${typeLabels[s.transportType] || s.transportType}</span></td>
+                        <td>${s.toolCount || 0}</td>
+                        <td>${s.connected ? '<span class="badge bg-success">在线</span>' : '<span class="badge bg-secondary">离线</span>'}</td>
+                        <td>${s.template ? '<span class="badge bg-warning">模板</span>' : (s.projectId ? '<span class="badge bg-info">项目</span>' : '<span class="badge bg-primary">全局</span>')}</td>
+                        <td>
+                            <button class="btn btn-sm btn-outline-primary" onclick="testServer(${s.id})" title="测试连接">
+                                <i class="bi bi-lightning"></i>
+                            </button>
+                            <button class="btn btn-sm btn-outline-info ms-1" onclick="showServerTools(${s.id})" title="查看工具">
+                                <i class="bi bi-gear"></i>
+                            </button>
+                            <button class="btn btn-sm btn-outline-${s.enabled ? 'warning' : 'success'} ms-1" onclick="toggleServer(${s.id})">
+                                ${s.enabled ? '禁用' : '启用'}
+                            </button>
+                            ${!s.template ? `<button class="btn btn-sm btn-outline-danger ms-1" onclick="deleteServer(${s.id})"><i class="bi bi-trash"></i></button>` : ''}
+                        </td>
+                    </tr>
+                `).join('');
+            } catch (e) {
+                console.error('Failed to load servers:', e);
+            }
+        }
+
+        // 测试连接
+        async function testServer(id) {
+            try {
+                const res = await fetch(`/mcp/api/servers/${id}/test`, { method: 'POST' });
+                const server = await res.json();
+                alert(server.lastTestResult || '测试完成');
+                loadServers();
+            } catch (e) {
+                alert('测试失败: ' + e.message);
+            }
+        }
+
+        // 切换启用状态
+        async function toggleServer(id) {
+            await fetch(`/mcp/api/servers/${id}/toggle`, { method: 'POST' });
+            loadServers();
+        }
+
+        // 删除 Server
+        async function deleteServer(id) {
+            if (!confirm('确定要删除此 MCP Server 吗？相关的工具和绑定也会被删除。')) return;
+            await fetch(`/mcp/api/servers/${id}`, { method: 'DELETE' });
+            loadServers();
+        }
+
+        // 显示模板弹窗
+        async function showTemplateModal() {
+            try {
+                const res = await fetch('/mcp/api/templates');
+                const templates = await res.json();
+
+                const container = document.getElementById('templateList');
+                container.innerHTML = templates.map(t => `
+                    <div class="col-md-4 mb-3">
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <h6><i class="bi bi-box"></i> ${t.name}</h6>
+                                <p class="text-muted small">${t.description || ''}</p>
+                                <span class="badge bg-secondary">${t.transportType}</span>
+                            </div>
+                            <div class="card-footer">
+                                <button class="btn btn-sm btn-primary w-100" onclick="installTemplate('${t.templateKey}')">
+                                    安装
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `).join('');
+
+                new bootstrap.Modal(document.getElementById('templateModal')).show();
+            } catch (e) {
+                console.error('Failed to load templates:', e);
+            }
+        }
+
+        // 从模板安装
+        async function installTemplate(templateKey) {
+            const projectId = document.getElementById('templateProjectId').value || null;
+
+            try {
+                const res = await fetch('/mcp/api/servers/install', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ templateKey, projectId, envVars: {} })
+                });
+
+                if (res.ok) {
+                    bootstrap.Modal.getInstance(document.getElementById('templateModal')).hide();
+                    loadServers();
+                } else {
+                    const err = await res.json();
+                    alert(err.message || '安装失败');
+                }
+            } catch (e) {
+                alert('安装失败: ' + e.message);
+            }
+        }
+
+        // 显示 Server 工具
+        async function showServerTools(serverId) {
+            try {
+                const res = await fetch(`/mcp/api/servers/${serverId}/tools`);
+                const tools = await res.json();
+
+                document.getElementById('serverDetailTitle').textContent = 'Server 工具 (' + tools.length + ')';
+
+                const body = document.getElementById('serverDetailBody');
+                if (tools.length === 0) {
+                    body.innerHTML = '<p class="text-muted">暂无工具，请先测试连接以发现工具。</p>';
+                } else {
+                    body.innerHTML = `
+                        <div class="table-responsive">
+                            <table class="table table-sm">
+                                <thead><tr><th>工具名</th><th>描述</th><th>审批</th><th>状态</th><th>操作</th></tr></thead>
+                                <tbody>${tools.map(t => `
+                                    <tr>
+                                        <td><code>${t.toolName}</code></td>
+                                        <td><small>${t.description || '-'}</small></td>
+                                        <td>${t.requiresApproval ? '<span class="badge bg-warning">需要</span>' : '<span class="badge bg-success">不需要</span>'}</td>
+                                        <td>${t.enabled ? '<span class="badge bg-success">启用</span>' : '<span class="badge bg-danger">禁用</span>'}</td>
+                                        <td>
+                                            <button class="btn btn-sm btn-outline-${t.enabled ? 'warning' : 'success'}" onclick="toggleTool(${t.id})">
+                                                ${t.enabled ? '禁用' : '启用'}
+                                            </button>
+                                            <button class="btn btn-sm btn-outline-info ms-1" onclick="toggleToolApproval(${t.id}, ${!t.requiresApproval})">
+                                                ${t.requiresApproval ? '取消审批' : '设为需审批'}
+                                            </button>
+                                        </td>
+                                    </tr>
+                                `).join('')}</tbody>
+                            </table>
+                        </div>
+                    `;
+                }
+
+                new bootstrap.Modal(document.getElementById('serverDetailModal')).show();
+            } catch (e) {
+                console.error('Failed to load tools:', e);
+            }
+        }
+
+        // 切换工具状态
+        async function toggleTool(toolId) {
+            await fetch(`/mcp/api/tools/${toolId}/toggle`, { method: 'POST' });
+        }
+
+        // 切换工具审批
+        async function toggleToolApproval(toolId, requiresApproval) {
+            await fetch(`/mcp/api/tools/${toolId}/approval`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ requiresApproval })
+            });
+        }
+
+        // 加载绑定
+        async function loadBindings() {
+            const role = document.getElementById('bindingRole').value;
+            const projectId = document.getElementById('bindingProject').value;
+
+            if (!projectId) return;
+
+            try {
+                // 加载可用工具
+                const serversRes = await fetch(`/mcp/api/servers/project/${projectId}`);
+                const servers = await serversRes.json();
+
+                const availableDiv = document.getElementById('availableTools');
+                let availableHtml = '';
+
+                for (const server of servers) {
+                    if (!server.enabled) continue;
+                    const toolsRes = await fetch(`/mcp/api/servers/${server.id}/tools`);
+                    const tools = await toolsRes.json();
+                    const enabledTools = tools.filter(t => t.enabled);
+
+                    if (enabledTools.length > 0) {
+                        availableHtml += `<h6 class="mt-2">${server.name}</h6>`;
+                        enabledTools.forEach(t => {
+                            availableHtml += `
+                                <div class="form-check">
+                                    <input class="form-check-input available-tool" type="checkbox"
+                                           value="${t.id}" data-server="${server.id}" data-name="${t.toolName}">
+                                    <label class="form-check-label small">${t.toolName} ${t.requiresApproval ? '<span class="badge bg-warning badge-sm">审批</span>' : ''}</label>
+                                </div>
+                            `;
+                        });
+                    }
+                }
+
+                availableDiv.innerHTML = availableHtml || '<p class="text-muted">无可用工具</p>';
+
+                // 加载已分配工具
+                const bindingsRes = await fetch(`/mcp/api/bindings/${role}?projectId=${encodeURIComponent(projectId)}`);
+                const bindings = await bindingsRes.json();
+
+                const boundDiv = document.getElementById('boundTools');
+                if (bindings.length === 0) {
+                    boundDiv.innerHTML = '<p class="text-muted">未分配任何工具</p>';
+                } else {
+                    boundDiv.innerHTML = bindings.map(b => `
+                        <div class="d-flex justify-content-between align-items-center mb-1 p-1 border rounded">
+                            <span class="small">Server #${b.serverId} ${b.toolId ? 'Tool #' + b.toolId : '(全部)'}</span>
+                            <button class="btn btn-sm btn-outline-danger" onclick="unbind(${b.id})">
+                                <i class="bi bi-x"></i>
+                            </button>
+                        </div>
+                    `).join('');
+                }
+            } catch (e) {
+                console.error('Failed to load bindings:', e);
+            }
+        }
+
+        // 绑定选中的工具
+        async function bindSelected() {
+            const role = document.getElementById('bindingRole').value;
+            const projectId = document.getElementById('bindingProject').value;
+
+            if (!projectId) { alert('请先选择项目'); return; }
+
+            const checked = document.querySelectorAll('.available-tool:checked');
+            for (const cb of checked) {
+                await fetch('/mcp/api/bind', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        agentRole: role,
+                        projectId: projectId,
+                        serverId: parseInt(cb.dataset.server),
+                        toolId: parseInt(cb.value)
+                    })
+                });
+            }
+
+            loadBindings();
+        }
+
+        // 解绑
+        async function unbind(bindingId) {
+            await fetch(`/mcp/api/unbind/${bindingId}`, { method: 'POST' });
+            loadBindings();
+        }
+
+        // 显示创建弹窗
+        function showCreateModal() {
+            // TODO: 实现创建 Server 弹窗
+            alert('请使用「从模板安装」功能');
+        }
+
+        // 初始化
+        document.addEventListener('DOMContentLoaded', () => {
+            loadServers();
+        });
+    </script>
+</section>
+</body>
+</html>

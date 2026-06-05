@@ -11,9 +11,28 @@ public class AgentMessage {
     private String content;
     private String metadata;
     private LocalDateTime timestamp;
-    
+
+    /** 消息优先级：0-9，数字越大优先级越高 */
+    private Integer priority = 5;
+
+    /** 消息状态 */
+    private MessageStatus status = MessageStatus.PENDING;
+
+    /** 重试次数 */
+    private Integer retryCount = 0;
+
+    /** 错误信息 */
+    private String error;
+
+    /** 时间戳（毫秒） */
+    private Long timestampMs;
+
     public enum MessageType {
-        TASK, REPORT, QUERY, RESPONSE, COMMAND, NOTIFY, APPROVAL
+        TASK, REPORT, QUERY, RESPONSE, COMMAND, NOTIFY, APPROVAL, REVIEW, SYSTEM
+    }
+
+    public enum MessageStatus {
+        PENDING, PROCESSING, PROCESSED, RETRYING, FAILED
     }
     
     public AgentMessage() {
@@ -28,7 +47,7 @@ public class AgentMessage {
     
     public static class Builder {
         private final AgentMessage msg = new AgentMessage();
-        
+
         public Builder id(String id) { msg.id = id; return this; }
         public Builder fromAgentId(String from) { msg.fromAgentId = from; return this; }
         public Builder toAgentId(String to) { msg.toAgentId = to; return this; }
@@ -36,8 +55,13 @@ public class AgentMessage {
         public Builder content(String content) { msg.content = content; return this; }
         public Builder metadata(String metadata) { msg.metadata = metadata; return this; }
         public Builder timestamp(LocalDateTime timestamp) { msg.timestamp = timestamp; return this; }
-        
-        public AgentMessage build() { return msg; }
+        public Builder priority(Integer priority) { msg.priority = priority; return this; }
+        public Builder status(MessageStatus status) { msg.status = status; return this; }
+
+        public AgentMessage build() {
+            msg.timestampMs = System.currentTimeMillis();
+            return msg;
+        }
     }
     
     // Static factory methods
@@ -65,6 +89,15 @@ public class AgentMessage {
                 .content(content)
                 .build();
     }
+
+    public static AgentMessage createReview(String from, String to, String content) {
+        return builder()
+                .fromAgentId(from)
+                .toAgentId(to)
+                .type(MessageType.REVIEW)
+                .content(content)
+                .build();
+    }
     
     // Getters and Setters
     public String getId() { return id; }
@@ -87,4 +120,19 @@ public class AgentMessage {
     
     public LocalDateTime getTimestamp() { return timestamp; }
     public void setTimestamp(LocalDateTime timestamp) { this.timestamp = timestamp; }
+
+    public Integer getPriority() { return priority; }
+    public void setPriority(Integer priority) { this.priority = priority; }
+
+    public MessageStatus getStatus() { return status; }
+    public void setStatus(MessageStatus status) { this.status = status; }
+
+    public Integer getRetryCount() { return retryCount; }
+    public void setRetryCount(Integer retryCount) { this.retryCount = retryCount; }
+
+    public String getError() { return error; }
+    public void setError(String error) { this.error = error; }
+
+    public Long getTimestampMs() { return timestampMs; }
+    public void setTimestampMs(Long timestampMs) { this.timestampMs = timestampMs; }
 }

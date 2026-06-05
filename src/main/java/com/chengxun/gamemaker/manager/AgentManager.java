@@ -1,22 +1,46 @@
 package com.chengxun.gamemaker.manager;
 
 import com.chengxun.gamemaker.agent.Agent;
+import com.chengxun.gamemaker.agent.GitCommitAgent;
+import com.chengxun.gamemaker.agent.NumericalPlannerAgent;
 import com.chengxun.gamemaker.agent.ProducerAgent;
 import com.chengxun.gamemaker.agent.ServerDevAgent;
+import com.chengxun.gamemaker.agent.SystemPlannerAgent;
+import com.chengxun.gamemaker.agent.UiDevAgent;
+import com.chengxun.gamemaker.agent.BaseAgent;
 import com.chengxun.gamemaker.config.AppConfig;
+import org.springframework.context.annotation.Lazy;
 import com.chengxun.gamemaker.engine.ClaudeCliEngine;
 import com.chengxun.gamemaker.engine.MessageBus;
 import com.chengxun.gamemaker.feishu.FeishuBotService;
 import com.chengxun.gamemaker.model.AgentDefinition;
+import com.chengxun.gamemaker.service.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import java.util.concurrent.ConcurrentHashMap;
+
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * Agent 管理器
+ * 负责 Agent 的创建、销毁、调度和生命周期管理
+ *
+ * 核心设计：项目级隔离
+ * - 存储结构：projectId -> agentRole -> Agent（嵌套 ConcurrentHashMap）
+ * - 每个项目内的 Agent 完全独立，不同项目同角色 Agent 互不影响
+ * - Agent 运行时 ID 格式：projectId:agentRole（全局唯一）
+ * - 管理员可跨项目查看所有 Agent
+ *
+ * @author chengxun
+ * @since 1.0.0
+ */
 @Component
 public class AgentManager {
 
@@ -30,8 +54,35 @@ public class AgentManager {
     private final SkillManager skillManager;
     private final ProjectManager projectManager;
     private final FeishuBotService feishuService;
+    private final ContextCompactor contextCompactor;
+    private final CapabilityRegistry capabilityRegistry;
+    private final CapabilityOutputParser capabilityOutputParser;
+    private final CapabilityExecutionEngine capabilityExecutionEngine;
+    private final CapabilityInterceptor capabilityInterceptor;
+    private final ContextMonitor contextMonitor;
 
-    private final Map<String, Agent> agents = new ConcurrentHashMap<>();
+    @Autowired(required = false)
+    private GoalService goalService;
+
+    @Autowired(required = false)
+    private DistributedLockService lockService;
+
+    @Autowired(required = false)
+    private com.chengxun.gamemaker.service.McpService mcpService;
+
+    @Autowired(required = false)
+    private com.chengxun.gamemaker.web.service.AgentLogService agentLogService;
+
+    /** Agent 资源配额缓存 */
+    private final ConcurrentHashMap<String, AgentResourceQuota> quotaMap = new ConcurrentHashMap<>();
+
+    /**
+     * 项目级 Agent 存储
+     * 外层 key: projectId
+     * 内层 key: agentRole（如 producer、server-dev）
+     * 保证不同项目的 Agent 完全隔离
+     */
+    private final Map<String, Map<String, Agent>> projectAgents = new ConcurrentHashMap<>();
 
     public AgentManager(AppConfig appConfig,
                        ClaudeCliEngine cliEngine,
@@ -40,7 +91,13 @@ public class AgentManager {
                        MemoryManager memoryManager,
                        SkillManager skillManager,
                        ProjectManager projectManager,
-                       FeishuBotService feishuService) {
+                       FeishuBotService feishuService,
+                       ContextCompactor contextCompactor,
+                       CapabilityRegistry capabilityRegistry,
+                       CapabilityOutputParser capabilityOutputParser,
+                       @Lazy CapabilityExecutionEngine capabilityExecutionEngine,
+                       CapabilityInterceptor capabilityInterceptor,
+                       @Lazy ContextMonitor contextMonitor) {
         this.appConfig = appConfig;
         this.cliEngine = cliEngine;
         this.messageBus = messageBus;
@@ -49,78 +106,371 @@ public class AgentManager {
         this.skillManager = skillManager;
         this.projectManager = projectManager;
         this.feishuService = feishuService;
+        this.contextCompactor = contextCompactor;
+        this.capabilityRegistry = capabilityRegistry;
+        this.capabilityOutputParser = capabilityOutputParser;
+        this.capabilityExecutionEngine = capabilityExecutionEngine;
+        this.capabilityInterceptor = capabilityInterceptor;
+        this.contextMonitor = contextMonitor;
     }
 
-    public Agent createProducerAgent(AgentDefinition definition) {
+    // ===== 创建 Agent =====
+
+    /**
+     * 创建制作人 Agent（项目级）
+     *
+     * @param definition Agent 定义（必须包含 projectId）
+     * @return 创建的 Agent 实例
+     */
+    public synchronized Agent createProducerAgent(AgentDefinition definition) {
+        String projectId = definition.getProjectId();
+        String agentRole = definition.getRole();
+
+        if (projectId == null) {
+            log.error("Cannot create producer agent without projectId");
+            throw new IllegalArgumentException("projectId is required for agent creation");
+        }
+
+        // 检查项目内是否已存在同角色 Agent
+        Map<String, Agent> projectAgentMap = projectAgents.computeIfAbsent(projectId, k -> new ConcurrentHashMap<>());
+        if (projectAgentMap.containsKey(agentRole)) {
+            log.warn("Agent already exists in project {}: role={}", projectId, agentRole);
+            return projectAgentMap.get(agentRole);
+        }
+
         ProducerAgent producer = new ProducerAgent(definition, cliEngine, messageBus,
                 contextManager, memoryManager, skillManager, projectManager, this, feishuService);
+        injectCapabilityServices(producer);
+        if (goalService != null) {
+            producer.setGoalService(goalService);
+        }
         producer.initialize();
         producer.start();
-        agents.put(definition.getId(), producer);
-        log.info("Producer agent created: {} for workDir: {}", definition.getName(), definition.getWorkDir());
+        projectAgentMap.put(agentRole, producer);
+
+        log.info("Producer agent created: {} (runtimeId={}) for project: {}",
+            definition.getName(), definition.getEffectiveId(), projectId);
         return producer;
     }
 
-    public Agent createAgent(AgentDefinition definition) {
+    /**
+     * 创建 Agent（项目级）
+     * 根据 AgentDefinition 中的 role 创建对应类型的 Agent
+     *
+     * @param definition Agent 定义（必须包含 projectId）
+     * @return 创建的 Agent 实例
+     */
+    public synchronized Agent createAgent(AgentDefinition definition) {
         if ("producer".equals(definition.getRole())) {
             return createProducerAgent(definition);
         }
 
-        ServerDevAgent agent = new ServerDevAgent(definition, cliEngine, messageBus, contextManager, memoryManager, skillManager, projectManager);
+        String projectId = definition.getProjectId();
+        String agentRole = definition.getRole();
+
+        if (projectId == null) {
+            log.error("Cannot create agent without projectId");
+            throw new IllegalArgumentException("projectId is required for agent creation");
+        }
+
+        // 检查项目内是否已存在同角色 Agent
+        Map<String, Agent> projectAgentMap = projectAgents.computeIfAbsent(projectId, k -> new ConcurrentHashMap<>());
+        if (projectAgentMap.containsKey(agentRole)) {
+            log.warn("Agent already exists in project {}: role={}", projectId, agentRole);
+            return projectAgentMap.get(agentRole);
+        }
+
+        Agent agent;
+        switch (agentRole) {
+            case "git-commit" -> {
+                agent = new GitCommitAgent(definition, cliEngine, messageBus, contextManager, memoryManager, skillManager, projectManager);
+            }
+            case "system-planner" -> {
+                agent = new SystemPlannerAgent(definition, cliEngine, messageBus, contextManager, memoryManager, skillManager, projectManager);
+            }
+            case "numerical-planner" -> {
+                agent = new NumericalPlannerAgent(definition, cliEngine, messageBus, contextManager, memoryManager, skillManager, projectManager);
+            }
+            case "ui-dev" -> {
+                agent = new UiDevAgent(definition, cliEngine, messageBus, contextManager, memoryManager, skillManager, projectManager);
+            }
+            default -> {
+                agent = new ServerDevAgent(definition, cliEngine, messageBus, contextManager, memoryManager, skillManager, projectManager);
+            }
+        }
+
+        // 注入上下文压缩服务和能力系统
+        if (agent instanceof BaseAgent baseAgent) {
+            injectCapabilityServices(baseAgent);
+        }
+
         agent.initialize();
         agent.start();
-        agents.put(definition.getId(), agent);
+        projectAgentMap.put(agentRole, agent);
 
-        log.info("Agent created: {} ({}) for workDir: {}", definition.getName(), definition.getId(), definition.getWorkDir());
+        log.info("Agent created: {} (runtimeId={}) for project: {}",
+            definition.getName(), definition.getEffectiveId(), projectId);
         return agent;
     }
 
-    public Agent getAgent(String agentId) {
-        return agents.get(agentId);
+    // ===== 查询 Agent =====
+
+    /**
+     * 通过运行时 ID 获取 Agent
+     * 运行时 ID 格式：projectId:agentRole
+     *
+     * @param runtimeId 运行时 ID
+     * @return Agent 实例，不存在返回 null
+     */
+    public Agent getAgent(String runtimeId) {
+        if (runtimeId == null) return null;
+
+        // 解析运行时 ID: projectId:agentRole
+        int lastColon = runtimeId.lastIndexOf(':');
+        if (lastColon > 0) {
+            String projectId = runtimeId.substring(0, lastColon);
+            String agentRole = runtimeId.substring(lastColon + 1);
+            return getAgent(projectId, agentRole);
+        }
+
+        // 兼容旧格式：遍历所有项目查找（多项目同角色时返回第一个找到的，不确定）
+        log.warn("Agent lookup by legacy ID '{}', consider using runtime ID format 'projectId:agentRole'", runtimeId);
+        for (Map<String, Agent> projectMap : projectAgents.values()) {
+            Agent agent = projectMap.get(runtimeId);
+            if (agent != null) return agent;
+        }
+        return null;
     }
 
+    /**
+     * 获取指定项目的指定角色 Agent
+     *
+     * @param projectId 项目 ID
+     * @param agentRole Agent 角色（如 producer、server-dev）
+     * @return Agent 实例，不存在返回 null
+     */
+    public Agent getAgent(String projectId, String agentRole) {
+        Map<String, Agent> projectMap = projectAgents.get(projectId);
+        if (projectMap == null) return null;
+        return projectMap.get(agentRole);
+    }
+
+    /**
+     * 获取所有 Agent（管理员视角，跨项目）
+     *
+     * @return 所有项目的 Agent 列表
+     */
     public List<Agent> getAllAgents() {
-        return new ArrayList<>(agents.values());
+        List<Agent> result = new ArrayList<>();
+        for (Map<String, Agent> projectMap : projectAgents.values()) {
+            result.addAll(projectMap.values());
+        }
+        return result;
     }
 
+    /**
+     * 获取指定项目的所有 Agent
+     *
+     * @param projectId 项目 ID
+     * @return 该项目下的 Agent 列表
+     */
+    public List<Agent> getAgentsByProject(String projectId) {
+        Map<String, Agent> projectMap = projectAgents.get(projectId);
+        if (projectMap == null) return Collections.emptyList();
+        return new ArrayList<>(projectMap.values());
+    }
+
+    /**
+     * 按角色查找 Agent（跨项目）
+     *
+     * @param role Agent 角色
+     * @return 所有项目中该角色的 Agent 列表
+     */
     public List<Agent> getAgentsByRole(String role) {
-        return agents.values().stream()
-            .filter(a -> a.getRole().equals(role))
-            .toList();
+        List<Agent> result = new ArrayList<>();
+        for (Map<String, Agent> projectMap : projectAgents.values()) {
+            Agent agent = projectMap.get(role);
+            if (agent != null) result.add(agent);
+        }
+        return result;
     }
 
-    public void removeAgent(String agentId) {
-        Agent agent = agents.remove(agentId);
-        if (agent != null) {
-            agent.stop();
-            messageBus.unregisterAgent(agentId);
-            log.info("Agent removed: {}", agentId);
+    /**
+     * 获取所有已注册的项目 ID
+     */
+    public List<String> getRegisteredProjectIds() {
+        return new ArrayList<>(projectAgents.keySet());
+    }
+
+    // ===== 移除 Agent =====
+
+    /**
+     * 通过运行时 ID 移除 Agent
+     *
+     * @param runtimeId 运行时 ID（projectId:agentRole）
+     */
+    public void removeAgent(String runtimeId) {
+        if (runtimeId == null) return;
+
+        int lastColon = runtimeId.lastIndexOf(':');
+        if (lastColon > 0) {
+            String projectId = runtimeId.substring(0, lastColon);
+            String agentRole = runtimeId.substring(lastColon + 1);
+            removeAgent(projectId, agentRole);
         }
     }
 
-    public void stopAll() {
-        agents.values().forEach(Agent::stop);
-        log.info("All agents stopped");
+    /**
+     * 移除指定项目的指定角色 Agent
+     *
+     * @param projectId 项目 ID
+     * @param agentRole Agent 角色
+     */
+    public void removeAgent(String projectId, String agentRole) {
+        Map<String, Agent> projectMap = projectAgents.get(projectId);
+        if (projectMap == null) return;
+
+        Agent agent = projectMap.remove(agentRole);
+        if (agent != null) {
+            agent.stop();
+            messageBus.unregisterAgent(agent.getId());
+            // 清理资源配额缓存
+            quotaMap.remove(agent.getId());
+            log.info("Agent removed: {} from project {}", agentRole, projectId);
+        }
+
+        // 如果项目下没有 Agent 了，清理空 Map
+        if (projectMap.isEmpty()) {
+            projectAgents.remove(projectId);
+        }
     }
 
-    public Map<String, Object> getAgentStatus(String agentId) {
-        Agent agent = agents.get(agentId);
+    /**
+     * 为 Agent 注入能力系统、监控、MCP 和日志相关服务
+     */
+    private void injectCapabilityServices(BaseAgent agent) {
+        agent.setContextCompactor(contextCompactor);
+        agent.setCapabilityRegistry(capabilityRegistry);
+        agent.setCapabilityOutputParser(capabilityOutputParser);
+        agent.setCapabilityExecutionEngine(capabilityExecutionEngine);
+        agent.setCapabilityInterceptor(capabilityInterceptor);
+        agent.setContextMonitor(contextMonitor);
+        agent.setMcpService(mcpService);
+        agent.setAgentLogService(agentLogService);
+    }
+
+    // ===== 停止管理 =====
+
+    /**
+     * 停止指定项目的所有 Agent
+     *
+     * @param projectId 项目 ID
+     */
+    public void stopProject(String projectId) {
+        Map<String, Agent> projectMap = projectAgents.get(projectId);
+        if (projectMap == null) return;
+
+        projectMap.values().forEach(Agent::stop);
+        log.info("All agents stopped for project: {}", projectId);
+    }
+
+    /**
+     * 停止所有项目的所有 Agent（系统关闭时调用）
+     */
+    public void stopAll() {
+        for (Map.Entry<String, Map<String, Agent>> entry : projectAgents.entrySet()) {
+            entry.getValue().values().forEach(Agent::stop);
+            log.info("Agents stopped for project: {}", entry.getKey());
+        }
+        log.info("All agents stopped across all projects");
+    }
+
+    // ===== 资源配额 =====
+
+    /**
+     * 获取 Agent 的资源配额
+     */
+    public AgentResourceQuota getResourceQuota(String agentId) {
+        return quotaMap.computeIfAbsent(agentId, AgentResourceQuota::defaultQuota);
+    }
+
+    /**
+     * 检查 Agent 是否可以接受新任务
+     */
+    public boolean canAcceptTask(String agentId) {
+        return getResourceQuota(agentId).canAcceptTask();
+    }
+
+    /**
+     * 记录 Agent 任务开始
+     */
+    public boolean startAgentTask(String agentId) {
+        return getResourceQuota(agentId).startTask();
+    }
+
+    /**
+     * 记录 Agent 任务完成
+     */
+    public void completeAgentTask(String agentId) {
+        getResourceQuota(agentId).completeTask();
+    }
+
+    // ===== 状态查询 =====
+
+    /**
+     * 获取 Agent 状态（通过运行时 ID）
+     *
+     * @param runtimeId 运行时 ID（projectId:agentRole）
+     * @return Agent 状态信息，不存在返回 null
+     */
+    public Map<String, Object> getAgentStatus(String runtimeId) {
+        Agent agent = getAgent(runtimeId);
         if (agent == null) {
             return null;
         }
+        return buildAgentStatus(agent);
+    }
 
+    /**
+     * 获取指定项目的指定角色 Agent 状态
+     */
+    public Map<String, Object> getAgentStatus(String projectId, String agentRole) {
+        Agent agent = getAgent(projectId, agentRole);
+        if (agent == null) {
+            return null;
+        }
+        return buildAgentStatus(agent);
+    }
+
+    /**
+     * 获取指定项目所有 Agent 的状态
+     */
+    public List<Map<String, Object>> getProjectAgentStatuses(String projectId) {
+        List<Map<String, Object>> statuses = new ArrayList<>();
+        List<Agent> agents = getAgentsByProject(projectId);
+        for (Agent agent : agents) {
+            statuses.add(buildAgentStatus(agent));
+        }
+        return statuses;
+    }
+
+    private Map<String, Object> buildAgentStatus(Agent agent) {
         Map<String, Object> status = new java.util.HashMap<>();
         status.put("id", agent.getId());
+        status.put("runtimeId", agent.getId());
         status.put("name", agent.getName());
         status.put("role", agent.getRole());
         status.put("busy", agent.isBusy());
         status.put("alive", agent.isAlive());
         status.put("taskCount", agent.getTasks().size());
+        status.put("reasoningDepth", agent.getDefinition().getReasoningDepth());
 
-        if (agent instanceof com.chengxun.gamemaker.agent.BaseAgent baseAgent) {
+        if (agent instanceof BaseAgent baseAgent) {
             status.put("conversationId", baseAgent.getCurrentConversationId());
-            status.put("workingMemorySize", baseAgent.getAgentContext().getWorkingMemory().size());
-            status.put("learnedPatternsCount", baseAgent.getAgentContext().getLearnedPatterns().size());
+            if (baseAgent.getAgentContext() != null) {
+                status.put("workingMemorySize", baseAgent.getAgentContext().getWorkingMemory().size());
+                status.put("learnedPatternsCount", baseAgent.getAgentContext().getLearnedPatterns().size());
+            }
 
             if (baseAgent.getCurrentProject() != null) {
                 status.put("projectId", baseAgent.getCurrentProject().getId());

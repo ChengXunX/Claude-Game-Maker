@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Git仓库管理 - ChengXun Game Maker</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <link th:href="@{/css/custom.css}" rel="stylesheet">
+    <style>
+        .git-card {
+            background: linear-gradient(135deg, var(--bg-card) 0%, var(--bg-secondary) 100%);
+            border: 1px solid var(--border-color);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .git-card:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 6px 15px var(--shadow-color);
+        }
+        .repo-type-badge {
+            width: 80px;
+            text-align: center;
+        }
+        .type-DESIGN { background-color: #6f42c1; }
+        .type-SERVER { background-color: #0d6efd; }
+        .type-CLIENT { background-color: #198754; }
+        .type-SHARED { background-color: #ffc107; color: #000; }
+        .type-ASSETS { background-color: #fd7e14; }
+        .type-CONFIG { background-color: #6c757d; }
+    </style>
+</head>
+<body class="bg-dark text-light">
+    <div class="container-fluid mt-4">
+        <!-- 面包屑导航 -->
+        <nav aria-label="breadcrumb" class="mb-4">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item">
+                    <a th:href="@{/projects}" class="text-decoration-none">
+                        <i class="bi bi-folder"></i> 项目
+                    </a>
+                </li>
+                <li class="breadcrumb-item active">Git仓库管理</li>
+            </ol>
+        </nav>
+
+        <!-- 页面标题 -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h2><i class="bi bi-git"></i> Git仓库管理</h2>
+                        <p class="text-muted mb-0">管理项目下的多个Git仓库（策划、服务端、客户端等）</p>
+                    </div>
+                    <div>
+                        <a th:href="@{/git/repository/{projectId}/new(projectId=${projectId})}"
+                           class="btn btn-primary">
+                            <i class="bi bi-plus-circle"></i> 创建仓库
+                        </a>
+                        <button class="btn btn-outline-success" onclick="initializeDefaults()">
+                            <i class="bi bi-magic"></i> 初始化默认仓库
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 统计卡片 -->
+        <div class="row mb-4">
+            <div class="col-md-3">
+                <div class="card git-card">
+                    <div class="card-body text-center">
+                        <div class="display-6 text-primary" th:text="${statistics.totalRepositories}">0</div>
+                        <div class="text-muted">总仓库数</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card git-card">
+                    <div class="card-body text-center">
+                        <div class="display-6 text-success" th:text="${statistics.activeRepositories}">0</div>
+                        <div class="text-muted">活跃仓库</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card git-card">
+                    <div class="card-body text-center">
+                        <div class="display-6 text-warning" th:text="${statistics.autoReviewRepositories}">0</div>
+                        <div class="text-muted">自动审查</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card git-card">
+                    <div class="card-body text-center">
+                        <div class="display-6 text-info">
+                            <span th:each="entry : ${statistics.typeCounts}" th:text="${entry.value} + ' '">0 </span>
+                        </div>
+                        <div class="text-muted">按类型分布</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 仓库列表 -->
+        <div class="row">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-list"></i> Git仓库列表</h5>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="table-responsive">
+                            <table class="table table-hover mb-0">
+                                <thead>
+                                    <tr>
+                                        <th>仓库名称</th>
+                                        <th>类型</th>
+                                        <th>路径</th>
+                                        <th>默认分支</th>
+                                        <th>自动审查</th>
+                                        <th>状态</th>
+                                        <th>操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr th:each="repo : ${repositories}">
+                                        <td>
+                                            <div>
+                                                <strong>
+                                                    <a th:href="@{/git/repository/{id}(id=${repo.id})}"
+                                                       class="text-decoration-none" th:text="${repo.name}">
+                                                        仓库名称
+                                                    </a>
+                                                </strong>
+                                                <br>
+                                                <small class="text-muted" th:text="${repo.description}">描述</small>
+                                            </div>
+                                        </td>
+                                        <td>
+                                            <span class="repo-type-badge badge"
+                                                  th:classappend="'type-' + ${repo.repositoryType}"
+                                                  th:text="${repo.repositoryTypeDisplayName}">
+                                                类型
+                                            </span>
+                                        </td>
+                                        <td>
+                                            <code th:text="${repo.relativePath}">path</code>
+                                        </td>
+                                        <td th:text="${repo.defaultBranch}">main</td>
+                                        <td>
+                                            <span class="badge"
+                                                  th:classappend="${repo.autoReviewEnabled ? 'bg-success' : 'bg-secondary'}"
+                                                  th:text="${repo.autoReviewEnabled ? '启用' : '禁用'}">
+                                                状态
+                                            </span>
+                                        </td>
+                                        <td>
+                                            <span class="badge"
+                                                  th:classappend="${repo.status == 'ACTIVE' ? 'bg-success' : (repo.status == 'ARCHIVED' ? 'bg-warning text-dark' : 'bg-secondary')}"
+                                                  th:text="${repo.status}">
+                                                状态
+                                            </span>
+                                        </td>
+                                        <td>
+                                            <div class="btn-group btn-group-sm">
+                                                <a th:href="@{/git/repository/{id}(id=${repo.id})}"
+                                                   class="btn btn-outline-primary">
+                                                    <i class="bi bi-eye"></i>
+                                                </a>
+                                                <a th:href="@{/git/repository/{id}/edit(id=${repo.id})}"
+                                                   class="btn btn-outline-secondary">
+                                                    <i class="bi bi-pencil"></i>
+                                                </a>
+                                                <button class="btn btn-outline-danger"
+                                                        th:onclick="'deleteRepository(' + ${repo.id} + ')'">
+                                                    <i class="bi bi-trash"></i>
+                                                </button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 使用说明 -->
+        <div class="row mt-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-info-circle"></i> 使用说明</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-4">
+                                <h6>多仓库支持</h6>
+                                <p class="text-muted small">
+                                    一个项目可以包含多个Git仓库，例如：<br>
+                                    - 策划文档仓库（design）<br>
+                                    - 服务端代码仓库（server）<br>
+                                    - 客户端代码仓库（client）<br>
+                                    - 共享库仓库（shared）
+                                </p>
+                            </div>
+                            <div class="col-md-4">
+                                <h6>Agent分配</h6>
+                                <p class="text-muted small">
+                                    每个仓库可以分配多个Agent：<br>
+                                    - 策划Agent → 策划文档仓库<br>
+                                    - 服务端Agent → 服务端仓库<br>
+                                    - 客户端Agent → 客户端仓库<br>
+                                    Agent只能提交到分配的仓库
+                                </p>
+                            </div>
+                            <div class="col-md-4">
+                                <h6>代码审查</h6>
+                                <p class="text-muted small">
+                                    每个仓库可以配置独立的审查规则：<br>
+                                    - 启用/禁用自动审查<br>
+                                    - 针对仓库类型的审查标准<br>
+                                    - 审查结果按仓库分类<br>
+                                    - 支持仓库级别的审查统计
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script th:inline="javascript">
+        const projectId = [[${projectId}]];
+
+        function initializeDefaults() {
+            if (confirm('确定要初始化默认的Git仓库结构吗？这将创建策划、服务端、客户端和共享库仓库。')) {
+                const projectWorkDir = prompt('请输入项目工作目录路径：', '/home/projects/' + projectId);
+                if (projectWorkDir) {
+                    fetch(`/git/api/project/${projectId}/initialize?projectWorkDir=${encodeURIComponent(projectWorkDir)}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.status === 'success') {
+                            alert('默认仓库已初始化');
+                            location.reload();
+                        } else {
+                            alert('错误: ' + data.message);
+                        }
+                    })
+                    .catch(error => alert('请求失败: ' + error));
+                }
+            }
+        }
+
+        function deleteRepository(id) {
+            if (confirm('确定要删除此Git仓库吗？此操作不可恢复。')) {
+                fetch(`/git/api/repository/${id}`, {
+                    method: 'DELETE',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        location.reload();
+                    } else {
+                        alert('删除失败: ' + data.message);
+                    }
+                })
+                .catch(error => alert('请求失败: ' + error));
+            }
+        }
+    </script>
+</body>
+</html>

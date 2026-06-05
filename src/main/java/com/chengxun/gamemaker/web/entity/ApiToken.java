@@ -1,6 +1,7 @@
 package com.chengxun.gamemaker.web.entity;
 
 import jakarta.persistence.*;
+import jakarta.validation.constraints.NotBlank;
 import java.time.LocalDateTime;
 
 @Entity
@@ -11,9 +12,11 @@ public class ApiToken {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @NotBlank(message = "Token 名称不能为空")
     @Column(name = "token_name", nullable = false, length = 100)
     private String name;
 
+    @NotBlank(message = "API Key 不能为空")
     @Column(name = "api_key", nullable = false)
     private String apiKey;
 
@@ -29,6 +32,14 @@ public class ApiToken {
     @Enumerated(EnumType.STRING)
     @Column(length = 20)
     private TokenStatus status = TokenStatus.ACTIVE;
+
+    /** 适用的 Agent 角色标签，逗号分隔，如 "server-dev,client-dev,ui-dev" */
+    @Column(name = "agent_tags", length = 500)
+    private String agentTags;
+
+    /** Token 优先级，数值越小优先级越高，用于自动分配 */
+    @Column(name = "priority")
+    private Integer priority = 10;
 
     @Column(name = "assigned_agent_id", length = 50)
     private String assignedAgentId;
@@ -97,6 +108,12 @@ public class ApiToken {
     public TokenStatus getStatus() { return status; }
     public void setStatus(TokenStatus status) { this.status = status; }
 
+    public String getAgentTags() { return agentTags; }
+    public void setAgentTags(String agentTags) { this.agentTags = agentTags; }
+
+    public Integer getPriority() { return priority; }
+    public void setPriority(Integer priority) { this.priority = priority; }
+
     public String getAssignedAgentId() { return assignedAgentId; }
     public void setAssignedAgentId(String assignedAgentId) { this.assignedAgentId = assignedAgentId; }
 
@@ -129,6 +146,25 @@ public class ApiToken {
 
     public boolean isActive() { return status == TokenStatus.ACTIVE; }
     public boolean isAssigned() { return assignedAgentId != null && !assignedAgentId.isEmpty(); }
+
+    /**
+     * 检查此 Token 是否适用于指定的 Agent 角色
+     *
+     * @param agentRole Agent 角色
+     * @return true 如果适用于该角色
+     */
+    public boolean isSuitableForRole(String agentRole) {
+        if (agentTags == null || agentTags.isEmpty()) {
+            return true; // 没有标签限制，适用于所有角色
+        }
+        String[] tags = agentTags.split(",");
+        for (String tag : tags) {
+            if (tag.trim().equalsIgnoreCase(agentRole)) {
+                return true;
+            }
+        }
+        return false;
+    }
 
     public String getMaskedApiKey() {
         if (apiKey == null || apiKey.length() < 10) return "****";

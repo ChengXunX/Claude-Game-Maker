@@ -7,6 +7,7 @@
     <title th:text="${status.name} + ' - Agent 详情'">Agent 详情</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <link th:href="@{/css/markdown-editor.css}" rel="stylesheet">
 </head>
 <body class="bg-dark text-light">
     <!-- Navbar -->
@@ -32,9 +33,29 @@
                             <i class="bi bi-folder"></i> 项目
                         </a>
                     </li>
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/skills}">
+                            <i class="bi bi-lightning"></i> 技能
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/tokens}">
+                            <i class="bi bi-key"></i> Token 管理
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" th:href="@{/monitor}">
+                            <i class="bi bi-graph-up"></i> 监控
+                        </a>
+                    </li>
                     <li class="nav-item" sec:authorize="hasRole('ADMIN')">
                         <a class="nav-link" th:href="@{/admin/users}">
                             <i class="bi bi-people"></i> 用户管理
+                        </a>
+                    </li>
+                    <li class="nav-item" sec:authorize="hasAuthority('PERM_roles:manage')">
+                        <a class="nav-link" th:href="@{/roles}">
+                            <i class="bi bi-shield-lock"></i> 角色管理
                         </a>
                     </li>
                 </ul>
@@ -44,6 +65,12 @@
                             <i class="bi bi-person-circle"></i> <span th:text="${username}">User</span>
                         </a>
                         <ul class="dropdown-menu dropdown-menu-end dropdown-menu-dark">
+                            <li>
+                                <a class="dropdown-item" th:href="@{/profile}">
+                                    <i class="bi bi-person"></i> 个人中心
+                                </a>
+                            </li>
+                            <li><hr class="dropdown-divider"></li>
                             <li>
                                 <form th:action="@{/logout}" method="post">
                                     <button class="dropdown-item" type="submit">
@@ -66,6 +93,20 @@
                 <li class="breadcrumb-item active" th:text="${status.name}"></li>
             </ol>
         </nav>
+
+        <!-- Alerts -->
+        <div th:if="${success}" class="alert alert-success alert-dismissible fade show" role="alert">
+            <i class="bi bi-check-circle"></i> <span th:text="${success}"></span>
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+        <div th:if="${error}" class="alert alert-danger alert-dismissible fade show" role="alert">
+            <i class="bi bi-exclamation-circle"></i> <span th:text="${error}"></span>
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+        <div th:if="${warning}" class="alert alert-warning alert-dismissible fade show" role="alert">
+            <i class="bi bi-exclamation-triangle"></i> <span th:text="${warning}"></span>
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
 
         <div class="row">
             <!-- Agent Info -->
@@ -92,6 +133,45 @@
                         <p><strong>工作记忆：</strong><span th:text="${status.workingMemorySize}">0</span> 条</p>
                         <p><strong>学习模式：</strong><span th:text="${status.learnedPatternsCount}">0</span> 个</p>
                     </div>
+                    <!-- Reasoning Depth -->
+                    <div class="card-body border-top border-secondary" sec:authorize="hasAuthority('PERM_agents:manage')">
+                        <form th:action="@{/agents/{id}/reasoning-depth(id=${agentId})}" method="post">
+                            <label class="form-label mb-1"><i class="bi bi-brain"></i> <strong>推理深度</strong></label>
+                            <div class="d-flex align-items-center gap-2">
+                                <select name="reasoningDepth" class="form-select form-select-sm bg-dark text-light border-secondary" style="width: auto;">
+                                    <option value="1" th:selected="${reasoningDepth == 1}">1 - 快速</option>
+                                    <option value="2" th:selected="${reasoningDepth == 2}">2 - 标准</option>
+                                    <option value="3" th:selected="${reasoningDepth == 3}">3 - 深入</option>
+                                    <option value="4" th:selected="${reasoningDepth == 4}">4 - 全面</option>
+                                    <option value="5" th:selected="${reasoningDepth == 5}">5 - 极致</option>
+                                </select>
+                                <button type="submit" class="btn btn-sm btn-outline-primary">
+                                    <i class="bi bi-check"></i>
+                                </button>
+                            </div>
+                            <div class="form-text" th:text="${reasoningDepthLabel}"></div>
+                        </form>
+                    </div>
+                    <!-- Control Buttons -->
+                    <div class="card-footer d-flex gap-2" sec:authorize="hasAuthority('PERM_agents:manage')">
+                        <form th:unless="${status.alive}"
+                              th:action="@{/agents/{id}/start(id=${agentId})}" method="post" class="flex-fill">
+                            <button type="submit" class="btn btn-success w-100">
+                                <i class="bi bi-play"></i> 启动
+                            </button>
+                        </form>
+                        <form th:if="${status.alive}"
+                              th:action="@{/agents/{id}/stop(id=${agentId})}" method="post" class="flex-fill">
+                            <button type="submit" class="btn btn-danger w-100">
+                                <i class="bi bi-stop"></i> 停止
+                            </button>
+                        </form>
+                        <form th:action="@{/agents/{id}/restart(id=${agentId})}" method="post" class="flex-fill">
+                            <button type="submit" class="btn btn-warning w-100">
+                                <i class="bi bi-arrow-clockwise"></i> 重启
+                            </button>
+                        </form>
+                    </div>
                 </div>
 
                 <!-- SKILL List -->
@@ -112,39 +192,140 @@
 
             <!-- Actions -->
             <div class="col-md-8">
-                <!-- Send Task -->
-                <div class="card bg-dark border-secondary mb-4">
-                    <div class="card-header">
-                        <h5 class="mb-0"><i class="bi bi-send"></i> 发送任务</h5>
-                    </div>
-                    <div class="card-body">
-                        <form th:action="@{/agents/{id}/task(id=${agentId})}" method="post">
-                            <div class="mb-3">
-                                <textarea class="form-control bg-dark text-light border-secondary" name="taskContent"
-                                          rows="3" placeholder="输入任务内容..." required></textarea>
-                            </div>
-                            <button type="submit" class="btn btn-primary">
-                                <i class="bi bi-send"></i> 发送任务
-                            </button>
-                        </form>
-                    </div>
-                </div>
+                <!-- Tab导航 -->
+                <ul class="nav nav-tabs mb-4" role="tablist">
+                    <li class="nav-item">
+                        <a class="nav-link active" data-bs-toggle="tab" href="#task-tab">
+                            <i class="bi bi-send"></i> 发送任务
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" data-bs-toggle="tab" href="#query-tab">
+                            <i class="bi bi-question-circle"></i> 发送查询
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" data-bs-toggle="tab" href="#intervention-tab">
+                            <i class="bi bi-hand-index"></i> 人工干预
+                        </a>
+                    </li>
+                </ul>
 
-                <!-- Send Query -->
-                <div class="card bg-dark border-secondary mb-4">
-                    <div class="card-header">
-                        <h5 class="mb-0"><i class="bi bi-question-circle"></i> 发送查询</h5>
-                    </div>
-                    <div class="card-body">
-                        <form th:action="@{/agents/{id}/query(id=${agentId})}" method="post">
-                            <div class="mb-3">
-                                <textarea class="form-control bg-dark text-light border-secondary" name="queryContent"
-                                          rows="3" placeholder="输入问题..." required></textarea>
+                <!-- Tab内容 -->
+                <div class="tab-content">
+                    <!-- 发送任务 -->
+                    <div class="tab-pane fade show active" id="task-tab">
+                        <div class="card bg-dark border-secondary">
+                            <div class="card-body">
+                                <form th:action="@{/agents/{id}/task(id=${agentId})}" method="post">
+                                    <div class="mb-3">
+                                        <textarea class="form-control bg-dark text-light border-secondary" name="taskContent"
+                                                  rows="3" placeholder="输入任务内容..." required></textarea>
+                                    </div>
+                                    <button type="submit" class="btn btn-primary">
+                                        <i class="bi bi-send"></i> 发送任务
+                                    </button>
+                                </form>
                             </div>
-                            <button type="submit" class="btn btn-info">
-                                <i class="bi bi-question-circle"></i> 发送查询
-                            </button>
-                        </form>
+                        </div>
+                    </div>
+
+                    <!-- 发送查询 -->
+                    <div class="tab-pane fade" id="query-tab">
+                        <div class="card bg-dark border-secondary">
+                            <div class="card-body">
+                                <form th:action="@{/agents/{id}/query(id=${agentId})}" method="post">
+                                    <div class="mb-3">
+                                        <textarea class="form-control bg-dark text-light border-secondary" name="queryContent"
+                                                  rows="3" placeholder="输入问题..." required></textarea>
+                                    </div>
+                                    <button type="submit" class="btn btn-info">
+                                        <i class="bi bi-question-circle"></i> 发送查询
+                                    </button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 人工干预 -->
+                    <div class="tab-pane fade" id="intervention-tab">
+                        <div class="card bg-dark border-secondary">
+                            <div class="card-header">
+                                <h5 class="mb-0"><i class="bi bi-hand-index"></i> 人工干预</h5>
+                                <small class="text-muted">干预Agent的决策和方向，提供指导或修改行为</small>
+                            </div>
+                            <div class="card-body">
+                                <form id="interventionForm">
+                                    <div class="mb-3">
+                                        <label class="form-label">干预类型 *</label>
+                                        <select class="form-select bg-dark text-light border-secondary" id="interventionType" required>
+                                            <option value="">选择干预类型</option>
+                                            <option value="GUIDANCE">方向指导 - 提供新的工作方向</option>
+                                            <option value="CORRECTION">行为纠正 - 纠正错误行为</option>
+                                            <option value="PRIORITY">优先级调整 - 调整任务优先级</option>
+                                            <option value="CONSTRAINT">约束添加 - 添加新的约束条件</option>
+                                            <option value="CONTEXT">上下文补充 - 补充重要上下文信息</option>
+                                        </select>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label">干预内容 * <small class="text-muted">(支持Markdown格式)</small></label>
+                                        <div class="markdown-editor"
+                                             data-name="interventionContent"
+                                             data-rows="6"
+                                             data-placeholder="输入干预内容...&#10;&#10;例如：&#10;- 请优先处理用户反馈的问题&#10;- 避免使用已废弃的API&#10;- 参考最新的设计规范"
+                                             data-required="true"></div>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label">紧急程度</label>
+                                        <select class="form-select bg-dark text-light border-secondary" id="interventionUrgency">
+                                            <option value="NORMAL">普通</option>
+                                            <option value="HIGH">高 - 需要立即处理</option>
+                                            <option value="CRITICAL">紧急 - 必须立即响应</option>
+                                        </select>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label">有效期</label>
+                                        <select class="form-select bg-dark text-light border-secondary" id="interventionDuration">
+                                            <option value="ONCE">仅本次 - 仅影响当前任务</option>
+                                            <option value="SESSION">本次会话 - 影响整个会话期间</option>
+                                            <option value="PERMANENT">永久 - 作为长期指导原则</option>
+                                        </select>
+                                    </div>
+                                    <button type="submit" class="btn btn-warning w-100">
+                                        <i class="bi bi-hand-index"></i> 提交干预
+                                    </button>
+                                </form>
+                            </div>
+                        </div>
+
+                        <!-- 干预历史 -->
+                        <div class="card bg-dark border-secondary mt-4">
+                            <div class="card-header d-flex justify-content-between align-items-center">
+                                <h5 class="mb-0"><i class="bi bi-clock-history"></i> 干预历史</h5>
+                                <button class="btn btn-sm btn-outline-secondary" onclick="loadInterventionHistory()">
+                                    <i class="bi bi-arrow-clockwise"></i> 刷新
+                                </button>
+                            </div>
+                            <div class="card-body p-0">
+                                <div class="table-responsive">
+                                    <table class="table table-hover mb-0">
+                                        <thead>
+                                            <tr>
+                                                <th>时间</th>
+                                                <th>类型</th>
+                                                <th>内容摘要</th>
+                                                <th>紧急程度</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="interventionHistory">
+                                            <tr>
+                                                <td colspan="4" class="text-center text-muted">暂无干预记录</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -152,5 +333,108 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script th:src="@{/js/markdown-editor.js}"></script>
+    <script th:inline="javascript">
+        const agentId = [[${agentId}]];
+
+        // 页面加载时获取干预历史
+        document.addEventListener('DOMContentLoaded', () => {
+            loadInterventionHistory();
+        });
+
+        // 提交干预
+        document.getElementById('interventionForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const type = document.getElementById('interventionType').value;
+            const urgency = document.getElementById('interventionUrgency').value;
+            const duration = document.getElementById('interventionDuration').value;
+
+            // 获取Markdown编辑器内容
+            const editorContainer = document.querySelector('#interventionForm .markdown-editor');
+            const textarea = editorContainer.querySelector('textarea');
+            const content = textarea.value;
+
+            if (!type || !content.trim()) {
+                alert('请填写所有必填字段');
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/agents/${agentId}/interventions`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        type,
+                        content,
+                        urgency,
+                        duration
+                    })
+                });
+
+                const result = await response.json();
+
+                if (result.status === 'success') {
+                    alert('干预已提交，Agent将收到您的指导');
+                    document.getElementById('interventionForm').reset();
+                    // 重新初始化Markdown编辑器
+                    MarkdownEditor.initAll();
+                    loadInterventionHistory();
+                } else {
+                    alert('提交失败: ' + result.message);
+                }
+            } catch (error) {
+                alert('请求失败: ' + error.message);
+            }
+        });
+
+        // 加载干预历史
+        async function loadInterventionHistory() {
+            try {
+                const response = await fetch(`/api/agents/${agentId}/interventions`);
+                const interventions = await response.json();
+
+                const tbody = document.getElementById('interventionHistory');
+                tbody.innerHTML = '';
+
+                if (interventions.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">暂无干预记录</td></tr>';
+                    return;
+                }
+
+                interventions.forEach(item => {
+                    const tr = document.createElement('tr');
+                    const typeMap = {
+                        'GUIDANCE': '方向指导',
+                        'CORRECTION': '行为纠正',
+                        'PRIORITY': '优先级调整',
+                        'CONSTRAINT': '约束添加',
+                        'CONTEXT': '上下文补充'
+                    };
+                    const urgencyClass = {
+                        'NORMAL': 'bg-secondary',
+                        'HIGH': 'bg-warning text-dark',
+                        'CRITICAL': 'bg-danger'
+                    };
+                    const urgencyText = {
+                        'NORMAL': '普通',
+                        'HIGH': '高',
+                        'CRITICAL': '紧急'
+                    };
+
+                    tr.innerHTML = `
+                        <td><small>${new Date(item.createdAt).toLocaleString()}</small></td>
+                        <td><span class="badge bg-info">${typeMap[item.type] || item.type}</span></td>
+                        <td><small>${item.content.substring(0, 50)}${item.content.length > 50 ? '...' : ''}</small></td>
+                        <td><span class="badge ${urgencyClass[item.urgency]}">${urgencyText[item.urgency]}</span></td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+            } catch (error) {
+                console.error('Failed to load intervention history:', error);
+            }
+        }
+    </script>
 </body>
 </html>
