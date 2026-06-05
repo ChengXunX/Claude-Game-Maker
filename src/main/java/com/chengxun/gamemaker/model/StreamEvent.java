@@ -117,12 +117,21 @@ public class StreamEvent {
     }
 
     /**
-     * 创建工具调用事件
+     * 创建工具调用事件（开始）
      */
     public static StreamEvent toolUse(String toolName, Map<String, Object> toolInput) {
         StreamEvent event = new StreamEvent("tool_use", null);
         event.setToolName(toolName);
         event.setToolInput(toolInput);
+        return event;
+    }
+
+    /**
+     * 创建工具执行中事件
+     */
+    public static StreamEvent toolExecuting(String toolName, String message) {
+        StreamEvent event = new StreamEvent("tool_executing", message);
+        event.setToolName(toolName);
         return event;
     }
 

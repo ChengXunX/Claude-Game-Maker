@@ -100,6 +100,8 @@ public class AiToolLoopService {
             List<ToolCallInfo> toolCalls = new ArrayList<>();
             AtomicBoolean hasError = new AtomicBoolean(false);
             AtomicBoolean nativeToolUseSeen = new AtomicBoolean(false);
+            // 收集 Claude 原生工具事件（tool_use / tool_result），由主循环统一转发给前端
+            List<Object> nativeToolEvents = new ArrayList<>();
             CountDownLatch latch = new CountDownLatch(1);
 
             // 调用 AI 引擎（异步，通过 latch 等待完成）
@@ -110,7 +112,7 @@ public class AiToolLoopService {
                 currentMessage,
                 null, null, null, null,
                 event -> handleIterationEvent(event, textOutput, thinkingOutput, finalResultContent, toolCalls,
-                                               hasError, isCancelled, nativeToolUseSeen, onEvent, latch)
+                                               hasError, isCancelled, nativeToolUseSeen, nativeToolEvents, onEvent, latch)
             );
 
             // 阻塞等待 AI 响应完成
@@ -143,6 +145,29 @@ public class AiToolLoopService {
             String engineSessionId = streamingEngine.getSessionId(agentKey);
             if (engineSessionId != null) {
                 currentSessionId = engineSessionId;
+            }
+
+            // 处理 Claude 原生工具调用事件
+            // 统一发送 tool_use → tool_executing → tool_result，保证前端状态正确切换
+            if (nativeToolUseSeen.get() && !nativeToolEvents.isEmpty()) {
+                log.info("处理 Claude 原生工具调用事件，共 {} 个事件 - 轮次: {}", nativeToolEvents.size(), iteration);
+                for (Object evt : nativeToolEvents) {
+                    if (isCancelled.get()) break;
+                    StreamEvent toolEvent = (StreamEvent) evt;
+
+                    if ("tool_use".equals(toolEvent.getType())) {
+                        // 1. 发送 tool_use（前端显示"准备中"）
+                        onEvent.accept(StreamEvent.toolUse(toolEvent.getToolName(), toolEvent.getToolInput()));
+                        // 2. 立即发送 tool_executing（前端显示"执行中"）
+                        onEvent.accept(StreamEvent.toolExecuting(toolEvent.getToolName(),
+                            "正在执行 " + getToolDisplayName(toolEvent.getToolName()) + "..."));
+                    } else if ("tool_result".equals(toolEvent.getType())) {
+                        // 3. 发送 tool_result（前端显示"成功"/"失败"）
+                        String resultData = toolEvent.getToolResult();
+                        onEvent.accept(StreamEvent.toolResult(toolEvent.getToolName(), resultData));
+                        log.info("原生工具执行完成: {}", toolEvent.getToolName());
+                    }
+                }
             }
 
             // 如果没有工具调用，输出最终结果并结束
@@ -193,6 +218,9 @@ public class AiToolLoopService {
                     continue;
                 }
 
+                // 通知前端工具正在执行
+                onEvent.accept(StreamEvent.toolExecuting(toolCall.name, "正在执行 " + getToolDisplayName(toolCall.name) + "..."));
+
                 // 执行工具
                 long startTime = System.currentTimeMillis();
                 Map<String, Object> result;
@@ -215,8 +243,11 @@ public class AiToolLoopService {
                 toolResults.append("耗时: ").append(duration).append("ms\n");
                 toolResults.append("结果:\n```json\n").append(resultJson).append("\n```\n\n");
 
+                // 通知前端工具执行完成
+                boolean success = result.containsKey("success") ? (boolean) result.get("success") : true;
+                String statusMsg = success ? "执行成功" : "执行失败: " + result.getOrDefault("error", "未知错误");
                 onEvent.accept(StreamEvent.toolResult(toolCall.name, resultJson));
-                log.info("工具执行完成: {} ({}ms) - 轮次: {}", toolCall.name, duration, iteration);
+                log.info("工具执行完成: {} ({}ms, success={}) - 轮次: {}", toolCall.name, duration, success, iteration);
             }
 
             // 构建下一轮消息
@@ -231,6 +262,9 @@ public class AiToolLoopService {
     /**
      * 处理单轮迭代中的流式事件
      * 收集数据并实时转发给前端显示
+     *
+     * 注意：当 Claude CLI 使用原生工具执行时，tool_use 和 tool_result 事件
+     * 不在此处转发给前端，而是由主循环统一发送（保证 tool_use → tool_executing → tool_result 的顺序）
      */
     private void handleIterationEvent(StreamEvent event,
                                        StringBuilder textOutput,
@@ -240,6 +274,7 @@ public class AiToolLoopService {
                                        AtomicBoolean hasError,
                                        AtomicBoolean isCancelled,
                                        AtomicBoolean nativeToolUseSeen,
+                                       List<Object> nativeToolEvents,
                                        Consumer<StreamEvent> onEvent,
                                        CountDownLatch latch) {
         if (isCancelled.get()) {
@@ -261,9 +296,14 @@ public class AiToolLoopService {
                 break;
 
             case "tool_use":
-                // Claude 原生工具调用，标记并转发给前端显示
+                // Claude 原生工具调用：标记并收集事件（不直接转发，由主循环统一发送）
                 nativeToolUseSeen.set(true);
-                onEvent.accept(event);
+                nativeToolEvents.add(event);
+                break;
+
+            case "tool_result":
+                // Claude 原生工具结果：收集事件（不直接转发，由主循环统一发送）
+                nativeToolEvents.add(event);
                 break;
 
             case "error":
@@ -336,5 +376,61 @@ public class AiToolLoopService {
             this.name = name;
             this.params = params;
         }
+    }
+
+    /**
+     * 获取工具的中文显示名称
+     */
+    private String getToolDisplayName(String toolName) {
+        return switch (toolName) {
+            case "list_agents" -> "查询Agent列表";
+            case "send_agent_task" -> "发送Agent任务";
+            case "intervene_agent" -> "干预Agent";
+            case "pause_agent" -> "暂停Agent";
+            case "resume_agent" -> "恢复Agent";
+            case "get_agent_health" -> "查询Agent健康状态";
+            case "get_agent_logs" -> "查询Agent日志";
+            case "list_projects" -> "查询项目列表";
+            case "create_project" -> "创建项目";
+            case "create_project_from_template" -> "从模板创建项目";
+            case "list_workflow_templates" -> "查询工作流模板";
+            case "create_workflow_template" -> "创建工作流模板";
+            case "delete_workflow_template" -> "删除工作流模板";
+            case "start_workflow" -> "启动工作流";
+            case "list_workflow_instances" -> "查询工作流实例";
+            case "cancel_workflow" -> "取消工作流";
+            case "pause_workflow" -> "暂停工作流";
+            case "resume_workflow" -> "恢复工作流";
+            case "list_game_templates" -> "查询游戏模板";
+            case "create_game_template" -> "创建游戏模板";
+            case "delete_game_template" -> "删除游戏模板";
+            case "list_skills" -> "查询技能列表";
+            case "create_skill" -> "创建技能";
+            case "list_mcp_servers" -> "查询MCP服务器";
+            case "add_mcp_server" -> "添加MCP服务器";
+            case "test_mcp_server" -> "测试MCP服务器";
+            case "list_alerts" -> "查询告警";
+            case "acknowledge_alert" -> "确认告警";
+            case "resolve_alert" -> "解决告警";
+            case "list_notifications" -> "查询通知";
+            case "mark_notification_read" -> "标记通知已读";
+            case "mark_all_notifications_read" -> "全部标记已读";
+            case "get_resource_usage" -> "查询资源使用";
+            case "get_operation_logs" -> "查询操作日志";
+            case "list_configs" -> "查询系统配置";
+            case "update_config" -> "更新系统配置";
+            case "list_tokens" -> "查询Token列表";
+            case "list_users" -> "查询用户列表";
+            case "list_roles" -> "查询角色列表";
+            case "list_pipelines" -> "查询流水线";
+            case "trigger_pipeline" -> "触发流水线";
+            case "list_git_repos" -> "查询Git仓库";
+            case "list_reviews" -> "查询代码审查";
+            case "list_capabilities" -> "查询能力列表";
+            case "create_capability" -> "创建能力";
+            case "get_system_info" -> "查询系统信息";
+            case "get_diagnostic" -> "系统自检";
+            default -> toolName;
+        };
     }
 }

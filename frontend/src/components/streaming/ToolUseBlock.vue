@@ -6,6 +6,7 @@
       </div>
       <span class="tool-name">{{ toolName }}</span>
       <el-tag v-if="status" :type="statusType" size="small" class="tool-status">
+        <el-icon v-if="isExecuting" class="is-loading" :size="12"><Loading /></el-icon>
         {{ statusText }}
       </el-tag>
       <el-icon class="expand-icon" :class="{ rotated: isExpanded }">
@@ -58,6 +59,7 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { ElMessage } from 'element-plus'
+import { Loading } from '@element-plus/icons-vue'
 
 const props = defineProps({
   toolName: {
@@ -86,10 +88,12 @@ const isExpanded = ref(props.defaultExpanded)
 
 const isSuccess = computed(() => props.status === 'success')
 const isError = computed(() => props.status === 'error')
+const isExecuting = computed(() => props.status === 'executing' || props.status === 'running')
 
 const statusType = computed(() => {
   switch (props.status) {
     case 'running': return 'warning'
+    case 'executing': return 'warning'
     case 'success': return 'success'
     case 'error': return 'danger'
     default: return 'info'
@@ -98,7 +102,8 @@ const statusType = computed(() => {
 
 const statusText = computed(() => {
   switch (props.status) {
-    case 'running': return '执行中'
+    case 'running': return '准备中'
+    case 'executing': return '执行中'
     case 'success': return '成功'
     case 'error': return '失败'
     default: return ''

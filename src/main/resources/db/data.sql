@@ -11,7 +11,8 @@ INSERT IGNORE INTO roles (id, name, display_name, description, is_system) VALUES
 (3, 'DEVELOPER', '开发者', '使用 Agent 进行开发工作', TRUE),
 (4, 'OPS_ENGINEER', '运维工程师', '负责系统运维和部署', TRUE),
 (5, 'OBSERVER', '观察者', '只读权限，查看系统状态', TRUE),
-(6, 'USER', '普通用户', '普通用户，基础权限', TRUE);
+(6, 'USER', '普通用户', '普通用户，基础权限', TRUE),
+(7, 'READONLY', '只读访客', '只读权限，可查看所有模块但不能修改，供外部人员了解系统特性', TRUE);
 
 -- 插入管理员角色权限
 INSERT IGNORE INTO role_permissions (role_id, permission) VALUES
@@ -121,6 +122,24 @@ INSERT IGNORE INTO role_permissions (role_id, permission) VALUES
 (6, 'dashboard:view'),
 (6, 'projects:view');
 
+-- 插入只读访客角色权限
+INSERT IGNORE INTO role_permissions (role_id, permission) VALUES
+(7, 'dashboard:view'),
+(7, 'agents:view'),
+(7, 'ai:use'),
+(7, 'projects:view'),
+(7, 'skills:view'),
+(7, 'tokens:view'),
+(7, 'notification:view'),
+(7, 'code:review'),
+(7, 'pipeline:view'),
+(7, 'workflow:view'),
+(7, 'approval:view'),
+(7, 'users:view'),
+(7, 'logs:view'),
+(7, 'system:view'),
+(7, 'system:monitor');
+
 -- 插入默认管理员用户（密码：admin123）
 INSERT IGNORE INTO users (id, username, password, email, nickname, role_id, status) VALUES
 (1, 'admin', '$2a$12$REDACTED_BCRYPT_HASH_PLACEHOLDER_DATA', 'chengxun@88.com', '管理员', 1, 'APPROVED');
@@ -213,3 +232,43 @@ INSERT IGNORE INTO system_configs (config_key, config_value, config_group, value
 ('notification.enabled.channels', 'feishu,email', 'notification', 'string', '启用的通知渠道（逗号分隔）'),
 ('system.pagination.default-size', '20', 'system', 'number', '默认分页大小'),
 ('system.pagination.max-size', '100', 'system', 'number', '最大分页大小');
+
+-- 插入权限定义
+INSERT IGNORE INTO permission_definitions (permission_key, name, description, category, enabled, system, sort_order) VALUES
+('dashboard:view', '仪表盘查看', '查看仪表盘和系统概览', '工作台', 1, 1, 1),
+('agents:view', 'Agent查看', '查看Agent列表、状态、详情', 'Agent', 1, 1, 1),
+('agents:manage', 'Agent管理', '启动、停止、重启Agent，修改Agent配置', 'Agent', 1, 1, 2),
+('agents:task', 'Agent任务', '向Agent发送任务和指令', 'Agent', 1, 1, 3),
+('ai:use', 'AI助手使用', '使用AI助手进行对话', 'AI', 1, 1, 1),
+('ai:admin', 'AI助手管理', '管理AI配置、知识库、技能生成', 'AI', 1, 1, 2),
+('projects:view', '项目查看', '查看项目列表和详情', '项目', 1, 1, 1),
+('projects:manage', '项目管理', '创建、编辑、删除项目，管理项目配置', '项目', 1, 1, 2),
+('skills:view', '技能查看', '查看技能列表和详情', '技能', 1, 1, 1),
+('skills:manage', '技能管理', '创建、编辑、删除技能，AI生成技能', '技能', 1, 1, 2),
+('tokens:view', 'Token查看', '查看Token列表和用量统计', 'Token', 1, 1, 1),
+('tokens:manage', 'Token管理', '创建、编辑、删除Token，分配Token给Agent', 'Token', 1, 1, 2),
+('notification:view', '通知查看', '查看系统通知和消息', '通知', 1, 1, 1),
+('notification:manage', '通知管理', '管理系统通知、模板、清理无效通知', '通知', 1, 1, 2),
+('code:review', '代码审查', '查看和执行代码审查', '代码', 1, 1, 1),
+('knowledge:manage', '知识库管理', '管理知识库、知识进化、文档索引', '知识库', 1, 1, 1),
+('pipeline:view', '流水线查看', '查看CI/CD流水线列表和状态', '流水线', 1, 1, 1),
+('pipeline:manage', '流水线管理', '创建、编辑、删除流水线', '流水线', 1, 1, 2),
+('pipeline:execute', '流水线执行', '触发流水线执行', '流水线', 1, 1, 3),
+('pipeline:approve', '流水线审批', '审批流水线执行请求', '流水线', 1, 1, 4),
+('pipeline:intervene', '流水线干预', '干预正在执行的流水线', '流水线', 1, 1, 5),
+('workflow:view', '工作流查看', '查看工作流模板和实例', '工作流', 1, 1, 1),
+('workflow:manage', '工作流管理', '创建、编辑、管理工作流', '工作流', 1, 1, 2),
+('approval:view', '审批查看', '查看审批记录和流程', '审批', 1, 1, 1),
+('approval:manage', '审批管理', '处理审批请求，批准或驳回', '审批', 1, 1, 2),
+('users:view', '用户查看', '查看用户列表和详情', '用户', 1, 1, 1),
+('users:manage', '用户管理', '创建、编辑、删除用户，审批注册', '用户', 1, 1, 2),
+('roles:manage', '角色管理', '创建、编辑、删除角色，分配权限', '角色', 1, 1, 1),
+('logs:view', '日志查看', '查看操作日志和审计记录', '日志', 1, 1, 1),
+('system:view', '系统查看', '查看系统信息和状态', '系统', 1, 1, 1),
+('system:monitor', '系统监控', '查看系统监控、资源用量、Agent健康', '系统', 1, 1, 2),
+('system:monitor:manage', '监控管理', '管理告警规则、处理告警', '系统', 1, 1, 3),
+('system:config', '配置查看', '查看系统配置和常量', '系统', 1, 1, 4),
+('system:config:manage', '配置管理', '修改系统配置和常量', '系统', 1, 1, 5),
+('system:manage', '系统管理', '系统级管理操作', '系统', 1, 1, 6),
+('admin:manage', '管理后台', '访问管理后台功能', '系统', 1, 1, 7),
+('terminal:use', '终端使用', '使用系统终端执行命令', '系统', 1, 1, 8);

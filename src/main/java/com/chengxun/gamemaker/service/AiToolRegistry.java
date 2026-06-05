@@ -546,27 +546,73 @@ public class AiToolRegistry {
      */
     public String generateToolDescriptions(Set<String> userPermissions) {
         StringBuilder sb = new StringBuilder();
-        sb.append("## 可用工具\n\n");
-        sb.append("你可以使用以下工具来执行操作。使用格式：\n");
+        sb.append("## 可用工具（必须使用这些工具来执行操作）\n\n");
+        sb.append("⚠️ **重要**：所有操作都必须通过工具完成，不要尝试修改代码文件。\n");
+        sb.append("⚠️ **你拥有完整的系统访问能力**：所有工具都可以直接调用获取实时数据，不需要查看代码。\n\n");
+        sb.append("工具调用格式：\n");
         sb.append("```tool_call\n{\"tool\": \"工具名\", \"params\": {参数}}\n```\n\n");
+        sb.append("示例：\n");
+        sb.append("```tool_call\n{\"tool\": \"list_workflow_templates\", \"params\": {}}\n```\n");
+        sb.append("```tool_call\n{\"tool\": \"list_agents\", \"params\": {}}\n```\n");
+        sb.append("```tool_call\n{\"tool\": \"list_workflow_instances\", \"params\": {}}\n```\n\n");
 
-        for (AiTool tool : getAvailableTools(userPermissions)) {
-            sb.append("### ").append(tool.getName()).append("\n");
-            sb.append("**说明**: ").append(tool.getDescription()).append("\n");
+        // 按类别分组
+        sb.append("### 项目管理\n");
+        appendToolByNames(sb, userPermissions, "list_projects", "create_project", "create_project_from_template");
 
+        sb.append("### 工作流管理\n");
+        appendToolByNames(sb, userPermissions, "list_workflow_templates", "create_workflow_template",
+            "delete_workflow_template", "start_workflow", "list_workflow_instances",
+            "cancel_workflow", "pause_workflow", "resume_workflow");
+
+        sb.append("### Agent 管理\n");
+        appendToolByNames(sb, userPermissions, "list_agents", "send_agent_task", "intervene_agent",
+            "pause_agent", "resume_agent", "get_agent_health", "get_agent_logs");
+
+        sb.append("### 游戏模板\n");
+        appendToolByNames(sb, userPermissions, "list_game_templates", "create_game_template", "delete_game_template");
+
+        sb.append("### 技能管理\n");
+        appendToolByNames(sb, userPermissions, "list_skills", "create_skill");
+
+        sb.append("### 系统监控\n");
+        appendToolByNames(sb, userPermissions, "list_alerts", "acknowledge_alert", "resolve_alert",
+            "get_resource_usage", "get_system_info", "get_diagnostic");
+
+        sb.append("### 配置管理\n");
+        appendToolByNames(sb, userPermissions, "list_configs", "update_config", "list_tokens", "list_users", "list_roles");
+
+        sb.append("### 通用API调用\n");
+        appendToolByNames(sb, userPermissions, "call_api");
+
+        sb.append("### 代码审查 & CI/CD\n");
+        appendToolByNames(sb, userPermissions, "list_reviews", "list_pipelines", "trigger_pipeline", "list_git_repos");
+
+        return sb.toString();
+    }
+
+    /**
+     * 按名称追加工具说明
+     */
+    private void appendToolByNames(StringBuilder sb, Set<String> userPermissions, String... toolNames) {
+        for (String name : toolNames) {
+            AiTool tool = tools.get(name);
+            if (tool == null) continue;
+            if (tool.getPermission() != null && !userPermissions.contains(tool.getPermission())) continue;
+
+            sb.append("- **`").append(name).append("`**：").append(tool.getDescription());
             if (tool.getParameters() != null && !tool.getParameters().isEmpty()) {
-                sb.append("**参数**:\n");
+                sb.append(" | 参数: ");
+                boolean first = true;
                 for (Map.Entry<String, ParameterDef> entry : tool.getParameters().entrySet()) {
-                    ParameterDef param = entry.getValue();
-                    sb.append("- `").append(entry.getKey()).append("`");
-                    sb.append(" (").append(param.getType()).append(")");
-                    if (param.isRequired()) sb.append(" [必填]");
-                    sb.append(": ").append(param.getDescription()).append("\n");
+                    if (!first) sb.append(", ");
+                    sb.append(entry.getKey());
+                    if (entry.getValue().isRequired()) sb.append("(必填)");
+                    first = false;
                 }
             }
             sb.append("\n");
         }
-
-        return sb.toString();
+        sb.append("\n");
     }
 }

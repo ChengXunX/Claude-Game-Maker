@@ -327,20 +327,45 @@ const sendMessage = async () => {
       scrollToBottom()
     })
 
+    // 监听工具执行中事件
+    eventSource.addEventListener('tool_executing', (e) => {
+      const data = JSON.parse(e.data)
+      // 更新对应工具的状态为"执行中"
+      const tool = streamingToolUses.find(t => t.toolName === data.toolName && t.status === 'running')
+      if (tool) {
+        tool.status = 'executing'
+        tool.executingMessage = data.content || '执行中...'
+      }
+      // 触发响应式更新
+      messages[assistantIndex].toolUses = [...streamingToolUses]
+      scrollToBottom()
+    })
+
     // 监听工具结果事件（后端执行完成后）
     eventSource.addEventListener('tool_result', (e) => {
       const data = JSON.parse(e.data)
       // 按顺序匹配：后端保证 tool_use 和 tool_result 按相同顺序发送
       if (nextToolIndex < streamingToolUses.length) {
         streamingToolUses[nextToolIndex].result = data.result
-        streamingToolUses[nextToolIndex].status = 'success'
+        // 判断是否成功
+        try {
+          const resultObj = JSON.parse(data.result)
+          streamingToolUses[nextToolIndex].status = resultObj.success !== false ? 'success' : 'error'
+        } catch {
+          streamingToolUses[nextToolIndex].status = 'success'
+        }
         nextToolIndex++
       } else {
         // 兜底：按名称查找（兼容乱序情况）
-        const tool = streamingToolUses.find(t => t.toolName === data.toolName && t.status === 'running')
+        const tool = streamingToolUses.find(t => t.toolName === data.toolName && (t.status === 'running' || t.status === 'executing'))
         if (tool) {
           tool.result = data.result
-          tool.status = 'success'
+          try {
+            const resultObj = JSON.parse(data.result)
+            tool.status = resultObj.success !== false ? 'success' : 'error'
+          } catch {
+            tool.status = 'success'
+          }
         }
       }
       // 触发响应式更新
@@ -376,7 +401,7 @@ const sendMessage = async () => {
 
       // 将所有仍在"执行中"的工具标记为"成功"（后端已完成执行）
       streamingToolUses.forEach(tool => {
-        if (tool.status === 'running') {
+        if (tool.status === 'running' || tool.status === 'executing') {
           tool.status = 'success'
         }
       })
