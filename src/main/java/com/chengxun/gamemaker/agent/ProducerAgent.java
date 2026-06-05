@@ -56,8 +56,8 @@ public class ProducerAgent extends BaseAgent {
             driveGoalIteration();
         }
 
-        // 自动优化团队
-        autoOptimizeTeam();
+        // 检查团队状态并发起优化建议
+        checkTeamAndSuggestOptimization();
 
         String teamStatus = getTeamStatus();
         processApprovals();
@@ -245,7 +245,7 @@ public class ProducerAgent extends BaseAgent {
 
     /**
      * 检查里程碑并将任务分配给对应 Agent
-     * 如果需要的 Agent 不存在，自动招聘
+     * 如果需要的 Agent 不存在，发起招聘请求给管理员审批
      */
     private void checkAndAssignMilestoneTasks() {
         String projectId = getProjectId();
@@ -258,14 +258,14 @@ public class ProducerAgent extends BaseAgent {
         String targetAgentId = projectId + ":" + next.getAssignedAgentRole();
         Agent targetAgent = agentManager.getAgent(targetAgentId);
 
-        // 如果 Agent 不存在，自动招聘
+        // 如果 Agent 不存在，发起招聘请求
         if (targetAgent == null) {
-            log.info("Agent not found for milestone {}, auto-recruiting: {}", next.getId(), next.getAssignedAgentRole());
-            targetAgent = autoRecruitAgent(next.getAssignedAgentRole(), next.getTitle());
-            if (targetAgent == null) {
-                log.error("Failed to auto-recruit agent for role: {}", next.getAssignedAgentRole());
-                return;
+            log.info("Agent not found for milestone {}, requesting recruit: {}", next.getId(), next.getAssignedAgentRole());
+            boolean requested = requestAutoRecruit(next.getAssignedAgentRole(), next.getTitle());
+            if (!requested) {
+                log.error("Failed to request auto-recruit for role: {}", next.getAssignedAgentRole());
             }
+            return; // 等待管理员审批后再执行任务
         }
 
         // 如果里程碑没有任务，生成任务
@@ -538,61 +538,89 @@ public class ProducerAgent extends BaseAgent {
     }
 
     /**
-     * 自动招聘 Agent
-     * 当里程碑需要某个角色但没有对应 Agent 时，自动招聘
+     * 发送通知给管理员
+     *
+     * @param notificationType 通知类型
+     * @param content 通知内容
+     */
+    private void sendNotificationToAdmin(String notificationType, String content) {
+        // 通过飞书发送通知
+        if (feishuService != null && feishuService.isEnabled()) {
+            feishuService.sendMessage(String.format(
+                "📢 制作人通知\n\n类型: %s\n\n%s",
+                notificationType, content
+            ));
+        }
+
+        // 记录日志
+        logInfo(notificationType, content);
+
+        // 保存到经验
+        saveExperience(notificationType.toLowerCase() + "_" + System.currentTimeMillis(), content);
+    }
+
+    /**
+     * 发起自动招聘请求
+     * 当里程碑需要某个角色但没有对应 Agent 时，向管理员发起招聘审批请求
      *
      * @param role 需要的角色
      * @param taskDescription 任务描述
-     * @return 创建的 Agent，如果创建失败返回 null
+     * @return true 如果请求已发送，false 如果发送失败
      */
-    private Agent autoRecruitAgent(String role, String taskDescription) {
+    private boolean requestAutoRecruit(String role, String taskDescription) {
         String projectId = getProjectId();
-        if (projectId == null) return null;
+        if (projectId == null) return false;
 
-        log.info("Auto-recruiting agent for role: {} in project: {}", role, projectId);
+        log.info("Requesting auto-recruit for role: {} in project: {}", role, projectId);
 
-        // 生成 Agent 名称
+        // 生成招聘请求描述
         String name = generateAgentName(role);
+        String requestData = String.format(
+            "{\"role\":\"%s\",\"name\":\"%s\",\"reason\":\"里程碑任务需要: %s\"}",
+            role, name, taskDescription
+        );
+        String description = String.format(
+            "【自动招聘请求】\n\n项目: %s\n需要角色: %s\n建议名称: %s\n任务需求: %s\n\n请审批是否招聘该成员。",
+            currentProject != null ? currentProject.getName() : projectId,
+            role, name, taskDescription
+        );
 
-        // 使用项目全局 API 配置
-        GameProject project = projectManager.getProject(projectId);
-        String workDir = project != null ? project.getWorkDir() : null;
+        // 发送招聘请求到管理员
+        requestHiring(role, description);
 
-        try {
-            Agent agent = createAgent(name, role, null, workDir);
+        // 通知管理员
+        sendNotificationToAdmin("AUTO_RECRUIT_REQUEST", description);
 
-            // 如果项目有全局 API 配置，自动分配
-            if (agent != null && project != null) {
-                String globalApiKey = project.getMetadata().get("globalApiKey");
-                String globalApiUrl = project.getMetadata().get("globalApiUrl");
-                String globalModel = project.getMetadata().get("globalModel");
+        logInfo("AUTO_RECRUIT_REQUEST", "已发起自动招聘请求，角色: " + role + "，等待管理员审批");
+        return true;
+    }
 
-                if (globalApiKey != null && !globalApiKey.isEmpty()) {
-                    agent.getDefinition().setApiKey(globalApiKey);
-                }
-                if (globalApiUrl != null && !globalApiUrl.isEmpty()) {
-                    agent.getDefinition().setApiUrl(globalApiUrl);
-                }
-                if (globalModel != null && !globalModel.isEmpty()) {
-                    agent.getDefinition().setModel(globalModel);
-                }
-            }
+    /**
+     * 发起自动优化建议
+     * 检查团队成员状态，向管理员发起优化建议
+     *
+     * @param agentId 需要优化的 Agent ID
+     * @param reason 优化原因
+     * @param suggestion 优化建议
+     */
+    private void requestTeamOptimization(String agentId, String reason, String suggestion) {
+        String projectId = getProjectId();
+        if (projectId == null) return;
 
-            // 通知管理员
-            if (feishuService != null && feishuService.isEnabled()) {
-                feishuService.sendMessage(String.format(
-                    "🤖 自动招聘通知\n\n项目: %s\n角色: %s\n名称: %s\n任务: %s",
-                    projectId, role, name, taskDescription
-                ));
-            }
+        Agent targetAgent = agentManager.getAgent(agentId);
+        if (targetAgent == null) return;
 
-            log.info("Auto-recruited agent: {} ({}) for project: {}", name, role, projectId);
-            return agent;
+        String description = String.format(
+            "【团队优化建议】\n\n项目: %s\nAgent: %s (%s)\n角色: %s\n\n原因: %s\n\n建议: %s\n\n请审批是否执行优化。",
+            currentProject != null ? currentProject.getName() : projectId,
+            targetAgent.getName(), agentId, targetAgent.getRole(),
+            reason, suggestion
+        );
 
-        } catch (Exception e) {
-            log.error("Failed to auto-recruit agent for role: {}", role, e);
-            return null;
-        }
+        // 发送优化建议到管理员
+        sendNotificationToAdmin("TEAM_OPTIMIZATION", description);
+
+        logInfo("TEAM_OPTIMIZATION", "已发起团队优化建议: " + agentId);
     }
 
     /**
@@ -613,10 +641,10 @@ public class ProducerAgent extends BaseAgent {
     }
 
     /**
-     * 自动优化团队
-     * 检查团队成员状态，自动调整团队配置
+     * 检查团队状态并发起优化建议
+     * 检查团队成员状态，向管理员发起优化建议
      */
-    private void autoOptimizeTeam() {
+    private void checkTeamAndSuggestOptimization() {
         String projectId = getProjectId();
         if (projectId == null) return;
 
@@ -628,15 +656,17 @@ public class ProducerAgent extends BaseAgent {
         for (Agent agent : agents) {
             if ("producer".equals(agent.getRole())) continue; // 跳过制作人
 
-            // 如果 Agent 长期空闲且没有任务，考虑解雇
+            // 如果 Agent 长期空闲且没有任务，建议优化
             if (!agent.isBusy() && agent.getPendingMessages().isEmpty()) {
                 // 检查是否有待执行的里程碑任务需要这个角色
                 boolean needed = isRoleNeeded(projectId, agent.getRole());
                 if (!needed) {
-                    log.info("Agent {} ({}) is idle and not needed, considering dismissal", agent.getName(), agent.getRole());
-                    // 这里可以添加自动解雇逻辑，但为了安全起见，先记录日志
-                    saveExperience("idle_agent_" + agent.getId(),
-                        String.format("Agent %s (%s) is idle and may not be needed", agent.getName(), agent.getRole()));
+                    log.info("Agent {} ({}) is idle and not needed, suggesting optimization", agent.getName(), agent.getRole());
+                    requestTeamOptimization(
+                        agent.getId(),
+                        "Agent 长期空闲且当前项目不需要该角色",
+                        "建议解雇该 Agent 以节省资源"
+                    );
                 }
             }
         }

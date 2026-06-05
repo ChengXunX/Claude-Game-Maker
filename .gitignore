@@ -10,7 +10,7 @@
 # Mobile Tools for Java (J2ME)
 .mtj.tmp/
 
-# Package Files #
+# Package Files
 *.jar
 *.war
 *.nar
@@ -19,7 +19,7 @@
 *.tar.gz
 *.rar
 
-# virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
+# virtual machine crash logs
 hs_err_pid*
 
 # IDE
@@ -31,6 +31,9 @@ hs_err_pid*
 .settings/
 .project
 .classpath
+*.swp
+*.swo
+*~
 
 # Maven
 target/
@@ -44,29 +47,48 @@ buildNumber.properties
 .mvn/timing.properties
 .mvn/wrapper/maven-wrapper.jar
 
+# Node
+node_modules/
+frontend/dist/
+frontend/node_modules/
+
 # Spring Boot - 敏感配置文件
 application-local.yml
 application-secret.yml
 application-prod.yml
 application-dev.yml
+application-*.yml
 
 # Privacy sensitive files
 *.env
 .env
 .env.local
 .env.*.local
+.env.example
 
 # Claude CLI session files
 .claude/
+
+# Vibe memory files
+.vibe-memory/
+
+# Game Maker runtime data (contains user data, contexts, secrets)
+.game-maker/
 
 # Data directories (runtime data, contains user data and secrets)
 data/
 data/contexts/
 data/memory/
 data/projects/
+data/settings.properties
+data/knowledge-base/
 
 # Runtime settings (may contain API keys saved via admin panel)
-data/settings.properties
+settings.properties
+
+# PID files
+*.pid
+app.pid
 
 # Keystore / SSL certificates
 *.p12
@@ -87,3 +109,72 @@ Thumbs.db
 # Gradle
 .gradle/
 build/
+
+# ============================================================
+# 项目文档 - 开发过程文档不应该提交到 git
+# ============================================================
+
+# 实现文档（开发过程记录，不需要提交）
+*_IMPLEMENTATION.md
+*_IMPLEMENTATION*.md
+*_SUMMARY.md
+*_GUIDE.md
+
+# 开发过程文档
+BUGFIX_*.md
+BUG_FIX_*.md
+REFACTOR_*.md
+TESTFIX_*.md
+OPTIMIZATION_*.md
+
+# 其他开发文档（明确列出）
+AGENT_INTERVENTION_IMPLEMENTATION.md
+AGENT_PERFORMANCE_IMPLEMENTATION.md
+AGENT_RECRUITMENT_IMPLEMENTATION.md
+AI_ASSISTANT_IMPLEMENTATION.md
+BUGFIX_ALL.md
+BUG_FIX_SUMMARY.md
+CICD_PIPELINE_GUIDE.md
+COMPLETE_IMPLEMENTATION.md
+CONTEXT_COMPACT_IMPLEMENTATION.md
+DEPLOY_CHECKLIST.md
+DEPLOY_README.md
+GAME_PROJECT_ENHANCEMENT.md
+LOG_DETAIL_IMPLEMENTATION.md
+MONITORING_IMPLEMENTATION.md
+MULTI_GIT_IMPLEMENTATION.md
+OPTIMIZATION_SUMMARY.md
+PERFORMANCE_MANAGEMENT_IMPLEMENTATION.md
+PIPELINE_PERMISSIONS.md
+PRODUCER_REPLACEMENT_IMPLEMENTATION.md
+RECRUITMENT_APPROVAL_IMPLEMENTATION.md
+REFACTOR_PHASE2.md
+REFACTOR_PHASE3.md
+REFACTOR_PROJECT_ISOLATION.md
+TESTFIX_ALL.md
+TESTFIX_ROUND2.md
+VUE_FRONTEND_IMPLEMENTATION.md
+
+# 文档目录（开发文档，不需要提交）
+docs/
+
+# SQL 文档
+sql/README.md
+
+# 脚手架示例文件
+frontend/src/components/HelloWorld.vue
+frontend/src/assets/hero.png
+frontend/src/assets/vite.svg
+frontend/src/assets/vue.svg
+
+# ============================================================
+# 以下文件应该保留在 git 中
+# ============================================================
+
+# CLAUDE.md - 项目规范文档（保留）
+# QUICKSTART.md - 快速开始文档（保留）
+# LICENSE - 许可证（保留）
+# src/main/resources/ - 系统资源文件（保留）
+# src/main/resources/agents/ - Agent 配置（保留）
+# src/main/resources/skills/ - 技能定义（保留）
+# src/main/resources/templates/ - 模板文件（保留）
