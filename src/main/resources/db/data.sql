@@ -221,6 +221,8 @@ INSERT IGNORE INTO system_configs (config_key, config_value, config_group, value
 ('security.session.max-concurrent', '1', 'security', 'number', '最大并发会话数'),
 ('security.login.max-attempts', '5', 'security', 'number', '最大登录尝试次数'),
 ('security.login.lockout-minutes', '15', 'security', 'number', '登录锁定时间（分钟）'),
+('security.device.trust.enabled', 'false', 'security', 'boolean', '是否启用设备信任（陌生设备二次验证）'),
+('security.device.trust.days', '7', 'security', 'number', '设备信任有效期（天）'),
 ('agent.task.max-retry', '3', 'agent', 'number', '任务最大重试次数'),
 ('agent.task.retry-delay-ms', '5000', 'agent', 'number', '任务重试延迟（毫秒）'),
 ('agent.task.max-queue-size', '100', 'agent', 'number', '任务队列最大长度'),

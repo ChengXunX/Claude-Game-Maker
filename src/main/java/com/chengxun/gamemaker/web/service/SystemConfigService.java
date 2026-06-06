@@ -68,6 +68,10 @@ public class SystemConfigService {
         initConfig("system.pagination.default-size", "20", "默认分页大小", SystemConfig.GROUP_SYSTEM, "number", true);
         initConfig("system.pagination.max-size", "100", "最大分页大小", SystemConfig.GROUP_SYSTEM, "number", true);
 
+        // 安全配置 - 设备信任
+        initConfig("security.device.trust.enabled", "false", "是否启用设备信任（陌生设备二次验证）", SystemConfig.GROUP_SECURITY, "boolean", true);
+        initConfig("security.device.trust.days", "7", "设备信任有效期（天）", SystemConfig.GROUP_SECURITY, "number", true);
+
         // 加载所有配置到缓存
         loadAllToCache();
 
