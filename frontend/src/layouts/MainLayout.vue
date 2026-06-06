@@ -96,6 +96,9 @@
         </div>
 
         <div class="header-right">
+          <!-- 主题切换 -->
+          <ThemeToggle />
+
           <!-- 全局搜索 -->
           <el-icon :size="20" class="header-icon" @click="router.push('/search')">
             <Search />
@@ -164,10 +167,13 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox, ElMessage } from 'element-plus'
 import { useUserStore } from '@/stores/user'
+import { useThemeStore } from '@/stores/theme'
+import ThemeToggle from '@/components/ThemeToggle.vue'
 
 const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
+const themeStore = useThemeStore()
 
 const isCollapse = ref(false)
 const notificationCount = ref(0)
@@ -334,6 +340,9 @@ const handleCommand = async (command) => {
 
 /** 初始化 */
 onMounted(async () => {
+  // 初始化主题
+  themeStore.init()
+
   // 如果已登录但没有用户信息，重新获取
   if (userStore.isLoggedIn && !userStore.userInfo) {
     try {
@@ -355,6 +364,10 @@ onMounted(async () => {
   transition: width 0.3s;
   overflow: hidden;
   overflow-y: auto;
+}
+
+html.dark .aside {
+  background-color: #0d0d0d;
 }
 
 .aside::-webkit-scrollbar {
@@ -396,6 +409,12 @@ onMounted(async () => {
   justify-content: space-between;
   padding: 0 20px;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  transition: background-color 0.3s;
+}
+
+html.dark .header {
+  background: #1d1e1f;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
 }
 
 .header-left {
@@ -408,6 +427,11 @@ onMounted(async () => {
   font-size: 20px;
   cursor: pointer;
   color: #333;
+  transition: color 0.3s;
+}
+
+html.dark .collapse-btn {
+  color: #e5eaf3;
 }
 
 .collapse-btn:hover {
@@ -423,6 +447,11 @@ onMounted(async () => {
 .header-icon {
   color: #666;
   cursor: pointer;
+  transition: color 0.3s;
+}
+
+html.dark .header-icon {
+  color: #a3a6ad;
 }
 
 .header-icon:hover {
@@ -443,11 +472,21 @@ onMounted(async () => {
 .username {
   color: #333;
   font-size: 14px;
+  transition: color 0.3s;
+}
+
+html.dark .username {
+  color: #e5eaf3;
 }
 
 .main {
   background-color: #f0f2f5;
   padding: 20px;
+  transition: background-color 0.3s;
+}
+
+html.dark .main {
+  background-color: #141414;
 }
 
 /* 页面切换动画 */

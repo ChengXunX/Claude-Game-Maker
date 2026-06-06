@@ -1,5 +1,6 @@
 package com.chengxun.gamemaker.service;
 
+import com.chengxun.gamemaker.model.GameProject;
 import com.chengxun.gamemaker.model.Skill;
 import com.chengxun.gamemaker.web.entity.GameTemplateEntity;
 import com.chengxun.gamemaker.web.repository.GameTemplateRepository;
@@ -291,6 +292,195 @@ public class GameTemplateService {
     }
 
     /**
+     * 解析模板内容中的目录配置
+     * 目录配置格式：
+     * ## 目录配置
+     * | 目录路径 | 用途 | 可访问角色 | 说明 |
+     * |---------|------|-----------|------|
+     * | /client | 前端游戏客户端 | client-dev, ui-dev | 游戏主程序 |
+     * | /server | 后端服务 | server-dev | API、业务逻辑 |
+     * | /config | 配置文件 | | 游戏配置（所有角色可访问） |
+     *
+     * @param content 模板内容
+     * @return 解析出的目录配置列表
+     */
+    public List<TemplateDirectoryConfig> parseDirectoryConfigs(String content) {
+        List<TemplateDirectoryConfig> configs = new ArrayList<>();
+        if (content == null || content.isEmpty()) {
+            return configs;
+        }
+
+        // 查找目录配置部分
+        String[] lines = content.split("\n");
+        boolean inDirectorySection = false;
+        boolean headerParsed = false;
+
+        for (String line : lines) {
+            line = line.trim();
+
+            // 检测目录配置章节
+            if (line.contains("## 目录配置") || line.contains("## Directory Config")) {
+                inDirectorySection = true;
+                continue;
+            }
+
+            // 检测下一个章节（结束目录配置解析）
+            if (inDirectorySection && line.startsWith("## ") && !line.contains("目录配置") && !line.contains("Directory Config")) {
+                break;
+            }
+
+            if (inDirectorySection) {
+                // 跳过表头分隔行
+                if (line.startsWith("|---") || line.startsWith("| ---")) {
+                    headerParsed = true;
+                    continue;
+                }
+
+                // 跳过表头行
+                if (!headerParsed && line.startsWith("|") && (line.contains("目录路径") || line.contains("目录") || line.contains("path"))) {
+                    continue;
+                }
+
+                // 解析数据行
+                if (headerParsed && line.startsWith("|") && !line.isEmpty()) {
+                    try {
+                        TemplateDirectoryConfig config = parseDirectoryConfigLine(line);
+                        if (config != null) {
+                            configs.add(config);
+                        }
+                    } catch (Exception e) {
+                        log.debug("解析目录配置行失败: {} - {}", line, e.getMessage());
+                    }
+                }
+            }
+        }
+
+        return configs;
+    }
+
+    /**
+     * 解析单行目录配置
+     * 格式：| 路径 | 用途 | 可访问角色 | 说明 |
+     *
+     * @param line 配置行
+     * @return 解析出的目录配置
+     */
+    private TemplateDirectoryConfig parseDirectoryConfigLine(String line) {
+        // 去掉首尾的 | 并分割
+        String[] parts = line.split("\\|");
+        if (parts.length < 3) {
+            return null;
+        }
+
+        // 去掉第一个空元素（split 结果的第一个元素是空的）
+        List<String> cells = new ArrayList<>();
+        for (String part : parts) {
+            String trimmed = part.trim();
+            if (!trimmed.isEmpty()) {
+                cells.add(trimmed);
+            }
+        }
+
+        if (cells.size() < 2) {
+            return null;
+        }
+
+        TemplateDirectoryConfig config = new TemplateDirectoryConfig();
+        config.setPath(cells.get(0));
+        config.setDescription(cells.size() > 1 ? cells.get(1) : "");
+
+        // 解析可访问角色（逗号分隔）
+        if (cells.size() > 2 && !cells.get(2).isEmpty()) {
+            String rolesStr = cells.get(2);
+            // 支持中英文逗号
+            String[] roles = rolesStr.split("[,，]");
+            List<String> roleList = new ArrayList<>();
+            for (String role : roles) {
+                String trimmedRole = role.trim();
+                if (!trimmedRole.isEmpty()) {
+                    roleList.add(trimmedRole);
+                }
+            }
+            config.setAccessibleRoles(roleList);
+        }
+
+        // 解析说明
+        if (cells.size() > 3) {
+            config.setNotes(cells.get(3));
+        }
+
+        return config;
+    }
+
+    /**
+     * 获取模板的目录配置
+     * 如果模板内容已解析，直接返回；否则先解析
+     *
+     * @param templateId 模板 ID
+     * @return 目录配置列表
+     */
+    public List<TemplateDirectoryConfig> getTemplateDirectoryConfigs(String templateId) {
+        GameTemplate template = templates.get(templateId);
+        if (template == null) {
+            return new ArrayList<>();
+        }
+
+        // 如果还没有解析过目录配置，先解析
+        if (template.getDirectoryConfigs().isEmpty() && template.getContent() != null) {
+            List<TemplateDirectoryConfig> configs = parseDirectoryConfigs(template.getContent());
+            template.setDirectoryConfigs(configs);
+        }
+
+        return template.getDirectoryConfigs();
+    }
+
+    /**
+     * 根据模板配置项目目录
+     * 从模板中提取目录配置，并设置到项目中
+     *
+     * @param project 项目
+     * @param templateId 模板 ID
+     */
+    public void configureProjectDirectories(GameProject project, String templateId) {
+        List<TemplateDirectoryConfig> templateConfigs = getTemplateDirectoryConfigs(templateId);
+        if (templateConfigs.isEmpty()) {
+            return;
+        }
+
+        // 将模板目录配置转换为项目目录配置
+        for (TemplateDirectoryConfig templateConfig : templateConfigs) {
+            GameProject.DirectoryConfig dirConfig = new GameProject.DirectoryConfig(
+                templateConfig.getPath(),
+                templateConfig.getDescription(),
+                templateConfig.getNotes()
+            );
+            project.addDirectoryConfig(dirConfig);
+        }
+
+        log.info("已从模板 {} 配置项目目录，共 {} 个目录", templateId, templateConfigs.size());
+    }
+
+    /**
+     * 获取指定角色在模板中可访问的目录列表
+     *
+     * @param templateId 模板 ID
+     * @param role 角色名称
+     * @return 可访问的目录路径列表
+     */
+    public List<String> getAccessibleDirsForRole(String templateId, String role) {
+        List<TemplateDirectoryConfig> configs = getTemplateDirectoryConfigs(templateId);
+        List<String> accessibleDirs = new ArrayList<>();
+
+        for (TemplateDirectoryConfig config : configs) {
+            if (config.isAccessibleBy(role)) {
+                accessibleDirs.add(config.getPath());
+            }
+        }
+
+        return accessibleDirs;
+    }
+
+    /**
      * 获取所有模板
      */
     public List<GameTemplate> getAllTemplates() {
@@ -481,6 +671,8 @@ public class GameTemplateService {
         private final List<String> keywords;
         private final String skillName;
         private String content;
+        /** 模板中的目录配置列表 */
+        private List<TemplateDirectoryConfig> directoryConfigs = new ArrayList<>();
 
         public GameTemplate(String id, String name, String description, List<String> keywords, String skillName) {
             this.id = id;
@@ -498,5 +690,58 @@ public class GameTemplateService {
         public List<String> getKeywords() { return keywords; }
         public String getSkillName() { return skillName; }
         public String getContent() { return content; }
+
+        public List<TemplateDirectoryConfig> getDirectoryConfigs() { return directoryConfigs; }
+        public void setDirectoryConfigs(List<TemplateDirectoryConfig> directoryConfigs) {
+            this.directoryConfigs = directoryConfigs != null ? directoryConfigs : new ArrayList<>();
+        }
+    }
+
+    /**
+     * 模板目录配置
+     * 定义模板中的目录结构和各角色的访问权限
+     */
+    public static class TemplateDirectoryConfig {
+        /** 目录路径（如 /client、/server） */
+        private String path;
+        /** 目录用途描述 */
+        private String description;
+        /** 可访问该目录的角色列表（为空表示所有角色都可访问） */
+        private List<String> accessibleRoles = new ArrayList<>();
+        /** 补充说明 */
+        private String notes;
+
+        public TemplateDirectoryConfig() {}
+
+        public TemplateDirectoryConfig(String path, String description) {
+            this.path = path;
+            this.description = description;
+        }
+
+        public TemplateDirectoryConfig(String path, String description, List<String> accessibleRoles) {
+            this.path = path;
+            this.description = description;
+            this.accessibleRoles = accessibleRoles != null ? accessibleRoles : new ArrayList<>();
+        }
+
+        // Getters and Setters
+        public String getPath() { return path; }
+        public void setPath(String path) { this.path = path; }
+        public String getDescription() { return description; }
+        public void setDescription(String description) { this.description = description; }
+        public List<String> getAccessibleRoles() { return accessibleRoles; }
+        public void setAccessibleRoles(List<String> accessibleRoles) { this.accessibleRoles = accessibleRoles != null ? accessibleRoles : new ArrayList<>(); }
+        public String getNotes() { return notes; }
+        public void setNotes(String notes) { this.notes = notes; }
+
+        /**
+         * 检查指定角色是否可访问该目录
+         *
+         * @param role 角色名称
+         * @return true 如果角色可访问（包括空角色列表表示所有角色可访问）
+         */
+        public boolean isAccessibleBy(String role) {
+            return accessibleRoles.isEmpty() || accessibleRoles.contains(role);
+        }
     }
 }

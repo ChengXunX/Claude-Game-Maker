@@ -103,7 +103,11 @@ export const projectApi = {
   refresh: (id) => api.post(`/projects/api/${id}/refresh`),
   setRules: (id, data) => api.post(`/projects/${id}/rules`, data),
   setGoal: (id, data) => api.post(`/projects/${id}/goal`, data),
-  checkDirectory: (workDir) => api.get('/projects/api/check-directory', { params: { workDir } })
+  checkDirectory: (workDir) => api.get('/projects/api/check-directory', { params: { workDir } }),
+  getMilestones: (id) => api.get(`/projects/api/${id}/milestones`),
+  getDirectories: (id) => api.get(`/projects/api/${id}/directories`),
+  addDirectory: (id, data) => api.post(`/projects/api/${id}/directories`, data),
+  removeDirectory: (id, dirPath) => api.delete(`/projects/api/${id}/directories/${encodeURIComponent(dirPath)}`)
 }
 
 // ===== 游戏模板管理 API =====
@@ -392,7 +396,8 @@ export const schedulerApi = {
   getTaskQueue: () => api.get('/agent-scheduler/tasks'),
   triggerSchedule: () => api.post('/agent-scheduler/trigger'),
   getConfig: () => api.get('/agent-scheduler/config'),
-  updateConfig: (data) => api.put('/agent-scheduler/config', data)
+  updateConfig: (data) => api.put('/agent-scheduler/config', data),
+  cancelTask: (taskId) => api.post(`/agent-scheduler/tasks/${taskId}/cancel`)
 }
 
 // ===== 代码质量 API =====

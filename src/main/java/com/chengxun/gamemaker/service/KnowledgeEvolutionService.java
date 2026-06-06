@@ -13,6 +13,7 @@ import java.io.IOException;
 import java.nio.file.*;
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.stream.Collectors;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -895,6 +896,187 @@ public class KnowledgeEvolutionService {
         public String getKey() { return key; }
         public int getFrequency() { return frequency; }
         public List<String> getSources() { return sources; }
+    }
+
+    // ===== Agent 查询接口 =====
+
+    /**
+     * 查询与任务相关的知识
+     * 搜索已学习的模式、解决方案和最佳实践，返回可用于 prompt 注入的知识文本
+     *
+     * @param query 任务描述或查询关键词
+     * @param agentRole Agent 角色（用于角色相关知识过滤）
+     * @return 格式化的知识文本，可直接注入 prompt
+     */
+    public String queryRelevantKnowledge(String query, String agentRole) {
+        if (query == null || query.isEmpty()) return "";
+
+        StringBuilder knowledge = new StringBuilder();
+        String lowerQuery = query.toLowerCase();
+
+        // 1. 搜索已学习的模式
+        List<LearnedPattern> matchedPatterns = learnedPatterns.values().stream()
+            .filter(p -> {
+                String key = p.getKey().toLowerCase();
+                return lowerQuery.contains(key) || key.contains(lowerQuery.split("\\s+")[0]);
+            })
+            .sorted((a, b) -> Integer.compare(b.getFrequency(), a.getFrequency()))
+            .limit(5)
+            .toList();
+
+        if (!matchedPatterns.isEmpty()) {
+            knowledge.append("### Learned Patterns\n\n");
+            for (LearnedPattern pattern : matchedPatterns) {
+                knowledge.append(String.format("- **%s** (frequency: %d, sources: %s)\n",
+                    pattern.getKey(), pattern.getFrequency(), String.join(", ", pattern.getSources())));
+            }
+            knowledge.append("\n");
+        }
+
+        // 2. 搜索解决方案
+        Map<String, List<GameKnowledgeBase.Solution>> allSolutions = knowledgeBase.getAllSolutions();
+        for (Map.Entry<String, List<GameKnowledgeBase.Solution>> entry : allSolutions.entrySet()) {
+            String problemType = entry.getKey();
+            if (lowerQuery.contains(problemType.toLowerCase()) || problemType.toLowerCase().contains(lowerQuery.split("\\s+")[0])) {
+                List<GameKnowledgeBase.Solution> sols = entry.getValue();
+                if (!sols.isEmpty()) {
+                    knowledge.append("### Known Solutions: ").append(problemType).append("\n\n");
+                    for (GameKnowledgeBase.Solution sol : sols.stream().limit(3).toList()) {
+                        knowledge.append(String.format("- **%s**: %s\n",
+                            sol.getProblemDescription().length() > 80 ? sol.getProblemDescription().substring(0, 80) + "..." : sol.getProblemDescription(),
+                            sol.getSolution().length() > 200 ? sol.getSolution().substring(0, 200) + "..." : sol.getSolution()));
+                    }
+                    knowledge.append("\n");
+                }
+            }
+        }
+
+        // 3. 搜索最佳实践
+        List<GameKnowledgeBase.BestPractice> matchedPractices = knowledgeBase.getAllBestPractices().stream()
+            .filter(bp -> {
+                String combined = (bp.getCategory() + " " + bp.getTitle() + " " + bp.getContent()).toLowerCase();
+                for (String word : lowerQuery.split("\\s+")) {
+                    if (word.length() > 2 && combined.contains(word)) return true;
+                }
+                return false;
+            })
+            .limit(3)
+            .toList();
+
+        if (!matchedPractices.isEmpty()) {
+            knowledge.append("### Best Practices\n\n");
+            for (GameKnowledgeBase.BestPractice bp : matchedPractices) {
+                knowledge.append(String.format("- **%s** (%s): %s\n",
+                    bp.getTitle(), bp.getCategory(),
+                    bp.getContent().length() > 200 ? bp.getContent().substring(0, 200) + "..." : bp.getContent()));
+            }
+            knowledge.append("\n");
+        }
+
+        return knowledge.toString();
+    }
+
+    /**
+     * 将项目级学习的技能提升为全局技能
+     * 使其他项目也能使用该技能
+     *
+     * @param skill 要提升的技能
+     * @param agentId 学习该技能的 Agent ID
+     */
+    public void promoteLearnedSkill(Skill skill, String agentId) {
+        if (skill == null) return;
+
+        log.info("Promoting learned skill to global: {} (learned by {})", skill.getId(), agentId);
+
+        try {
+            // 注册为全局技能
+            skillManager.registerGlobalSkill(skill);
+            skillManager.saveGlobalSkillToFile(skill);
+
+            // 保存到知识库的 learned-skills 目录
+            saveSkillToKnowledgeBase(agentId, skill);
+
+            log.info("Skill promoted to global: {}", skill.getId());
+        } catch (Exception e) {
+            log.error("Failed to promote skill to global: {}", skill.getId(), e);
+        }
+    }
+
+    /**
+     * 从任务完成中提取洞察并加入知识库
+     * 成功的任务提取模式，失败的任务记录解决方案
+     *
+     * @param agentId Agent ID
+     * @param taskDescription 任务描述
+     * @param result 执行结果
+     * @param success 是否成功
+     */
+    public void extractInsightsFromTaskCompletion(String agentId, String taskDescription,
+                                                   String result, boolean success) {
+        if (taskDescription == null || taskDescription.isEmpty()) return;
+
+        log.info("Extracting insights from task completion: agent={}, success={}", agentId, success);
+
+        try {
+            if (success) {
+                // 成功：提取模式
+                String patternKey = extractPatternKey(taskDescription);
+                LearnedPattern pattern = learnedPatterns.get(patternKey);
+                if (pattern == null) {
+                    pattern = new LearnedPattern(patternKey);
+                    learnedPatterns.put(patternKey, pattern);
+                }
+                pattern.incrementFrequency();
+                pattern.addSource(agentId + ":" + System.currentTimeMillis());
+
+                // 如果模式频率达到阈值，生成最佳实践
+                if (pattern.getFrequency() >= 3) {
+                    String bestPractice = String.format(
+                        "Based on %d successful completions of similar tasks. Key pattern: %s",
+                        pattern.getFrequency(), patternKey);
+                    saveBestPractice("task_pattern", bestPractice);
+                }
+            } else {
+                // 失败：记录解决方案（如果有）
+                if (result != null && result.length() > 50) {
+                    String problemType = extractPatternKey(taskDescription);
+                    knowledgeBase.recordSolution(problemType, taskDescription,
+                        result.length() > 500 ? result.substring(0, 500) : result);
+                }
+            }
+        } catch (Exception e) {
+            log.error("Failed to extract insights from task completion", e);
+        }
+    }
+
+    /**
+     * 获取知识进化统计信息
+     *
+     * @return 统计数据 Map
+     */
+    public Map<String, Object> getEvolutionStats() {
+        Map<String, Object> stats = new LinkedHashMap<>();
+        stats.put("learnedPatternsCount", learnedPatterns.size());
+        stats.put("totalPatternFrequency", learnedPatterns.values().stream().mapToInt(LearnedPattern::getFrequency).sum());
+        stats.put("solutionsCount", knowledgeBase.getAllSolutions().values().stream().mapToInt(List::size).sum());
+        stats.put("bestPracticesCount", knowledgeBase.getAllBestPractices().size());
+        stats.put("processedDocumentsCount", processedDocuments.size());
+        stats.put("learnedSkillsCount", skillManager.getAllGlobalSkills().stream()
+            .filter(s -> "learned".equals(s.getCategory())).count());
+        return stats;
+    }
+
+    /**
+     * 从任务描述中提取模式关键词
+     * 取前3个有意义的词作为模式标识
+     */
+    private String extractPatternKey(String taskDescription) {
+        if (taskDescription == null) return "unknown";
+        String[] words = taskDescription.toLowerCase().split("[\\s,，。、]+");
+        return Arrays.stream(words)
+            .filter(w -> w.length() > 2)
+            .limit(3)
+            .collect(Collectors.joining("_"));
     }
 
     /**

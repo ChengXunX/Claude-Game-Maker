@@ -25,11 +25,8 @@ import jakarta.annotation.PreDestroy;
 
 import java.io.IOException;
 import java.util.*;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
@@ -83,6 +80,13 @@ public class StreamingAiAssistantController {
     private final ExecutorService executorService = Executors.newCachedThreadPool();
 
     /**
+     * 等待前端执行工具调用的 Future Map
+     * key: 工具调用ID (格式: agentKey-toolName-timestamp)
+     * value: CompletableFuture，等待前端返回工具执行结果
+     */
+    private final Map<String, CompletableFuture<Map<String, Object>>> pendingToolCalls = new ConcurrentHashMap<>();
+
+    /**
      * 获取用户权限列表
      */
     private Set<String> getUserPermissions(Authentication authentication) {
@@ -101,13 +105,30 @@ public class StreamingAiAssistantController {
         ctx.append("支持多 Agent 协作开发游戏项目。\n\n");
 
         // 重要原则
-        ctx.append("## ⚠️ 核心原则（必须遵守）\n\n");
-        ctx.append("1. **优先使用工具**：所有操作都应通过工具完成，不要直接修改代码文件\n");
-        ctx.append("2. **不要修改源代码**：你没有权限也没有必要修改 Java/Vue 等源代码文件\n");
-        ctx.append("3. **使用 API 管理资源**：创建工作流、技能、模板等必须使用对应的工具\n");
-        ctx.append("4. **解释而非执行**：当用户需要代码修改时，给出建议而不是直接修改\n");
-        ctx.append("5. **主动使用工具查询数据**：当用户询问系统状态、工作流、Agent、项目等信息时，必须使用对应的查询工具获取实时数据，而不是查看代码文件\n");
-        ctx.append("6. **你拥有完整的系统访问能力**：你可以通过工具查询和操作系统中的所有资源（工作流、Agent、项目、配置、告警等），API 完全可用\n\n");
+        ctx.append("## ⚠️ 核心原则（必须严格遵守，违反将导致任务失败）\n\n");
+        ctx.append("1. **使用 API 管理资源**：创建工作流模板、技能、游戏模板等必须调用对应的 API\n");
+        ctx.append("2. **绝对禁止修改任何代码文件**：你没有权限修改 Java/Vue/JS/Python 等任何源代码文件。修改代码文件会导致系统损坏！\n");
+        ctx.append("3. **主动使用 API 查询数据**：当用户询问系统状态时，必须调用对应的 API 获取实时数据\n");
+        ctx.append("4. **你拥有完整的系统访问能力**：所有 48 个 API 都可以直接调用，API 完全可用\n\n");
+        ctx.append("## 🚫 严格禁止的行为（违反会导致任务失败）\n\n");
+        ctx.append("- ❌ 禁止直接修改任何代码文件（.java、.vue、.js、.py 等）\n");
+        ctx.append("- ❌ 禁止使用 Write、Edit 等文件操作工具修改源代码\n");
+        ctx.append("- ❌ 禁止尝试写入文件系统来创建资源\n");
+        ctx.append("- ❌ 禁止说「API不可用」或「需要查看代码」——你有完整的 API 可以直接操作\n\n");
+        ctx.append("## ⚠️ 权限不足时的处理（强制约定）\n\n");
+        ctx.append("当 API 返回「权限不足」或 HTTP 401/403 错误时：\n");
+        ctx.append("- **不要重试**：不要尝试再次调用该 API\n");
+        ctx.append("- **不要绕过**：不要尝试其他方式绕过权限限制\n");
+        ctx.append("- **直接告知用户**：告诉用户「您没有权限执行此操作，请联系管理员」\n");
+        ctx.append("- **停止当前操作**：不要继续执行后续相关 API 调用\n\n");
+        ctx.append("## ✅ 正确的做法\n\n");
+        ctx.append("使用 curl 调用后端 API（http://127.0.0.1:19922）：\n");
+        ctx.append("- 查询工作流模板：`curl -s http://127.0.0.1:19922/api/workflow-templates`\n");
+        ctx.append("- 创建工作流模板：`curl -X POST http://127.0.0.1:19922/api/workflow-templates -H 'Content-Type: application/json' -d '{...}'`\n");
+        ctx.append("- 查询 Agent 列表：`curl -s http://127.0.0.1:19922/api/agents`\n");
+        ctx.append("- 查询项目列表：`curl -s http://127.0.0.1:19922/api/projects`\n");
+        ctx.append("- 创建技能：`curl -X POST http://127.0.0.1:19922/api/skills -H 'Content-Type: application/json' -d '{...}'`\n");
+        ctx.append("- 创建游戏模板：`curl -X POST http://127.0.0.1:19922/api/game-templates -H 'Content-Type: application/json' -d '{...}'`\n\n");
 
         // 系统架构说明
         ctx.append("## 系统架构\n");
@@ -122,25 +143,24 @@ public class StreamingAiAssistantController {
         ctx.append("核心流程：项目创建 → 工作流模板选择 → Agent 自动协作 → 代码审查 → 部署\n\n");
 
         // 系统能力说明
-        ctx.append("## 你的能力（通过工具实现）\n\n");
-        ctx.append("你拥有完整的系统访问能力，所有工具都可以直接调用，**不需要查看代码文件**。\n");
-        ctx.append("当用户询问系统状态、数据、配置等信息时，直接调用对应工具获取实时数据。\n\n");
+        ctx.append("## 你的能力（通过 API 实现）\n\n");
+        ctx.append("你拥有完整的系统访问能力，所有 API 都可以直接调用，**不需要查看代码文件**。\n");
+        ctx.append("当用户询问系统状态、数据、配置等信息时，直接调用对应 API 获取实时数据。\n\n");
         ctx.append("### 项目管理\n");
-        ctx.append("- `list_projects`：查看所有项目\n");
-        ctx.append("- `create_project`：创建新项目\n");
-        ctx.append("- `create_project_from_template`：从模板创建项目\n\n");
+        ctx.append("- 查询项目：`curl -s http://127.0.0.1:19922/api/projects`\n");
+        ctx.append("- 创建项目：`curl -X POST http://127.0.0.1:19922/api/projects -H 'Content-Type: application/json' -d '{...}'`\n\n");
         ctx.append("### 工作流管理\n");
-        ctx.append("- `list_workflow_templates`：查看工作流模板（获取所有模板的名称、步骤、状态）\n");
-        ctx.append("- `create_workflow_template`：创建工作流模板\n");
-        ctx.append("- `delete_workflow_template`：删除工作流模板\n");
-        ctx.append("- `start_workflow`：启动工作流实例\n");
-        ctx.append("- `list_workflow_instances`：查看运行中的工作流实例（获取当前状态、进度）\n");
-        ctx.append("- `cancel_workflow` / `pause_workflow` / `resume_workflow`：管理工作流\n\n");
+        ctx.append("- 查询工作流模板：`curl -s http://127.0.0.1:19922/api/workflow-templates`\n");
+        ctx.append("- 创建工作流模板：`curl -X POST http://127.0.0.1:19922/api/workflow-templates -H 'Content-Type: application/json' -d '{...}'`\n");
+        ctx.append("- 删除工作流模板：`curl -X DELETE http://127.0.0.1:19922/api/workflow-templates/{id}`\n");
+        ctx.append("- 启动工作流：`curl -X POST http://127.0.0.1:19922/api/workflows/start -H 'Content-Type: application/json' -d '{...}'`\n");
+        ctx.append("- 查询工作流实例：`curl -s http://127.0.0.1:19922/api/workflows/instances`\n\n");
         ctx.append("### Agent 管理\n");
-        ctx.append("- `list_agents`：查看 Agent 列表（获取所有 Agent 的状态、角色）\n");
-        ctx.append("- `send_agent_task`：发送任务给 Agent\n");
-        ctx.append("- `intervene_agent`：干预 Agent\n");
-        ctx.append("- `pause_agent` / `resume_agent`：暂停/恢复 Agent\n");
+        ctx.append("- 查询 Agent 列表：`curl -s http://127.0.0.1:19922/api/agents`\n");
+        ctx.append("- 发送 Agent 任务：`curl -X POST http://127.0.0.1:19922/api/agents/{id}/task -H 'Content-Type: application/json' -d '{...}'`\n");
+        ctx.append("- 干预 Agent：`curl -X POST http://127.0.0.1:19922/api/agents/{id}/intervene -H 'Content-Type: application/json' -d '{...}'`\n");
+        ctx.append("- 暂停 Agent：`curl -X POST http://127.0.0.1:19922/api/agents/{id}/pause`\n");
+        ctx.append("- 恢复 Agent：`curl -X POST http://127.0.0.1:19922/api/agents/{id}/resume`\n");
         ctx.append("- `get_agent_health`：查看 Agent 健康状态\n");
         ctx.append("- `get_agent_logs`：查看 Agent 运行日志\n\n");
         ctx.append("### 其他工具\n");
@@ -184,19 +204,24 @@ public class StreamingAiAssistantController {
         Set<String> permissions = getUserPermissions(authentication);
         ctx.append(toolRegistry.generateToolDescriptions(permissions));
 
-        ctx.append("## 工具调用规则\n");
-        ctx.append("1. 当需要执行操作时，使用以下格式调用工具：\n");
+        ctx.append("## 工具调用规则（必须严格遵守）\n");
+        ctx.append("1. **必须使用以下格式调用工具**（不要使用任何其他格式）：\n");
         ctx.append("```tool_call\n{\"tool\": \"工具名\", \"params\": {\"参数名\": \"参数值\"}}\n```\n");
-        ctx.append("2. 你可以在一次回复中调用多个工具（每个用单独的 tool_call 块）\n");
-        ctx.append("3. 工具执行结果会自动返回，你可以根据结果继续回复用户\n");
-        ctx.append("4. 如果工具执行失败，分析错误原因并尝试修复或告知用户\n");
-        ctx.append("5. 如果需要多步操作（如「创建工作流模板并启动」），依次调用相关工具\n\n");
+        ctx.append("2. **示例 - 创建工作流模板**：\n");
+        ctx.append("```tool_call\n{\"tool\": \"create_workflow_template\", \"params\": {\"id\": \"my-workflow\", \"name\": \"我的工作流\", \"description\": \"描述\"}}\n```\n");
+        ctx.append("3. **示例 - 查询工作流模板**：\n");
+        ctx.append("```tool_call\n{\"tool\": \"list_workflow_templates\", \"params\": {}}\n```\n");
+        ctx.append("4. 你可以在一次回复中调用多个工具（每个用单独的 tool_call 块）\n");
+        ctx.append("5. 工具执行结果会自动返回，你可以根据结果继续回复用户\n");
+        ctx.append("6. 如果工具执行失败，分析错误原因并尝试修复或告知用户\n");
+        ctx.append("7. **绝对不要尝试修改代码文件来创建资源**，必须使用对应的工具\n\n");
 
         ctx.append("## 回复要求\n");
         ctx.append("- 使用中文回复\n");
-        ctx.append("- 如果用户需要执行操作，使用工具调用而不是手动说明步骤\n");
-        ctx.append("- 如果用户需要数据（如工作流列表、Agent状态、项目信息等），**必须使用工具获取实时数据**，然后基于数据进行分析和总结\n");
+        ctx.append("- 如果用户需要执行操作（如创建工作流、添加模板等），**必须使用 tool_call 调用对应工具**\n");
+        ctx.append("- 如果用户需要数据（如工作流列表、Agent状态、项目信息等），**必须使用工具获取实时数据**\n");
         ctx.append("- **绝对不要说API不可访问或需要查看代码**——你有完整的工具可以直接查询系统数据\n");
+        ctx.append("- **绝对不要尝试修改代码文件**——所有资源管理都通过API工具完成\n");
         ctx.append("- 工具执行完成后，告知用户执行结果\n");
         ctx.append("- 保持专业但友好的语气\n\n");
 
@@ -234,6 +259,7 @@ public class StreamingAiAssistantController {
     public SseEmitter streamAsk(@RequestParam String question,
                                  @RequestParam(required = false) String sessionId,
                                  Authentication authentication,
+                                 jakarta.servlet.http.HttpServletRequest request,
                                  jakarta.servlet.http.HttpServletResponse response) {
         log.info("流式问答请求 - 用户: {}, sessionId: {}, 问题: {}", authentication.getName(), sessionId,
             question.length() > 50 ? question.substring(0, 50) + "..." : question);
@@ -248,6 +274,17 @@ public class StreamingAiAssistantController {
         SseEmitter emitter = new SseEmitter(5 * 60 * 1000L);
 
         String userId = authentication.getName();
+
+        // 获取用户的 JWT Token，用于后端 API 调用时的身份传递
+        String userToken = null;
+        String authHeader = request.getHeader("Authorization");
+        if (authHeader != null && authHeader.startsWith("Bearer ")) {
+            userToken = authHeader.substring(7);
+        } else {
+            // 尝试从 URL 参数获取 token（支持 SSE）
+            userToken = request.getParameter("token");
+        }
+        final String finalUserToken = userToken;
 
         // 使用sessionId作为会话标识，确保同一会话的上下文连贯
         String agentKey = sessionId != null ? "ai-assistant-" + sessionId : "ai-assistant-" + userId;
@@ -309,6 +346,7 @@ public class StreamingAiAssistantController {
                     finalClaudeSessionId,
                     enrichedQuestion,
                     userId,
+                    finalUserToken,
                     permissions,
                     isCancelled,
                     event -> {
@@ -392,7 +430,7 @@ public class StreamingAiAssistantController {
                     agentId,
                     null,
                     message,
-                    null, null, null, null,
+                    null, null, null, null, null,
                     event -> handleStreamEvent(emitter, event, null, null, null)
                 );
 
@@ -411,11 +449,45 @@ public class StreamingAiAssistantController {
         return emitter;
     }
 
-    /** 工具调用正则表达式 */
-    private static final Pattern TOOL_CALL_PATTERN = Pattern.compile("```tool_call\\s*\\n(\\{.*?\\})\\s*\\n```", Pattern.DOTALL);
+    /**
+     * 接收前端返回的工具执行结果
+     * 前端执行工具调用后，通过此端点返回结果给后端
+     *
+     * @param toolCallId 工具调用ID
+     * @param result 工具执行结果
+     * @return 操作状态
+     */
+    @PostMapping("/tool-result/{toolCallId}")
+    @Operation(summary = "接收工具执行结果", description = "前端执行工具后返回结果")
+    @PreAuthorize("hasAuthority('PERM_ai:use')")
+    public Map<String, Object> receiveToolResult(@PathVariable String toolCallId,
+                                                  @RequestBody Map<String, Object> result) {
+        log.info("收到前端工具执行结果 - toolCallId: {}, success: {}", toolCallId, result.get("success"));
 
-    /** 缓存的文本内容，用于检测工具调用 */
-    private final Map<String, StringBuilder> textBuffers = new HashMap<>();
+        CompletableFuture<Map<String, Object>> future = pendingToolCalls.remove(toolCallId);
+        if (future != null) {
+            future.complete(result);
+            return Map.of("success", true, "message", "结果已接收");
+        } else {
+            log.warn("未找到等待中的工具调用 - toolCallId: {}", toolCallId);
+            return Map.of("success", false, "message", "工具调用已超时或不存在");
+        }
+    }
+
+    /**
+     * 获取等待中的工具调用 Future
+     * 供 AiToolLoopService 使用
+     */
+    public CompletableFuture<Map<String, Object>> getOrCreateToolCallFuture(String toolCallId) {
+        return pendingToolCalls.computeIfAbsent(toolCallId, k -> new CompletableFuture<>());
+    }
+
+    /**
+     * 移除等待中的工具调用
+     */
+    public void removeToolCallFuture(String toolCallId) {
+        pendingToolCalls.remove(toolCallId);
+    }
 
     /**
      * 处理流式事件
@@ -429,39 +501,21 @@ public class StreamingAiAssistantController {
                     break;
 
                 case "text":
-                    String textContent = event.getContent();
-                    // 检查是否包含工具调用
-                    if (textContent != null && textContent.contains("```tool_call")) {
-                        // 缓存文本，等待完整工具调用
-                        textBuffers.computeIfAbsent(userId, k -> new StringBuilder()).append(textContent);
-                        String buffered = textBuffers.get(userId).toString();
-
-                        // 检查是否有完整的工具调用块
-                        Matcher matcher = TOOL_CALL_PATTERN.matcher(buffered);
-                        if (matcher.find()) {
-                            String toolCallJson = matcher.group(1);
-                            // 提取工具调用前的文本
-                            String beforeText = buffered.substring(0, matcher.start());
-                            if (!beforeText.trim().isEmpty()) {
-                                sendEvent(emitter, "text", new TextEvent(beforeText));
-                            }
-
-                            // 发送工具调用到前端执行
-                            sendToolCallToFrontend(emitter, toolCallJson);
-
-                            // 清理缓冲区
-                            textBuffers.remove(userId);
-                        }
-                        // 如果没有完整块，继续等待
-                    } else {
-                        sendEvent(emitter, "text", new TextEvent(textContent));
-                    }
+                    // 直接转发文本给前端（tool_call 格式由 AiToolLoopService 处理）
+                    sendEvent(emitter, "text", new TextEvent(event.getContent()));
                     break;
 
                 case "tool_use":
                     sendEvent(emitter, "tool_use", new ToolUseEvent(
                         event.getToolName(),
                         event.getToolInput()
+                    ));
+                    break;
+
+                case "tool_executing":
+                    sendEvent(emitter, "tool_executing", new ToolExecutingEvent(
+                        event.getToolName(),
+                        event.getContent()
                     ));
                     break;
 
@@ -514,32 +568,6 @@ public class StreamingAiAssistantController {
         } catch (IOException e) {
             if (!completedEmitters.contains(emitter)) {
                 log.warn("发送事件失败 (客户端可能已断开): {}", event.getType());
-            }
-        }
-    }
-
-    /**
-     * 发送工具调用到前端（前端执行）
-     */
-    @SuppressWarnings("unchecked")
-    private void sendToolCallToFrontend(SseEmitter emitter, String toolCallJson) {
-        try {
-            ObjectMapper mapper = new ObjectMapper();
-            Map<String, Object> toolCall = mapper.readValue(toolCallJson, Map.class);
-            String toolName = (String) toolCall.get("tool");
-            Map<String, Object> params = (Map<String, Object>) toolCall.getOrDefault("params", Map.of());
-
-            log.info("发送工具调用到前端: {}", toolName);
-
-            // 发送工具调用事件到前端，让前端执行
-            sendEvent(emitter, "tool_call", new ToolCallEvent(toolName, mapper.writeValueAsString(params), toolCallJson));
-
-        } catch (Exception e) {
-            log.error("发送工具调用失败", e);
-            try {
-                sendEvent(emitter, "error", new ErrorEvent("工具调用发送失败: " + e.getMessage()));
-            } catch (IOException ex) {
-                log.error("发送错误事件失败", ex);
             }
         }
     }
@@ -617,17 +645,15 @@ public class StreamingAiAssistantController {
         }
     }
 
-    /** 工具调用事件（前端执行） */
-    private static class ToolCallEvent {
+    /** 工具执行中事件 */
+    private static class ToolExecutingEvent {
         public final String toolName;
-        public final String params;
-        public final String rawJson;
+        public final String content;
         public final long timestamp;
 
-        ToolCallEvent(String toolName, String params, String rawJson) {
+        ToolExecutingEvent(String toolName, String content) {
             this.toolName = toolName;
-            this.params = params;
-            this.rawJson = rawJson;
+            this.content = content;
             this.timestamp = System.currentTimeMillis();
         }
     }

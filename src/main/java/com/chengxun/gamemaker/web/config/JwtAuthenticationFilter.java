@@ -65,6 +65,13 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                                     HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {
 
+        // 内部 API 路径跳过 JWT 认证
+        String requestURI = request.getRequestURI();
+        if (requestURI.startsWith("/api/internal/")) {
+            filterChain.doFilter(request, response);
+            return;
+        }
+
         String authHeader = request.getHeader(JwtUtils.HEADER_STRING);
 
         // 如果没有 Authorization 头，尝试从 URL 参数获取 token（支持 SSE）

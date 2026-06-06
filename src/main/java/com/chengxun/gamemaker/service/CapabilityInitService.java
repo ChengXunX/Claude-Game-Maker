@@ -49,6 +49,19 @@ public class CapabilityInitService {
         initNumericalPlannerCapabilities();
         initGitCommitCapabilities();
         initUiDevCapabilities();
+        // 新增角色
+        initTesterCapabilities();
+        initSecurityExpertCapabilities();
+        initDataAnalystCapabilities();
+        initTechArtistCapabilities();
+        initProductManagerCapabilities();
+        initLocalizationCapabilities();
+        initAiEngineerCapabilities();
+        initPerformanceEngineerCapabilities();
+        initAudioDevCapabilities();
+        initNarrativePlannerCapabilities();
+        initLevelDesignCapabilities();
+        initDevOpsCapabilities();
         initCommonCapabilities();
 
         capabilityRegistry.reloadAll();
@@ -410,10 +423,433 @@ public class CapabilityInitService {
         log.info("UiDev capabilities initialized: 4");
     }
 
+    // ===== Tester 能力集 =====
+
+    private void initTesterCapabilities() {
+        String role = "tester";
+
+        save(role, "createTestPlan", "制定测试计划", "为项目制定测试计划和测试用例",
+            "task", false, null, 1,
+            "{\"testScope\":\"string|required\",\"testTypes\":\"enum:functional,performance,compatibility,security\",\"priority\":\"enum:high,medium,low\"}");
+
+        save(role, "executeTest", "执行测试", "执行测试用例并记录结果",
+            "task", false, null, 2,
+            "{\"testType\":\"enum:functional,performance,regression|required\",\"scope\":\"string\"}");
+
+        save(role, "reportBug", "报告缺陷", "发现 Bug 时创建缺陷报告",
+            "task", false, null, 3,
+            "{\"title\":\"string|required\",\"severity\":\"enum:critical,high,medium,low|required\",\"steps\":\"string|required\",\"expected\":\"string\",\"actual\":\"string\"}");
+
+        save(role, "reviewTestResults", "审查测试结果", "审查测试报告，评估质量状态",
+            "task", false, null, 4,
+            "{\"testReportId\":\"string\",\"focus\":\"string\"}");
+
+        save(role, "manageBugList", "管理缺陷列表", "查看和管理项目中的 Bug 列表",
+            "task", false, null, 5,
+            "{\"action\":\"enum:list,assign,prioritize,close|required\",\"bugId\":\"string\",\"assignee\":\"string\"}");
+
+        save(role, "reportProgress", "汇报进度", "向制作人汇报测试进度",
+            "communication", false, null, 6,
+            "{\"taskId\":\"string\",\"progress\":\"string|required\"}");
+
+        log.info("Tester capabilities initialized: 6");
+    }
+
+    // ===== SecurityExpert 能力集 =====
+
+    private void initSecurityExpertCapabilities() {
+        String role = "security-expert";
+
+        save(role, "auditCode", "代码安全审计", "对代码进行安全审计，检测潜在漏洞",
+            "task", false, null, 1,
+            "{\"targetPath\":\"string\",\"scope\":\"enum:full,api,auth,data\",\"depth\":\"enum:basic,thorough\"}");
+
+        save(role, "scanVulnerability", "漏洞扫描", "扫描项目中的安全漏洞",
+            "task", false, null, 2,
+            "{\"scanType\":\"enum:sql_injection,xss,csrf,auth\",\"target\":\"string\"}");
+
+        save(role, "reviewSecurityDesign", "审查安全设计", "审查系统架构的安全性",
+            "task", false, null, 3,
+            "{\"designType\":\"enum:auth,data,api,infra\",\"description\":\"string\"}");
+
+        save(role, "createSecurityReport", "生成安全报告", "生成安全审计报告",
+            "task", false, null, 4,
+            "{\"scope\":\"string\",\"includeRecommendations\":\"boolean\"}");
+
+        save(role, "validateInput", "输入验证检查", "检查输入验证逻辑的安全性",
+            "task", false, null, 5,
+            "{\"targetPath\":\"string\",\"inputType\":\"enum:form,api,url\"}");
+
+        save(role, "alertSecurityRisk", "安全风险预警", "发现安全风险时向管理员预警",
+            "communication", false, null, 6,
+            "{\"riskType\":\"string|required\",\"severity\":\"enum:critical,high,medium,low|required\",\"description\":\"string|required\"}");
+
+        save(role, "reportProgress", "汇报进度", "向制作人汇报安全审计进度",
+            "communication", false, null, 7,
+            "{\"taskId\":\"string\",\"progress\":\"string|required\"}");
+
+        log.info("SecurityExpert capabilities initialized: 7");
+    }
+
+    // ===== DataAnalyst 能力集 =====
+
+    private void initDataAnalystCapabilities() {
+        String role = "data-analyst";
+
+        save(role, "analyzeRetention", "留存分析", "分析用户留存数据",
+            "task", false, null, 1,
+            "{\"period\":\"enum:day1,day7,day30\",\"segment\":\"string\",\"startDate\":\"string\",\"endDate\":\"string\"}");
+
+        save(role, "analyzeMonetization", "付费分析", "分析用户付费行为",
+            "task", false, null, 2,
+            "{\"metrics\":\"enum:arpu,arppu,ltv,conversion\",\"period\":\"string\",\"segment\":\"string\"}");
+
+        save(role, "analyzeUserBehavior", "行为分析", "分析用户行为路径和模式",
+            "task", false, null, 3,
+            "{\"metrics\":\"enum:retention,engagement,funnel,cohort\",\"period\":\"string\"}");
+
+        save(role, "designABTest", "设计 AB 测试", "设计 AB 测试实验方案",
+            "task", false, null, 4,
+            "{\"hypothesis\":\"string|required\",\"metrics\":\"string\",\"sampleSize\":\"number\"}");
+
+        save(role, "generateDataReport", "生成数据报告", "生成数据分析报告",
+            "task", false, null, 5,
+            "{\"reportType\":\"enum:daily,weekly,monthly,custom|required\",\"metrics\":\"string\"}");
+
+        save(role, "collectFeedback", "收集用户反馈", "从各渠道收集用户反馈",
+            "task", false, null, 6,
+            "{\"channels\":\"enum:appstore,social,survey,feedback|required\",\"period\":\"string\"}");
+
+        save(role, "analyzeFeedback", "分析用户反馈", "分析用户反馈，提取关键洞察",
+            "task", false, null, 7,
+            "{\"feedbackId\":\"string\",\"focus\":\"string\"}");
+
+        save(role, "reportProgress", "汇报进度", "向制作人汇报数据分析进度",
+            "communication", false, null, 8,
+            "{\"taskId\":\"string\",\"progress\":\"string|required\"}");
+
+        log.info("DataAnalyst capabilities initialized: 8");
+    }
+
+    // ===== TechArtist 能力集 =====
+
+    private void initTechArtistCapabilities() {
+        String role = "tech-artist";
+
+        save(role, "createShader", "创建 Shader", "创建或修改 Shader 代码",
+            "task", false, null, 1,
+            "{\"shaderType\":\"enum:surface,post_process,particle,ui|required\",\"requirements\":\"string|required\"}");
+
+        save(role, "optimizeRendering", "优化渲染", "优化渲染性能",
+            "task", false, null, 2,
+            "{\"targetPath\":\"string\",\"optimizationType\":\"enum:drawcall,shader,memory,overdraw\"}");
+
+        save(role, "createArtTool", "创建美术工具", "创建批量处理或自动化工具",
+            "task", false, null, 3,
+            "{\"toolType\":\"enum:batch_convert,validation,preview,export|required\",\"requirements\":\"string\"}");
+
+        save(role, "reviewShader", "审查 Shader", "审查 Shader 代码的性能和质量",
+            "task", false, null, 4,
+            "{\"targetPath\":\"string\",\"focus\":\"enum:performance,quality,compatibility\"}");
+
+        save(role, "setupRenderPipeline", "配置渲染管线", "配置或优化渲染管线",
+            "task", false, null, 5,
+            "{\"pipelineType\":\"enum:forward,deferred,hybrid\",\"requirements\":\"string\"}");
+
+        save(role, "reportProgress", "汇报进度", "向制作人汇报技术美术进度",
+            "communication", false, null, 6,
+            "{\"taskId\":\"string\",\"progress\":\"string|required\"}");
+
+        log.info("TechArtist capabilities initialized: 6");
+    }
+
+    // ===== ProductManager 能力集 =====
+
+    private void initProductManagerCapabilities() {
+        String role = "product-manager";
+
+        save(role, "analyzeRequirements", "需求分析", "分析和评估产品需求",
+            "task", false, null, 1,
+            "{\"requirement\":\"string|required\",\"stakeholders\":\"string\",\"priority\":\"enum:high,medium,low\"}");
+
+        save(role, "createPRD", "创建需求文档", "创建产品需求文档 (PRD)",
+            "task", false, null, 2,
+            "{\"featureName\":\"string|required\",\"userStory\":\"string\",\"acceptanceCriteria\":\"string\"}");
+
+        save(role, "prioritizeFeatures", "特性优先级", "评估和排序产品特性的优先级",
+            "task", false, null, 3,
+            "{\"features\":\"string|required\",\"criteria\":\"enum:impact,effort,risk,value\"}");
+
+        save(role, "analyzeCompetitor", "竞品分析", "分析竞品的优劣势",
+            "task", false, null, 4,
+            "{\"competitors\":\"string|required\",\"focus\":\"enum:features,monetization,ux,market\"}");
+
+        save(role, "designUserJourney", "用户旅程设计", "设计用户旅程和体验流程",
+            "task", false, null, 5,
+            "{\"scenario\":\"string|required\",\"persona\":\"string\"}");
+
+        save(role, "reviewDesign", "审查设计", "审查设计方案的用户体验",
+            "task", false, null, 6,
+            "{\"designType\":\"enum:ui,ux,flow,feature\",\"target\":\"string\"}");
+
+        save(role, "reportProgress", "汇报进度", "向制作人汇报产品进度",
+            "communication", false, null, 7,
+            "{\"taskId\":\"string\",\"progress\":\"string|required\"}");
+
+        log.info("ProductManager capabilities initialized: 7");
+    }
+
+    // ===== Localization 能力集 =====
+
+    private void initLocalizationCapabilities() {
+        String role = "localization";
+
+        save(role, "translateText", "翻译文本", "将文本翻译为目标语言",
+            "task", false, null, 1,
+            "{\"text\":\"string|required\",\"sourceLang\":\"string\",\"targetLang\":\"string|required\",\"context\":\"string\"}");
+
+        save(role, "reviewTranslation", "审查翻译", "审查翻译质量",
+            "task", false, null, 2,
+            "{\"file\":\"string\",\"targetLang\":\"string\",\"focus\":\"enum:accuracy,fluency,consistency\"}");
+
+        save(role, "checkLocalization", "本地化检查", "检查本地化适配问题",
+            "task", false, null, 3,
+            "{\"targetLang\":\"string\",\"checkType\":\"enum:text_length,encoding,cultural,format\"}");
+
+        save(role, "manageTerminology", "术语管理", "管理游戏术语表",
+            "task", false, null, 4,
+            "{\"action\":\"enum:add,update,query,export\",\"term\":\"string\",\"definition\":\"string\"}");
+
+        save(role, "createGlossary", "创建术语表", "创建多语言术语表",
+            "task", false, null, 5,
+            "{\"domain\":\"string\",\"languages\":\"string\"}");
+
+        save(role, "reportProgress", "汇报进度", "向制作人汇报本地化进度",
+            "communication", false, null, 6,
+            "{\"taskId\":\"string\",\"progress\":\"string|required\"}");
+
+        log.info("Localization capabilities initialized: 6");
+    }
+
+    // ===== AiEngineer 能力集 =====
+
+    private void initAiEngineerCapabilities() {
+        String role = "ai-engineer";
+
+        save(role, "createBehaviorTree", "创建行为树", "为 NPC 创建行为树",
+            "task", false, null, 1,
+            "{\"npcType\":\"string|required\",\"behaviors\":\"string|required\",\"complexity\":\"enum:simple,medium,complex\"}");
+
+        save(role, "implementPathfinding", "实现寻路算法", "实现或优化寻路算法",
+            "task", false, null, 2,
+            "{\"algorithm\":\"enum:astar,navmesh,flowfield|required\",\"requirements\":\"string\"}");
+
+        save(role, "designDialogueSystem", "设计对话系统", "设计分支对话系统",
+            "task", false, null, 3,
+            "{\"dialogueType\":\"enum:branching,ai_generated,hybrid\",\"features\":\"string\"}");
+
+        save(role, "trainModel", "训练模型", "训练机器学习模型",
+            "task", false, null, 4,
+            "{\"modelType\":\"enum:classification,regression,reinforcement\",\"dataset\":\"string\",\"objective\":\"string\"}");
+
+        save(role, "optimizeAI", "优化 AI 性能", "优化 AI 系统的性能",
+            "task", false, null, 5,
+            "{\"target\":\"enum:behavior_tree,pathfinding,dialogue\",\"optimization\":\"enum:speed,memory,quality\"}");
+
+        save(role, "reportProgress", "汇报进度", "向制作人汇报 AI 开发进度",
+            "communication", false, null, 6,
+            "{\"taskId\":\"string\",\"progress\":\"string|required\"}");
+
+        log.info("AiEngineer capabilities initialized: 6");
+    }
+
+    // ===== PerformanceEngineer 能力集 =====
+
+    private void initPerformanceEngineerCapabilities() {
+        String role = "performance-engineer";
+
+        save(role, "profilePerformance", "性能分析", "对系统进行性能分析",
+            "task", false, null, 1,
+            "{\"target\":\"enum:cpu,gpu,memory,network\",\"scope\":\"enum:full,specific\",\"duration\":\"string\"}");
+
+        save(role, "identifyBottleneck", "瓶颈定位", "定位性能瓶颈",
+            "task", false, null, 2,
+            "{\"symptom\":\"string|required\",\"component\":\"enum:client,server,database,api\"}");
+
+        save(role, "optimizeCode", "代码优化", "优化代码性能",
+            "task", false, null, 3,
+            "{\"targetPath\":\"string\",\"optimizationType\":\"enum:algorithm,caching,async,batch\"}");
+
+        save(role, "setupMonitoring", "配置监控", "配置性能监控",
+            "task", false, null, 4,
+            "{\"metrics\":\"string\",\"thresholds\":\"string\",\"alerting\":\"boolean\"}");
+
+        save(role, "runLoadTest", "压力测试", "执行压力测试",
+            "task", false, null, 5,
+            "{\"concurrentUsers\":\"number\",\"duration\":\"string\",\"scenario\":\"string\"}");
+
+        save(role, "generatePerformanceReport", "生成性能报告", "生成性能分析报告",
+            "task", false, null, 6,
+            "{\"scope\":\"string\",\"includeRecommendations\":\"boolean\"}");
+
+        save(role, "reportProgress", "汇报进度", "向制作人汇报性能优化进度",
+            "communication", false, null, 7,
+            "{\"taskId\":\"string\",\"progress\":\"string|required\"}");
+
+        log.info("PerformanceEngineer capabilities initialized: 7");
+    }
+
+    // ===== AudioDev 能力集 =====
+
+    private void initAudioDevCapabilities() {
+        String role = "audio-dev";
+
+        save(role, "designSoundEffect", "设计音效", "设计游戏音效",
+            "task", false, null, 1,
+            "{\"sfxType\":\"enum:ui,combat,environment,character|required\",\"requirements\":\"string\"}");
+
+        save(role, "planMusic", "规划音乐", "规划背景音乐方案",
+            "task", false, null, 2,
+            "{\"scene\":\"string\",\"mood\":\"string\",\"style\":\"string\"}");
+
+        save(role, "designAudioSystem", "设计音频系统", "设计音频架构",
+            "task", false, null, 3,
+            "{\"systemType\":\"enum:mixer,3d_audio,adaptive,events\",\"requirements\":\"string\"}");
+
+        save(role, "optimizeAudio", "优化音频", "优化音频资源和播放",
+            "task", false, null, 4,
+            "{\"optimizationType\":\"enum:format,memory,latency,quality\",\"target\":\"string\"}");
+
+        save(role, "createAudioAssets", "创建音频资源", "创建或处理音频资源",
+            "task", false, null, 5,
+            "{\"assetType\":\"enum:sfx,bgm,voice,ambient\",\"format\":\"enum:wav,ogg,mp3\"}");
+
+        save(role, "reportProgress", "汇报进度", "向制作人汇报音频开发进度",
+            "communication", false, null, 6,
+            "{\"taskId\":\"string\",\"progress\":\"string|required\"}");
+
+        log.info("AudioDev capabilities initialized: 6");
+    }
+
+    // ===== NarrativePlanner 能力集 =====
+
+    private void initNarrativePlannerCapabilities() {
+        String role = "narrative-planner";
+
+        save(role, "buildWorldview", "构建世界观", "构建游戏世界观设定",
+            "task", false, null, 1,
+            "{\"scope\":\"enum:world,region,faction\",\"depth\":\"enum:brief,detailed,comprehensive\"}");
+
+        save(role, "designCharacter", "设计角色", "设计游戏角色",
+            "task", false, null, 2,
+            "{\"roleType\":\"enum:protagonist,antagonist,npc,side\",\"importance\":\"enum:main,secondary,minor\"}");
+
+        save(role, "writeStoryline", "编写剧情", "编写游戏剧情",
+            "task", false, null, 3,
+            "{\"storyType\":\"enum:main_quest,side_quest,hidden_event\",\"chapter\":\"string\"}");
+
+        save(role, "designDialogue", "设计对话", "设计角色对话",
+            "task", false, null, 4,
+            "{\"character\":\"string\",\"scene\":\"string\",\"branching\":\"boolean\"}");
+
+        save(role, "createStoryBible", "创建故事圣经", "创建完整的故事设定文档",
+            "task", false, null, 5,
+            "{\"scope\":\"enum:full,characters,world,plot\"}");
+
+        save(role, "reviewNarrative", "审查剧情", "审查剧情设计的一致性",
+            "task", false, null, 6,
+            "{\"target\":\"string\",\"focus\":\"enum:consistency,pacing,character,dialogue\"}");
+
+        save(role, "reportProgress", "汇报进度", "向制作人汇报剧情设计进度",
+            "communication", false, null, 7,
+            "{\"taskId\":\"string\",\"progress\":\"string|required\"}");
+
+        log.info("NarrativePlanner capabilities initialized: 7");
+    }
+
+    // ===== LevelDesign 能力集 =====
+
+    private void initLevelDesignCapabilities() {
+        String role = "level-design";
+
+        save(role, "designLevel", "设计关卡", "设计游戏关卡",
+            "task", false, null, 1,
+            "{\"levelType\":\"enum:tutorial,challenge,boss,hidden\",\"difficulty\":\"enum:easy,medium,hard\"}");
+
+        save(role, "layoutMap", "地图布局", "设计地图布局",
+            "task", false, null, 2,
+            "{\"mapSize\":\"enum:small,medium,large\",\"theme\":\"string\",\"pathType\":\"enum:linear,open,branching\"}");
+
+        save(role, "configureEnemies", "配置敌人", "配置关卡敌人",
+            "task", false, null, 3,
+            "{\"enemyTypes\":\"string\",\"difficulty\":\"enum:easy,medium,hard\",\"spawnPattern\":\"string\"}");
+
+        save(role, "designDifficultyCurve", "设计难度曲线", "设计关卡难度曲线",
+            "task", false, null, 4,
+            "{\"totalLevels\":\"number\",\"peakLevel\":\"number\",\"restLevels\":\"string\"}");
+
+        save(role, "placeRewards", "配置奖励", "配置关卡奖励",
+            "task", false, null, 5,
+            "{\"rewardType\":\"enum:currency,item,unlock,experience\",\"distribution\":\"string\"}");
+
+        save(role, "reviewLevel", "审查关卡", "审查关卡设计质量",
+            "task", false, null, 6,
+            "{\"levelId\":\"string\",\"focus\":\"enum:flow,difficulty,rewards,pacing\"}");
+
+        save(role, "reportProgress", "汇报进度", "向制作人汇报关卡设计进度",
+            "communication", false, null, 7,
+            "{\"taskId\":\"string\",\"progress\":\"string|required\"}");
+
+        log.info("LevelDesign capabilities initialized: 7");
+    }
+
+    // ===== DevOps 能力集 =====
+
+    private void initDevOpsCapabilities() {
+        String role = "devops";
+
+        save(role, "setupCICD", "配置 CI/CD", "配置持续集成/持续部署流水线",
+            "task", false, null, 1,
+            "{\"platform\":\"enum:jenkins,github_actions,gitlab_ci\",\"stages\":\"string\"}");
+
+        save(role, "deployService", "部署服务", "部署服务到指定环境",
+            "task", true, "DEPLOY", 2,
+            "{\"environment\":\"enum:dev,staging,prod|required\",\"version\":\"string\",\"strategy\":\"enum:rolling,blue_green,canary\"}");
+
+        save(role, "configureMonitoring", "配置监控", "配置系统监控和告警",
+            "task", false, null, 3,
+            "{\"metrics\":\"string\",\"thresholds\":\"string\",\"channels\":\"string\"}");
+
+        save(role, "optimizeInfrastructure", "优化基础设施", "优化服务器和基础设施",
+            "task", false, null, 4,
+            "{\"target\":\"enum:compute,storage,network\",\"optimization\":\"enum:cost,performance,reliability\"}");
+
+        save(role, "manageContainers", "管理容器", "管理 Docker 容器",
+            "task", false, null, 5,
+            "{\"action\":\"enum:build,deploy,scale,monitor\",\"service\":\"string\"}");
+
+        save(role, "setupHotUpdate", "配置热更新", "配置不停服更新机制",
+            "task", false, null, 6,
+            "{\"strategy\":\"enum:client_patch,config_reload,hotfix\",\"scope\":\"string\"}");
+
+        save(role, "createBuild", "创建构建", "创建项目构建",
+            "task", false, null, 7,
+            "{\"buildType\":\"enum:debug,release|required\",\"platform\":\"enum:android,ios,web,pc\"}");
+
+        save(role, "reportProgress", "汇报进度", "向制作人汇报运维进度",
+            "communication", false, null, 8,
+            "{\"taskId\":\"string\",\"progress\":\"string|required\"}");
+
+        log.info("DevOps capabilities initialized: 8");
+    }
+
     // ===== 通用能力（所有角色） =====
 
     private void initCommonCapabilities() {
-        String[] roles = {"producer", "server-dev", "system-planner", "numerical-planner", "git-commit", "ui-dev"};
+        String[] roles = {"producer", "server-dev", "system-planner", "numerical-planner", "git-commit", "ui-dev",
+            "tester", "security-expert", "data-analyst", "tech-artist", "product-manager",
+            "localization", "ai-engineer", "performance-engineer", "audio-dev",
+            "narrative-planner", "level-design", "devops"};
 
         for (String role : roles) {
             save(role, "sendMessage", "发送消息", "向其他 Agent 发送消息",

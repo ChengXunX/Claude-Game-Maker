@@ -79,6 +79,17 @@ game-fullstack/
     └── seed.sql
 ```
 
+## 目录配置
+
+| 目录路径 | 用途 | 可访问角色 | 说明 |
+|---------|------|-----------|------|
+| /client | 前端游戏客户端 | client-dev, ui-dev | 游戏主程序、场景、实体、UI |
+| /server | 后端服务 | server-dev | API接口、业务逻辑、数据库模型 |
+| /database | 数据库脚本 | server-dev | 数据库初始化、种子数据 |
+| /config | 配置文件 | | 游戏配置、环境变量（所有角色可访问） |
+| /docs | 文档 | system-planner | 需求文档、设计文档、API文档 |
+| /proto | 接口定义 | client-dev, server-dev | 前后端接口协议定义 |
+
 ## 核心代码模板
 
 ### 1. 后端入口 (server/src/index.js)

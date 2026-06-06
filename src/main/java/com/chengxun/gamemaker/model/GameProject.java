@@ -45,6 +45,9 @@ public class GameProject {
     /** 里程碑列表 */
     private List<GoalMilestone> milestones = new ArrayList<>();
 
+    /** 目录配置（目录路径 -> 目录配置），用于告诉 Agent 项目目录结构和用途 */
+    private Map<String, DirectoryConfig> directoryConfigs = new HashMap<>();
+
     /**
      * 目标类型枚举
      */
@@ -141,6 +144,9 @@ public class GameProject {
         /** 依赖的前置里程碑 ID 列表 */
         private List<String> dependencies = new ArrayList<>();
 
+        /** 该里程碑可访问的目录列表（相对于项目根目录） */
+        private List<String> accessibleDirs = new ArrayList<>();
+
         public GoalMilestone() {}
 
         public GoalMilestone(String id, String title, String assignedAgentRole, int order) {
@@ -172,6 +178,9 @@ public class GameProject {
         public List<String> getDependencies() { return dependencies; }
         public void setDependencies(List<String> dependencies) { this.dependencies = dependencies; }
 
+        public List<String> getAccessibleDirs() { return accessibleDirs; }
+        public void setAccessibleDirs(List<String> accessibleDirs) { this.accessibleDirs = accessibleDirs != null ? accessibleDirs : new ArrayList<>(); }
+
         public void addTask(MilestoneTask task) { this.tasks.add(task); }
 
         /**
@@ -200,6 +209,40 @@ public class GameProject {
         COMPLETED,
         /** 被阻塞（依赖未完成） */
         BLOCKED
+    }
+
+    /**
+     * 目录配置
+     * 定义项目中各目录的用途，供 Agent 参考
+     */
+    public static class DirectoryConfig {
+        /** 目录路径（相对于项目根目录，如 /server、/client） */
+        private String path;
+        /** 目录用途描述 */
+        private String description;
+        /** 补充说明（如可访问的角色、注意事项等） */
+        private String notes;
+
+        public DirectoryConfig() {}
+
+        public DirectoryConfig(String path, String description) {
+            this.path = path;
+            this.description = description;
+        }
+
+        public DirectoryConfig(String path, String description, String notes) {
+            this.path = path;
+            this.description = description;
+            this.notes = notes;
+        }
+
+        // Getters and Setters
+        public String getPath() { return path; }
+        public void setPath(String path) { this.path = path; }
+        public String getDescription() { return description; }
+        public void setDescription(String description) { this.description = description; }
+        public String getNotes() { return notes; }
+        public void setNotes(String notes) { this.notes = notes; }
     }
 
     /**
@@ -357,6 +400,55 @@ public class GameProject {
 
     public List<GoalMilestone> getMilestones() { return milestones; }
     public void setMilestones(List<GoalMilestone> milestones) { this.milestones = milestones; }
+
+    // ===== 目录配置相关 =====
+
+    public Map<String, DirectoryConfig> getDirectoryConfigs() { return directoryConfigs; }
+    public void setDirectoryConfigs(Map<String, DirectoryConfig> directoryConfigs) {
+        this.directoryConfigs = directoryConfigs != null ? directoryConfigs : new HashMap<>();
+    }
+
+    /**
+     * 添加目录配置
+     *
+     * @param config 目录配置
+     */
+    public void addDirectoryConfig(DirectoryConfig config) {
+        if (config != null && config.getPath() != null) {
+            this.directoryConfigs.put(config.getPath(), config);
+        }
+    }
+
+    /**
+     * 删除目录配置
+     *
+     * @param path 目录路径
+     */
+    public void removeDirectoryConfig(String path) {
+        this.directoryConfigs.remove(path);
+    }
+
+    /**
+     * 获取目录配置的文本描述
+     * 用于在 prompt 中告知 Agent 项目目录结构
+     *
+     * @return 格式化的目录配置文本
+     */
+    public String getDirectoryConfigText() {
+        if (directoryConfigs.isEmpty()) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        for (DirectoryConfig config : directoryConfigs.values()) {
+            sb.append("- ").append(config.getPath());
+            sb.append(": ").append(config.getDescription());
+            if (config.getNotes() != null && !config.getNotes().isEmpty()) {
+                sb.append("（").append(config.getNotes()).append("）");
+            }
+            sb.append("\n");
+        }
+        return sb.toString();
+    }
 
     /**
      * 是否有目标

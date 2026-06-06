@@ -9,6 +9,7 @@ import router from './router'
 import { permissionDirective } from './utils/permission'
 import { useUserStore } from './stores/user'
 import './style.css'
+import './styles/dark.css'
 
 /**
  * 应用入口

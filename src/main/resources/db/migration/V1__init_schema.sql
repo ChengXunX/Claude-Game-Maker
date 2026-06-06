@@ -1012,9 +1012,9 @@ INSERT INTO `roles` (`id`, `name`, `display_name`, `description`, `is_system`) V
 (6, 'USER', '普通用户', '普通用户，基础权限', 1),
 (7, 'READONLY', '只读访客', '只读权限，可查看所有模块但不能修改，供外部人员了解系统特性', 1);
 
--- 默认管理员用户 (密码: REDACTED_PASSWORD)
+-- 默认管理员用户（密码由安装向导设置，此处仅为占位哈希）
 INSERT INTO `users` (`id`, `username`, `password`, `email`, `nickname`, `role_id`, `status`, `password_changed`) VALUES
-(1, 'admin', '$2a$10$REDACTED_BCRYPT_HASH_PLACEHOLDER_V1', 'admin@example.com', '管理员', 1, 'APPROVED', 1);
+(1, 'admin', '$2a$10$PLACEHOLDER_HASH_ADMIN_MUST_CHANGE_PASSWORD', 'admin@example.com', '管理员', 1, 'APPROVED', 1);
 
 -- 角色权限关联
 -- ADMIN 管理员：拥有所有权限

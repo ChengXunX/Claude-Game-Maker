@@ -1,11 +1,14 @@
 package com.chengxun.gamemaker.web.service;
 
 import com.chengxun.gamemaker.agent.Agent;
+import com.chengxun.gamemaker.agent.ProducerAgent;
 import com.chengxun.gamemaker.manager.AgentManager;
+import com.chengxun.gamemaker.service.ApprovalCallbackService;
 import com.chengxun.gamemaker.web.entity.ApprovalRequest;
 import com.chengxun.gamemaker.web.repository.ApprovalRequestRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -30,6 +33,9 @@ public class ApprovalService {
     private final AgentManager agentManager;
     private final NotificationService notificationService;
     private BusinessMetricsService metricsService;
+
+    @Autowired(required = false)
+    private ApprovalCallbackService approvalCallbackService;
 
     public ApprovalService(ApprovalRequestRepository approvalRepository,
                           AgentManager agentManager,
@@ -141,7 +147,7 @@ public class ApprovalService {
             switch (type) {
                 case "CREATE_AGENT" -> executeCreateAgent(request);
                 case "ASSIGN_API" -> executeAssignApi(request);
-                case "DELETE_AGENT" -> executeDeleteAgent(request);
+                case "DELETE_AGENT", "DISMISS_AGENT" -> executeDeleteAgent(request);
                 case "CHANGE_CONFIG" -> executeChangeConfig(request);
                 default -> log.warn("Unknown request type: {}", type);
             }
@@ -227,7 +233,7 @@ public class ApprovalService {
      */
     private int getPriorityByType(String requestType) {
         return switch (requestType) {
-            case "DELETE_AGENT" -> 1;      // 最高优先级
+            case "DELETE_AGENT", "DISMISS_AGENT" -> 1;  // 最高优先级
             case "ASSIGN_API" -> 3;
             case "CREATE_AGENT" -> 5;
             case "CHANGE_CONFIG" -> 7;
@@ -253,18 +259,35 @@ public class ApprovalService {
 
     /**
      * 通知请求者审批结果
+     * 通过 ApprovalCallbackService 回调 Producer
      */
     private void notifyRequester(ApprovalRequest request) {
         try {
+            // 使用 ApprovalCallbackService 回调
+            if (approvalCallbackService != null) {
+                String approvalId = request.getRequestType() + "-" + request.getId();
+                approvalCallbackService.onApprovalCompleted(
+                    approvalId,
+                    request.isApproved(),
+                    request.getApprovalComment() != null ? request.getApprovalComment() : ""
+                );
+                log.info("已通过 ApprovalCallbackService 通知请求者: {}", request.getRequesterId());
+                return;
+            }
+
+            // 回退：直接通知 Agent
             Agent requester = agentManager.getAgent(request.getRequesterId());
             if (requester != null) {
-                String message = String.format("您的审批请求已%s\n类型: %s\n审批者: %s\n意见: %s",
-                    request.isApproved() ? "批准" : "拒绝",
-                    request.getRequestType(),
-                    request.getApproverName(),
-                    request.getApprovalComment());
-                // 发送消息给请求者
-                // requester.receiveMessage(...);
+                String approvalId = request.getRequestType() + "-" + request.getId();
+
+                // 如果是 Producer，调用通用审批回调
+                if (requester instanceof ProducerAgent producer) {
+                    producer.onApprovalCompleted(
+                        approvalId,
+                        request.isApproved(),
+                        request.getApprovalComment() != null ? request.getApprovalComment() : ""
+                    );
+                }
             }
         } catch (Exception e) {
             log.warn("Failed to notify requester: {}", e.getMessage());

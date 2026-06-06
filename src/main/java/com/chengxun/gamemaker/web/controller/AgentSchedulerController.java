@@ -140,6 +140,25 @@ public class AgentSchedulerController {
         return ResponseEntity.ok(Map.of("status", "success", "message", "调度已触发"));
     }
 
+    /**
+     * 取消任务
+     */
+    @PostMapping("/tasks/{taskId}/cancel")
+    @PreAuthorize("hasAnyAuthority('PERM_agents:manage', 'PERM_admin:manage')")
+    public ResponseEntity<Map<String, Object>> cancelTask(@PathVariable String taskId) {
+        try {
+            boolean cancelled = agentScheduler.cancelTask(taskId);
+            if (cancelled) {
+                return ResponseEntity.ok(Map.of("status", "success", "message", "任务已取消"));
+            } else {
+                return ResponseEntity.badRequest().body(Map.of("status", "error", "message", "任务不存在或无法取消"));
+            }
+        } catch (Exception e) {
+            log.error("取消任务失败: {}", taskId, e);
+            return ResponseEntity.internalServerError().body(Map.of("status", "error", "message", "取消失败: " + e.getMessage()));
+        }
+    }
+
     @PostMapping("/{agentId}/start")
     @PreAuthorize("hasAnyAuthority('PERM_agents:manage', 'PERM_admin:manage')")
     public ResponseEntity<?> startAgent(@PathVariable String agentId,

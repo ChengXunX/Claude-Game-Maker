@@ -233,6 +233,20 @@ public class GoalService {
     }
 
     /**
+     * 获取项目的所有里程碑
+     *
+     * @param projectId 项目 ID
+     * @return 里程碑列表，如果项目不存在返回空列表
+     */
+    public List<GoalMilestone> getMilestones(String projectId) {
+        GameProject project = projectManager.getProject(projectId);
+        if (project == null || project.getMilestones() == null) {
+            return new ArrayList<>();
+        }
+        return project.getMilestones();
+    }
+
+    /**
      * 获取下一个可执行的里程碑
      */
     public GoalMilestone getNextExecutableMilestone(String projectId) {

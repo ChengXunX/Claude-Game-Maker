@@ -37,9 +37,17 @@ public class AgentRecruitmentService {
     @Autowired
     private AgentCapabilityService capabilityService;
 
+    @Autowired
+    private DynamicCapabilityService dynamicCapabilityService;
+
     /** 核心Agent角色（不可删除） */
     private static final Set<String> CORE_ROLES = Set.of(
         "producer"  // 制作人是核心角色
+    );
+
+    /** 默认参与项目的角色 */
+    private static final Set<String> DEFAULT_IN_PROJECT_ROLES = Set.of(
+        "producer"  // 制作人默认在项目内
     );
 
     /** 预设角色模板 */
@@ -91,6 +99,73 @@ public class AgentRecruitmentService {
             Set.of("version_control", "git_operations"),
             Set.of("all")
         ));
+
+        // 新增角色模板
+        PRESET_TEMPLATES.put("security-expert", new RoleTemplate(
+            "security-expert", "安全工程师", "负责代码安全审计、漏洞检测、反作弊系统",
+            Set.of("security_audit", "vulnerability_detection", "anti_cheat"),
+            Set.of("java", "py", "js", "sql")
+        ));
+
+        PRESET_TEMPLATES.put("data-analyst", new RoleTemplate(
+            "data-analyst", "数据分析师", "负责玩家行为分析、留存分析、付费分析",
+            Set.of("data_analysis", "retention_analysis", "monetization_analysis"),
+            Set.of("py", "sql", "csv", "json")
+        ));
+
+        PRESET_TEMPLATES.put("tech-artist", new RoleTemplate(
+            "tech-artist", "技术美术", "负责Shader开发、渲染优化、美术工具开发",
+            Set.of("shader_development", "rendering_optimization", "art_tools"),
+            Set.of("hlsl", "glsl", "shader", "py")
+        ));
+
+        PRESET_TEMPLATES.put("product-manager", new RoleTemplate(
+            "product-manager", "产品经理", "负责产品规划、需求分析、用户体验设计",
+            Set.of("product_planning", "requirement_analysis", "ux_design"),
+            Set.of("md", "txt", "json")
+        ));
+
+        PRESET_TEMPLATES.put("localization", new RoleTemplate(
+            "localization", "本地化专员", "负责多语言翻译、文化适配、本地化流程",
+            Set.of("translation", "cultural_adaptation", "localization_management"),
+            Set.of("json", "csv", "xml", "properties")
+        ));
+
+        PRESET_TEMPLATES.put("ai-engineer", new RoleTemplate(
+            "ai-engineer", "AI工程师", "负责NPC行为AI、寻路算法、对话系统",
+            Set.of("behavior_tree", "pathfinding", "dialogue_system"),
+            Set.of("py", "java", "json", "yaml")
+        ));
+
+        PRESET_TEMPLATES.put("performance-engineer", new RoleTemplate(
+            "performance-engineer", "性能优化师", "负责性能分析、瓶颈定位、优化方案",
+            Set.of("performance_analysis", "profiling", "optimization"),
+            Set.of("java", "py", "cpp", "json")
+        ));
+
+        PRESET_TEMPLATES.put("audio-dev", new RoleTemplate(
+            "audio-dev", "音频设计师", "负责音效设计、背景音乐、音频系统",
+            Set.of("sound_design", "music_composition", "audio_system"),
+            Set.of("wav", "ogg", "mp3", "json")
+        ));
+
+        PRESET_TEMPLATES.put("narrative-planner", new RoleTemplate(
+            "narrative-planner", "剧情策划", "负责世界观构建、角色设定、剧情设计",
+            Set.of("worldbuilding", "character_design", "story_design"),
+            Set.of("md", "txt", "json")
+        ));
+
+        PRESET_TEMPLATES.put("level-design", new RoleTemplate(
+            "level-design", "关卡设计师", "负责关卡流程、地图布局、难度曲线",
+            Set.of("level_design", "map_layout", "difficulty_curve"),
+            Set.of("json", "yaml", "tmx")
+        ));
+
+        PRESET_TEMPLATES.put("devops", new RoleTemplate(
+            "devops", "运维工程师", "负责CI/CD、服务器部署、监控告警",
+            Set.of("cicd", "deployment", "monitoring"),
+            Set.of("sh", "yaml", "dockerfile", "json")
+        ));
     }
 
     /**
@@ -133,6 +208,8 @@ public class AgentRecruitmentService {
         private int maxContextSize;
         private boolean supportsImageGeneration;
         private String workDir;
+        /** 是否加入项目（默认 false，制作人招聘时默认 true） */
+        private boolean inProject = false;
 
         // Getters and Setters
         public String getName() { return name; }
@@ -147,6 +224,8 @@ public class AgentRecruitmentService {
         public void setSupportedFileTypes(Set<String> types) { this.supportedFileTypes = types; }
         public Map<String, String> getTags() { return tags; }
         public void setTags(Map<String, String> tags) { this.tags = tags; }
+        public boolean isInProject() { return inProject; }
+        public void setInProject(boolean inProject) { this.inProject = inProject; }
         public int getMaxContextSize() { return maxContextSize; }
         public void setMaxContextSize(int size) { this.maxContextSize = size; }
         public boolean isSupportsImageGeneration() { return supportsImageGeneration; }
@@ -194,6 +273,10 @@ public class AgentRecruitmentService {
             throw new RuntimeException("只有制作人Agent可以招聘新员工");
         }
 
+        // 自动创建角色能力（如果不存在）
+        String projectId = extractProjectId(producerId);
+        dynamicCapabilityService.createCapabilitiesForRole(role, projectId);
+
         // 检查是否是预设角色
         RoleTemplate template = PRESET_TEMPLATES.get(role);
         if (template != null) {
@@ -226,6 +309,10 @@ public class AgentRecruitmentService {
             throw new RuntimeException("只有制作人Agent可以招聘新员工");
         }
 
+        // 自动创建角色能力
+        String projectId = extractProjectId(producerId);
+        dynamicCapabilityService.createCapabilitiesForRole(role, projectId);
+
         // 如果角色模板不存在，自动创建
         if (!PRESET_TEMPLATES.containsKey(role) && !customTemplates.containsKey(role)) {
             createCustomRoleTemplate(role, roleName != null ? roleName : role,
@@ -246,6 +333,7 @@ public class AgentRecruitmentService {
                                      Set<String> supportedFileTypes) {
         String agentId = generateAgentId(role);
         String projectId = extractProjectId(producerId);
+        boolean defaultInProject = DEFAULT_IN_PROJECT_ROLES.contains(role);
 
         AgentDefinition.Builder builder = AgentDefinition.builder()
             .id(agentId)
@@ -257,7 +345,9 @@ public class AgentRecruitmentService {
             .tag("recruited_by", producerId)
             .tag("recruitment_time", String.valueOf(System.currentTimeMillis()))
             .tag("custom_role", "true")
-            .maxContextSize(100000);
+            .maxContextSize(100000)
+            .defaultInProject(defaultInProject)
+            .inProject(defaultInProject);  // 默认在项目内的角色自动加入项目
 
         // 设置能力
         if (capabilities != null && !capabilities.isEmpty()) {
@@ -286,6 +376,7 @@ public class AgentRecruitmentService {
     private Agent recruitFromTemplate(String producerId, RoleTemplate template, String name, String workDir) {
         String agentId = generateAgentId(template.getRole());
         String projectId = extractProjectId(producerId);
+        boolean defaultInProject = DEFAULT_IN_PROJECT_ROLES.contains(template.getRole());
 
         AgentDefinition.Builder builder = AgentDefinition.builder()
             .id(agentId)
@@ -297,7 +388,9 @@ public class AgentRecruitmentService {
             .capabilities(template.getDefaultCapabilities())
             .tag("recruited_by", producerId)
             .tag("recruitment_time", String.valueOf(System.currentTimeMillis()))
-            .maxContextSize(100000);
+            .maxContextSize(100000)
+            .defaultInProject(defaultInProject)
+            .inProject(defaultInProject);  // 默认在项目内的角色自动加入项目
 
         // 添加支持的文件类型
         for (String type : template.getSupportedFileTypes()) {
@@ -307,7 +400,8 @@ public class AgentRecruitmentService {
         AgentDefinition definition = builder.build();
 
         Agent agent = agentManager.createAgent(definition);
-        log.info("Agent recruited by {}: {} ({}) for project: {}", producerId, name, agentId, projectId);
+        log.info("Agent recruited by {}: {} ({}) for project: {} (inProject: {})",
+            producerId, name, agentId, projectId, defaultInProject);
 
         return agent;
     }
@@ -335,6 +429,12 @@ public class AgentRecruitmentService {
         String agentId = generateAgentId(request.getRole());
         String projectId = extractProjectId(producerId);
 
+        // 自动创建角色能力
+        dynamicCapabilityService.createCapabilitiesForRole(request.getRole(), projectId);
+
+        // 判断是否在项目内：制作人默认在项目内，其他角色由请求指定
+        boolean shouldBeInProject = DEFAULT_IN_PROJECT_ROLES.contains(request.getRole()) || request.isInProject();
+
         AgentDefinition.Builder builder = AgentDefinition.builder()
             .id(agentId)
             .name(request.getName())
@@ -343,7 +443,9 @@ public class AgentRecruitmentService {
             .workDir(request.getWorkDir())
             .projectId(projectId)
             .tag("recruited_by", producerId)
-            .tag("recruitment_time", String.valueOf(System.currentTimeMillis()));
+            .tag("recruitment_time", String.valueOf(System.currentTimeMillis()))
+            .defaultInProject(shouldBeInProject)
+            .inProject(shouldBeInProject);  // 根据配置决定是否加入项目
 
         // 设置能力
         if (request.getCapabilities() != null) {

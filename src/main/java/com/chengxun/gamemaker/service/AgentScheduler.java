@@ -345,6 +345,48 @@ public class AgentScheduler {
         driveGoalIterations();
     }
 
+    /**
+     * 取消任务
+     * 通过任务 ID 找到对应的 Agent 并停止其当前任务
+     *
+     * @param taskId 任务 ID（格式：agentId_current）
+     * @return 是否取消成功
+     */
+    public boolean cancelTask(String taskId) {
+        if (taskId == null || taskId.isEmpty()) {
+            return false;
+        }
+
+        // 从任务 ID 中提取 Agent ID（格式：agentId_current）
+        String agentId = taskId;
+        if (taskId.endsWith("_current")) {
+            agentId = taskId.substring(0, taskId.length() - "_current".length());
+        }
+
+        Agent agent = agentManager.getAgent(agentId);
+        if (agent == null) {
+            log.warn("取消任务失败：Agent 不存在 {}", agentId);
+            return false;
+        }
+
+        if (!agent.isBusy()) {
+            log.warn("取消任务失败：Agent {} 当前没有执行任务", agentId);
+            return false;
+        }
+
+        // 停止 Agent 当前任务
+        try {
+            agent.stop();
+            // 重新启动 Agent（保持可用状态）
+            agent.start();
+            log.info("已取消 Agent {} 的当前任务", agentId);
+            return true;
+        } catch (Exception e) {
+            log.error("取消任务失败：{}", e.getMessage());
+            return false;
+        }
+    }
+
     // ===== 目标驱动调度 =====
 
     /**

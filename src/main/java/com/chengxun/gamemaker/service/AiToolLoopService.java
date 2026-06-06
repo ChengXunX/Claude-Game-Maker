@@ -70,13 +70,14 @@ public class AiToolLoopService {
      * @param sessionId 会话ID（用于 --resume 恢复上下文，首次调用传 null）
      * @param message 消息内容
      * @param username 用户名
+     * @param userToken 用户的 JWT Token，用于后端 API 调用时的身份传递
      * @param userPermissions 用户权限
      * @param isCancelled 取消标记
      * @param onEvent 事件回调
      * @return 会话ID（用于后续调用恢复上下文）
      */
     public String executeWithToolLoop(String agentKey, String sessionId, String message, String username,
-                                     Set<String> userPermissions, AtomicBoolean isCancelled,
+                                     String userToken, Set<String> userPermissions, AtomicBoolean isCancelled,
                                      Consumer<StreamEvent> onEvent) {
         log.info("开始工具循环 - agent: {}, sessionId: {}, 用户: {}", agentKey, sessionId, username);
 
@@ -111,6 +112,7 @@ public class AiToolLoopService {
                 null,
                 currentMessage,
                 null, null, null, null,
+                userToken,
                 event -> handleIterationEvent(event, textOutput, thinkingOutput, finalResultContent, toolCalls,
                                                hasError, isCancelled, nativeToolUseSeen, nativeToolEvents, onEvent, latch)
             );
@@ -147,27 +149,19 @@ public class AiToolLoopService {
                 currentSessionId = engineSessionId;
             }
 
-            // 处理 Claude 原生工具调用事件
-            // 统一发送 tool_use → tool_executing → tool_result，保证前端状态正确切换
-            if (nativeToolUseSeen.get() && !nativeToolEvents.isEmpty()) {
-                log.info("处理 Claude 原生工具调用事件，共 {} 个事件 - 轮次: {}", nativeToolEvents.size(), iteration);
-                for (Object evt : nativeToolEvents) {
-                    if (isCancelled.get()) break;
-                    StreamEvent toolEvent = (StreamEvent) evt;
-
-                    if ("tool_use".equals(toolEvent.getType())) {
-                        // 1. 发送 tool_use（前端显示"准备中"）
-                        onEvent.accept(StreamEvent.toolUse(toolEvent.getToolName(), toolEvent.getToolInput()));
-                        // 2. 立即发送 tool_executing（前端显示"执行中"）
-                        onEvent.accept(StreamEvent.toolExecuting(toolEvent.getToolName(),
-                            "正在执行 " + getToolDisplayName(toolEvent.getToolName()) + "..."));
-                    } else if ("tool_result".equals(toolEvent.getType())) {
-                        // 3. 发送 tool_result（前端显示"成功"/"失败"）
-                        String resultData = toolEvent.getToolResult();
-                        onEvent.accept(StreamEvent.toolResult(toolEvent.getToolName(), resultData));
-                        log.info("原生工具执行完成: {}", toolEvent.getToolName());
-                    }
+            // 如果有原生工具调用（Claude CLI 自己执行的工具），直接返回最终结果
+            if (nativeToolUseSeen.get()) {
+                String resultText = finalResultContent.toString().trim();
+                if (resultText.isEmpty()) {
+                    resultText = textOutput.toString().trim();
                 }
+                if (!resultText.isEmpty()) {
+                    onEvent.accept(StreamEvent.complete(resultText));
+                } else {
+                    onEvent.accept(StreamEvent.complete("工具执行完成"));
+                }
+                log.info("工具循环结束（原生工具调用）- agent: {}, 轮次: {}, sessionId: {}", agentKey, iteration, currentSessionId);
+                return currentSessionId;
             }
 
             // 如果没有工具调用，输出最终结果并结束
@@ -198,6 +192,9 @@ public class AiToolLoopService {
             StringBuilder toolResults = new StringBuilder();
             toolResults.append("以下是工具执行结果，请根据结果继续回复用户：\n\n");
 
+            // 标记是否有权限不足的情况
+            boolean hasPermissionError = false;
+
             for (ToolCallInfo toolCall : toolCalls) {
                 if (isCancelled.get()) {
                     log.info("前端已断开，终止工具循环 - agent: {}, 轮次: {}", agentKey, iteration);
@@ -215,7 +212,10 @@ public class AiToolLoopService {
                     toolResults.append("### 工具: ").append(toolCall.name).append("\n");
                     toolResults.append("结果: ").append(errorResult).append("\n\n");
                     onEvent.accept(StreamEvent.toolResult(toolCall.name, errorResult));
-                    continue;
+                    hasPermissionError = true;
+                    // 权限不足时直接返回错误，不继续执行其他工具
+                    onEvent.accept(StreamEvent.complete("权限不足，无法执行操作: " + toolCall.name));
+                    return currentSessionId;
                 }
 
                 // 通知前端工具正在执行
@@ -225,7 +225,7 @@ public class AiToolLoopService {
                 long startTime = System.currentTimeMillis();
                 Map<String, Object> result;
                 try {
-                    result = toolExecutor.executeTool(toolCall.name, toolCall.params, username);
+                    result = toolExecutor.executeTool(toolCall.name, toolCall.params, username, userToken);
                 } catch (Exception e) {
                     log.error("工具执行异常: {}", toolCall.name, e);
                     result = Map.of("success", false, "error", "执行异常: " + e.getMessage());
@@ -250,6 +250,11 @@ public class AiToolLoopService {
                 log.info("工具执行完成: {} ({}ms, success={}) - 轮次: {}", toolCall.name, duration, success, iteration);
             }
 
+            // 如果有权限不足的情况，直接返回，不继续循环
+            if (hasPermissionError) {
+                return currentSessionId;
+            }
+
             // 构建下一轮消息
             currentMessage = toolResults.toString();
         }
@@ -263,8 +268,8 @@ public class AiToolLoopService {
      * 处理单轮迭代中的流式事件
      * 收集数据并实时转发给前端显示
      *
-     * 注意：当 Claude CLI 使用原生工具执行时，tool_use 和 tool_result 事件
-     * 不在此处转发给前端，而是由主循环统一发送（保证 tool_use → tool_executing → tool_result 的顺序）
+     * 当 Claude CLI 使用原生工具执行时，tool_use 和 tool_result 事件
+     * 会实时转发给前端，确保工具调用过程可见
      */
     private void handleIterationEvent(StreamEvent event,
                                        StringBuilder textOutput,
@@ -296,14 +301,23 @@ public class AiToolLoopService {
                 break;
 
             case "tool_use":
-                // Claude 原生工具调用：标记并收集事件（不直接转发，由主循环统一发送）
+                // Claude 原生工具调用：标记并实时转发给前端
                 nativeToolUseSeen.set(true);
                 nativeToolEvents.add(event);
+                // 实时发送 tool_use 事件给前端（显示"准备中"）
+                onEvent.accept(StreamEvent.toolUse(event.getToolName(), event.getToolInput()));
+                // 立即发送 tool_executing 事件（显示"执行中"）
+                onEvent.accept(StreamEvent.toolExecuting(event.getToolName(),
+                    "正在执行 " + getToolDisplayName(event.getToolName()) + "..."));
+                log.info("实时转发工具调用: {}", event.getToolName());
                 break;
 
             case "tool_result":
-                // Claude 原生工具结果：收集事件（不直接转发，由主循环统一发送）
+                // Claude 原生工具结果：实时转发给前端
                 nativeToolEvents.add(event);
+                // 实时发送 tool_result 事件给前端（显示"成功"/"失败"）
+                onEvent.accept(StreamEvent.toolResult(event.getToolName(), event.getToolResult()));
+                log.info("实时转发工具结果: {}", event.getToolName());
                 break;
 
             case "error":

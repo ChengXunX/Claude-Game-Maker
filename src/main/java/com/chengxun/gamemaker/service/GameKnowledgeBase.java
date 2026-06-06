@@ -149,6 +149,13 @@ public class GameKnowledgeBase {
     }
 
     /**
+     * 获取所有问题解决方案（按问题类型分组）
+     */
+    public Map<String, List<Solution>> getAllSolutions() {
+        return solutions;
+    }
+
+    /**
      * 获取最佳实践
      */
     public List<BestPractice> getBestPractices(String category) {

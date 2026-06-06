@@ -26,7 +26,7 @@
 
       <div v-loading="loading" class="code-content">
         <!-- Markdown 渲染视图 -->
-        <div v-if="isMarkdown && !showSource" class="markdown-body" v-html="renderedMarkdown"></div>
+        <MarkdownRenderer v-if="isMarkdown && !showSource" :content="content" />
 
         <!-- 代码视图 -->
         <div v-else-if="content" class="code-wrapper">
@@ -53,14 +53,9 @@ import { codeBrowserApi } from '@/api'
 import { ElMessage } from 'element-plus'
 import { View } from '@element-plus/icons-vue'
 import hljs from 'highlight.js'
+import 'highlight.js/styles/github.css'
 import 'highlight.js/styles/github-dark.css'
-import { marked } from 'marked'
-
-// 配置marked
-marked.setOptions({
-  breaks: true,
-  gfm: true
-})
+import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -85,16 +80,6 @@ const isMarkdown = computed(() => {
 const lineCount = computed(() => {
   if (!content.value) return 0
   return content.value.split('\n').length
-})
-
-/** 渲染Markdown */
-const renderedMarkdown = computed(() => {
-  if (!content.value) return ''
-  try {
-    return marked(content.value)
-  } catch (e) {
-    return `<pre>${escapeHtml(content.value)}</pre>`
-  }
 })
 
 /** 语法高亮 */
@@ -203,112 +188,24 @@ onMounted(() => {
   min-height: 400px;
 }
 
-/* Markdown渲染样式 */
-.markdown-body {
-  padding: 24px;
-  background: #fff;
-  border-radius: 8px;
-  line-height: 1.8;
-}
-
-.markdown-body :deep(h1) {
-  font-size: 2em;
-  border-bottom: 1px solid #eaecef;
-  padding-bottom: 0.3em;
-  margin-bottom: 16px;
-}
-
-.markdown-body :deep(h2) {
-  font-size: 1.5em;
-  border-bottom: 1px solid #eaecef;
-  padding-bottom: 0.3em;
-  margin-bottom: 16px;
-}
-
-.markdown-body :deep(h3) {
-  font-size: 1.25em;
-  margin-bottom: 16px;
-}
-
-.markdown-body :deep(p) {
-  margin-bottom: 16px;
-}
-
-.markdown-body :deep(code) {
-  background: #f6f8fa;
-  padding: 0.2em 0.4em;
-  border-radius: 3px;
-  font-size: 85%;
-}
-
-.markdown-body :deep(pre) {
-  background: #f6f8fa;
-  padding: 16px;
-  border-radius: 6px;
-  overflow-x: auto;
-  margin-bottom: 16px;
-}
-
-.markdown-body :deep(pre code) {
-  background: transparent;
-  padding: 0;
-}
-
-.markdown-body :deep(ul),
-.markdown-body :deep(ol) {
-  padding-left: 2em;
-  margin-bottom: 16px;
-}
-
-.markdown-body :deep(li) {
-  margin-bottom: 4px;
-}
-
-.markdown-body :deep(blockquote) {
-  border-left: 4px solid #dfe2e5;
-  padding: 0 16px;
-  color: #6a737d;
-  margin-bottom: 16px;
-}
-
-.markdown-body :deep(table) {
-  border-collapse: collapse;
-  width: 100%;
-  margin-bottom: 16px;
-}
-
-.markdown-body :deep(th),
-.markdown-body :deep(td) {
-  border: 1px solid #dfe2e5;
-  padding: 6px 13px;
-}
-
-.markdown-body :deep(th) {
-  background: #f6f8fa;
-}
-
-.markdown-body :deep(img) {
-  max-width: 100%;
-}
-
 /* 代码视图样式 */
 .code-wrapper {
   display: flex;
-  background: #1e1e1e;
+  background: #f6f8fa;
   border-radius: 8px;
   overflow: auto;
 }
 
 .line-numbers {
   padding: 16px 12px;
-  background: #2d2d2d;
-  color: #858585;
+  background: #f6f8fa;
+  color: #6a737d;
   text-align: right;
   user-select: none;
   font-family: 'Courier New', monospace;
   font-size: 14px;
   line-height: 1.6;
-  border-right: 1px solid #404040;
+  border-right: 1px solid #e1e4e8;
 }
 
 .line-number {
@@ -325,6 +222,7 @@ onMounted(() => {
   overflow-x: auto;
   white-space: pre;
   word-wrap: normal;
+  color: #24292e;
 }
 
 .code-block code {
@@ -332,5 +230,26 @@ onMounted(() => {
   padding: 0;
   white-space: inherit;
   word-wrap: inherit;
+  color: inherit;
+}
+
+/* 暗色主题下的代码样式 */
+html.dark .code-wrapper {
+  background: #282c34;
+}
+
+html.dark .line-numbers {
+  background: #282c34;
+  color: #636d83;
+  border-right-color: #3e4451;
+}
+
+html.dark .code-block {
+  color: #abb2bf;
+}
+
+html.dark .code-block code.hljs {
+  background: transparent;
+  color: #abb2bf;
 }
 </style>

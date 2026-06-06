@@ -56,6 +56,9 @@ public abstract class BaseAgent implements Agent {
     /** Agent 日志服务 - 通过setter注入 */
     protected AgentLogService agentLogService;
 
+    /** 知识进化服务 - 通过setter注入，连接知识库自学习与 Agent 自进化 */
+    protected KnowledgeEvolutionService knowledgeEvolutionService;
+
     protected AgentContext agentContext;
     protected GameProject currentProject;
     protected String currentConversationId;
@@ -123,6 +126,11 @@ public abstract class BaseAgent implements Agent {
     /** 设置 Agent 日志服务 */
     public void setAgentLogService(AgentLogService agentLogService) {
         this.agentLogService = agentLogService;
+    }
+
+    /** 设置知识进化服务 */
+    public void setKnowledgeEvolutionService(KnowledgeEvolutionService knowledgeEvolutionService) {
+        this.knowledgeEvolutionService = knowledgeEvolutionService;
     }
 
     /**
@@ -1143,6 +1151,11 @@ public abstract class BaseAgent implements Agent {
 
                 skillManager.saveLearnedSkill(skill, getId(), currentProject.getId(), currentProject.getSkillsDir());
                 log.info("Learned new skill: {} for project: {}", skill.getId(), currentProject.getId());
+
+                // 将学习到的技能推送到知识进化服务，促进全局知识共享
+                if (knowledgeEvolutionService != null) {
+                    knowledgeEvolutionService.promoteLearnedSkill(skill, getId());
+                }
             }
         } catch (Exception e) {
             log.debug("Failed to parse learned skill: {}", e.getMessage());
@@ -1157,5 +1170,38 @@ public abstract class BaseAgent implements Agent {
         int end = text.indexOf("\n", start);
         if (end == -1) end = text.length();
         return text.substring(start, end).trim();
+    }
+
+    // ===== 知识库集成 =====
+
+    /**
+     * 查询与任务相关的知识
+     * 从知识进化服务中搜索相关的模式、解决方案和最佳实践
+     *
+     * @param taskDescription 任务描述
+     * @return 格式化的知识文本，可直接注入 prompt；服务不可用时返回空字符串
+     */
+    protected String queryRelevantKnowledge(String taskDescription) {
+        if (knowledgeEvolutionService == null || taskDescription == null) {
+            return "";
+        }
+        return knowledgeEvolutionService.queryRelevantKnowledge(taskDescription, getRole());
+    }
+
+    /**
+     * 将任务完成信息反馈到知识库
+     * 成功的任务提取模式，失败的任务记录解决方案
+     *
+     * @param taskDescription 任务描述
+     * @param result 执行结果
+     * @param success 是否成功
+     */
+    protected void feedTaskCompletionToKB(String taskDescription, String result, boolean success) {
+        if (knowledgeEvolutionService == null) return;
+        try {
+            knowledgeEvolutionService.extractInsightsFromTaskCompletion(getId(), taskDescription, result, success);
+        } catch (Exception e) {
+            log.debug("Failed to feed task completion to knowledge base: {}", e.getMessage());
+        }
     }
 }

@@ -135,7 +135,10 @@
         </el-descriptions>
         <div v-if="previewTemplate.content" class="preview-markdown">
           <h4>模板内容：</h4>
-          <div class="markdown-body" v-html="renderMarkdown(previewTemplate.content)"></div>
+          <!-- 使用 MarkdownRenderer 组件渲染模板内容（只读展示） -->
+          <div class="markdown-preview-container">
+            <MarkdownRenderer :content="previewTemplate.content" />
+          </div>
         </div>
       </div>
       <template #footer>
@@ -192,6 +195,14 @@
  * - 使用模板创建游戏
  * - 新增/编辑/删除模板（需要 projects:manage 权限）
  *
+ * 组件复用说明：
+ * - MarkdownEditor: 可编辑的 Markdown 编辑器（支持编辑/预览/分屏模式）
+ *   位置: @/components/MarkdownEditor.vue
+ *   用途: 编辑模板内容
+ * - MarkdownRenderer: 只读 Markdown 渲染器（纯展示，无编辑功能）
+ *   位置: @/components/MarkdownRenderer.vue
+ *   用途: 预览模板内容
+ *
  * @author chengxun
  * @since 1.0.0
  */
@@ -199,18 +210,14 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { gameTemplateApi } from '@/api'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { marked } from 'marked'
-import MarkdownEditor from '@/components/MarkdownEditor.vue'
 
-// 渲染Markdown
-const renderMarkdown = (content) => {
-  if (!content) return ''
-  try {
-    return marked(content, { breaks: true, gfm: true })
-  } catch (e) {
-    return content
-  }
-}
+/**
+ * Markdown 组件
+ * - MarkdownEditor: 编辑模式，用于创建/编辑模板内容
+ * - MarkdownRenderer: 只读模式，用于预览模板内容
+ */
+import MarkdownEditor from '@/components/MarkdownEditor.vue'
+import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 
 const router = useRouter()
 
@@ -508,107 +515,15 @@ onMounted(() => {
   margin-bottom: 8px;
 }
 
-/* Markdown样式 */
-.markdown-body {
-  padding: 16px;
+/**
+ * Markdown 预览容器样式
+ * 为 MarkdownRenderer 组件提供容器样式
+ */
+.markdown-preview-container {
   background: var(--el-fill-color-lighter);
   border-radius: 8px;
+  padding: 16px;
   max-height: 400px;
   overflow-y: auto;
-  line-height: 1.6;
-}
-
-.markdown-body :deep(h1),
-.markdown-body :deep(h2),
-.markdown-body :deep(h3),
-.markdown-body :deep(h4),
-.markdown-body :deep(h5),
-.markdown-body :deep(h6) {
-  margin-top: 16px;
-  margin-bottom: 8px;
-  font-weight: 600;
-  line-height: 1.25;
-}
-
-.markdown-body :deep(h1) {
-  font-size: 1.5em;
-  padding-bottom: 0.3em;
-  border-bottom: 1px solid var(--el-border-color-lighter);
-}
-
-.markdown-body :deep(h2) {
-  font-size: 1.3em;
-  padding-bottom: 0.3em;
-  border-bottom: 1px solid var(--el-border-color-lighter);
-}
-
-.markdown-body :deep(h3) {
-  font-size: 1.1em;
-}
-
-.markdown-body :deep(p) {
-  margin-top: 0;
-  margin-bottom: 10px;
-}
-
-.markdown-body :deep(ul),
-.markdown-body :deep(ol) {
-  padding-left: 2em;
-  margin-top: 0;
-  margin-bottom: 10px;
-}
-
-.markdown-body :deep(li) {
-  margin-top: 0.25em;
-}
-
-.markdown-body :deep(blockquote) {
-  padding: 0 1em;
-  color: var(--el-text-color-secondary);
-  border-left: 0.25em solid var(--el-border-color);
-  margin-top: 0;
-  margin-bottom: 10px;
-}
-
-.markdown-body :deep(pre) {
-  background: var(--el-fill-color-light);
-  padding: 16px;
-  border-radius: 6px;
-  overflow-x: auto;
-  margin-top: 0;
-  margin-bottom: 10px;
-}
-
-.markdown-body :deep(code) {
-  background: var(--el-fill-color-light);
-  padding: 0.2em 0.4em;
-  border-radius: 3px;
-  font-size: 85%;
-  font-family: 'Courier New', monospace;
-}
-
-.markdown-body :deep(pre code) {
-  background: transparent;
-  padding: 0;
-  font-size: 100%;
-}
-
-.markdown-body :deep(table) {
-  border-collapse: collapse;
-  border-spacing: 0;
-  margin-top: 0;
-  margin-bottom: 10px;
-  width: 100%;
-}
-
-.markdown-body :deep(th),
-.markdown-body :deep(td) {
-  padding: 6px 13px;
-  border: 1px solid var(--el-border-color);
-}
-
-.markdown-body :deep(th) {
-  font-weight: 600;
-  background: var(--el-fill-color-lighter);
 }
 </style>

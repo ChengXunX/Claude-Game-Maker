@@ -15,86 +15,200 @@
       </div>
     </el-card>
 
+    <!-- 统计概览 -->
+    <el-row :gutter="16" class="stat-cards" v-if="selectedProjectId">
+      <el-col :xs="12" :sm="6">
+        <el-card shadow="hover" class="stat-card">
+          <div class="stat-icon" style="background: var(--el-color-primary-light-9)">
+            <el-icon :size="24" color="var(--el-color-primary)"><User /></el-icon>
+          </div>
+          <div class="stat-info">
+            <div class="stat-value">{{ agents.length }}</div>
+            <div class="stat-label">Agent 总数</div>
+          </div>
+        </el-card>
+      </el-col>
+      <el-col :xs="12" :sm="6">
+        <el-card shadow="hover" class="stat-card">
+          <div class="stat-icon" style="background: var(--el-color-success-light-9)">
+            <el-icon :size="24" color="var(--el-color-success)"><CircleCheck /></el-icon>
+          </div>
+          <div class="stat-info">
+            <div class="stat-value">{{ runningCount }}</div>
+            <div class="stat-label">运行中</div>
+          </div>
+        </el-card>
+      </el-col>
+      <el-col :xs="12" :sm="6">
+        <el-card shadow="hover" class="stat-card">
+          <div class="stat-icon" style="background: var(--el-color-warning-light-9)">
+            <el-icon :size="24" color="var(--el-color-warning)"><Loading /></el-icon>
+          </div>
+          <div class="stat-info">
+            <div class="stat-value">{{ busyCount }}</div>
+            <div class="stat-label">忙碌中</div>
+          </div>
+        </el-card>
+      </el-col>
+      <el-col :xs="12" :sm="6">
+        <el-card shadow="hover" class="stat-card">
+          <div class="stat-icon" style="background: var(--el-color-info-light-9)">
+            <el-icon :size="24" color="var(--el-color-info)"><Coffee /></el-icon>
+          </div>
+          <div class="stat-info">
+            <div class="stat-value">{{ idleCount }}</div>
+            <div class="stat-label">空闲中</div>
+          </div>
+        </el-card>
+      </el-col>
+    </el-row>
+
     <!-- Agent 列表 -->
     <el-card v-if="selectedProjectId">
       <template #header>
         <div class="card-header">
           <span>{{ selectedProject?.name }} - Agent 列表</span>
-          <el-button @click="loadAgents" :loading="loading">
-            <el-icon><Refresh /></el-icon> 刷新
-          </el-button>
+          <div class="header-actions">
+            <el-input
+              v-model="searchKeyword"
+              placeholder="搜索 Agent..."
+              clearable
+              style="width: 200px"
+              :prefix-icon="Search"
+            />
+            <el-radio-group v-model="viewMode" class="view-toggle">
+              <el-radio-button value="table">
+                <el-icon><List /></el-icon>
+              </el-radio-button>
+              <el-radio-button value="card">
+                <el-icon><Grid /></el-icon>
+              </el-radio-button>
+            </el-radio-group>
+            <el-button @click="loadAgents" :loading="loading">
+              <el-icon><Refresh /></el-icon> 刷新
+            </el-button>
+          </div>
         </div>
       </template>
 
-      <el-table :data="agents" v-loading="loading" stripe>
-        <el-table-column prop="id" label="ID" width="150" show-overflow-tooltip />
-        <el-table-column prop="name" label="名称" width="120" />
-        <el-table-column prop="role" label="角色" width="120">
-          <template #default="{ row }">
-            <el-tag size="small">{{ row.role || '-' }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="状态" width="80">
-          <template #default="{ row }">
-            <el-tag :type="row.alive ? 'success' : 'info'" size="small">
-              {{ row.alive ? '运行中' : '已停止' }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="忙碌" width="80">
-          <template #default="{ row }">
-            <el-tag :type="row.busy ? 'warning' : 'success'" size="small">
-              {{ row.busy ? '忙碌' : '空闲' }}
-            </el-tag>
-          </template>
-        </el-table-column>
-
-        <!-- 推理深度列 -->
-        <el-table-column label="推理深度" width="200">
-          <template #default="{ row }">
-            <div class="reasoning-depth-cell">
-              <el-select
-                :model-value="row.reasoningDepth || 3"
-                size="small"
-                style="width: 140px"
-                @change="(val) => handleReasoningDepthChange(row, val)"
-                :disabled="!hasPermission('agents:manage')"
-              >
-                <el-option
-                  v-for="option in reasoningDepthOptions"
-                  :key="option.value"
-                  :label="option.label"
-                  :value="option.value"
+      <!-- 表格视图 -->
+      <div v-if="viewMode === 'table'">
+        <el-table :data="filteredAgents" v-loading="loading" stripe @selection-change="handleSelectionChange">
+          <el-table-column type="selection" width="45" />
+          <el-table-column prop="name" label="名称" width="120">
+            <template #default="{ row }">
+              <el-link type="primary" @click="handleViewDetail(row)">{{ row.name }}</el-link>
+            </template>
+          </el-table-column>
+          <el-table-column prop="role" label="角色" width="120">
+            <template #default="{ row }">
+              <el-tag size="small" :type="getRoleTagType(row.role)">{{ getRoleLabel(row.role) }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="状态" width="80">
+            <template #default="{ row }">
+              <el-tag :type="row.alive ? 'success' : 'info'" size="small">
+                {{ row.alive ? '运行中' : '已停止' }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="工作状态" width="80">
+            <template #default="{ row }">
+              <el-tag :type="row.busy ? 'warning' : 'success'" size="small" effect="plain">
+                {{ row.busy ? '忙碌' : '空闲' }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="推理深度" width="200">
+            <template #default="{ row }">
+              <div class="reasoning-depth-cell">
+                <el-select
+                  :model-value="row.reasoningDepth || 3"
+                  size="small"
+                  style="width: 140px"
+                  @change="(val) => handleReasoningDepthChange(row, val)"
+                  :disabled="!hasPermission('agents:manage')"
                 >
-                  <div class="depth-option">
-                    <span>{{ option.label }}</span>
-                    <span class="depth-desc">{{ option.description }}</span>
-                  </div>
-                </el-option>
-              </el-select>
-              <el-tooltip :content="getDepthTooltip(row.reasoningDepth)" placement="top">
-                <el-icon class="depth-info"><InfoFilled /></el-icon>
-              </el-tooltip>
-            </div>
-          </template>
-        </el-table-column>
+                  <el-option
+                    v-for="option in reasoningDepthOptions"
+                    :key="option.value"
+                    :label="option.label"
+                    :value="option.value"
+                  >
+                    <div class="depth-option">
+                      <span>{{ option.label }}</span>
+                      <span class="depth-desc">{{ option.description }}</span>
+                    </div>
+                  </el-option>
+                </el-select>
+                <el-tooltip :content="getDepthTooltip(row.reasoningDepth)" placement="top">
+                  <el-icon class="depth-info"><InfoFilled /></el-icon>
+                </el-tooltip>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="250" fixed="right">
+            <template #default="{ row }">
+              <el-button type="primary" size="small" text @click="handleViewDetail(row)">详情</el-button>
+              <el-button type="success" size="small" text @click="handleSendTask(row)">任务</el-button>
+              <el-button
+                :type="row.alive ? 'warning' : 'success'"
+                size="small"
+                text
+                @click="handleToggle(row)"
+                v-permission="'agents:manage'"
+              >
+                {{ row.alive ? '停止' : '启动' }}
+              </el-button>
+              <el-button type="info" size="small" text @click="handleRestart(row)" v-permission="'agents:manage'">重启</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
 
-        <el-table-column label="操作" width="200" fixed="right">
-          <template #default="{ row }">
-            <el-button type="primary" size="small" text @click="handleViewDetail(row)">详情</el-button>
+      <!-- 卡片视图 -->
+      <div v-else class="agents-grid">
+        <el-card
+          v-for="agent in filteredAgents"
+          :key="agent.id"
+          class="agent-card"
+          shadow="hover"
+          @click="handleViewDetail(agent)"
+        >
+          <div class="agent-card-header">
+            <el-tag :type="agent.alive ? 'success' : 'info'" size="small">
+              {{ agent.alive ? '运行中' : '已停止' }}
+            </el-tag>
+            <el-tag v-if="agent.busy" type="warning" size="small" effect="plain">忙碌</el-tag>
+          </div>
+          <div class="agent-card-body">
+            <div class="agent-avatar">
+              <el-icon :size="32"><User /></el-icon>
+            </div>
+            <h4 class="agent-name">{{ agent.name }}</h4>
+            <el-tag :type="getRoleTagType(agent.role)" size="small">{{ getRoleLabel(agent.role) }}</el-tag>
+          </div>
+          <div class="agent-card-footer">
+            <el-button type="primary" size="small" text @click.stop="handleSendTask(agent)">发送任务</el-button>
             <el-button
-              :type="row.alive ? 'warning' : 'success'"
+              :type="agent.alive ? 'warning' : 'success'"
               size="small"
               text
-              @click="handleToggle(row)"
+              @click.stop="handleToggle(agent)"
               v-permission="'agents:manage'"
             >
-              {{ row.alive ? '停止' : '启动' }}
+              {{ agent.alive ? '停止' : '启动' }}
             </el-button>
-            <el-button type="info" size="small" text @click="handleRestart(row)" v-permission="'agents:manage'">重启</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
+          </div>
+        </el-card>
+      </div>
+
+      <!-- 批量操作 -->
+      <div v-if="selectedAgents.length > 0" class="batch-actions">
+        <span class="batch-info">已选择 {{ selectedAgents.length }} 个 Agent</span>
+        <el-button type="warning" size="small" @click="handleBatchStop" v-permission="'agents:manage'">批量停止</el-button>
+        <el-button type="success" size="small" @click="handleBatchStart" v-permission="'agents:manage'">批量启动</el-button>
+      </div>
     </el-card>
 
     <!-- 未选择项目时的提示 -->
@@ -105,6 +219,78 @@
         </template>
       </el-empty>
     </el-card>
+
+    <!-- Agent 详情抽屉 -->
+    <el-drawer
+      v-model="drawerVisible"
+      :title="currentAgent?.name || 'Agent 详情'"
+      size="450px"
+      direction="rtl"
+    >
+      <template v-if="currentAgent">
+        <el-descriptions :column="1" border>
+          <el-descriptions-item label="Agent ID">{{ currentAgent.id }}</el-descriptions-item>
+          <el-descriptions-item label="名称">{{ currentAgent.name }}</el-descriptions-item>
+          <el-descriptions-item label="角色">
+            <el-tag :type="getRoleTagType(currentAgent.role)" size="small">{{ getRoleLabel(currentAgent.role) }}</el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="状态">
+            <el-tag :type="currentAgent.alive ? 'success' : 'info'" size="small">
+              {{ currentAgent.alive ? '运行中' : '已停止' }}
+            </el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="工作状态">
+            <el-tag :type="currentAgent.busy ? 'warning' : 'success'" size="small">
+              {{ currentAgent.busy ? '忙碌' : '空闲' }}
+            </el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="推理深度">
+            {{ getDepthLabel(currentAgent.reasoningDepth) }}
+          </el-descriptions-item>
+        </el-descriptions>
+
+        <el-divider>快捷操作</el-divider>
+        <div class="drawer-actions">
+          <el-button type="primary" @click="handleSendTask(currentAgent)">
+            <el-icon><Promotion /></el-icon> 发送任务
+          </el-button>
+          <el-button @click="handleQuery(currentAgent)">
+            <el-icon><ChatDotRound /></el-icon> 发送消息
+          </el-button>
+          <el-button
+            :type="currentAgent.alive ? 'warning' : 'success'"
+            @click="handleToggle(currentAgent)"
+            v-permission="'agents:manage'"
+          >
+            <el-icon><VideoPlay /></el-icon> {{ currentAgent.alive ? '停止' : '启动' }}
+          </el-button>
+          <el-button type="info" @click="handleRestart(currentAgent)" v-permission="'agents:manage'">
+            <el-icon><RefreshRight /></el-icon> 重启
+          </el-button>
+        </div>
+      </template>
+    </el-drawer>
+
+    <!-- 发送任务对话框 -->
+    <el-dialog v-model="taskDialogVisible" title="发送任务" width="500px">
+      <el-form :model="taskForm" label-width="80px">
+        <el-form-item label="Agent">
+          <el-input :model-value="taskForm.agentName" disabled />
+        </el-form-item>
+        <el-form-item label="任务内容" required>
+          <el-input
+            v-model="taskForm.content"
+            type="textarea"
+            :rows="4"
+            placeholder="请输入任务内容..."
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="taskDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="handleSubmitTask" :loading="sendingTask">发送</el-button>
+      </template>
+    </el-dialog>
 
     <!-- 推理深度说明对话框 -->
     <el-dialog v-model="depthHelpVisible" title="推理深度说明" width="500px">
@@ -129,10 +315,18 @@
  * 先选择项目，再管理该项目下的 Agent
  *
  * 功能：
- * - 查看 Agent 列表和状态
+ * - 统计概览（总数、运行中、忙碌、空闲）
+ * - 查看 Agent 列表和状态（表格/卡片视图）
  * - 启动/停止/重启 Agent
- * - 设置推理深度（全局生效）
- * - 查看 Agent 详情
+ * - 设置推理深度
+ * - 查看 Agent 详情（侧边抽屉）
+ * - 发送任务给 Agent
+ * - 批量操作
+ *
+ * 组件复用说明：
+ * - ProjectSelector: 项目选择器组件
+ *   位置: @/components/ProjectSelector.vue
+ *   用途: 选择要管理的项目
  *
  * 操作维度：项目级
  * 权限要求：agents:view
@@ -141,7 +335,11 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { agentApi } from '@/api'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Folder, InfoFilled } from '@element-plus/icons-vue'
+import {
+  Folder, InfoFilled, Search, List, Grid, User,
+  CircleCheck, Loading, Coffee, Promotion,
+  ChatDotRound, VideoPlay, RefreshRight
+} from '@element-plus/icons-vue'
 import ProjectSelector from '@/components/ProjectSelector.vue'
 import { useUserStore } from '@/stores/user'
 
@@ -153,6 +351,24 @@ const agents = ref([])
 const selectedProjectId = ref(route.query.projectId || localStorage.getItem('selectedProjectId') || '')
 const projects = ref([])
 const depthHelpVisible = ref(false)
+
+// 视图模式
+const viewMode = ref('table') // table | card
+const searchKeyword = ref('')
+const selectedAgents = ref([])
+
+// 详情抽屉
+const drawerVisible = ref(false)
+const currentAgent = ref(null)
+
+// 发送任务
+const taskDialogVisible = ref(false)
+const sendingTask = ref(false)
+const taskForm = ref({
+  agentId: '',
+  agentName: '',
+  content: ''
+})
 
 // 推理深度选项
 const reasoningDepthOptions = [
@@ -167,15 +383,67 @@ const selectedProject = computed(() => {
   return projects.value.find(p => p.id === selectedProjectId.value) || null
 })
 
+// 统计
+const runningCount = computed(() => agents.value.filter(a => a.alive).length)
+const busyCount = computed(() => agents.value.filter(a => a.busy).length)
+const idleCount = computed(() => agents.value.filter(a => a.alive && !a.busy).length)
+
+// 筛选后的 Agent
+const filteredAgents = computed(() => {
+  if (!searchKeyword.value) return agents.value
+  const keyword = searchKeyword.value.toLowerCase()
+  return agents.value.filter(a =>
+    a.name?.toLowerCase().includes(keyword) ||
+    a.role?.toLowerCase().includes(keyword) ||
+    a.id?.toLowerCase().includes(keyword)
+  )
+})
+
 // 检查权限
 const hasPermission = (permission) => {
   return userStore.isAdmin() || userStore.hasPermission(permission)
+}
+
+// 获取角色标签类型
+const getRoleTagType = (role) => {
+  const typeMap = {
+    'producer': 'danger',
+    'server-dev': 'primary',
+    'client-dev': 'success',
+    'ui-dev': 'warning',
+    'system-planner': 'info',
+    'numerical-planner': 'info',
+    'tester': '',
+    'git-commit': 'info'
+  }
+  return typeMap[role] || ''
+}
+
+// 获取角色标签文本
+const getRoleLabel = (role) => {
+  const labelMap = {
+    'producer': '制作人',
+    'server-dev': '服务端',
+    'client-dev': '客户端',
+    'ui-dev': 'UI设计',
+    'system-planner': '系统策划',
+    'numerical-planner': '数值策划',
+    'tester': '测试',
+    'git-commit': 'Git专员'
+  }
+  return labelMap[role] || role
 }
 
 // 获取深度提示
 const getDepthTooltip = (depth) => {
   const option = reasoningDepthOptions.find(o => o.value === depth)
   return option ? `${option.label}: ${option.description}` : '点击查看详情'
+}
+
+// 获取深度标签
+const getDepthLabel = (depth) => {
+  const option = reasoningDepthOptions.find(o => o.value === depth)
+  return option ? option.label : '未知'
 }
 
 /** 项目切换 */
@@ -202,9 +470,58 @@ const loadAgents = async () => {
   }
 }
 
+/** 表格多选变化 */
+const handleSelectionChange = (selection) => {
+  selectedAgents.value = selection
+}
+
 /** 查看详情 */
 const handleViewDetail = (agent) => {
-  router.push(`/agents/${selectedProjectId.value}/${agent.role}`)
+  currentAgent.value = agent
+  drawerVisible.value = true
+}
+
+/** 发送任务 */
+const handleSendTask = (agent) => {
+  taskForm.value = {
+    agentId: agent.id,
+    agentName: agent.name,
+    content: ''
+  }
+  taskDialogVisible.value = true
+  drawerVisible.value = false
+}
+
+/** 提交任务 */
+const handleSubmitTask = async () => {
+  if (!taskForm.value.content) {
+    ElMessage.warning('请输入任务内容')
+    return
+  }
+  sendingTask.value = true
+  try {
+    await agentApi.sendTask(selectedProjectId.value, taskForm.value.agentId.split(':').pop(), {
+      content: taskForm.value.content
+    })
+    ElMessage.success('任务已发送')
+    taskDialogVisible.value = false
+    loadAgents()
+  } catch (error) {
+    ElMessage.error('发送任务失败')
+  } finally {
+    sendingTask.value = false
+  }
+}
+
+/** 发送消息 */
+const handleQuery = (agent) => {
+  taskForm.value = {
+    agentId: agent.id,
+    agentName: agent.name,
+    content: ''
+  }
+  taskDialogVisible.value = true
+  drawerVisible.value = false
 }
 
 /** 启动/停止 */
@@ -224,6 +541,7 @@ const handleToggle = async (agent) => {
     }
 
     ElMessage.success(`Agent 已${action}`)
+    drawerVisible.value = false
     loadAgents()
   } catch (error) {
     if (error !== 'cancel') {
@@ -244,6 +562,7 @@ const handleRestart = async (agent) => {
     await agentApi.restart(selectedProjectId.value, agent.role)
 
     ElMessage.success('Agent 已重启')
+    drawerVisible.value = false
     loadAgents()
   } catch (error) {
     if (error !== 'cancel') {
@@ -258,15 +577,61 @@ const handleReasoningDepthChange = async (agent, newDepth) => {
     const result = await agentApi.setReasoningDepth(selectedProjectId.value, agent.role, newDepth)
     if (result.success) {
       ElMessage.success(result.message || '推理深度已更新')
-      // 更新本地数据
       agent.reasoningDepth = newDepth
     } else {
       ElMessage.error(result.message || '设置失败')
     }
   } catch (error) {
     ElMessage.error('设置推理深度失败')
-    // 恢复原值
     loadAgents()
+  }
+}
+
+/** 批量停止 */
+const handleBatchStop = async () => {
+  try {
+    await ElMessageBox.confirm(`确定要停止选中的 ${selectedAgents.value.length} 个 Agent 吗？`, '批量停止', {
+      confirmButtonText: '停止',
+      cancelButtonText: '取消',
+      type: 'warning'
+    })
+
+    for (const agent of selectedAgents.value) {
+      if (agent.alive) {
+        await agentApi.stop(selectedProjectId.value, agent.role)
+      }
+    }
+
+    ElMessage.success('批量停止完成')
+    loadAgents()
+  } catch (error) {
+    if (error !== 'cancel') {
+      ElMessage.error('批量停止失败')
+    }
+  }
+}
+
+/** 批量启动 */
+const handleBatchStart = async () => {
+  try {
+    await ElMessageBox.confirm(`确定要启动选中的 ${selectedAgents.value.length} 个 Agent 吗？`, '批量启动', {
+      confirmButtonText: '启动',
+      cancelButtonText: '取消',
+      type: 'warning'
+    })
+
+    for (const agent of selectedAgents.value) {
+      if (!agent.alive) {
+        await agentApi.start(selectedProjectId.value, agent.role)
+      }
+    }
+
+    ElMessage.success('批量启动完成')
+    loadAgents()
+  } catch (error) {
+    if (error !== 'cancel') {
+      ElMessage.error('批量启动失败')
+    }
   }
 }
 
@@ -302,6 +667,45 @@ onMounted(() => {
   margin-left: 8px;
 }
 
+/* 统计卡片 */
+.stat-cards {
+  margin-bottom: 16px;
+}
+
+.stat-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px;
+}
+
+.stat-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.stat-info {
+  flex: 1;
+}
+
+.stat-value {
+  font-size: 24px;
+  font-weight: bold;
+  color: var(--el-text-color-primary);
+}
+
+.stat-label {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  margin-top: 4px;
+}
+
+/* 卡片头部 */
 .card-header {
   display: flex;
   justify-content: space-between;
@@ -310,13 +714,95 @@ onMounted(() => {
   gap: 8px;
 }
 
-.empty-card {
-  min-height: 400px;
+.header-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.view-toggle {
+  flex-shrink: 0;
+}
+
+/* 卡片视图 */
+.agents-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 16px;
+}
+
+.agent-card {
+  cursor: pointer;
+  transition: all 0.3s;
+}
+
+.agent-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--el-box-shadow-light);
+}
+
+.agent-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.agent-card-body {
+  text-align: center;
+  padding: 12px 0;
+}
+
+.agent-avatar {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: var(--el-color-primary-light-9);
   display: flex;
   align-items: center;
   justify-content: center;
+  margin: 0 auto 12px;
+  color: var(--el-color-primary);
 }
 
+.agent-name {
+  margin: 0 0 8px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.agent-card-footer {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  border-top: 1px solid var(--el-border-color-lighter);
+  padding-top: 12px;
+}
+
+/* 批量操作 */
+.batch-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 12px;
+  background: var(--el-fill-color-lighter);
+  border-radius: 8px;
+}
+
+.batch-info {
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+}
+
+/* 详情抽屉 */
+.drawer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* 推理深度 */
 .reasoning-depth-cell {
   display: flex;
   align-items: center;
@@ -343,6 +829,7 @@ onMounted(() => {
   font-size: 12px;
 }
 
+/* 深度说明 */
 .depth-help-content p {
   margin-bottom: 16px;
   line-height: 1.6;
@@ -360,7 +847,14 @@ onMounted(() => {
   font-size: 13px;
 }
 
-/* 手机端 */
+.empty-card {
+  min-height: 400px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 响应式 */
 @media (max-width: 767px) {
   .agents-page {
     padding: 12px;
@@ -374,6 +868,20 @@ onMounted(() => {
   .card-header {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .header-actions {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .agents-grid {
+    grid-template-columns: 1fr;
+  }
+
+  :deep(.el-dialog),
+  :deep(.el-drawer) {
+    width: 90% !important;
   }
 }
 </style>

@@ -140,9 +140,7 @@ INSERT IGNORE INTO role_permissions (role_id, permission) VALUES
 (7, 'system:view'),
 (7, 'system:monitor');
 
--- 插入默认管理员用户（密码：admin123）
-INSERT IGNORE INTO users (id, username, password, email, nickname, role_id, status) VALUES
-(1, 'admin', '$2a$12$REDACTED_BCRYPT_HASH_PLACEHOLDER_DATA', 'chengxun@88.com', '管理员', 1, 'APPROVED');
+-- 管理员用户由 Flyway V1 迁移脚本创建，此处不再重复插入（避免覆盖用户自定义密码）
 
 -- 插入默认通知模板
 INSERT IGNORE INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES

@@ -68,7 +68,8 @@ public class SecurityConfig {
     @Order(1)
     public SecurityFilterChain apiFilterChain(HttpSecurity http) throws Exception {
         http
-            .securityMatcher("/api/**", "/feishu/**", "/dingtalk/**", "/ws/**", "/projects/api/**",
+            .authenticationProvider(authenticationProvider())
+            .securityMatcher("/api/**", "/api/internal/**", "/feishu/**", "/dingtalk/**", "/ws/**", "/projects/api/**",
                     "/search/**", "/resources/**", "/performance/**", "/performance-management/**",
                     "/tokens/**", "/reviews/**", "/git/**", "/agents/**", "/health/**",
                     "/interventions/**", "/recruitment/**", "/notifications/**",
@@ -87,6 +88,7 @@ public class SecurityConfig {
                 .requestMatchers("/api/v1/auth/**").permitAll() // 认证相关API（登录、注册、设备验证等）允许匿名访问
                 .requestMatchers("/api/auth/**").permitAll() // 认证相关API允许匿名访问
                 .requestMatchers("/api/install/**").permitAll() // 安装向导允许匿名访问
+                .requestMatchers("/api/internal/**").permitAll() // 内部API允许匿名访问（MCP服务器使用）
                 .requestMatchers("/feishu/**").permitAll() // 飞书webhook允许匿名访问
                 .requestMatchers("/dingtalk/**").permitAll() // 钉钉配置允许匿名访问
                 .requestMatchers("/api/dingtalk/**").permitAll() // 钉钉配置允许匿名访问
@@ -104,6 +106,7 @@ public class SecurityConfig {
     @Order(2)
     public SecurityFilterChain webFilterChain(HttpSecurity http) throws Exception {
         http
+            .securityMatcher("/**")  // 匹配所有未被 apiFilterChain 处理的请求
             .authenticationProvider(authenticationProvider())
             .addFilterBefore(captchaAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
             .addFilterAfter(forcePasswordChangeFilter, UsernamePasswordAuthenticationFilter.class)

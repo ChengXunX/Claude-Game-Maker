@@ -59,6 +59,20 @@ game-project/
     └── data/
 ```
 
+## 目录配置
+
+| 目录路径 | 用途 | 可访问角色 | 说明 |
+|---------|------|-----------|------|
+| /src | 游戏源代码 | client-dev | 场景、实体、系统、UI |
+| /src/scenes | 游戏场景 | client-dev | 各个游戏场景的实现 |
+| /src/entities | 游戏实体 | client-dev | 角色、NPC、怪物等实体类 |
+| /src/systems | 游戏系统 | client-dev | 战斗、任务、对话等系统 |
+| /src/data | 数据配置 | client-dev, system-planner, numerical-planner | 物品、技能、怪物、任务数据 |
+| /src/ui | UI组件 | client-dev, ui-dev | HUD、菜单、对话框等UI |
+| /assets | 资源文件 | ui-dev | 图片、音频、数据文件 |
+| /config | 配置文件 | | 游戏配置（所有角色可访问） |
+| /docs | 文档 | system-planner | 需求文档、设计文档 |
+
 ## 核心代码模板
 
 ### 1. 角色系统 (Character.js)

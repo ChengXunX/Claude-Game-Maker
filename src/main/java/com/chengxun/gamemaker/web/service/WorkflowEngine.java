@@ -75,8 +75,17 @@ public class WorkflowEngine {
     /** 工作流模板（内存缓存） */
     private final Map<String, WorkflowTemplate> templates = new ConcurrentHashMap<>();
 
+    /** 默认步骤超时时间（分钟），可通过系统配置覆盖 */
+    private int defaultStepTimeoutMinutes = 60;
+
+    /** 默认最大重试次数，可通过系统配置覆盖 */
+    private int defaultMaxRetries = 3;
+
     /** 运行中的工作流实例ID集合（防止重复启动） */
     private final Set<String> runningInstanceIds = ConcurrentHashMap.newKeySet();
+
+    /** 工作流实例内存缓存（支持快速查询） */
+    private final Map<String, WorkflowInstance> instanceCache = new ConcurrentHashMap<>();
 
     /** 线程池，用于并行执行任务 */
     private final ExecutorService executorService = Executors.newFixedThreadPool(10);
@@ -138,29 +147,158 @@ public class WorkflowEngine {
 
     @PostConstruct
     public void init() {
+        // 加载系统配置
+        loadSystemConfig();
+
         // ===== 1. 标准游戏开发流程 =====
-        WorkflowTemplate standard = new WorkflowTemplate("standard-game-dev", "标准游戏开发流程", "完整的游戏开发流程，包含策划、并行开发、测试审查、部署上线。适用于有客户端和服务端的完整项目");
-        WorkflowStep planStep = new WorkflowStep("plan", "系统策划", "system-planner", "分析游戏需求，制定系统架构和技术方案，输出设计文档");
-        WorkflowStep devServerStep = new WorkflowStep("dev-server", "服务端开发", "server-dev", "实现服务端逻辑、API接口和数据库设计");
-        devServerStep.addDependency("plan");
-        WorkflowStep devClientStep = new WorkflowStep("dev-client", "客户端开发", "client-dev", "实现前端界面、交互逻辑和游戏画面");
-        devClientStep.addDependency("plan");
-        devServerStep.setParallel(true);
-        devClientStep.setParallel(true);
-        WorkflowStep stdTestStep = new WorkflowStep("test", "测试验证", "tester", "执行功能测试、性能测试和兼容性测试。如测试失败，需记录问题并通知开发Agent修复后重新测试，测试通过后方可进入下一步骤");
-        stdTestStep.addDependency("dev-server");
-        stdTestStep.addDependency("dev-client");
-        WorkflowStep stdReviewStep = new WorkflowStep("review", "代码审查", "server-dev", "审查代码质量、注释规范、安全性和性能问题");
-        stdReviewStep.addDependency("test");
-        WorkflowStep stdDeployStep = new WorkflowStep("deploy", "部署上线", "git-commit", "合并代码并部署到生产环境");
-        stdDeployStep.addDependency("review");
-        stdDeployStep.setRequiresApproval(true);
+        // 完整的游戏开发流程：系统策划→数值审批→技术评审→服务端设计→三方并行开发→自测验收→测试→bug修复→回归→部署
+        WorkflowTemplate standard = new WorkflowTemplate("standard-game-dev", "标准游戏开发流程",
+            "完整的游戏开发流程，包含策划审批、技术评审、并行开发、测试验收、bug修复和部署。适用于有客户端和服务端的完整项目");
+
+        // 步骤1：系统策划 — 输出策划案
+        WorkflowStep planStep = new WorkflowStep("plan", "系统策划", "system-planner",
+            "分析游戏需求，撰写完整的系统策划案，包括核心玩法、系统架构、功能模块划分、交互流程和数据模型设计。输出策划文档供数值策划审批");
+
+        // 步骤2：数值策划审批 — 审查策划案的数值可行性和平衡性
+        WorkflowStep numericalReview = new WorkflowStep("numerical-review", "数值策划审批", "numerical-planner",
+            "审查系统策划案的数值可行性、平衡性和完整性。检查数值框架是否合理、成长曲线是否平滑、经济系统是否平衡。审批通过后进入技术评审，不通过则打回修改");
+        numericalReview.addDependency("plan");
+        numericalReview.setRequiresApproval(true);
+
+        // 步骤3：技术评审 — 服务端和客户端并行评审
+        WorkflowStep serverTechReview = new WorkflowStep("server-tech-review", "服务端技术评审", "server-dev",
+            "从服务端角度评审策划案：评估技术可行性、性能瓶颈、数据库设计难度、接口复杂度。输出技术评审意见和风险点");
+        serverTechReview.addDependency("numerical-review");
+        serverTechReview.setParallel(true);
+
+        WorkflowStep clientTechReview = new WorkflowStep("client-tech-review", "客户端技术评审", "client-dev",
+            "从客户端角度评审策划案：评估前端实现难度、渲染性能、交互体验、兼容性问题。输出技术评审意见和风险点");
+        clientTechReview.addDependency("numerical-review");
+        clientTechReview.setParallel(true);
+
+        // 步骤4：服务端设计 — 输出接口文档和配置表
+        WorkflowStep serverDesign = new WorkflowStep("server-design", "服务端设计", "server-dev",
+            "根据策划案和技术评审意见，完成以下设计：\n" +
+            "1. 数据库设计：用户表、角色表、背包表等核心业务表结构\n" +
+            "2. 配置表设计：装备配置、技能配置、关卡配置等策划配置表\n" +
+            "3. 接口文档：RESTful API 接口定义，包含请求/响应格式、错误码\n" +
+            "输出：数据库DDL、配置表模板、接口文档（Swagger格式）\n" +
+            "接口文档传递给客户端开发，配置表传递给数值策划");
+        serverDesign.addDependency("server-tech-review");
+        serverDesign.addDependency("client-tech-review");
+
+        // 步骤5：三方并行开发
+        WorkflowStep devServer = new WorkflowStep("dev-server", "服务端开发", "server-dev",
+            "根据接口文档和数据库设计，实现服务端业务逻辑：\n" +
+            "1. 实现数据库表和ORM映射\n" +
+            "2. 实现 RESTful API 接口\n" +
+            "3. 实现核心业务逻辑（战斗、背包、任务等）\n" +
+            "4. 编写单元测试\n" +
+            "5. 输出接口联调文档给客户端");
+        devServer.addDependency("server-design");
+        devServer.setParallel(true);
+
+        WorkflowStep devClient = new WorkflowStep("dev-client", "客户端开发", "client-dev",
+            "根据接口文档和策划案，实现客户端功能：\n" +
+            "1. 实现 UI 界面和交互逻辑\n" +
+            "2. 对接服务端 API 接口\n" +
+            "3. 实现游戏核心玩法的前端逻辑\n" +
+            "4. 实现动画、音效等多媒体资源集成\n" +
+            "5. 编写自动化测试脚本");
+        devClient.addDependency("server-design");
+        devClient.setParallel(true);
+
+        WorkflowStep devNumerical = new WorkflowStep("dev-numerical", "数值配置", "numerical-planner",
+            "根据配置表模板和策划案，完成数值配置：\n" +
+            "1. 填写装备、技能、怪物等配置表数据\n" +
+            "2. 设计数值成长曲线和平衡参数\n" +
+            "3. 配置关卡难度和奖励数值\n" +
+            "4. 输出数值配置文件供服务端加载");
+        devNumerical.addDependency("server-design");
+        devNumerical.setParallel(true);
+
+        // 步骤6：自测 — 三方各自验证
+        WorkflowStep serverSelfTest = new WorkflowStep("server-self-test", "服务端自测", "server-dev",
+            "服务端自测：验证API接口正确性、数据一致性、性能指标。确保所有接口可正常调用，无明显bug");
+        serverSelfTest.addDependency("dev-server");
+        serverSelfTest.setParallel(true);
+
+        WorkflowStep clientSelfTest = new WorkflowStep("client-self-test", "客户端自测", "client-dev",
+            "客户端自测：验证UI展示正确性、交互流畅性、接口对接无误。确保所有页面可正常访问和操作");
+        clientSelfTest.addDependency("dev-client");
+        clientSelfTest.setParallel(true);
+
+        WorkflowStep numericalSelfTest = new WorkflowStep("numerical-self-test", "数值自测", "numerical-planner",
+            "数值自测：验证配置表数据正确性、数值平衡性、成长曲线合理性。确保配置表可正确加载，数值无明显异常");
+        numericalSelfTest.addDependency("dev-numerical");
+        numericalSelfTest.setParallel(true);
+
+        // 步骤7：策划验收 — 系统策划确认功能完整性
+        WorkflowStep acceptance = new WorkflowStep("acceptance", "策划验收", "system-planner",
+            "系统策划验收：对照策划案逐项检查功能实现完整性，确认核心玩法、系统逻辑、交互流程是否符合设计预期。验收不通过则记录问题并打回对应开发方修改");
+        acceptance.addDependency("server-self-test");
+        acceptance.addDependency("client-self-test");
+        acceptance.addDependency("numerical-self-test");
+        acceptance.setRequiresApproval(true);
+
+        // 步骤8：测试 — 测试团队全面测试
+        WorkflowStep testing = new WorkflowStep("test", "测试验证", "tester",
+            "全面测试：\n" +
+            "1. 功能测试：验证所有功能模块是否正常工作\n" +
+            "2. 集成测试：验证前后端联调是否正确\n" +
+            "3. 性能测试：验证响应时间、并发能力、资源占用\n" +
+            "4. 兼容性测试：验证不同设备和浏览器的兼容性\n" +
+            "5. 记录所有bug并分配给对应开发方（服务端/客户端/数值）\n" +
+            "测试不通过则进入bug修复阶段");
+        testing.addDependency("acceptance");
+
+        // 步骤9：Bug修复 — 三方并行修复
+        WorkflowStep fixServer = new WorkflowStep("fix-server", "服务端Bug修复", "server-dev",
+            "修复测试阶段发现的服务端bug，确保修复后不影响其他功能");
+        fixServer.addDependency("test");
+        fixServer.setParallel(true);
+
+        WorkflowStep fixClient = new WorkflowStep("fix-client", "客户端Bug修复", "client-dev",
+            "修复测试阶段发现的客户端bug，确保修复后不影响其他功能");
+        fixClient.addDependency("test");
+        fixClient.setParallel(true);
+
+        WorkflowStep fixNumerical = new WorkflowStep("fix-numerical", "数值Bug修复", "numerical-planner",
+            "修复测试阶段发现的数值配置bug，调整不合理的数值参数");
+        fixNumerical.addDependency("test");
+        fixNumerical.setParallel(true);
+
+        // 步骤10：回归测试 — 验证bug修复
+        WorkflowStep regression = new WorkflowStep("regression", "回归测试", "tester",
+            "回归测试：重新验证所有已修复的bug，确认修复有效且未引入新问题。执行核心功能回归测试套件，确保系统稳定性");
+        regression.addDependency("fix-server");
+        regression.addDependency("fix-client");
+        regression.addDependency("fix-numerical");
+
+        // 步骤11：部署上线
+        WorkflowStep deployStep = new WorkflowStep("deploy", "部署上线", "git-commit",
+            "合并所有代码分支，执行构建流水线，部署到生产环境。进行线上冒烟测试，确认服务正常运行");
+        deployStep.addDependency("regression");
+        deployStep.setRequiresApproval(true);
+
         standard.addStep(planStep);
-        standard.addStep(devServerStep);
-        standard.addStep(devClientStep);
-        standard.addStep(stdTestStep);
-        standard.addStep(stdReviewStep);
-        standard.addStep(stdDeployStep);
+        standard.addStep(numericalReview);
+        standard.addStep(serverTechReview);
+        standard.addStep(clientTechReview);
+        standard.addStep(serverDesign);
+        standard.addStep(devServer);
+        standard.addStep(devClient);
+        standard.addStep(devNumerical);
+        standard.addStep(serverSelfTest);
+        standard.addStep(clientSelfTest);
+        standard.addStep(numericalSelfTest);
+        standard.addStep(acceptance);
+        standard.addStep(testing);
+        standard.addStep(fixServer);
+        standard.addStep(fixClient);
+        standard.addStep(fixNumerical);
+        standard.addStep(regression);
+        standard.addStep(deployStep);
 
         // ===== 2. 服务端开发流程 =====
         WorkflowTemplate serverOnly = new WorkflowTemplate("server-only-dev", "服务端开发流程", "纯后端项目开发流程，适用于API服务、微服务、后台管理系统等无客户端的项目");
@@ -383,6 +521,9 @@ public class WorkflowEngine {
         registerTemplate(planningQuick);
         registerTemplate(codeQuickFix);
 
+        // 持久化内置模板到数据库（如果不存在）
+        persistBuiltinTemplates();
+
         // 从数据库加载用户自定义模板
         loadCustomTemplatesFromDatabase();
 
@@ -481,6 +622,9 @@ public class WorkflowEngine {
         // 持久化到数据库
         persistInstance(instance, template);
         runningInstanceIds.add(instanceId);
+
+        // 保存到内存缓存
+        instanceCache.put(instanceId, instance);
 
         // 记录审计日志
         auditService.logSystem(instanceId, null, WorkflowAuditService.ACTION_INSTANCE_CREATED, null);
@@ -1056,16 +1200,143 @@ public class WorkflowEngine {
 
     // ===== 查询方法 =====
 
-    /** 获取工作流实例 */
+    /**
+     * 获取工作流实例
+     * 优先从内存缓存查询，如果没有则从数据库恢复
+     *
+     * @param instanceId 实例 ID
+     * @return 工作流实例，不存在返回 null
+     */
     public WorkflowInstance getInstance(String instanceId) {
-        // 先从内存查
-        // 内存中可能没有（重启后），需要从数据库恢复
-        return null; // 简化实现，实际需要维护内存缓存
+        // 1. 先从内存缓存查询
+        WorkflowInstance instance = instanceCache.get(instanceId);
+        if (instance != null) {
+            return instance;
+        }
+
+        // 2. 从数据库恢复
+        instance = recoverInstanceFromDatabase(instanceId);
+        if (instance != null) {
+            // 保存到缓存
+            instanceCache.put(instanceId, instance);
+        }
+
+        return instance;
     }
 
-    /** 获取所有运行中的工作流实例 */
+    /**
+     * 从数据库恢复工作流实例
+     *
+     * @param instanceId 实例 ID
+     * @return 恢复的工作流实例，不存在返回 null
+     */
+    private WorkflowInstance recoverInstanceFromDatabase(String instanceId) {
+        try {
+            Optional<WorkflowInstanceEntity> entityOpt = instanceRepository.findById(instanceId);
+            if (entityOpt.isEmpty()) {
+                return null;
+            }
+
+            WorkflowInstanceEntity entity = entityOpt.get();
+
+            // 恢复实例
+            WorkflowInstance instance = new WorkflowInstance(instanceId, entity.getTemplateId(), entity.getProjectId());
+            instance.setStatus(WorkflowStatus.valueOf(entity.getStatus()));
+
+            // 恢复参数
+            if (entity.getParametersJson() != null && !entity.getParametersJson().isEmpty()) {
+                Map<String, String> params = objectMapper.readValue(entity.getParametersJson(),
+                    new com.fasterxml.jackson.core.type.TypeReference<Map<String, String>>() {});
+                instance.getParameters().putAll(params);
+            }
+
+            // 恢复步骤执行状态
+            List<WorkflowStepExecutionEntity> stepEntities = stepExecutionRepository.findByInstanceIdOrderByCreatedAtAsc(instanceId);
+            for (WorkflowStepExecutionEntity stepEntity : stepEntities) {
+                StepExecution stepExecution = new StepExecution(stepEntity.getStepId());
+                stepExecution.setStatus(StepStatus.valueOf(stepEntity.getStatus()));
+                stepExecution.setAgentId(stepEntity.getAgentId());
+                stepExecution.setResult(stepEntity.getOutputDataJson());
+                stepExecution.setError(stepEntity.getErrorMessage());
+                stepExecution.setRetryCount(stepEntity.getRetryCount());
+
+                if (stepEntity.getStartedAt() != null) {
+                    stepExecution.setStartedAt(stepEntity.getStartedAt());
+                }
+                if (stepEntity.getCompletedAt() != null) {
+                    stepExecution.setCompletedAt(stepEntity.getCompletedAt());
+                }
+
+                instance.getStepExecutions().put(stepEntity.getStepId(), stepExecution);
+            }
+
+            log.info("从数据库恢复工作流实例: {}", instanceId);
+            return instance;
+        } catch (Exception e) {
+            log.error("从数据库恢复工作流实例失败: {}", instanceId, e);
+            return null;
+        }
+    }
+
+    /**
+     * 获取所有运行中的工作流实例
+     *
+     * @return 运行中的实例列表
+     */
     public List<WorkflowInstance> getRunningInstances() {
-        return new ArrayList<>(); // 简化实现
+        List<WorkflowInstance> running = new ArrayList<>();
+
+        // 从内存缓存中筛选运行中的实例
+        for (WorkflowInstance instance : instanceCache.values()) {
+            if (instance.getStatus() == WorkflowStatus.RUNNING ||
+                instance.getStatus() == WorkflowStatus.PAUSED) {
+                running.add(instance);
+            }
+        }
+
+        // 如果缓存为空，从数据库恢复
+        if (running.isEmpty()) {
+            try {
+                List<WorkflowInstanceEntity> entities = instanceRepository.findByStatusIn(
+                    Arrays.asList("RUNNING", "PAUSED"));
+                for (WorkflowInstanceEntity entity : entities) {
+                    WorkflowInstance instance = getInstance(entity.getId());
+                    if (instance != null) {
+                        running.add(instance);
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("从数据库获取运行中实例失败: {}", e.getMessage());
+            }
+        }
+
+        return running;
+    }
+
+    /**
+     * 获取所有工作流实例（包括已完成的）
+     *
+     * @return 所有实例列表
+     */
+    public List<WorkflowInstance> getAllInstances() {
+        List<WorkflowInstance> all = new ArrayList<>(instanceCache.values());
+
+        // 补充数据库中有但缓存中没有的实例
+        try {
+            List<WorkflowInstanceEntity> entities = instanceRepository.findAll();
+            for (WorkflowInstanceEntity entity : entities) {
+                if (!instanceCache.containsKey(entity.getId())) {
+                    WorkflowInstance instance = getInstance(entity.getId());
+                    if (instance != null) {
+                        all.add(instance);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("从数据库获取所有实例失败: {}", e.getMessage());
+        }
+
+        return all;
     }
 
     /** 获取实例的审计日志 */
@@ -1176,6 +1447,78 @@ public class WorkflowEngine {
         }
     }
 
+    /**
+     * 从系统配置加载默认参数
+     */
+    private void loadSystemConfig() {
+        try {
+            // 这里可以从 SystemConfigService 或数据库加载配置
+            // 暂时使用硬编码的默认值，后续可以通过配置覆盖
+            defaultStepTimeoutMinutes = 60;  // 默认 60 分钟
+            defaultMaxRetries = 3;           // 默认重试 3 次
+
+            log.info("工作流系统配置已加载: timeout={}min, maxRetries={}",
+                defaultStepTimeoutMinutes, defaultMaxRetries);
+        } catch (Exception e) {
+            log.warn("加载工作流系统配置失败，使用默认值: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * 获取默认步骤超时时间
+     */
+    public int getDefaultStepTimeoutMinutes() {
+        return defaultStepTimeoutMinutes;
+    }
+
+    /**
+     * 设置默认步骤超时时间
+     */
+    public void setDefaultStepTimeoutMinutes(int minutes) {
+        this.defaultStepTimeoutMinutes = minutes;
+    }
+
+    /**
+     * 获取默认最大重试次数
+     */
+    public int getDefaultMaxRetries() {
+        return defaultMaxRetries;
+    }
+
+    /**
+     * 设置默认最大重试次数
+     */
+    public void setDefaultMaxRetries(int retries) {
+        this.defaultMaxRetries = retries;
+    }
+
+    /**
+     * 持久化内置模板到数据库
+     * 确保重启后内置模板不丢失
+     */
+    private void persistBuiltinTemplates() {
+        for (WorkflowTemplate template : templates.values()) {
+            try {
+                // 检查数据库中是否已存在
+                if (workflowTemplateRepository.existsById(template.getId())) {
+                    continue;
+                }
+
+                WorkflowTemplateEntity entity = new WorkflowTemplateEntity();
+                entity.setId(template.getId());
+                entity.setName(template.getName());
+                entity.setDescription(template.getDescription());
+                entity.setBuiltin(true);
+                entity.setStepsJson(objectMapper.writeValueAsString(template.getSteps()));
+                workflowTemplateRepository.save(entity);
+
+                log.debug("持久化内置工作流模板: {}", template.getId());
+            } catch (Exception e) {
+                log.warn("持久化内置工作流模板失败: {} - {}", template.getId(), e.getMessage());
+            }
+        }
+    }
+
     /** 从数据库加载用户自定义模板 */
     private void loadCustomTemplatesFromDatabase() {
         try {
@@ -1264,9 +1607,19 @@ public class WorkflowEngine {
             this.taskDescription = taskDescription;
             this.dependencies = new ArrayList<>();
             this.parallel = false;
-            this.timeoutMinutes = 30;
+            this.timeoutMinutes = 60;  // 默认 60 分钟
             this.requiresApproval = false;
             this.maxRetries = 3;
+        }
+
+        /**
+         * 构造函数（带超时和重试配置）
+         */
+        public WorkflowStep(String id, String name, String agentRole, String taskDescription,
+                            int timeoutMinutes, int maxRetries) {
+            this(id, name, agentRole, taskDescription);
+            this.timeoutMinutes = timeoutMinutes;
+            this.maxRetries = maxRetries;
         }
 
         public String getId() { return id; }

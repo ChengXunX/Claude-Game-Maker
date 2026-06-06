@@ -61,12 +61,13 @@ public class StreamingClaudeCliEngine {
      * @param apiKey API密钥
      * @param apiUrl API地址
      * @param model 模型名称
+     * @param userToken 用户 JWT Token，用于 MCP 工具鉴权
      * @param onEvent 事件回调
      */
     public void sendMessageStreaming(String agentId, String sessionId, String message,
                                      String workDir, String apiKey, String apiUrl, String model,
-                                     Consumer<StreamEvent> onEvent) {
-        ProcessInfo processInfo = getOrCreateProcess(agentId, sessionId, workDir, apiKey, apiUrl, model);
+                                     String userToken, Consumer<StreamEvent> onEvent) {
+        ProcessInfo processInfo = getOrCreateProcess(agentId, sessionId, workDir, apiKey, apiUrl, model, userToken);
         if (processInfo == null) {
             onEvent.accept(StreamEvent.error("Failed to create Claude CLI process"));
             return;
@@ -86,7 +87,8 @@ public class StreamingClaudeCliEngine {
      * --print 模式是一次性进程，每次都需要创建新进程
      */
     private ProcessInfo getOrCreateProcess(String agentId, String sessionId,
-                                           String workDir, String apiKey, String apiUrl, String model) {
+                                           String workDir, String apiKey, String apiUrl, String model,
+                                           String userToken) {
         // 清理旧进程（--print 模式下进程用完即销毁）
         ProcessInfo existing = processes.remove(agentId);
         if (existing != null) {
@@ -94,7 +96,7 @@ public class StreamingClaudeCliEngine {
         }
 
         try {
-            return createProcess(agentId, sessionId, workDir, apiKey, apiUrl, model);
+            return createProcess(agentId, sessionId, workDir, apiKey, apiUrl, model, userToken);
         } catch (Exception e) {
             log.error("Failed to create Claude CLI process for agent: {}", agentId, e);
             return null;
@@ -105,7 +107,8 @@ public class StreamingClaudeCliEngine {
      * 创建Claude CLI进程
      */
     private ProcessInfo createProcess(String agentId, String sessionId,
-                                      String workDir, String apiKey, String apiUrl, String model) throws IOException {
+                                      String workDir, String apiKey, String apiUrl, String model,
+                                      String userToken) throws IOException {
         String installPath = appConfig.getClaude().getInstallPath();
 
         // 使用默认配置
@@ -134,6 +137,7 @@ public class StreamingClaudeCliEngine {
         command.add("--output-format");
         command.add("stream-json");
         command.add("--verbose");
+        command.add("--dangerously-skip-permissions");
 
         if (model != null && !model.isEmpty()) {
             command.add("--model");
@@ -143,6 +147,16 @@ public class StreamingClaudeCliEngine {
         if (sessionId != null && !sessionId.isEmpty()) {
             command.add("--resume");
             command.add(sessionId);
+        }
+
+        // 生成 MCP 配置文件，让 Claude CLI 可以调用后端 API 工具
+        if (userToken != null && !userToken.isEmpty()) {
+            File mcpConfigFile = generateMcpConfig(userToken);
+            if (mcpConfigFile != null) {
+                command.add("--mcp-config");
+                command.add(mcpConfigFile.getAbsolutePath());
+                log.info("MCP config generated for agent: {}, token: {}...", agentId, userToken.substring(0, Math.min(20, userToken.length())));
+            }
         }
 
         pb.command(command);
@@ -331,6 +345,53 @@ public class StreamingClaudeCliEngine {
      */
     public String getSessionId(String agentId) {
         return sessionIds.get(agentId);
+    }
+
+    /**
+     * 生成 MCP 配置文件
+     * 创建临时 JSON 文件，配置 MCP 服务器和用户 Token
+     *
+     * @param userToken 用户 JWT Token
+     * @return MCP 配置文件，失败返回 null
+     */
+    private File generateMcpConfig(String userToken) {
+        try {
+            // MCP 服务器脚本路径
+            String mcpServerPath = System.getProperty("user.dir") + "/mcp-server/index.js";
+
+            // 检查 MCP 服务器脚本是否存在
+            File mcpServerFile = new File(mcpServerPath);
+            if (!mcpServerFile.exists()) {
+                log.warn("MCP 服务器脚本不存在: {}", mcpServerPath);
+                return null;
+            }
+
+            // 生成 MCP 配置 JSON
+            String config = String.format("""
+                {
+                  "mcpServers": {
+                    "chengxun-game-maker": {
+                      "command": "node",
+                      "args": ["%s"],
+                      "env": {
+                        "USER_TOKEN": "%s"
+                      }
+                    }
+                  }
+                }
+                """, mcpServerPath, userToken);
+
+            // 写入临时文件
+            File tempFile = File.createTempFile("mcp-config-", ".json");
+            tempFile.deleteOnExit();
+            java.nio.file.Files.write(tempFile.toPath(), config.getBytes());
+
+            log.info("MCP 配置文件已生成: {}", tempFile.getAbsolutePath());
+            return tempFile;
+        } catch (Exception e) {
+            log.error("生成 MCP 配置文件失败", e);
+            return null;
+        }
     }
 
     /**

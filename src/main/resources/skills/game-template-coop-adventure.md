@@ -66,6 +66,22 @@ game-coop-adventure/
 └── assets/
 ```
 
+## 目录配置
+
+| 目录路径 | 用途 | 可访问角色 | 说明 |
+|---------|------|-----------|------|
+| /src | 游戏源代码 | client-dev | 游戏主程序、场景、实体 |
+| /src/scenes | 游戏场景 | client-dev | 各个游戏场景的实现 |
+| /src/entities | 游戏实体 | client-dev | 玩家、障碍物、NPC等实体类 |
+| /src/systems | 游戏系统 | client-dev | 物理、谜题、检查点等系统 |
+| /src/network | 网络模块 | client-dev | Socket管理、状态同步 |
+| /src/data | 数据配置 | client-dev, system-planner | 关卡、谜题、对话数据 |
+| /src/ui | UI组件 | client-dev, ui-dev | HUD、对话框、提示等UI |
+| /server | 联机服务端 | server-dev | 联机服务端代码 |
+| /assets | 资源文件 | ui-dev | 图片、音频资源 |
+| /config | 配置文件 | | 游戏配置（所有角色可访问） |
+| /docs | 文档 | system-planner | 需求文档、设计文档 |
+
 ## 核心代码
 
 ### 1. 游戏配置 (config.js)

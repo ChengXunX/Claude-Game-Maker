@@ -339,6 +339,29 @@ public class SkillManager {
         }
     }
 
+    /**
+     * 将项目级技能提升为全局技能
+     * 从项目技能中移除，注册为全局技能并保存到文件
+     *
+     * @param skillId 技能 ID
+     * @param projectId 项目 ID
+     * @return 提升的技能，如果不存在返回 null
+     */
+    public Skill promoteToGlobal(String skillId, String projectId) {
+        Map<String, Skill> projSkills = projectSkills.get(projectId);
+        if (projSkills == null) return null;
+
+        Skill skill = projSkills.remove(skillId);
+        if (skill == null) return null;
+
+        skill.setCategory("global");
+        globalSkills.put(skill.getId(), skill);
+        saveGlobalSkillToFile(skill);
+
+        log.info("Skill promoted from project to global: {} (project: {})", skillId, projectId);
+        return skill;
+    }
+
     public void saveLearnedSkill(Skill skill, String agentId, String projectId, String projectSkillsDir) {
         skill.setCategory("learned");
         registerProjectSkill(projectId, skill);

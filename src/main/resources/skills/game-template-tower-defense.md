@@ -54,6 +54,21 @@ game-project/
     └── levels/
 ```
 
+## 目录配置
+
+| 目录路径 | 用途 | 可访问角色 | 说明 |
+|---------|------|-----------|------|
+| /src | 游戏源代码 | client-dev | 游戏主程序、场景 |
+| /src/scenes | 游戏场景 | client-dev | 各个游戏场景的实现 |
+| /src/towers | 塔防单位 | client-dev | 各种塔的实现 |
+| /src/enemies | 敌人单位 | client-dev | 各种敌人的实现 |
+| /src/systems | 游戏系统 | client-dev | 波次、路径、经济等系统 |
+| /src/ui | UI组件 | client-dev, ui-dev | HUD、塔菜单等UI |
+| /src/data | 数据配置 | client-dev, numerical-planner | 塔、敌人、关卡数据 |
+| /assets | 资源文件 | ui-dev | 图片、音频、关卡文件 |
+| /config | 配置文件 | | 游戏配置（所有角色可访问） |
+| /docs | 文档 | system-planner | 需求文档、设计文档 |
+
 ## 核心代码模板
 
 ### 1. 塔基类 (Tower.js)

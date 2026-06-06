@@ -3,6 +3,7 @@ package com.chengxun.gamemaker.manager;
 import com.chengxun.gamemaker.config.AppConfig;
 import com.chengxun.gamemaker.config.CacheConfig;
 import com.chengxun.gamemaker.model.GameProject;
+import com.chengxun.gamemaker.service.GameTemplateService;
 import com.chengxun.gamemaker.service.TemplateService;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -45,6 +46,7 @@ public class ProjectManager {
     private final AppConfig appConfig;
     private final ObjectMapper objectMapper;
     private final TemplateService templateService;
+    private final GameTemplateService gameTemplateService;
 
     /** 项目缓存，key为项目ID */
     private final Map<String, GameProject> projects = new ConcurrentHashMap<>();
@@ -59,10 +61,12 @@ public class ProjectManager {
     private final ProjectManager self;
 
     public ProjectManager(AppConfig appConfig, ObjectMapper objectMapper,
-                          TemplateService templateService, @Lazy ProjectManager self) {
+                          TemplateService templateService, GameTemplateService gameTemplateService,
+                          @Lazy ProjectManager self) {
         this.appConfig = appConfig;
         this.objectMapper = objectMapper;
         this.templateService = templateService;
+        this.gameTemplateService = gameTemplateService;
         this.self = self;
         init();
     }
@@ -212,6 +216,14 @@ public class ProjectManager {
                 log.info("Template {} applied to project {}", templateId, projectId);
             } else {
                 log.warn("Failed to apply template {} to project {}", templateId, projectId);
+            }
+
+            // 从模板配置项目目录
+            try {
+                gameTemplateService.configureProjectDirectories(project, templateId);
+                log.info("Template directories configured for project {} from template {}", projectId, templateId);
+            } catch (Exception e) {
+                log.warn("Failed to configure template directories for project {}: {}", projectId, e.getMessage());
             }
         }
 

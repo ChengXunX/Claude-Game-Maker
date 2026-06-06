@@ -479,6 +479,93 @@ public class ProjectWebController {
         ));
     }
 
+    /**
+     * 获取项目的里程碑列表
+     *
+     * @param projectId 项目 ID
+     * @return 里程碑列表
+     */
+    @GetMapping("/api/{projectId}/milestones")
+    @ResponseBody
+    @PreAuthorize("hasAuthority('PERM_projects:view')")
+    public ResponseEntity<List<GameProject.GoalMilestone>> getMilestones(@PathVariable String projectId) {
+        GameProject project = projectManager.getProject(projectId);
+        if (project == null) {
+            return ResponseEntity.notFound().build();
+        }
+        List<GameProject.GoalMilestone> milestones = goalService.getMilestones(projectId);
+        return ResponseEntity.ok(milestones);
+    }
+
+    /**
+     * 获取项目的目录配置
+     *
+     * @param projectId 项目 ID
+     * @return 目录配置列表
+     */
+    @GetMapping("/api/{projectId}/directories")
+    @ResponseBody
+    @PreAuthorize("hasAuthority('PERM_projects:view')")
+    public ResponseEntity<Map<String, GameProject.DirectoryConfig>> getDirectories(@PathVariable String projectId) {
+        GameProject project = projectManager.getProject(projectId);
+        if (project == null) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok(project.getDirectoryConfigs());
+    }
+
+    /**
+     * 添加或更新项目目录配置
+     *
+     * @param projectId 项目 ID
+     * @param config 目录配置
+     * @return 操作结果
+     */
+    @PostMapping("/api/{projectId}/directories")
+    @ResponseBody
+    @PreAuthorize("hasAuthority('PERM_projects:manage')")
+    public ResponseEntity<Map<String, Object>> addDirectory(@PathVariable String projectId,
+                                                            @RequestBody GameProject.DirectoryConfig config) {
+        GameProject project = projectManager.getProject(projectId);
+        if (project == null) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "项目不存在"));
+        }
+
+        if (config.getPath() == null || config.getPath().isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "目录路径不能为空"));
+        }
+
+        project.addDirectoryConfig(config);
+        projectManager.saveProjectConfig(project);
+
+        return ResponseEntity.ok(Map.of("success", true, "message", "目录配置已保存"));
+    }
+
+    /**
+     * 删除项目目录配置
+     *
+     * @param projectId 项目 ID
+     * @param dirPath 目录路径
+     * @return 操作结果
+     */
+    @DeleteMapping("/api/{projectId}/directories/{dirPath}")
+    @ResponseBody
+    @PreAuthorize("hasAuthority('PERM_projects:manage')")
+    public ResponseEntity<Map<String, Object>> removeDirectory(@PathVariable String projectId,
+                                                               @PathVariable String dirPath) {
+        GameProject project = projectManager.getProject(projectId);
+        if (project == null) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "项目不存在"));
+        }
+
+        // URL 解码路径
+        String decodedPath = java.net.URLDecoder.decode(dirPath, java.nio.charset.StandardCharsets.UTF_8);
+        project.removeDirectoryConfig(decodedPath);
+        projectManager.saveProjectConfig(project);
+
+        return ResponseEntity.ok(Map.of("success", true, "message", "目录配置已删除"));
+    }
+
     // ===== 安全校验 =====
 
     /**

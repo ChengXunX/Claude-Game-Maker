@@ -105,9 +105,10 @@ public class AiToolExecutor {
      * @param toolName 工具名称
      * @param params 参数
      * @param username 当前用户名
+     * @param userToken 用户的 JWT Token，用于后端 API 调用时的身份传递
      * @return 执行结果
      */
-    public Map<String, Object> executeTool(String toolName, Map<String, Object> params, String username) {
+    public Map<String, Object> executeTool(String toolName, Map<String, Object> params, String username, String userToken) {
         log.info("执行工具: {} - 用户: {} - 参数: {}", toolName, username, params);
 
         try {
@@ -227,6 +228,10 @@ public class AiToolExecutor {
                     return executeGetSystemInfo();
                 case "get_diagnostic":
                     return executeGetDiagnostic();
+
+                // ===== 通用API调用 =====
+                case "call_api":
+                    return executeCallApi(params, userToken);
 
                 default:
                     return Map.of("success", false, "error", "未知工具: " + toolName);
@@ -868,6 +873,97 @@ public class AiToolExecutor {
             return Map.of("success", true, "diagnostic", diagnostic);
         } catch (Exception e) {
             return Map.of("success", false, "error", e.getMessage());
+        }
+    }
+
+    // ===== 通用API调用 =====
+
+    /**
+     * 执行通用API调用
+     * 允许AI助手调用系统中的任意API端点
+     *
+     * @param params 包含 method、path、body 的参数
+     * @param userToken 用户的 JWT Token，用于身份传递
+     * @return API调用结果
+     */
+    private Map<String, Object> executeCallApi(Map<String, Object> params, String userToken) {
+        String method = ((String) params.getOrDefault("method", "GET")).toUpperCase();
+        String path = (String) params.get("path");
+        String body = (String) params.getOrDefault("body", null);
+
+        if (path == null || path.isEmpty()) {
+            return Map.of("success", false, "error", "API路径不能为空");
+        }
+
+        try {
+            // 构建完整的URL
+            String baseUrl = "http://127.0.0.1:19922";
+            String fullUrl = baseUrl + (path.startsWith("/") ? path : "/" + path);
+
+            log.info("执行通用API调用: {} {}", method, fullUrl);
+
+            java.net.http.HttpClient httpClient = java.net.http.HttpClient.newHttpClient();
+            java.net.http.HttpRequest.Builder requestBuilder = java.net.http.HttpRequest.newBuilder()
+                .uri(java.net.URI.create(fullUrl))
+                .header("Content-Type", "application/json");
+
+            // 传递用户的 JWT Token，确保 API 调用使用当前用户的身份
+            if (userToken != null && !userToken.isEmpty()) {
+                requestBuilder.header("Authorization", "Bearer " + userToken);
+            }
+
+            // 根据HTTP方法构建请求
+            switch (method) {
+                case "GET":
+                    requestBuilder.GET();
+                    break;
+                case "POST":
+                    requestBuilder.POST(java.net.http.HttpRequest.BodyPublishers.ofString(body != null ? body : "{}"));
+                    break;
+                case "PUT":
+                    requestBuilder.PUT(java.net.http.HttpRequest.BodyPublishers.ofString(body != null ? body : "{}"));
+                    break;
+                case "DELETE":
+                    requestBuilder.DELETE();
+                    break;
+                default:
+                    return Map.of("success", false, "error", "不支持的HTTP方法: " + method);
+            }
+
+            java.net.http.HttpResponse<String> response = httpClient.send(
+                requestBuilder.build(),
+                java.net.http.HttpResponse.BodyHandlers.ofString()
+            );
+
+            int statusCode = response.statusCode();
+            String responseBody = response.body();
+
+            log.info("API调用完成: {} {} - 状态码: {}", method, fullUrl, statusCode);
+
+            // 权限不足（401/403）时返回明确的权限错误
+            if (statusCode == 401 || statusCode == 403) {
+                String errorMsg = statusCode == 401 ? "未授权：请先登录" : "权限不足：无法访问该资源";
+                log.warn("API调用权限不足: {} {} - 状态码: {}", method, fullUrl, statusCode);
+                return Map.of("success", false, "error", errorMsg, "statusCode", statusCode);
+            }
+
+            // 尝试解析JSON响应
+            try {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> jsonResponse = objectMapper.readValue(responseBody, Map.class);
+                return Map.of("success", statusCode >= 200 && statusCode < 300,
+                    "statusCode", statusCode,
+                    "data", jsonResponse);
+            } catch (Exception e) {
+                // 非JSON响应，返回原始文本
+                return Map.of("success", statusCode >= 200 && statusCode < 300,
+                    "statusCode", statusCode,
+                    "data", responseBody);
+            }
+
+        } catch (Exception e) {
+            log.error("API调用失败: {} {}", method, path, e);
+            return Map.of("success", false, "error", "API调用失败: " + e.getMessage());
         }
     }
 }

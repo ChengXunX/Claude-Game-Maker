@@ -41,6 +41,14 @@ public class AgentDefinition {
     /** 不支持的功能（如：image_generation, 3d_rendering等） */
     private Set<String> unsupportedFeatures = new HashSet<>();
 
+    // ===== 项目参与配置 =====
+
+    /** 是否默认参与项目（制作人默认 true，其他角色默认 false） */
+    private boolean defaultInProject = false;
+
+    /** 当前是否在项目中（运行时状态） */
+    private boolean inProject = false;
+
     // ===== 上下文配置 =====
 
     /** 最大上下文大小（token数） */
@@ -208,6 +216,16 @@ public class AgentDefinition {
     public void addUnsupportedFeature(String feature) { unsupportedFeatures.add(feature); }
     public boolean supportsFeature(String feature) { return !unsupportedFeatures.contains(feature); }
 
+    // ===== 项目参与配置相关 =====
+
+    /** 是否默认参与项目 */
+    public boolean isDefaultInProject() { return defaultInProject; }
+    public void setDefaultInProject(boolean defaultInProject) { this.defaultInProject = defaultInProject; }
+
+    /** 当前是否在项目中 */
+    public boolean isInProject() { return inProject; }
+    public void setInProject(boolean inProject) { this.inProject = inProject; }
+
     // ===== 上下文相关 =====
 
     public int getMaxContextSize() { return maxContextSize; }
@@ -344,6 +362,8 @@ public class AgentDefinition {
         public Builder supportsCodeExecution(boolean supports) { def.supportsCodeExecution = supports; return this; }
         public Builder supportsFileOperations(boolean supports) { def.supportsFileOperations = supports; return this; }
         public Builder apiProvider(String provider) { def.apiProvider = provider; return this; }
+        public Builder defaultInProject(boolean defaultInProject) { def.defaultInProject = defaultInProject; return this; }
+        public Builder inProject(boolean inProject) { def.inProject = inProject; return this; }
 
         public AgentDefinition build() {
             // 自动生成 runtimeId: projectId:role

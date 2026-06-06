@@ -546,31 +546,38 @@ public class AiToolRegistry {
      */
     public String generateToolDescriptions(Set<String> userPermissions) {
         StringBuilder sb = new StringBuilder();
-        sb.append("## 可用工具（必须使用这些工具来执行操作）\n\n");
-        sb.append("⚠️ **重要**：所有操作都必须通过工具完成，不要尝试修改代码文件。\n");
-        sb.append("⚠️ **你拥有完整的系统访问能力**：所有工具都可以直接调用获取实时数据，不需要查看代码。\n\n");
-        sb.append("工具调用格式：\n");
-        sb.append("```tool_call\n{\"tool\": \"工具名\", \"params\": {参数}}\n```\n\n");
+        sb.append("## 可用 API（使用 curl 调用）\n\n");
+        sb.append("⚠️ **重要**：所有操作都必须通过 API 完成，不要尝试修改代码文件。\n");
+        sb.append("⚠️ **你拥有完整的系统访问能力**：所有 API 都可以直接调用获取实时数据，不需要查看代码。\n\n");
+        sb.append("API 调用方式：使用 curl 调用 http://127.0.0.1:19922/api/...\n\n");
         sb.append("示例：\n");
-        sb.append("```tool_call\n{\"tool\": \"list_workflow_templates\", \"params\": {}}\n```\n");
-        sb.append("```tool_call\n{\"tool\": \"list_agents\", \"params\": {}}\n```\n");
-        sb.append("```tool_call\n{\"tool\": \"list_workflow_instances\", \"params\": {}}\n```\n\n");
+        sb.append("```bash\ncurl -s http://127.0.0.1:19922/api/workflow-templates\n```\n");
+        sb.append("```bash\ncurl -s http://127.0.0.1:19922/api/agents\n```\n");
+        sb.append("```bash\ncurl -s http://127.0.0.1:19922/api/projects\n```\n\n");
 
         // 按类别分组
         sb.append("### 项目管理\n");
-        appendToolByNames(sb, userPermissions, "list_projects", "create_project", "create_project_from_template");
+        sb.append("- 查询项目：`curl -s http://127.0.0.1:19922/api/projects`\n");
+        sb.append("- 创建项目：`curl -X POST http://127.0.0.1:19922/api/projects -H 'Content-Type: application/json' -d '{...}'`\n\n");
 
         sb.append("### 工作流管理\n");
-        appendToolByNames(sb, userPermissions, "list_workflow_templates", "create_workflow_template",
-            "delete_workflow_template", "start_workflow", "list_workflow_instances",
-            "cancel_workflow", "pause_workflow", "resume_workflow");
+        sb.append("- 查询工作流模板：`curl -s http://127.0.0.1:19922/api/workflow-templates`\n");
+        sb.append("- 创建工作流模板：`curl -X POST http://127.0.0.1:19922/api/workflow-templates -H 'Content-Type: application/json' -d '{...}'`\n");
+        sb.append("- 删除工作流模板：`curl -X DELETE http://127.0.0.1:19922/api/workflow-templates/{id}`\n");
+        sb.append("- 启动工作流：`curl -X POST http://127.0.0.1:19922/api/workflows/start -H 'Content-Type: application/json' -d '{...}'`\n");
+        sb.append("- 查询工作流实例：`curl -s http://127.0.0.1:19922/api/workflows/instances`\n\n");
 
         sb.append("### Agent 管理\n");
-        appendToolByNames(sb, userPermissions, "list_agents", "send_agent_task", "intervene_agent",
-            "pause_agent", "resume_agent", "get_agent_health", "get_agent_logs");
+        sb.append("- 查询 Agent 列表：`curl -s http://127.0.0.1:19922/api/agents`\n");
+        sb.append("- 发送 Agent 任务：`curl -X POST http://127.0.0.1:19922/api/agents/{id}/task -H 'Content-Type: application/json' -d '{...}'`\n");
+        sb.append("- 干预 Agent：`curl -X POST http://127.0.0.1:19922/api/agents/{id}/intervene -H 'Content-Type: application/json' -d '{...}'`\n");
+        sb.append("- 暂停 Agent：`curl -X POST http://127.0.0.1:19922/api/agents/{id}/pause`\n");
+        sb.append("- 恢复 Agent：`curl -X POST http://127.0.0.1:19922/api/agents/{id}/resume`\n\n");
 
         sb.append("### 游戏模板\n");
-        appendToolByNames(sb, userPermissions, "list_game_templates", "create_game_template", "delete_game_template");
+        sb.append("- 查询游戏模板：`curl -s http://127.0.0.1:19922/api/game-templates`\n");
+        sb.append("- 创建游戏模板：`curl -X POST http://127.0.0.1:19922/api/game-templates -H 'Content-Type: application/json' -d '{...}'`\n");
+        sb.append("- 删除游戏模板：`curl -X DELETE http://127.0.0.1:19922/api/game-templates/{id}`\n\n");
 
         sb.append("### 技能管理\n");
         appendToolByNames(sb, userPermissions, "list_skills", "create_skill");

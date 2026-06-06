@@ -450,8 +450,9 @@ public class CapabilityExecutionEngine {
             String role = getParam(params, "role", "");
             String workDir = getParam(params, "workDir", "");
             try {
-                var newAgent = producer.createAgent(name, role, null, workDir);
-                return CapabilityResult.success(newAgent != null ? "Agent 已创建: " + newAgent.getId() : "已提交审批");
+                // 发起创建 Agent 审批请求
+                producer.requestCreateAgent(name, role, null, workDir);
+                return CapabilityResult.success("已发起创建 Agent 审批请求，等待管理员审批");
             } catch (Exception e) {
                 return CapabilityResult.failed(e.getMessage());
             }

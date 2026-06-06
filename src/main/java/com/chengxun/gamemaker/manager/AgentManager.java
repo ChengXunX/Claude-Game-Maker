@@ -73,6 +73,24 @@ public class AgentManager {
     @Autowired(required = false)
     private com.chengxun.gamemaker.web.service.AgentLogService agentLogService;
 
+    @Autowired(required = false)
+    private com.chengxun.gamemaker.service.GameTemplateService gameTemplateService;
+
+    @Autowired(required = false)
+    private com.chengxun.gamemaker.web.service.WorkflowEngine workflowEngine;
+
+    @Autowired(required = false)
+    private com.chengxun.gamemaker.web.service.ApprovalService approvalService;
+
+    @Autowired(required = false)
+    private com.chengxun.gamemaker.service.ApprovalCallbackService approvalCallbackService;
+
+    @Autowired(required = false)
+    private com.chengxun.gamemaker.service.PerformanceManagementService performanceManagementService;
+
+    @Autowired(required = false)
+    private com.chengxun.gamemaker.service.KnowledgeEvolutionService knowledgeEvolutionService;
+
     /** Agent 资源配额缓存 */
     private final ConcurrentHashMap<String, AgentResourceQuota> quotaMap = new ConcurrentHashMap<>();
 
@@ -143,6 +161,21 @@ public class AgentManager {
         injectCapabilityServices(producer);
         if (goalService != null) {
             producer.setGoalService(goalService);
+        }
+        if (gameTemplateService != null) {
+            producer.setGameTemplateService(gameTemplateService);
+        }
+        if (workflowEngine != null) {
+            producer.setWorkflowEngine(workflowEngine);
+        }
+        if (approvalService != null) {
+            producer.setApprovalService(approvalService);
+        }
+        if (approvalCallbackService != null) {
+            producer.setApprovalCallbackService(approvalCallbackService);
+        }
+        if (performanceManagementService != null) {
+            producer.setPerformanceManagementService(performanceManagementService);
         }
         producer.initialize();
         producer.start();
@@ -357,6 +390,7 @@ public class AgentManager {
         agent.setContextMonitor(contextMonitor);
         agent.setMcpService(mcpService);
         agent.setAgentLogService(agentLogService);
+        agent.setKnowledgeEvolutionService(knowledgeEvolutionService);
     }
 
     // ===== 停止管理 =====

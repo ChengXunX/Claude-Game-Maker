@@ -59,6 +59,9 @@ application-prod.yml
 application-dev.yml
 application-*.yml
 
+# 数据库导出脚本（可能包含敏感数据）
+src/main/resources/db/init.sql
+
 # Privacy sensitive files
 *.env
 .env

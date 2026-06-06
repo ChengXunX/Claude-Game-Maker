@@ -51,6 +51,21 @@ game-project/
     └── levels/             # 关卡数据
 ```
 
+## 目录配置
+
+| 目录路径 | 用途 | 可访问角色 | 说明 |
+|---------|------|-----------|------|
+| /src | 游戏源代码 | client-dev | 游戏主程序、场景 |
+| /src/scenes | 游戏场景 | client-dev | 各个游戏场景的实现 |
+| /src/sprites | 游戏精灵 | client-dev | 玩家、敌人、平台等 |
+| /src/objects | 游戏对象 | client-dev | 金币、道具、检查点等 |
+| /src/ui | UI组件 | client-dev, ui-dev | HUD、菜单等UI |
+| /src/utils | 工具类 | client-dev | 关卡管理、音效管理等 |
+| /assets | 资源文件 | ui-dev | 图片、音频、关卡文件 |
+| /assets/levels | 关卡数据 | client-dev, system-planner | 关卡设计数据 |
+| /config | 配置文件 | | 游戏配置（所有角色可访问） |
+| /docs | 文档 | system-planner | 需求文档、设计文档 |
+
 ## 核心代码模板
 
 ### 1. 游戏配置 (config.js)

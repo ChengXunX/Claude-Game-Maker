@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "chengxun-game-maker": {
+      "command": "node",
+      "args": ["/home/chengxun/chengxun_game_maker/mcp-server/index.js"],
+      "env": {
+        "USER_TOKEN": ""
+      }
+    }
+  }
+}
