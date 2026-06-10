@@ -10,6 +10,7 @@ import com.chengxun.gamemaker.model.GameProject;
 import com.chengxun.gamemaker.web.entity.ApiToken;
 import com.chengxun.gamemaker.web.service.AgentPresetService;
 import com.chengxun.gamemaker.web.service.ApiTokenService;
+import com.chengxun.gamemaker.service.AgentInterventionService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
@@ -46,6 +47,7 @@ public class StartupInitializer {
     private final ProjectManager projectManager;
     private final AgentPresetService presetService;
     private final ApiTokenService tokenService;
+    private final AgentInterventionService interventionService;
 
     public StartupInitializer(AppConfig appConfig,
                              AgentConfig agentConfig,
@@ -54,7 +56,8 @@ public class StartupInitializer {
                              SkillManager skillManager,
                              ProjectManager projectManager,
                              AgentPresetService presetService,
-                             ApiTokenService tokenService) {
+                             ApiTokenService tokenService,
+                             AgentInterventionService interventionService) {
         this.appConfig = appConfig;
         this.agentConfig = agentConfig;
         this.agentManager = agentManager;
@@ -63,6 +66,7 @@ public class StartupInitializer {
         this.projectManager = projectManager;
         this.presetService = presetService;
         this.tokenService = tokenService;
+        this.interventionService = interventionService;
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -71,8 +75,9 @@ public class StartupInitializer {
 
         createDataDirectories();
         initSystemPresets();
-        createDefaultProjectAgents();
+        restoreExistingProjectAgents();
         restoreTokenBindings();
+        restorePendingInterventions();
         initDefaultSkills();
 
         log.info("Game Maker startup complete. Agents: {}, Skills: {}, Projects: {}",
@@ -108,44 +113,82 @@ public class StartupInitializer {
     }
 
     /**
-     * 创建默认项目的 Agent
-     * 如果配置了默认工作目录，创建一个默认项目并启动配置中的 Agent
+     * 恢复已有项目的 Agent 实例
+     * 从项目配置中读取 agentIds，为每个 Agent 创建运行实例
      *
-     * 注意：Agent 必须绑定到项目，不能独立存在
+     * 区别于从 yml 配置创建：这里是从已持久化的项目配置恢复
      */
-    private void createDefaultProjectAgents() {
-        String defaultWorkDir = appConfig.getDefaultWorkDir();
-        if (defaultWorkDir == null || defaultWorkDir.isEmpty()) {
-            log.info("No default workDir configured, skipping default project agent creation");
-            return;
+    private void restoreExistingProjectAgents() {
+        try {
+            java.util.List<GameProject> projects = projectManager.getAllProjects();
+            int restoredCount = 0;
+
+            for (GameProject project : projects) {
+                java.util.List<String> agentIds = project.getAgentIds();
+                if (agentIds == null || agentIds.isEmpty()) {
+                    continue;
+                }
+
+                log.info("Restoring agents for project: {} ({} agents)", project.getName(), agentIds.size());
+
+                for (String agentRuntimeId : agentIds) {
+                    // 运行时 ID 格式：projectId:agentRole
+                    int lastColon = agentRuntimeId.lastIndexOf(':');
+                    String role = lastColon > 0 ? agentRuntimeId.substring(lastColon + 1) : agentRuntimeId;
+
+                    // 跳过已存在的 Agent
+                    if (agentManager.getAgent(agentRuntimeId) != null) {
+                        log.debug("Agent already exists, skipping: {}", agentRuntimeId);
+                        continue;
+                    }
+
+                    try {
+                        AgentDefinition definition = AgentDefinition.builder()
+                            .id(role)
+                            .name(getDefaultAgentName(role))
+                            .role(role)
+                            .description("")
+                            .workDir(project.getWorkDir())
+                            .projectId(project.getId())
+                            .apiKey(appConfig.getClaude().getApiKey())
+                            .apiUrl(appConfig.getClaude().getApiUrl())
+                            .model(appConfig.getClaude().getModel())
+                            .parent("producer".equals(role))
+                            .build();
+
+                        agentManager.createAgent(definition);
+                        restoredCount++;
+                        log.info("Agent restored: {} for project: {}", agentRuntimeId, project.getName());
+                    } catch (Exception e) {
+                        log.warn("Failed to restore agent {} for project {}: {}",
+                            agentRuntimeId, project.getName(), e.getMessage());
+                    }
+                }
+            }
+
+            if (restoredCount > 0) {
+                log.info("Restored {} agents for existing projects", restoredCount);
+            }
+        } catch (Exception e) {
+            log.error("Failed to restore existing project agents", e);
         }
+    }
 
-        // 获取或创建默认项目
-        GameProject defaultProject = projectManager.getOrCreateProject(defaultWorkDir);
-        String projectId = defaultProject.getId();
-
-        log.info("Creating agents for default project: {} ({})", defaultProject.getName(), projectId);
-
-        agentConfig.getDefinitions().forEach((key, def) -> {
-            AgentDefinition definition = AgentDefinition.builder()
-                .id(key)
-                .name(def.getName())
-                .role(def.getRole())
-                .description(def.getDescription())
-                .agentsFile(def.getAgentsFile())
-                .workDir(defaultWorkDir)
-                .projectId(projectId)
-                .apiKey(appConfig.getClaude().getApiKey())
-                .apiUrl(appConfig.getClaude().getApiUrl())
-                .model(appConfig.getClaude().getModel())
-                .status(AgentDefinition.AgentStatus.IDLE)
-                .parent("producer".equals(def.getRole()))
-                .build();
-
-            agentManager.createAgent(definition);
-            log.info("Agent created: {} (runtimeId={}) for project: {}",
-                def.getName(), definition.getEffectiveId(), projectId);
-        });
+    /**
+     * 获取角色的默认名称
+     */
+    private String getDefaultAgentName(String role) {
+        return switch (role) {
+            case "producer" -> "制作人";
+            case "server-dev" -> "服务端开发";
+            case "client-dev" -> "客户端开发";
+            case "ui-dev" -> "UI设计";
+            case "system-planner" -> "系统策划";
+            case "numerical-planner" -> "数值策划";
+            case "tester" -> "测试工程师";
+            case "git-commit" -> "Git专员";
+            default -> role;
+        };
     }
 
     /**
@@ -153,6 +196,73 @@ public class StartupInitializer {
      */
     private void initDefaultSkills() {
         log.info("Default skills initialized: {}", skillManager.getAllGlobalSkills().size());
+    }
+
+    /**
+     * 恢复待处理的干预指令
+     * 系统重启后，数据库中状态为 PENDING/ACKNOWLEDGED 的干预需要重新投递给对应 Agent
+     * 避免干预因重启而永久丢失
+     */
+    private void restorePendingInterventions() {
+        try {
+            java.util.List<com.chengxun.gamemaker.web.entity.AgentIntervention> pending =
+                interventionService.getAllPendingInterventions();
+
+            if (pending.isEmpty()) {
+                log.info("No pending interventions to restore");
+                return;
+            }
+
+            int restored = 0;
+            for (com.chengxun.gamemaker.web.entity.AgentIntervention intervention : pending) {
+                String agentId = intervention.getAgentId();
+                Agent agent = agentManager.getAgent(agentId);
+
+                if (agent != null && agent.isAlive() && agent instanceof com.chengxun.gamemaker.agent.BaseAgent baseAgent) {
+                    // 重新构建干预消息并投递给 Agent
+                    String message = buildInterventionMessage(intervention);
+                    com.chengxun.gamemaker.model.AgentMessage agentMessage = com.chengxun.gamemaker.model.AgentMessage.builder()
+                        .fromAgentId("system")
+                        .toAgentId(agentId)
+                        .type(com.chengxun.gamemaker.model.AgentMessage.MessageType.SYSTEM)
+                        .content(message)
+                        .build();
+
+                    baseAgent.receiveMessage(agentMessage);
+                    restored++;
+                    log.info("Restored pending intervention {} to agent {}", intervention.getInterventionNo(), agentId);
+                } else {
+                    log.debug("Skipping intervention {} - agent {} not available", intervention.getInterventionNo(), agentId);
+                }
+            }
+
+            if (restored > 0) {
+                log.info("Restored {} pending interventions to agents", restored);
+            }
+        } catch (Exception e) {
+            log.error("Failed to restore pending interventions", e);
+        }
+    }
+
+    /**
+     * 构建干预消息内容（与 AgentInterventionService.buildInterventionMessage 一致）
+     */
+    private String buildInterventionMessage(com.chengxun.gamemaker.web.entity.AgentIntervention intervention) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("## 人工干预通知\n\n");
+        sb.append("**干预编号**: ").append(intervention.getInterventionNo()).append("\n");
+        sb.append("**干预类型**: ").append(intervention.getInterventionTypeDescription()).append("\n");
+        sb.append("**干预人**: ").append(intervention.getUsername()).append(" (").append(intervention.getUserRole()).append(")\n\n");
+
+        if (intervention.getInstruction() != null) {
+            sb.append("**指令内容**:\n").append(intervention.getInstruction()).append("\n\n");
+        }
+        if (intervention.getReason() != null) {
+            sb.append("**干预原因**:\n").append(intervention.getReason()).append("\n\n");
+        }
+
+        sb.append("请确认并执行此干预指令。");
+        return sb.toString();
     }
 
     /**
@@ -176,6 +286,12 @@ public class StartupInitializer {
                         agent.getDefinition().setApiKey(token.getApiKey());
                         agent.getDefinition().setApiUrl(token.getApiUrl());
                         agent.getDefinition().setModel(token.getModel());
+
+                        // 同时恢复到 AgentContext（持久化）
+                        if (agent instanceof com.chengxun.gamemaker.agent.BaseAgent baseAgent) {
+                            baseAgent.saveApiConfigToContext(token.getApiKey(), token.getApiUrl(), token.getModel());
+                        }
+
                         restoredCount++;
 
                         log.info("Restored token binding: {} -> agent {} (apiUrl={}, model={})",

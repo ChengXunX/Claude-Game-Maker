@@ -79,6 +79,12 @@ const routes = [
         meta: { title: 'Agent健康', icon: 'CircleCheck', group: 'Agent管理', permission: 'agents:view' }
       },
       {
+        path: 'game-verify',
+        name: 'GameVerify',
+        component: () => import('@/views/game-verify/index.vue'),
+        meta: { title: '游戏验证', icon: 'Monitor', group: '项目管理', permission: 'projects:view' }
+      },
+      {
         path: 'performance',
         name: 'Performance',
         component: () => import('@/views/performance/index.vue'),
@@ -94,13 +100,13 @@ const routes = [
         path: 'scheduler',
         name: 'Scheduler',
         component: () => import('@/views/scheduler/index.vue'),
-        meta: { title: 'Agent调度', icon: 'Timer', group: 'Agent管理', permission: 'agents:manage' }
+        meta: { title: '智能调度中心', icon: 'Cpu', group: 'Agent管理', permission: 'agents:manage' }
       },
       {
-        path: 'performance-mgmt',
-        name: 'PerformanceMgmt',
-        component: () => import('@/views/performance-mgmt/index.vue'),
-        meta: { title: '绩效管理', icon: 'DataAnalysis', group: 'Agent管理', permission: 'agents:manage' }
+        path: 'approvals',
+        name: 'Approvals',
+        component: () => import('@/views/approvals/index.vue'),
+        meta: { title: '审批管理', icon: 'Stamp', group: 'Agent管理', permission: 'agents:manage' }
       },
       {
         path: 'capabilities',

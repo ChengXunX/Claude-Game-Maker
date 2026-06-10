@@ -245,6 +245,15 @@ public class PerformanceManagementController {
     }
 
     /**
+     * 获取所有评审记录
+     */
+    @GetMapping("/reviews/producer/all")
+    @PreAuthorize("hasAuthority('PERM_agents:view')")
+    public ResponseEntity<List<PerformanceReview>> getAllReviews() {
+        return ResponseEntity.ok(performanceService.getAllReviews());
+    }
+
+    /**
      * 获取待审批的解雇申请
      */
     @GetMapping("/dismissals/pending")

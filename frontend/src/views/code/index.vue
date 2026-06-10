@@ -8,6 +8,9 @@
             <span>代码浏览</span>
           </div>
           <div class="header-actions">
+            <el-button size="small" @click="toggleFullscreen">
+              <el-icon><FullScreen /></el-icon> {{ isFullscreen ? '退出全屏' : '全屏' }}
+            </el-button>
             <el-button size="small" @click="handleDownload" :disabled="!currentFile">
               <el-icon><Download /></el-icon> 下载
             </el-button>
@@ -110,10 +113,10 @@
 
               <!-- 代码视图 -->
               <div v-else class="code-wrapper">
-                <div class="line-numbers">
+                <div class="line-numbers" ref="lineNumbersRef">
                   <div v-for="n in lineCount" :key="n" class="line-number">{{ n }}</div>
                 </div>
-                <pre class="code-block"><code :class="'language-' + currentLanguage" v-html="highlightedCode"></code></pre>
+                <pre class="code-block" ref="codeBlockRef" @scroll="syncLineNumbers"><code :class="['hljs', 'language-' + currentLanguage]" v-html="highlightedCode"></code></pre>
               </div>
             </div>
 
@@ -153,17 +156,19 @@ import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 import { codeBrowserApi } from '@/api'
 import {
   FolderOpened, Back, Refresh, Search, Folder, Document, Picture,
-  CopyDocument, Download, Operation, View
+  CopyDocument, Download, Operation, View, FullScreen
 } from '@element-plus/icons-vue'
 
-// 导入highlight.js样式（亮色和暗色主题）
-import 'highlight.js/styles/github.css'
-import 'highlight.js/styles/github-dark.css'
+// 导入highlight.js样式（IntelliJ IDEA风格）
+import 'highlight.js/styles/idea.css'
+import 'highlight.js/styles/androidstudio.css'
 
 const route = useRoute()
 const router = useRouter()
 const treeRef = ref(null)
 const containerRef = ref(null)
+const lineNumbersRef = ref(null)
+const codeBlockRef = ref(null)
 
 const loadingTree = ref(false)
 const loadingContent = ref(false)
@@ -173,6 +178,7 @@ const currentFile = ref('')
 const currentLanguage = ref('')
 const filterText = ref('')
 const showMarkdownSource = ref(false)
+const isFullscreen = ref(false)
 
 // 拖动调整相关
 const leftPanelWidth = ref(280)
@@ -250,6 +256,13 @@ const escapeHtml = (str) => {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
+}
+
+// 同步行号滚动
+const syncLineNumbers = () => {
+  if (lineNumbersRef.value && codeBlockRef.value) {
+    lineNumbersRef.value.scrollTop = codeBlockRef.value.scrollTop
+  }
 }
 
 // 过滤节点
@@ -360,6 +373,34 @@ const handleFileClick = async (data) => {
   }
 }
 
+/** 切换全屏 */
+const toggleFullscreen = () => {
+  isFullscreen.value = !isFullscreen.value
+  const page = document.querySelector('.code-page')
+  if (isFullscreen.value) {
+    if (page.requestFullscreen) {
+      page.requestFullscreen()
+    } else if (page.webkitRequestFullscreen) {
+      page.webkitRequestFullscreen()
+    } else if (page.msRequestFullscreen) {
+      page.msRequestFullscreen()
+    }
+  } else {
+    if (document.exitFullscreen) {
+      document.exitFullscreen()
+    } else if (document.webkitExitFullscreen) {
+      document.webkitExitFullscreen()
+    } else if (document.msExitFullscreen) {
+      document.msExitFullscreen()
+    }
+  }
+}
+
+// 监听全屏变化事件
+const handleFullscreenChange = () => {
+  isFullscreen.value = !!document.fullscreenElement
+}
+
 /** 格式化JSON */
 const handleFormatJson = () => {
   try {
@@ -413,12 +454,16 @@ const handleDownload = async () => {
 onMounted(() => {
   loadFileTree()
   window.addEventListener('resize', handleWindowResize)
+  document.addEventListener('fullscreenchange', handleFullscreenChange)
+  document.addEventListener('webkitfullscreenchange', handleFullscreenChange)
 })
 
 onUnmounted(() => {
   window.removeEventListener('resize', handleWindowResize)
   document.removeEventListener('mousemove', handleResize)
   document.removeEventListener('mouseup', stopResize)
+  document.removeEventListener('fullscreenchange', handleFullscreenChange)
+  document.removeEventListener('webkitfullscreenchange', handleFullscreenChange)
 })
 </script>
 
@@ -593,19 +638,22 @@ onUnmounted(() => {
 .code-wrapper {
   display: flex;
   min-height: 100%;
+  overflow: hidden;
 }
 
 .line-numbers {
   padding: 20px 16px;
-  background: #f6f8fa;
-  color: #6a737d;
+  background: #f5f5f5;
+  color: #999;
   text-align: right;
   user-select: none;
-  border-right: 1px solid #e1e4e8;
-  font-family: 'Courier New', Consolas, Monaco, monospace;
-  font-size: 14px;
+  border-right: 1px solid #e8e8e8;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', Consolas, Monaco, monospace;
+  font-size: 13px;
   line-height: 1.6;
   flex-shrink: 0;
+  overflow: hidden;
+  min-width: 50px;
 }
 
 .line-number {
@@ -616,42 +664,67 @@ onUnmounted(() => {
   flex: 1;
   margin: 0;
   padding: 20px;
-  background: #f6f8fa;
-  overflow-x: auto;
-  font-family: 'Courier New', Consolas, Monaco, monospace;
-  font-size: 14px;
+  background: #fff;
+  overflow: auto;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', Consolas, Monaco, monospace;
+  font-size: 13px;
   line-height: 1.6;
   tab-size: 4;
-  white-space: pre;
-  word-wrap: normal;
-  color: #24292e;
+  white-space: pre !important;
+  word-wrap: normal !important;
+  color: #000;
+  min-width: 0;
 }
 
-.code-block code {
-  background: transparent;
-  padding: 0;
-  font-size: inherit;
-  white-space: inherit;
-  word-wrap: inherit;
-  color: inherit;
+.code-block code,
+.code-block code.hljs {
+  background: transparent !important;
+  padding: 0 !important;
+  font-size: inherit !important;
+  white-space: pre !important;
+  word-wrap: normal !important;
+  color: inherit !important;
+  display: block;
 }
 
-/* 暗色主题下的代码样式 */
+/* 暗色主题下的代码样式（IntelliJ IDEA Dark风格） */
 html.dark .line-numbers {
-  background: #282c34;
-  color: #636d83;
-  border-right-color: #3e4451;
+  background: #2b2b2b;
+  color: #606366;
+  border-right-color: #3c3f41;
 }
 
 html.dark .code-block {
-  background: #282c34;
-  color: #abb2bf;
+  background: #2b2b2b;
+  color: #a9b7c6;
 }
 
 /* 暗色主题下的 highlight.js 样式覆盖 */
+html.dark .code-block code,
 html.dark .code-block code.hljs {
-  background: transparent;
-  color: #abb2bf;
+  background: transparent !important;
+  color: #a9b7c6 !important;
+}
+
+/* 全屏模式样式 */
+.code-page:fullscreen {
+  padding: 0;
+  background: var(--el-bg-color);
+}
+
+.code-page:fullscreen .el-card {
+  height: 100vh;
+  border: none;
+  border-radius: 0;
+}
+
+.code-page:fullscreen .file-tree-card,
+.code-page:fullscreen .file-content-card {
+  height: calc(100vh - 60px);
+}
+
+.code-page:fullscreen .file-content {
+  height: calc(100vh - 120px);
 }
 
 /* 响应式 */

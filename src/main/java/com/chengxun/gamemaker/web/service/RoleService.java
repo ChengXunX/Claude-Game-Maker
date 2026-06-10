@@ -381,6 +381,19 @@ public class RoleService {
     }
 
     /**
+     * 保存角色（用于更新权重等字段）
+     *
+     * @param role 角色实体
+     * @return 保存后的角色
+     */
+    @CacheEvict(value = "roles", allEntries = true)
+    public Role saveRole(Role role) {
+        Role saved = roleRepository.save(role);
+        log.info("Role saved: {}", role.getName());
+        return saved;
+    }
+
+    /**
      * 删除角色
      * 删除成功后清除角色缓存
      *

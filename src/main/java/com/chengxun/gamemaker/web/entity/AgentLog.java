@@ -28,7 +28,7 @@ public class AgentLog {
     @Column(length = 20)
     private String level = "INFO"; // DEBUG, INFO, WARN, ERROR
 
-    @Column(length = 200)
+    @Column(length = 500)
     private String summary;
 
     @Column(columnDefinition = "TEXT")

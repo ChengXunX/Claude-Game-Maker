@@ -53,6 +53,95 @@ public class AgentRecruitmentController {
     }
 
     /**
+     * 获取角色详情（含提示词、通知目标、审查者）
+     *
+     * @param roleId 角色标识
+     * @return 角色详情
+     */
+    @GetMapping("/roles/{roleId}")
+    @PreAuthorize("hasAuthority('PERM_agent:view')")
+    public ResponseEntity<Map<String, Object>> getRoleDetail(@PathVariable String roleId) {
+        return ResponseEntity.ok(recruitmentService.getRoleDetail(roleId));
+    }
+
+    /**
+     * 更新角色提示词
+     *
+     * @param roleId  角色标识
+     * @param request 包含 prompt、notifyTargets、reviewer
+     * @return 更新结果
+     */
+    @PutMapping("/roles/{roleId}/prompt")
+    @PreAuthorize("hasAuthority('PERM_agent:manage')")
+    public ResponseEntity<Map<String, Object>> updateRolePrompt(
+            @PathVariable String roleId,
+            @RequestBody Map<String, String> request) {
+        return ResponseEntity.ok(recruitmentService.updateRolePrompt(
+            roleId,
+            request.get("prompt"),
+            request.get("notifyTargets"),
+            request.get("reviewer")
+        ));
+    }
+
+    /**
+     * 重置角色提示词到文件默认版本
+     *
+     * @param roleId 角色标识
+     * @return 操作结果
+     */
+    @PostMapping("/roles/{roleId}/reset-prompt")
+    @PreAuthorize("hasAuthority('PERM_agent:manage')")
+    public ResponseEntity<Map<String, Object>> resetRolePrompt(@PathVariable String roleId) {
+        return ResponseEntity.ok(recruitmentService.resetRolePrompt(roleId));
+    }
+
+    /**
+     * AI 自动生成角色提示词
+     *
+     * @param roleId 角色标识
+     * @param request 包含 name、description
+     * @return 生成结果
+     */
+    @PostMapping("/roles/{roleId}/generate-prompt")
+    @PreAuthorize("hasAuthority('PERM_agent:manage')")
+    public ResponseEntity<Map<String, Object>> generateRolePrompt(
+            @PathVariable String roleId,
+            @RequestBody Map<String, String> request) {
+        return ResponseEntity.ok(recruitmentService.generateRolePrompt(
+            roleId,
+            request.get("name"),
+            request.get("description")
+        ));
+    }
+
+    /**
+     * AI 主动进化角色提示词
+     * 分析当前提示词和项目经验，生成更优版本
+     *
+     * @param roleId 角色标识
+     * @return 进化结果
+     */
+    @PostMapping("/roles/{roleId}/evolve")
+    @PreAuthorize("hasAuthority('PERM_agent:manage')")
+    public ResponseEntity<Map<String, Object>> evolveRolePrompt(@PathVariable String roleId) {
+        return ResponseEntity.ok(recruitmentService.evolveRolePrompt(roleId));
+    }
+
+    /**
+     * 获取角色进化元数据（版本号、来源、时间）
+     *
+     * @param roleId 角色标识
+     * @return 进化元数据
+     */
+    @GetMapping("/roles/{roleId}/evolution-meta")
+    @PreAuthorize("hasAuthority('PERM_agent:view')")
+    public ResponseEntity<Map<String, Object>> getEvolutionMeta(@PathVariable String roleId) {
+        Map<String, Object> meta = recruitmentService.getEvolutionMeta(roleId);
+        return ResponseEntity.ok(meta != null ? meta : Map.of());
+    }
+
+    /**
      * 获取预设角色模板
      */
     @GetMapping("/templates")

@@ -47,12 +47,34 @@
             找到 {{ totalResults }} 条结果
           </div>
 
+          <!-- 项目结果 -->
+          <div v-if="results.projects && results.projects.length > 0" class="result-section">
+            <h3 class="section-title">
+              <el-icon><Folder /></el-icon> 项目 ({{ results.projects.length }})
+            </h3>
+            <div v-for="item in results.projects" :key="item.id" class="result-item" @click="router.push(item.link)">
+              <div class="result-title">{{ item.title }}</div>
+              <div class="result-subtitle">{{ item.subtitle }}</div>
+            </div>
+          </div>
+
           <!-- Agent 结果 -->
           <div v-if="results.agents && results.agents.length > 0" class="result-section">
             <h3 class="section-title">
               <el-icon><UserFilled /></el-icon> Agent ({{ results.agents.length }})
             </h3>
             <div v-for="item in results.agents" :key="item.id" class="result-item" @click="router.push(item.link)">
+              <div class="result-title">{{ item.title }}</div>
+              <div class="result-subtitle">{{ item.subtitle }}</div>
+            </div>
+          </div>
+
+          <!-- 健康状态结果 -->
+          <div v-if="results.health && results.health.length > 0" class="result-section">
+            <h3 class="section-title">
+              <el-icon><CircleCheck /></el-icon> 健康状态 ({{ results.health.length }})
+            </h3>
+            <div v-for="item in results.health" :key="item.id" class="result-item" @click="router.push(item.link)">
               <div class="result-title">{{ item.title }}</div>
               <div class="result-subtitle">{{ item.subtitle }}</div>
             </div>
@@ -69,12 +91,34 @@
             </div>
           </div>
 
+          <!-- 干预结果 -->
+          <div v-if="results.interventions && results.interventions.length > 0" class="result-section">
+            <h3 class="section-title">
+              <el-icon><Warning /></el-icon> 干预记录 ({{ results.interventions.length }})
+            </h3>
+            <div v-for="item in results.interventions" :key="item.id" class="result-item" @click="router.push(item.link)">
+              <div class="result-title">{{ item.title }}</div>
+              <div class="result-subtitle">{{ item.subtitle }}</div>
+            </div>
+          </div>
+
           <!-- 审查结果 -->
           <div v-if="results.reviews && results.reviews.length > 0" class="result-section">
             <h3 class="section-title">
               <el-icon><Document /></el-icon> 代码审查 ({{ results.reviews.length }})
             </h3>
             <div v-for="item in results.reviews" :key="item.id" class="result-item" @click="router.push(item.link)">
+              <div class="result-title">{{ item.title }}</div>
+              <div class="result-subtitle">{{ item.subtitle }}</div>
+            </div>
+          </div>
+
+          <!-- 通知结果 -->
+          <div v-if="results.notifications && results.notifications.length > 0" class="result-section">
+            <h3 class="section-title">
+              <el-icon><Bell /></el-icon> 通知 ({{ results.notifications.length }})
+            </h3>
+            <div v-for="item in results.notifications" :key="item.id" class="result-item" @click="router.push(item.link)">
               <div class="result-title">{{ item.title }}</div>
               <div class="result-subtitle">{{ item.subtitle }}</div>
             </div>
@@ -120,9 +164,13 @@ const suggestions = ref([])
 /** 总结果数 */
 const totalResults = computed(() => {
   let count = 0
+  if (results.value.projects) count += results.value.projects.length
   if (results.value.agents) count += results.value.agents.length
+  if (results.value.health) count += results.value.health.length
   if (results.value.alerts) count += results.value.alerts.length
+  if (results.value.interventions) count += results.value.interventions.length
   if (results.value.reviews) count += results.value.reviews.length
+  if (results.value.notifications) count += results.value.notifications.length
   if (results.value.logs) count += results.value.logs.length
   return count
 })

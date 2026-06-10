@@ -153,7 +153,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, nextTick, onMounted, watch, defineExpose } from 'vue'
+import { ref, reactive, nextTick, onMounted, onUnmounted, onActivated, onDeactivated, watch, defineExpose } from 'vue'
 import { ElMessage } from 'element-plus'
 import { marked } from 'marked'
 import api from '@/api'
@@ -192,6 +192,7 @@ const inputText = ref('')
 const isLoading = ref(false)
 const currentNavIndex = ref(0)
 const navCollapsed = ref(true) // 默认折叠
+let activeEventSource = null // 跟踪当前活跃的 EventSource 连接
 
 // 消息列表
 const messages = reactive([])
@@ -284,12 +285,13 @@ const sendMessage = async () => {
     const sessionParam = props.sessionId ? `&sessionId=${encodeURIComponent(props.sessionId)}` : ''
     const url = `${props.apiEndpoint}?question=${encodeURIComponent(question)}&token=${encodeURIComponent(token)}${sessionParam}`
     const eventSource = new EventSource(url)
+    activeEventSource = eventSource
 
     let thinkingStartTime = Date.now()
 
     // 监听开始事件
     eventSource.addEventListener('start', (e) => {
-      console.log('Stream started:', JSON.parse(e.data))
+      // 流式传输开始
     })
 
     // 监听思考事件
@@ -423,6 +425,7 @@ const sendMessage = async () => {
       streamingTasks.splice(0, streamingTasks.length)
 
       eventSource.close()
+      activeEventSource = null
       isLoading.value = false
       scrollToBottom()
     })
@@ -435,6 +438,7 @@ const sendMessage = async () => {
       messages[assistantIndex].loading = false
 
       eventSource.close()
+      activeEventSource = null
       isLoading.value = false
       ElMessage.error(data.message)
       scrollToBottom()
@@ -447,6 +451,7 @@ const sendMessage = async () => {
         messages[assistantIndex].loading = false
 
         eventSource.close()
+        activeEventSource = null
         isLoading.value = false
         ElMessage.error('连接中断')
         scrollToBottom()
@@ -536,6 +541,25 @@ defineExpose({
 
 onMounted(() => {
   // 可以在这里加载历史对话
+})
+
+/** 关闭活跃的 EventSource 连接 */
+const closeActiveEventSource = () => {
+  if (activeEventSource) {
+    activeEventSource.close()
+    activeEventSource = null
+    isLoading.value = false
+  }
+}
+
+/** 组件被 keep-alive 缓存时清理资源 */
+onDeactivated(() => {
+  closeActiveEventSource()
+})
+
+/** 组件销毁时清理资源 */
+onUnmounted(() => {
+  closeActiveEventSource()
 })
 </script>
 

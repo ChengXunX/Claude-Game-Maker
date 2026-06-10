@@ -299,6 +299,7 @@ CREATE TABLE IF NOT EXISTS api_tokens (
     api_url VARCHAR(500),
     model VARCHAR(100),
     max_tokens INT,
+    context_window INT DEFAULT 200000,
     priority VARCHAR(20),
     agent_tags VARCHAR(500),
     assigned_agent_id VARCHAR(50),

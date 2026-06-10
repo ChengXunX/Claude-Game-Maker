@@ -77,6 +77,9 @@ public class AgentManager {
     private com.chengxun.gamemaker.service.GameTemplateService gameTemplateService;
 
     @Autowired(required = false)
+    private com.chengxun.gamemaker.service.GameRuntimeVerifier gameRuntimeVerifier;
+
+    @Autowired(required = false)
     private com.chengxun.gamemaker.web.service.WorkflowEngine workflowEngine;
 
     @Autowired(required = false)
@@ -90,6 +93,29 @@ public class AgentManager {
 
     @Autowired(required = false)
     private com.chengxun.gamemaker.service.KnowledgeEvolutionService knowledgeEvolutionService;
+
+    @Autowired(required = false)
+    private com.chengxun.gamemaker.web.service.NotificationService notificationService;
+
+    @Autowired(required = false)
+    private com.chengxun.gamemaker.web.service.AlertService alertService;
+
+    @Autowired(required = false)
+    private com.chengxun.gamemaker.web.service.ApiTokenService apiTokenService;
+
+    @Autowired(required = false)
+    private com.chengxun.gamemaker.service.AgentInterventionService interventionService;
+
+    @Autowired(required = false)
+    private com.chengxun.gamemaker.service.ProjectBoard projectBoard;
+
+    @Autowired(required = false)
+    private com.chengxun.gamemaker.service.EventBus eventBus;
+
+    /** Agent 调度器（延迟注入，避免循环依赖）- 用于事件驱动的消息处理 */
+    @Lazy
+    @Autowired(required = false)
+    private com.chengxun.gamemaker.service.AgentScheduler agentScheduler;
 
     /** Agent 资源配额缓存 */
     private final ConcurrentHashMap<String, AgentResourceQuota> quotaMap = new ConcurrentHashMap<>();
@@ -156,6 +182,9 @@ public class AgentManager {
             return projectAgentMap.get(agentRole);
         }
 
+        // 制作人使用最高推理深度（全面分析）
+        definition.setReasoningDepth(4);
+
         ProducerAgent producer = new ProducerAgent(definition, cliEngine, messageBus,
                 contextManager, memoryManager, skillManager, projectManager, this, feishuService);
         injectCapabilityServices(producer);
@@ -164,6 +193,9 @@ public class AgentManager {
         }
         if (gameTemplateService != null) {
             producer.setGameTemplateService(gameTemplateService);
+        }
+        if (gameRuntimeVerifier != null) {
+            producer.setGameRuntimeVerifier(gameRuntimeVerifier);
         }
         if (workflowEngine != null) {
             producer.setWorkflowEngine(workflowEngine);
@@ -237,7 +269,25 @@ public class AgentManager {
             injectCapabilityServices(baseAgent);
         }
 
+        // 注入游戏运行时验证服务
+        if (gameRuntimeVerifier != null) {
+            if (agent instanceof ServerDevAgent serverDevAgent) {
+                serverDevAgent.setGameRuntimeVerifier(gameRuntimeVerifier);
+            }
+        }
+
         agent.initialize();
+
+        // 自动分配 Token：如果 Agent 没有配置 API Key，尝试从 Token 池中匹配
+        autoAssignToken(agent, agentRole);
+
+        // 设置消息到达回调：收到消息时立即触发 Agent 工作，不再等待下一个定时周期
+        if (agent instanceof BaseAgent baseAgent && agentScheduler != null) {
+            baseAgent.setMessageArrivedCallback(() -> {
+                agentScheduler.onMessageArrived(agent);
+            });
+        }
+
         agent.start();
         projectAgentMap.put(agentRole, agent);
 
@@ -391,6 +441,52 @@ public class AgentManager {
         agent.setMcpService(mcpService);
         agent.setAgentLogService(agentLogService);
         agent.setKnowledgeEvolutionService(knowledgeEvolutionService);
+        agent.setNotificationService(notificationService);
+        agent.setAlertService(alertService);
+        agent.setApiTokenService(apiTokenService);
+        agent.setAgentManagerRef(this);
+        agent.setInterventionService(interventionService);
+        agent.setProjectBoard(projectBoard);
+        agent.setEventBus(eventBus);
+    }
+
+    /**
+     * 自动为 Agent 分配 Token
+     * 当 Agent 没有配置 API Key 时，从 Token 池中查找匹配角色的最佳 Token 并绑定
+     *
+     * @param agent Agent 实例
+     * @param agentRole Agent 角色
+     */
+    private void autoAssignToken(Agent agent, String agentRole) {
+        if (apiTokenService == null) return;
+
+        // 已有 API Key 则跳过
+        if (agent.getDefinition().getApiKey() != null && !agent.getDefinition().getApiKey().isEmpty()) {
+            return;
+        }
+
+        try {
+            com.chengxun.gamemaker.web.entity.ApiToken token = apiTokenService.findBestTokenForRole(agentRole);
+            if (token == null) {
+                log.debug("No available token for role: {}", agentRole);
+                return;
+            }
+
+            // 应用 Token 的 API 配置到 Agent
+            agent.getDefinition().setApiKey(token.getApiKey());
+            agent.getDefinition().setApiUrl(token.getApiUrl());
+            agent.getDefinition().setModel(token.getModel());
+
+            // 标记 Token 已绑定
+            token.setAssignedAgentId(agent.getId());
+            token.setAssignedAgentName(agent.getName());
+            apiTokenService.saveToken(token);
+
+            log.info("Auto-assigned token '{}' to agent {} (role: {})",
+                token.getName(), agent.getId(), agentRole);
+        } catch (Exception e) {
+            log.warn("Failed to auto-assign token for agent {}: {}", agent.getId(), e.getMessage());
+        }
     }
 
     // ===== 停止管理 =====
@@ -406,6 +502,30 @@ public class AgentManager {
 
         projectMap.values().forEach(Agent::stop);
         log.info("All agents stopped for project: {}", projectId);
+    }
+
+    /**
+     * 移除指定项目的所有 Agent（停止 + 清理内存）
+     * 项目删除时调用，确保 Agent 不会继续运行和消耗 Token
+     *
+     * @param projectId 项目 ID
+     */
+    public void removeProjectAgents(String projectId) {
+        Map<String, Agent> projectMap = projectAgents.remove(projectId);
+        if (projectMap == null) return;
+
+        for (Map.Entry<String, Agent> entry : projectMap.entrySet()) {
+            Agent agent = entry.getValue();
+            try {
+                agent.stop();
+                messageBus.unregisterAgent(agent.getId());
+                quotaMap.remove(agent.getId());
+            } catch (Exception e) {
+                log.warn("Failed to stop agent {} during project removal: {}",
+                    agent.getId(), e.getMessage());
+            }
+        }
+        log.info("All agents removed for project: {} ({} agents)", projectId, projectMap.size());
     }
 
     /**
@@ -510,6 +630,27 @@ public class AgentManager {
                 status.put("projectId", baseAgent.getCurrentProject().getId());
                 status.put("projectName", baseAgent.getCurrentProject().getName());
                 status.put("workDir", baseAgent.getCurrentProject().getWorkDir());
+            }
+        }
+
+        // Token 信息：查询该 Agent 绑定的 Token
+        if (apiTokenService != null) {
+            try {
+                com.chengxun.gamemaker.web.entity.ApiToken token = apiTokenService.getActiveTokenForAgent(agent.getId());
+                if (token != null) {
+                    status.put("tokenId", token.getId());
+                    status.put("tokenName", token.getName());
+                    status.put("tokenModel", token.getModel());
+                    status.put("tokenApiUrl", token.getApiUrl());
+                    status.put("tokenMaskedKey", token.getMaskedApiKey());
+                } else {
+                    status.put("tokenId", null);
+                    status.put("tokenName", null);
+                }
+            } catch (Exception e) {
+                log.debug("Failed to get token info for agent {}: {}", agent.getId(), e.getMessage());
+                status.put("tokenId", null);
+                status.put("tokenName", null);
             }
         }
 

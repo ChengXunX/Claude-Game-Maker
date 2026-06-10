@@ -145,7 +145,7 @@ public class InstallController {
     @PostMapping("/save-system")
     public ResponseEntity<?> saveSystem(@RequestBody Map<String, String> request) {
         if (installService.isInstalled()) return gone();
-        installService.saveSystemSettings(request.get("systemName"), request.get("jwtSecret"));
+        installService.saveSystemSettings(request.get("systemName"), request.get("jwtSecret"), request.get("contactLink"));
         return ResponseEntity.ok(Map.of("success", true, "message", "系统配置已保存"));
     }
 
@@ -161,7 +161,7 @@ public class InstallController {
     @PostMapping("/save-claude")
     public ResponseEntity<?> saveClaude(@RequestBody Map<String, String> request) {
         if (installService.isInstalled()) return gone();
-        installService.saveClaudeConfig(request.get("apiKey"), request.get("apiUrl"), request.get("model"));
+        installService.saveClaudeConfig(request.get("apiKey"), request.get("apiUrl"), request.get("model"), request.get("maxTokens"));
         return ResponseEntity.ok(Map.of("success", true, "message", "Claude 配置已保存"));
     }
 
@@ -180,12 +180,15 @@ public class InstallController {
     @PostMapping("/save-email")
     public ResponseEntity<?> saveEmail(@RequestBody Map<String, Object> request) {
         if (installService.isInstalled()) return gone();
+        boolean enabled = Boolean.parseBoolean(String.valueOf(request.getOrDefault("emailEnabled", true)));
         String host = (String) request.get("host");
         int port = request.get("port") != null ? ((Number) request.get("port")).intValue() : 587;
         String username = (String) request.get("username");
         String password = (String) request.get("password");
         String from = (String) request.get("from");
-        installService.saveEmailConfig(host, port, username, password, from);
+        String senderName = (String) request.get("senderName");
+        String proxyEmail = (String) request.get("proxyEmail");
+        installService.saveEmailConfig(enabled, host, port, username, password, from, senderName, proxyEmail);
         return ResponseEntity.ok(Map.of("success", true, "message", "邮件配置已保存"));
     }
 

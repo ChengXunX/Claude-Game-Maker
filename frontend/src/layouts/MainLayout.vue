@@ -163,11 +163,12 @@
  * - 面包屑导航
  * - 用户信息和快捷操作
  */
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox, ElMessage } from 'element-plus'
 import { useUserStore } from '@/stores/user'
 import { useThemeStore } from '@/stores/theme'
+import { notificationApi } from '@/api'
 import ThemeToggle from '@/components/ThemeToggle.vue'
 
 const route = useRoute()
@@ -177,20 +178,24 @@ const themeStore = useThemeStore()
 
 const isCollapse = ref(false)
 const notificationCount = ref(0)
+let notificationTimer = null
+
+/** 加载未读通知数量 */
+const loadNotificationCount = async () => {
+  try {
+    const data = await notificationApi.getUnreadCount()
+    notificationCount.value = data?.count || 0
+  } catch (error) {
+    console.error('加载通知数量失败:', error)
+  }
+}
 
 /**
  * 全局路由变化监听
- * 路由切换时关闭所有 el-dialog 遗留在 body 上的遮罩层
- * 解决 keep-alive + el-dialog 导致的页面空白问题：
- * el-dialog 默认 append-to-body，关闭弹窗时遮罩层 DOM 可能未被清理，
- * 当 keep-alive 缓存的组件带弹窗被切走再切回时，残留的遮罩层会覆盖新页面
+ * 路由切换时恢复 body 状态，防止 el-dialog 残留的滚动锁定
  */
 watch(() => route.path, (newPath, oldPath) => {
   if (newPath !== oldPath) {
-    // 移除所有 el-dialog 遗留的 overlay DOM
-    document.querySelectorAll('.el-overlay').forEach(el => {
-      el.remove()
-    })
     // 恢复 body 滚动（el-dialog 打开时会锁定 body）
     document.body.style.overflow = ''
     document.body.classList.remove('el-popup-parent--hidden')
@@ -350,6 +355,20 @@ onMounted(async () => {
     } catch (error) {
       console.error('获取用户信息失败:', error)
     }
+  }
+
+  // 加载通知数量
+  if (userStore.isLoggedIn) {
+    loadNotificationCount()
+    // 每60秒刷新一次通知数量
+    notificationTimer = setInterval(loadNotificationCount, 60000)
+  }
+})
+
+/** 清理 */
+onUnmounted(() => {
+  if (notificationTimer) {
+    clearInterval(notificationTimer)
   }
 })
 </script>

@@ -31,6 +31,22 @@ public class GenericAgent extends BaseAgent {
     /** 角色提示词库 */
     private final RolePromptLibrary rolePromptLibrary;
 
+    /** 游戏运行时验证服务（延迟注入） */
+    private com.chengxun.gamemaker.service.GameRuntimeVerifier gameRuntimeVerifier;
+
+    /**
+     * 设置游戏运行时验证服务
+     */
+    public void setGameRuntimeVerifier(com.chengxun.gamemaker.service.GameRuntimeVerifier gameRuntimeVerifier) {
+        this.gameRuntimeVerifier = gameRuntimeVerifier;
+    }
+
+    /** 上次角色特有工作执行时间 */
+    private LocalDateTime lastRoleWorkTime;
+
+    /** 角色特有工作冷却时间（分钟） */
+    private static final int ROLE_WORK_COOLDOWN_MINUTES = 60;
+
     public GenericAgent(AgentDefinition definition,
                        ClaudeCliEngine cliEngine,
                        MessageBus messageBus,
@@ -52,13 +68,35 @@ public class GenericAgent extends BaseAgent {
         // 1. 处理待办任务
         processPendingTasks();
 
-        // 2. 执行角色特有的周期性工作
-        doRoleSpecificWork();
+        // 2. 如果有工作流分配的待处理/进行中任务，跳过角色特有工作
+        boolean hasActiveTask = tasks.stream()
+            .anyMatch(t -> t.getStatus() == TaskAssignment.TaskStatus.PENDING
+                || t.getStatus() == TaskAssignment.TaskStatus.IN_PROGRESS);
+        if (hasActiveTask) {
+            log.debug("有活跃任务，跳过角色特有工作");
+            return;
+        }
 
-        // 3. 检查是否需要压缩上下文
+        // 3. 执行角色特有的周期性工作（带冷却时间）
+        if (shouldDoRoleWork()) {
+            doRoleSpecificWork();
+            lastRoleWorkTime = LocalDateTime.now();
+        }
+
+        // 4. 检查是否需要压缩上下文
         if (shouldCompactContext()) {
             compactContext();
         }
+    }
+
+    /**
+     * 判断是否需要执行角色特有工作
+     */
+    private boolean shouldDoRoleWork() {
+        if (lastRoleWorkTime == null) {
+            return true;
+        }
+        return LocalDateTime.now().isAfter(lastRoleWorkTime.plusMinutes(ROLE_WORK_COOLDOWN_MINUTES));
     }
 
     /**
@@ -78,12 +116,15 @@ public class GenericAgent extends BaseAgent {
 
     /**
      * 执行任务的核心流程
-     * 构建上下文丰富的 prompt → 调用 AI → 保存结果 → 通知相关方
+     * 构建上下文丰富的 prompt → 调用 AI → 运行时验证 → 失败则修复重试 → 保存结果 → 通知相关方
      *
      * @param task 待执行的任务
      */
     private void workOnTask(TaskAssignment task) {
         log.info("Agent [{}] working on task: {}", getName(), task.getTitle());
+
+        // 记录任务开始日志
+        logTask("TASK_RECEIVED", String.format("接收任务: %s", task.getTitle()), task.getId());
 
         // 标记任务进行中
         task.setStatus(TaskAssignment.TaskStatus.IN_PROGRESS);
@@ -93,14 +134,79 @@ public class GenericAgent extends BaseAgent {
         // 构建带上下文的 prompt
         String prompt = buildTaskPrompt(task);
 
-        // 调用 AI（sendMessage 自动注入能力 prompt、MCP 配置）
-        String result = sendMessage(prompt);
+        // 迭代修复循环：生成 → 验证 → 修复 → 再验证
+        int maxFixAttempts = 3;
+        String result = null;
+        long totalAiTime = 0;
+
+        for (int attempt = 0; attempt <= maxFixAttempts; attempt++) {
+            long startTime = System.currentTimeMillis();
+
+            // 调用 AI（sendMessage 自动注入能力 prompt、MCP 配置）
+            result = sendMessage(prompt);
+
+            long duration = System.currentTimeMillis() - startTime;
+            totalAiTime += duration;
+
+            // 记录 AI 调用日志
+            String logInput = prompt.length() > 3000 ? prompt.substring(0, 3000) + "\n...[截断]" : prompt;
+            String logOutput = result != null && result.length() > 10000
+                ? result.substring(0, 10000) + "\n...[截断]" : result;
+            logAiCall(String.format("任务 [%s] AI 调用完成 (第%d次)，耗时 %dms", task.getTitle(), attempt + 1, duration),
+                logInput, logOutput, duration);
+
+            // 运行时验证（仅对游戏开发类任务）
+            if (gameRuntimeVerifier != null && currentProject != null && isGameDevRole(getRole())) {
+                String projectDir = currentProject.getWorkDir();
+                if (projectDir != null) {
+                    log.info("任务 [{}] 运行时验证 (第{}次尝试)", task.getTitle(), attempt + 1);
+                    com.chengxun.gamemaker.service.GameRuntimeVerifier.VerifyResult verifyResult =
+                        gameRuntimeVerifier.verify(projectDir);
+
+                    if (verifyResult.isSuccess()) {
+                        log.info("任务 [{}] 运行时验证通过: {}", task.getTitle(), verifyResult.getMessage());
+                        if (attempt > 0) {
+                            logInfo("FIX_SUCCESS", String.format("任务 [%s] 经过%d次修复后验证通过", task.getTitle(), attempt));
+                        }
+                        break; // 验证通过，退出循环
+                    }
+
+                    // 验证失败
+                    if (attempt < maxFixAttempts) {
+                        log.warn("任务 [{}] 运行时验证失败 (第{}次): {}", task.getTitle(), attempt + 1, verifyResult.getError());
+                        logWarn("VERIFY_FAILED", String.format("任务 [%s] 运行时验证失败 (第%d次): %s",
+                            task.getTitle(), attempt + 1, verifyResult.getError()), null);
+
+                        // 构建修复 prompt：包含原始任务 + 验证失败信息
+                        prompt = buildFixPrompt(task, result, verifyResult);
+                        continue; // 重试
+                    } else {
+                        // 最后一次仍然失败
+                        log.warn("任务 [{}] 经过{}次修复仍未通过运行时验证: {}", task.getTitle(), maxFixAttempts, verifyResult.getError());
+                        logWarn("FIX_EXHAUSTED", String.format("任务 [%s] 经过%d次修复仍未通过验证: %s",
+                            task.getTitle(), maxFixAttempts, verifyResult.getError()), null);
+                    }
+                }
+            } else {
+                // 非游戏开发任务，不需要运行时验证
+                break;
+            }
+        }
 
         // 保存任务结果
         task.setResult(result);
         task.setStatus(TaskAssignment.TaskStatus.COMPLETED);
         task.setCompletedAt(LocalDateTime.now());
         agentContext.setCurrentTaskId(null);
+
+        // 记录任务完成决策日志（含 AI 输出摘要）
+        String resultSummary = result != null && result.length() > 5000
+            ? result.substring(0, 5000) + "\n...[截断]" : result;
+        logDecision(
+            String.format("任务完成: %s (耗时 %ds)", task.getTitle(), totalAiTime / 1000),
+            String.format("## 任务信息\n- 标题: %s\n- 描述: %s\n- 优先级: %s\n\n## AI 输出\n\n%s",
+                task.getTitle(), task.getDescription(), task.getPriority(), resultSummary)
+        );
 
         // 保存经验和学习技能
         saveTaskExperience(task, result);
@@ -113,13 +219,67 @@ public class GenericAgent extends BaseAgent {
         notifyTaskCompleted(task, result);
 
         // 汇报进度
-        String summary = result.length() > 100 ? result.substring(0, 100) + "..." : result;
+        String summary = result != null && result.length() > 100 ? result.substring(0, 100) + "..." : result;
         reportProgress(task.getId(), "已完成: " + summary);
+
+        // 记录任务完成日志
+        logTask("TASK_COMPLETED", String.format("任务完成: %s，耗时 %ds", task.getTitle(), totalAiTime / 1000), task.getId());
+    }
+
+    /**
+     * 判断是否为游戏开发类角色（需要运行时验证）
+     */
+    private boolean isGameDevRole(String role) {
+        return "client-dev".equals(role) || "ui-dev".equals(role);
+    }
+
+    /**
+     * 构建修复 prompt
+     * 当运行时验证失败时，将失败信息反馈给 AI 要求修复
+     *
+     * @param task 原始任务
+     * @param lastResult 上次 AI 输出
+     * @param verifyResult 验证结果
+     * @return 修复 prompt
+     */
+    private String buildFixPrompt(TaskAssignment task, String lastResult,
+                                   com.chengxun.gamemaker.service.GameRuntimeVerifier.VerifyResult verifyResult) {
+        StringBuilder sb = new StringBuilder();
+
+        // 角色提示词
+        String rolePrompt = rolePromptLibrary.getPrompt(getRole());
+        sb.append(rolePrompt).append("\n\n");
+
+        sb.append("## 紧急修复任务\n\n");
+        sb.append("你之前完成的任务【").append(task.getTitle()).append("】在运行时验证中失败，需要修复。\n\n");
+
+        sb.append("### 验证失败信息\n");
+        sb.append(verifyResult.toSummary()).append("\n");
+
+        if (currentProject != null) {
+            sb.append("### 项目信息\n");
+            sb.append("- 工作目录: ").append(currentProject.getWorkDir()).append("\n");
+            sb.append("- 目标: ").append(currentProject.getGoal()).append("\n\n");
+        }
+
+        sb.append("### 原始任务描述\n");
+        sb.append(task.getDescription()).append("\n\n");
+
+        sb.append("### 修复要求\n");
+        sb.append("1. 仔细分析验证失败的原因\n");
+        sb.append("2. 修复所有导致验证失败的问题\n");
+        sb.append("3. 确保代码语法正确、文件引用正确\n");
+        sb.append("4. 确保入口文件结构完整\n");
+        sb.append("5. 所有引用的资源文件必须存在\n\n");
+
+        sb.append("请立即修复以上问题。");
+
+        return sb.toString();
     }
 
     /**
      * 构建任务 prompt
-     * 注入角色知识、项目上下文、工作规范、相关经验
+     * 注入角色知识、项目上下文、工作规范、相关经验、协作上下文
      *
      * @param task 任务
      * @return 完整的 prompt
@@ -148,13 +308,22 @@ public class GenericAgent extends BaseAgent {
             }
         }
 
-        // 3. 工作约束（AGENTS.md）
+        // 3. 协作上下文（团队状态、任务依赖、最近事件）
+        if (currentProject != null && projectBoard != null) {
+            String collaborationContext = projectBoard.buildAgentContext(
+                currentProject.getId(), getId(), eventBus);
+            if (!collaborationContext.isEmpty()) {
+                sb.append(collaborationContext);
+            }
+        }
+
+        // 4. 工作约束（AGENTS.md）
         String agentsContent = loadKnowledge("agents_file");
         if (agentsContent != null) {
             sb.append("## 工作约束\n\n").append(agentsContent).append("\n\n");
         }
 
-        // 4. 相关知识和经验
+        // 5. 相关知识和经验
         String knowledge = loadKnowledge("project_architecture");
         if (knowledge != null) {
             sb.append("## 项目知识\n\n").append(knowledge).append("\n\n");
@@ -165,29 +334,51 @@ public class GenericAgent extends BaseAgent {
             sb.append("## 相关经验\n\n").append(experience).append("\n\n");
         }
 
-        // 5. 知识库相关知识（从全局知识库中查询相关模式、解决方案和最佳实践）
+        // 6. 知识库相关知识（从全局知识库中查询相关模式、解决方案和最佳实践）
         String relevantKnowledge = queryRelevantKnowledge(task.getTitle() + " " + task.getDescription());
         if (!relevantKnowledge.isEmpty()) {
             sb.append("## 知识库参考\n\n").append(relevantKnowledge).append("\n\n");
         }
 
-        // 6. 匹配技能
+        // 7. 匹配技能
         String skillPrompt = buildSkillPrompt(task.getTitle() + " " + task.getDescription());
         if (!skillPrompt.isEmpty()) {
             sb.append(skillPrompt).append("\n\n");
         }
 
-        // 6. 任务描述
+        // 8. 任务描述
         sb.append("## 任务\n\n");
         sb.append("- 标题: ").append(task.getTitle()).append("\n");
         sb.append("- 描述: ").append(task.getDescription()).append("\n");
         sb.append("- 优先级: ").append(task.getPriority()).append("\n\n");
 
-        // 7. 上次工作结果（如果有）
+        // 9. 上次工作结果（如果有）
         String lastWork = agentContext.getWorkingMemory("last_task_result");
         if (lastWork != null) {
             sb.append("## 上次工作结果\n\n").append(lastWork).append("\n\n");
         }
+
+        // 10. 工作思维
+        sb.append("## 工作思维\n\n");
+        sb.append("- 先做出能用的版本，再优化到好用\n");
+        sb.append("- 如果发现当前方案有问题，主动提出改进方案\n");
+        sb.append("- 不要盲目遵循模板或规范，以实际效果为准\n");
+        sb.append("- 遇到不确定的设计决策，先实现最简单的方案，后续迭代改进\n\n");
+
+        // 11. 质量自检清单
+        sb.append("## 质量自检清单\n\n");
+        sb.append("完成任务前，请逐项检查：\n");
+        sb.append("- [ ] 代码是否有完整的中文注释（类注释、方法注释、关键逻辑注释）\n");
+        sb.append("- [ ] 是否遵循项目代码规范\n");
+        sb.append("- [ ] 是否处理了边界条件和异常情况\n");
+        sb.append("- [ ] 是否与团队其他成员的代码兼容\n");
+        sb.append("- [ ] 输出文件路径是否正确\n\n");
+
+        // 11. 输出格式要求
+        sb.append("## 输出格式要求\n\n");
+        sb.append("- 报告中列出所有创建/修改的文件路径\n");
+        sb.append("- 说明每个变更的原因和作用\n");
+        sb.append("- 如果遇到阻塞问题，明确说明并请求协助\n\n");
 
         sb.append("请在工作目录 ").append(definition.getWorkDir()).append(" 中执行以上任务，并报告完成情况。");
 

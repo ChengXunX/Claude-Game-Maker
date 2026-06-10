@@ -1,473 +1,318 @@
 ---
-name: game-template-puzzle
-description: 益智游戏模板 - 提供完整的益智游戏项目骨架
-category: game-template
-triggerPattern: puzzle, match-3, 益智, 消除, 三消
+name: 益智游戏开发模板
+description: 益智游戏开发模板，适用于解谜、逻辑、益智类游戏
+trigger: puzzle, 益智, 解谜, 逻辑, 数独, 推箱子, 华容道
+examples: 数独|推箱子|华容道|2048|俄罗斯方块|Baba Is You|The Witness
 ---
 
-# 益智游戏模板
+# 益智游戏开发模板
 
-## 概述
+## 游戏设计核心原则
 
-这是一个完整的三消益智游戏模板，基于 Phaser 3 引擎。包含：
-- 棋盘系统（8x8 网格）
-- 宝石系统（多种宝石类型）
-- 消除系统（三消、四消、五消）
-- 特殊宝石（炸弹、闪电、彩虹）
-- 关卡系统（目标、步数限制）
-- 分数系统（连击加成）
-
-## 项目结构
-
+### 核心循环（每关 1-10 分钟）
 ```
-game-project/
-├── index.html
-├── package.json
-├── vite.config.js
-├── src/
-│   ├── main.js
-│   ├── config.js
-│   ├── scenes/
-│   │   ├── BootScene.js
-│   │   ├── MenuScene.js
-│   │   ├── GameScene.js
-│   │   └── LevelSelectScene.js
-│   ├── objects/
-│   │   ├── Gem.js            # 宝石类
-│   │   ├── Board.js          # 棋盘类
-│   │   └── SpecialGem.js     # 特殊宝石
-│   ├── systems/
-│   │   ├── MatchSystem.js    # 匹配系统
-│   │   ├── CascadeSystem.js  # 连锁系统
-│   │   └── ScoreSystem.js    # 分数系统
-│   ├── data/
-│   │   └── levels.js         # 关卡数据
-│   └── ui/
-│       ├── HUD.js
-│       └── LevelComplete.js
-└── assets/
-    ├── images/
-    └── sounds/
+观察谜题 → 思考解法 → 尝试操作 → 验证结果 → 解开/重试
+```
+- **逻辑性**：谜题有唯一解或多种解法
+- **渐进性**：从简单到复杂
+- **满足感**：解开谜题的成就感
+
+### 玩家心理学
+- **"恍然大悟"的快感**：突然理解解法的瞬间
+- **"挑战成功"的成就感**：解开难题的满足感
+- **"逻辑推理"的乐趣**：思考过程本身就是乐趣
+- **"收集完美"的欲望**：全关卡三星通关
+
+### 谜题设计要点
+```
+谜题设计原则：
+1. 规则简单：3 秒理解规则
+2. 解法明确：玩家知道目标是什么
+3. 难度渐进：从简单到复杂
+4. 无歧义：只有一种正确理解
+5. 可验证：玩家知道是否正确
 ```
 
-## 核心代码模板
+## 核心系统设计
 
-### 1. 棋盘系统 (Board.js)
-
+### 1. 谜题数据结构
 ```javascript
-export class Board {
-  constructor(scene, x, y, rows, cols) {
-    this.scene = scene
-    this.x = x
-    this.y = y
-    this.rows = rows
-    this.cols = cols
-    this.cellSize = 64
-    this.grid = []
-    this.selectedGem = null
-    this.isProcessing = false
-
-    this.init()
+class Puzzle {
+  constructor(config) {
+    this.id = config.id;
+    this.type = config.type;
+    this.grid = config.grid; // 网格数据
+    this.solution = config.solution; // 解法
+    this.moves = 0;
+    this.maxMoves = config.maxMoves;
+    this.stars = 0;
   }
+  
+  checkSolution() {
+    // 检查当前状态是否匹配解法
+    return JSON.stringify(this.grid) === JSON.stringify(this.solution);
+  }
+  
+  getStars() {
+    if (!this.checkSolution()) return 0;
+    if (this.moves <= this.maxMoves * 0.5) return 3;
+    if (this.moves <= this.maxMoves * 0.75) return 2;
+    return 1;
+  }
+}
+```
 
-  init() {
-    // 创建网格
-    for (let row = 0; row < this.rows; row++) {
-      this.grid[row] = []
-      for (let col = 0; col < this.cols; col++) {
-        this.grid[row][col] = null
+### 2. 推箱子系统
+```javascript
+class Sokoban {
+  constructor(level) {
+    this.grid = level.grid;
+    this.player = level.player;
+    this.boxes = level.boxes;
+    this.goals = level.goals;
+    this.moves = 0;
+  }
+  
+  move(dx, dy) {
+    const newX = this.player.x + dx;
+    const newY = this.player.y + dy;
+    
+    // 检查是否可以移动
+    if (!this.canMove(newX, newY)) return false;
+    
+    // 检查是否有箱子
+    const box = this.getBoxAt(newX, newY);
+    if (box) {
+      // 推箱子
+      const boxNewX = newX + dx;
+      const boxNewY = newY + dy;
+      
+      if (!this.canMoveBox(box, boxNewX, boxNewY)) return false;
+      
+      box.x = boxNewX;
+      box.y = boxNewY;
+    }
+    
+    // 移动玩家
+    this.player.x = newX;
+    this.player.y = newY;
+    this.moves++;
+    
+    return true;
+  }
+  
+  canMove(x, y) {
+    // 检查是否在网格内
+    if (x < 0 || x >= this.grid[0].length || y < 0 || y >= this.grid.length) return false;
+    // 检查是否是墙
+    if (this.grid[y][x] === '#') return false;
+    return true;
+  }
+  
+  canMoveBox(box, x, y) {
+    if (!this.canMove(x, y)) return false;
+    // 检查是否有其他箱子
+    if (this.getBoxAt(x, y)) return false;
+    return true;
+  }
+  
+  isComplete() {
+    // 检查所有箱子是否在目标位置
+    return this.boxes.every(box => 
+      this.goals.some(goal => goal.x === box.x && goal.y === box.y)
+    );
+  }
+}
+```
+
+### 3. 数独系统
+```javascript
+class Sudoku {
+  constructor(puzzle) {
+    this.grid = puzzle.map(row => [...row]);
+    this.original = puzzle.map(row => [...row]);
+  }
+  
+  setCell(x, y, value) {
+    // 不能修改原始数字
+    if (this.original[y][x] !== 0) return false;
+    
+    // 检查是否合法
+    if (!this.isValid(x, y, value)) return false;
+    
+    this.grid[y][x] = value;
+    return true;
+  }
+  
+  isValid(x, y, value) {
+    // 检查行
+    for (let i = 0; i < 9; i++) {
+      if (i !== x && this.grid[y][i] === value) return false;
+    }
+    
+    // 检查列
+    for (let i = 0; i < 9; i++) {
+      if (i !== y && this.grid[i][x] === value) return false;
+    }
+    
+    // 检查 3x3 宫格
+    const boxX = Math.floor(x / 3) * 3;
+    const boxY = Math.floor(y / 3) * 3;
+    for (let dy = 0; dy < 3; dy++) {
+      for (let dx = 0; dx < 3; dx++) {
+        const nx = boxX + dx;
+        const ny = boxY + dy;
+        if (nx !== x && ny !== y && this.grid[ny][nx] === value) return false;
       }
     }
-
-    // 填充宝石
-    this.fillBoard()
-
-    // 设置输入
-    this.setupInput()
+    
+    return true;
   }
+  
+  isComplete() {
+    return this.grid.every(row => row.every(cell => cell !== 0));
+  }
+}
+```
 
-  fillBoard() {
-    for (let row = 0; row < this.rows; row++) {
-      for (let col = 0; col < this.cols; col++) {
-        if (!this.grid[row][col]) {
-          this.createGemAt(row, col)
-        }
-      }
+### 4. 2048 系统
+```javascript
+class Game2048 {
+  constructor() {
+    this.grid = Array(4).fill(null).map(() => Array(4).fill(0));
+    this.score = 0;
+    this.addRandomTile();
+    this.addRandomTile();
+  }
+  
+  move(direction) {
+    let moved = false;
+    
+    switch (direction) {
+      case 'up':
+        moved = this.moveUp();
+        break;
+      case 'down':
+        moved = this.moveDown();
+        break;
+      case 'left':
+        moved = this.moveLeft();
+        break;
+      case 'right':
+        moved = this.moveRight();
+        break;
     }
-
-    // 确保没有初始匹配
-    while (this.findMatches().length > 0) {
-      this.shuffleBoard()
+    
+    if (moved) {
+      this.addRandomTile();
     }
+    
+    return moved;
   }
-
-  createGemAt(row, col, type = null) {
-    if (!type) {
-      type = this.getRandomGemType()
-    }
-
-    const x = this.x + col * this.cellSize + this.cellSize / 2
-    const y = this.y + row * this.cellSize + this.cellSize / 2
-
-    const gem = new Gem(this.scene, x, y, type)
-    gem.setGridPosition(row, col)
-
-    this.grid[row][col] = gem
-    return gem
-  }
-
-  getRandomGemType() {
-    const types = ['red', 'blue', 'green', 'yellow', 'purple', 'orange']
-    return types[Math.floor(Math.random() * types.length)]
-  }
-
-  setupInput() {
-    this.scene.input.on('pointerdown', this.onPointerDown, this)
-    this.scene.input.on('pointermove', this.onPointerMove, this)
-    this.scene.input.on('pointerup', this.onPointerUp, this)
-  }
-
-  onPointerDown(pointer) {
-    if (this.isProcessing) return
-
-    const col = Math.floor((pointer.x - this.x) / this.cellSize)
-    const row = Math.floor((pointer.y - this.y) / this.cellSize)
-
-    if (row >= 0 && row < this.rows && col >= 0 && col < this.cols) {
-      this.selectedGem = this.grid[row][col]
-      if (this.selectedGem) {
-        this.selectedGem.select()
-      }
-    }
-  }
-
-  onPointerMove(pointer) {
-    if (!this.selectedGem || this.isProcessing) return
-
-    const col = Math.floor((pointer.x - this.x) / this.cellSize)
-    const row = Math.floor((pointer.y - this.y) / this.cellSize)
-
-    if (row >= 0 && row < this.rows && col >= 0 && col < this.cols) {
-      const targetGem = this.grid[row][col]
-      if (targetGem && targetGem !== this.selectedGem) {
-        this.trySwap(this.selectedGem, targetGem)
-      }
-    }
-  }
-
-  onPointerUp() {
-    if (this.selectedGem) {
-      this.selectedGem.deselect()
-      this.selectedGem = null
-    }
-  }
-
-  async trySwap(gem1, gem2) {
-    this.isProcessing = true
-    this.selectedGem = null
-
-    // 执行交换
-    await this.swapGems(gem1, gem2)
-
-    // 检查匹配
-    const matches = this.findMatches()
-    if (matches.length > 0) {
-      await this.processMatches(matches)
-    } else {
-      // 没有匹配，交换回来
-      await this.swapGems(gem1, gem2)
-    }
-
-    this.isProcessing = false
-  }
-
-  async swapGems(gem1, gem2) {
-    const row1 = gem1.row
-    const col1 = gem1.col
-    const row2 = gem2.row
-    const col2 = gem2.col
-
-    // 更新网格
-    this.grid[row1][col1] = gem2
-    this.grid[row2][col2] = gem1
-
-    // 更新宝石位置
-    gem1.setGridPosition(row2, col2)
-    gem2.setGridPosition(row1, col1)
-
-    // 动画
-    await this.animateSwap(gem1, gem2)
-  }
-
-  findMatches() {
-    const matches = []
-
-    // 横向匹配
-    for (let row = 0; row < this.rows; row++) {
-      for (let col = 0; col < this.cols - 2; col++) {
-        const gem1 = this.grid[row][col]
-        const gem2 = this.grid[row][col + 1]
-        const gem3 = this.grid[row][col + 2]
-
-        if (gem1 && gem2 && gem3 && gem1.type === gem2.type && gem2.type === gem3.type) {
-          matches.push([gem1, gem2, gem3])
-        }
-      }
-    }
-
-    // 纵向匹配
-    for (let col = 0; col < this.cols; col++) {
-      for (let row = 0; row < this.rows - 2; row++) {
-        const gem1 = this.grid[row][col]
-        const gem2 = this.grid[row + 1][col]
-        const gem3 = this.grid[row + 2][col]
-
-        if (gem1 && gem2 && gem3 && gem1.type === gem2.type && gem2.type === gem3.type) {
-          matches.push([gem1, gem2, gem3])
-        }
-      }
-    }
-
-    return matches
-  }
-
-  async processMatches(matches) {
-    // 计算分数
-    let totalScore = 0
-    matches.forEach(match => {
-      totalScore += match.length * 10
-      // 四消、五消加分
-      if (match.length > 3) {
-        totalScore += (match.length - 3) * 20
-      }
-    })
-
-    // 移除匹配的宝石
-    matches.forEach(match => {
-      match.forEach(gem => {
-        this.grid[gem.row][gem.col] = null
-        gem.destroy()
-      })
-    })
-
-    // 更新分数
-    this.scene.updateScore(totalScore)
-
-    // 下落
-    await this.dropGems()
-
-    // 填充新宝石
-    this.fillBoard()
-
-    // 检查新的匹配（连锁）
-    const newMatches = this.findMatches()
-    if (newMatches.length > 0) {
-      await this.processMatches(newMatches)
-    }
-  }
-
-  async dropGems() {
-    for (let col = 0; col < this.cols; col++) {
-      let emptyRow = this.rows - 1
-
-      for (let row = this.rows - 1; row >= 0; row--) {
-        if (this.grid[row][col]) {
-          if (row !== emptyRow) {
-            const gem = this.grid[row][col]
-            this.grid[emptyRow][col] = gem
-            this.grid[row][col] = null
-            gem.setGridPosition(emptyRow, col)
-            await this.animateDrop(gem)
+  
+  moveLeft() {
+    let moved = false;
+    for (let y = 0; y < 4; y++) {
+      for (let x = 1; x < 4; x++) {
+        if (this.grid[y][x] !== 0) {
+          let newX = x;
+          while (newX > 0 && this.grid[y][newX - 1] === 0) {
+            newX--;
           }
-          emptyRow--
+          if (newX !== x) {
+            this.grid[y][newX] = this.grid[y][x];
+            this.grid[y][x] = 0;
+            moved = true;
+          }
+          if (newX > 0 && this.grid[y][newX - 1] === this.grid[y][newX]) {
+            this.grid[y][newX - 1] *= 2;
+            this.score += this.grid[y][newX - 1];
+            this.grid[y][newX] = 0;
+            moved = true;
+          }
         }
       }
     }
+    return moved;
   }
-
-  shuffleBoard() {
-    // 收集所有宝石
-    const gems = []
-    for (let row = 0; row < this.rows; row++) {
-      for (let col = 0; col < this.cols; col++) {
-        if (this.grid[row][col]) {
-          gems.push(this.grid[row][col])
+  
+  addRandomTile() {
+    const empty = [];
+    for (let y = 0; y < 4; y++) {
+      for (let x = 0; x < 4; x++) {
+        if (this.grid[y][x] === 0) {
+          empty.push({ x, y });
         }
       }
     }
-
-    // 打乱顺序
-    for (let i = gems.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [gems[i], gems[j]] = [gems[j], gems[i]]
-    }
-
-    // 重新放置
-    let index = 0
-    for (let row = 0; row < this.rows; row++) {
-      for (let col = 0; col < this.cols; col++) {
-        this.grid[row][col] = gems[index]
-        gems[index].setGridPosition(row, col)
-        index++
+    
+    if (empty.length === 0) return;
+    
+    const { x, y } = empty[Math.floor(Math.random() * empty.length)];
+    this.grid[y][x] = Math.random() < 0.9 ? 2 : 4;
+  }
+  
+  isGameOver() {
+    // 检查是否还有空格
+    for (let y = 0; y < 4; y++) {
+      for (let x = 0; x < 4; x++) {
+        if (this.grid[y][x] === 0) return false;
       }
     }
+    
+    // 检查是否还能合并
+    for (let y = 0; y < 4; y++) {
+      for (let x = 0; x < 3; x++) {
+        if (this.grid[y][x] === this.grid[y][x + 1]) return false;
+      }
+    }
+    for (let x = 0; x < 4; x++) {
+      for (let y = 0; y < 3; y++) {
+        if (this.grid[y][x] === this.grid[y + 1][x]) return false;
+      }
+    }
+    
+    return true;
   }
 }
 ```
 
-### 2. 宝石类 (Gem.js)
+## 迭代策略
 
-```javascript
-export class Gem extends Phaser.GameObjects.Container {
-  constructor(scene, x, y, type) {
-    super(scene, x, y)
+### 第一版：核心谜题
+- 1 种谜题类型
+- 10 个关卡
+- 基础 UI
+- 步数统计
 
-    this.type = type
-    this.row = 0
-    this.col = 0
-    this.isSelected = false
+### 第二版：多种谜题
+- 3 种谜题类型
+- 30 个关卡
+- 星级评价
+- 提示系统
 
-    // 宝石图像
-    this.image = scene.add.image(0, 0, `gem-${type}`)
-    this.add(this.image)
+### 第三版：内容扩展
+- 5 种谜题类型
+- 100 个关卡
+- 成就系统
+- 排行榜
 
-    // 选中效果
-    this.selectionCircle = scene.add.circle(0, 0, 30, 0xffffff, 0.3)
-    this.add(this.selectionCircle)
-    this.selectionCircle.setVisible(false)
+### 第四版：深度玩法
+- 关卡编辑器
+- 关卡分享
+- 每日挑战
+- 特殊事件
 
-    scene.add.existing(this)
-  }
+### 第五版：变现
+- 看广告获得提示
+- 内购系统
+- 社交分享
+- 推送通知
 
-  setGridPosition(row, col) {
-    this.row = row
-    this.col = col
+## 常见错误
 
-    // 更新实际位置
-    const x = this.scene.board.x + col * this.scene.board.cellSize + this.scene.board.cellSize / 2
-    const y = this.scene.board.y + row * this.scene.board.cellSize + this.scene.board.cellSize / 2
-
-    this.setPosition(x, y)
-  }
-
-  select() {
-    this.isSelected = true
-    this.selectionCircle.setVisible(true)
-
-    // 放大效果
-    this.scene.tweens.add({
-      targets: this,
-      scaleX: 1.2,
-      scaleY: 1.2,
-      duration: 100
-    })
-  }
-
-  deselect() {
-    this.isSelected = false
-    this.selectionCircle.setVisible(false)
-
-    // 恢复大小
-    this.scene.tweens.add({
-      targets: this,
-      scaleX: 1,
-      scaleY: 1,
-      duration: 100
-    })
-  }
-
-  async animateSwap(targetX, targetY) {
-    return new Promise(resolve => {
-      this.scene.tweens.add({
-        targets: this,
-        x: targetX,
-        y: targetY,
-        duration: 200,
-        ease: 'Power2',
-        onComplete: resolve
-      })
-    })
-  }
-
-  async animateDrop(targetY) {
-    return new Promise(resolve => {
-      this.scene.tweens.add({
-        targets: this,
-        y: targetY,
-        duration: 300,
-        ease: 'Bounce',
-        onComplete: resolve
-      })
-    })
-  }
-
-  animateDestroy() {
-    this.scene.tweens.add({
-      targets: this,
-      scaleX: 0,
-      scaleY: 0,
-      alpha: 0,
-      duration: 200,
-      onComplete: () => this.destroy()
-    })
-  }
-}
-```
-
-### 3. 关卡数据 (levels.js)
-
-```javascript
-export const LEVELS = [
-  {
-    id: 1,
-    name: '入门关卡',
-    rows: 8,
-    cols: 8,
-    targetScore: 1000,
-    maxMoves: 30,
-    goals: [
-      { type: 'red', count: 10 }
-    ]
-  },
-  {
-    id: 2,
-    name: '双色挑战',
-    rows: 8,
-    cols: 8,
-    targetScore: 2000,
-    maxMoves: 25,
-    goals: [
-      { type: 'red', count: 15 },
-      { type: 'blue', count: 15 }
-    ]
-  },
-  {
-    id: 3,
-    name: '三色迷阵',
-    rows: 8,
-    cols: 8,
-    targetScore: 3000,
-    maxMoves: 20,
-    goals: [
-      { type: 'red', count: 20 },
-      { type: 'blue', count: 20 },
-      { type: 'green', count: 20 }
-    ]
-  }
-]
-```
-
-## 使用方法
-
-1. 使用此模板创建新项目
-2. 在 `assets/images/` 中添加宝石图片
-3. 在 `data/levels.js` 中定义关卡
-4. 调整 `config.js` 中的游戏参数
-5. 运行 `npm run dev` 预览游戏
-
-## 扩展点
-
-- 添加特殊宝石：在 `SpecialGem.js` 中实现
-- 添加道具系统：创建 `PowerUpManager`
-- 添加成就系统：创建 `AchievementManager`
-- 添加排行榜：创建 `LeaderboardManager`
+1. **规则太复杂**：益智游戏规则要简单
+2. **难度跳跃**：难度要渐进，不能突然变难
+3. **没有提示**：玩家卡住时要有提示
+4. **没有撤销**：误操作要能撤销
+5. **没有反馈**：操作要有视觉和音效反馈

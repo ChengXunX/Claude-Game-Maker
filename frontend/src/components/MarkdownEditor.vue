@@ -1,11 +1,18 @@
 <template>
-  <div class="markdown-editor">
+  <div class="markdown-editor" :class="{ 'is-fullscreen': isFullscreen }">
     <div class="editor-toolbar">
       <el-tabs v-model="activeTab" type="card" size="small">
         <el-tab-pane label="编辑" name="edit" />
         <el-tab-pane label="预览" name="preview" />
         <el-tab-pane label="分屏" name="split" />
       </el-tabs>
+      <div class="toolbar-actions">
+        <el-tooltip :content="isFullscreen ? '退出最大化' : '最大化'" placement="top">
+          <el-button size="small" text @click="toggleFullscreen">
+            <el-icon><FullScreen v-if="!isFullscreen" /><ScaleToOriginal v-else /></el-icon>
+          </el-button>
+        </el-tooltip>
+      </div>
     </div>
     <div class="editor-content" :class="{ 'split-mode': activeTab === 'split' }">
       <!-- 编辑模式 -->
@@ -32,6 +39,7 @@
  */
 import { ref, computed, watch } from 'vue'
 import { marked } from 'marked'
+import { FullScreen, ScaleToOriginal } from '@element-plus/icons-vue'
 
 const props = defineProps({
   modelValue: {
@@ -52,6 +60,11 @@ const emit = defineEmits(['update:modelValue'])
 
 const activeTab = ref('edit')
 const content = ref(props.modelValue)
+const isFullscreen = ref(false)
+
+const toggleFullscreen = () => {
+  isFullscreen.value = !isFullscreen.value
+}
 
 // 监听外部值变化
 watch(() => props.modelValue, (newVal) => {
@@ -266,5 +279,39 @@ const handleInput = (val) => {
 .text-muted {
   color: var(--el-text-color-secondary);
   font-style: italic;
+}
+
+/* 最大化模式 */
+.markdown-editor.is-fullscreen {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 9999;
+  background: var(--el-bg-color);
+  border-radius: 0;
+  border: none;
+  display: flex;
+  flex-direction: column;
+}
+
+.markdown-editor.is-fullscreen .editor-toolbar {
+  flex-shrink: 0;
+}
+
+.markdown-editor.is-fullscreen .editor-content {
+  flex: 1;
+  min-height: 0;
+}
+
+.markdown-editor.is-fullscreen .preview-area {
+  max-height: none;
+}
+
+.toolbar-actions {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
 }
 </style>

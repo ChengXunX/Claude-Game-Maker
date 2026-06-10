@@ -1,542 +1,392 @@
 ---
-name: game-template-fullstack
-description: 全栈游戏模板 - 包含前端游戏和后端服务的完整项目骨架
-category: game-template
-triggerPattern: fullstack, 全栈, multiplayer, 多人, online, 在线, server, 后端
+name: 全栈游戏开发模板
+description: 全栈游戏开发模板，适用于需要后端服务的多人在线游戏
+trigger: fullstack, 全栈, multiplayer, 多人, online, 在线, server, 后端
+examples: 多人在线游戏|MMO|实时对战|联机游戏
 ---
 
-# 全栈游戏模板
+# 全栈游戏开发模板
 
-## 概述
+## 游戏设计核心原则
 
-这是一个完整的全栈游戏模板，包含：
-- **前端**：Phaser 3 游戏引擎 + Vue 3 管理界面
-- **后端**：Node.js + Express + Socket.IO
-- **数据库**：MongoDB / PostgreSQL
-- **实时通信**：WebSocket 双向通信
-- **用户系统**：注册、登录、排行榜
-- **部署**：Docker + Nginx
-
-## 项目结构
-
+### 核心循环（持续进行）
 ```
-game-fullstack/
-├── README.md
-├── docker-compose.yml
-├── .env.example
-│
-├── client/                    # 前端游戏客户端
-│   ├── index.html
-│   ├── package.json
-│   ├── vite.config.js
-│   ├── src/
-│   │   ├── main.js
-│   │   ├── config.js
-│   │   ├── scenes/
-│   │   │   ├── BootScene.js
-│   │   │   ├── MenuScene.js
-│   │   │   ├── GameScene.js
-│   │   │   └── LobbyScene.js
-│   │   ├── network/
-│   │   │   ├── SocketManager.js    # WebSocket 管理
-│   │   │   └── ApiClient.js        # REST API 客户端
-│   │   ├── entities/
-│   │   │   ├── Player.js
-│   │   │   └── RemotePlayer.js     # 远程玩家
-│   │   └── ui/
-│   │       ├── HUD.js
-│   │       ├── ChatBox.js
-│   │       └── Leaderboard.js
-│   └── assets/
-│
-├── server/                    # 后端服务
-│   ├── package.json
-│   ├── src/
-│   │   ├── index.js           # 服务入口
-│   │   ├── config.js          # 配置
-│   │   ├── routes/
-│   │   │   ├── auth.js        # 认证路由
-│   │   │   ├── game.js        # 游戏路由
-│   │   │   └── leaderboard.js # 排行榜路由
-│   │   ├── models/
-│   │   │   ├── User.js        # 用户模型
-│   │   │   ├── GameRoom.js    # 游戏房间
-│   │   │   └── Score.js       # 分数记录
-│   │   ├── services/
-│   │   │   ├── AuthService.js
-│   │   │   ├── GameService.js
-│   │   │   └── MatchService.js
-│   │   ├── socket/
-│   │   │   ├── SocketHandler.js
-│   │   │   └── GameRoom.js
-│   │   └── middleware/
-│   │       ├── auth.js
-│   │       └── rateLimit.js
-│   └── .env
-│
-└── database/                  # 数据库脚本
-    ├── init.sql
-    └── seed.sql
+登录 → 匹配 → 游戏 → 结算 → 保存 → 继续
+```
+- **实时性**：多人实时交互
+- **持久性**：数据保存到服务器
+- **社交性**：和其他玩家互动
+
+### 玩家心理学
+- **"多人对战"的刺激感**：和真人对战
+- **"数据持久"的安全感**：数据不会丢失
+- **"社交互动"的乐趣**：和其他玩家交流
+- -"排名竞争"的欲望**：提高排名
+
+### 全栈设计要点
+```
+全栈核心：
+1. 实时通信：WebSocket 低延迟
+2. 数据持久：服务器保存数据
+3. 状态同步：多人状态一致
+4. 安全防护：防止作弊
 ```
 
-## 目录配置
+## 核心系统设计
 
-| 目录路径 | 用途 | 可访问角色 | 说明 |
-|---------|------|-----------|------|
-| /client | 前端游戏客户端 | client-dev, ui-dev | 游戏主程序、场景、实体、UI |
-| /server | 后端服务 | server-dev | API接口、业务逻辑、数据库模型 |
-| /database | 数据库脚本 | server-dev | 数据库初始化、种子数据 |
-| /config | 配置文件 | | 游戏配置、环境变量（所有角色可访问） |
-| /docs | 文档 | system-planner | 需求文档、设计文档、API文档 |
-| /proto | 接口定义 | client-dev, server-dev | 前后端接口协议定义 |
-
-## 核心代码模板
-
-### 1. 后端入口 (server/src/index.js)
-
+### 1. 服务器架构
 ```javascript
-const express = require('express')
-const http = require('http')
-const { Server } = require('socket.io')
-const cors = require('cors')
-const mongoose = require('mongoose')
-require('dotenv').config()
-
-const authRoutes = require('./routes/auth')
-const gameRoutes = require('./routes/game')
-const leaderboardRoutes = require('./routes/leaderboard')
-const { setupSocketHandlers } = require('./socket/SocketHandler')
-
-const app = express()
-const server = http.createServer(app)
-const io = new Server(server, {
-  cors: {
-    origin: process.env.CLIENT_URL || 'http://localhost:5173',
-    methods: ['GET', 'POST']
+class GameServer {
+  constructor() {
+    this.io = require('socket.io')(server);
+    this.rooms = new Map();
+    this.players = new Map();
   }
-})
-
-// 中间件
-app.use(cors())
-app.use(express.json())
-
-// 路由
-app.use('/api/auth', authRoutes)
-app.use('/api/game', gameRoutes)
-app.use('/api/leaderboard', leaderboardRoutes)
-
-// WebSocket 处理
-setupSocketHandlers(io)
-
-// 数据库连接
-mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/game')
-  .then(() => console.log('MongoDB 连接成功'))
-  .catch(err => console.error('MongoDB 连接失败:', err))
-
-// 启动服务器
-const PORT = process.env.PORT || 3000
-server.listen(PORT, () => {
-  console.log(`服务器运行在端口 ${PORT}`)
-})
-```
-
-### 2. 认证路由 (server/src/routes/auth.js)
-
-```javascript
-const express = require('express')
-const router = express.Router()
-const jwt = require('jsonwebtoken')
-const bcrypt = require('bcryptjs')
-const User = require('../models/User')
-
-// 注册
-router.post('/register', async (req, res) => {
-  try {
-    const { username, password, email } = req.body
-
-    // 检查用户是否存在
-    const existingUser = await User.findOne({ username })
-    if (existingUser) {
-      return res.status(400).json({ error: '用户名已存在' })
-    }
-
-    // 创建用户
-    const hashedPassword = await bcrypt.hash(password, 10)
-    const user = new User({
-      username,
-      password: hashedPassword,
-      email
-    })
-    await user.save()
-
-    // 生成 Token
-    const token = jwt.sign(
-      { userId: user._id, username: user.username },
-      process.env.JWT_SECRET || 'secret',
-      { expiresIn: '7d' }
-    )
-
-    res.json({ token, user: { id: user._id, username: user.username } })
-  } catch (error) {
-    res.status(500).json({ error: '注册失败' })
+  
+  start() {
+    this.io.on('connection', (socket) => {
+      console.log('Player connected:', socket.id);
+      
+      // 玩家认证
+      socket.on('authenticate', (data) => this.authenticate(socket, data));
+      
+      // 加入房间
+      socket.on('join_room', (roomId) => this.joinRoom(socket, roomId));
+      
+      // 游戏操作
+      socket.on('game_action', (action) => this.handleAction(socket, action));
+      
+      // 断开连接
+      socket.on('disconnect', () => this.handleDisconnect(socket));
+    });
   }
-})
-
-// 登录
-router.post('/login', async (req, res) => {
-  try {
-    const { username, password } = req.body
-
-    // 查找用户
-    const user = await User.findOne({ username })
-    if (!user) {
-      return res.status(401).json({ error: '用户名或密码错误' })
+  
+  authenticate(socket, data) {
+    // 验证 token
+    const player = this.verifyToken(data.token);
+    
+    if (player) {
+      this.players.set(socket.id, player);
+      socket.emit('authenticated', { success: true, player });
+    } else {
+      socket.emit('authenticated', { success: false, error: '认证失败' });
     }
-
-    // 验证密码
-    const validPassword = await bcrypt.compare(password, user.password)
-    if (!validPassword) {
-      return res.status(401).json({ error: '用户名或密码错误' })
-    }
-
-    // 生成 Token
-    const token = jwt.sign(
-      { userId: user._id, username: user.username },
-      process.env.JWT_SECRET || 'secret',
-      { expiresIn: '7d' }
-    )
-
-    res.json({ token, user: { id: user._id, username: user.username } })
-  } catch (error) {
-    res.status(500).json({ error: '登录失败' })
   }
-})
-
-module.exports = router
-```
-
-### 3. WebSocket 处理 (server/src/socket/SocketHandler.js)
-
-```javascript
-const GameRoom = require('./GameRoom')
-
-const rooms = new Map()
-const players = new Map()
-
-function setupSocketHandlers(io) {
-  io.on('connection', (socket) => {
-    console.log(`玩家连接: ${socket.id}`)
-
-    // 加入房间
-    socket.on('joinRoom', (data) => {
-      const { roomId, player } = data
-
-      let room = rooms.get(roomId)
-      if (!room) {
-        room = new GameRoom(roomId)
-        rooms.set(roomId, room)
-      }
-
-      room.addPlayer(socket.id, player)
-      players.set(socket.id, { roomId, player })
-
-      socket.join(roomId)
-      io.to(roomId).emit('playerJoined', { playerId: socket.id, player })
-      io.to(roomId).emit('roomState', room.getState())
-    })
-
-    // 玩家移动
-    socket.on('playerMove', (data) => {
-      const playerData = players.get(socket.id)
-      if (!playerData) return
-
-      const room = rooms.get(playerData.roomId)
-      if (room) {
-        room.updatePlayerPosition(socket.id, data.position)
-        socket.to(playerData.roomId).emit('playerMoved', {
-          playerId: socket.id,
-          position: data.position
-        })
-      }
-    })
-
-    // 玩家动作
-    socket.on('playerAction', (data) => {
-      const playerData = players.get(socket.id)
-      if (!playerData) return
-
-      const room = rooms.get(playerData.roomId)
-      if (room) {
-        room.handlePlayerAction(socket.id, data.action)
-        io.to(playerData.roomId).emit('actionPerformed', {
-          playerId: socket.id,
-          action: data.action
-        })
-      }
-    })
-
-    // 发送消息
-    socket.on('sendMessage', (data) => {
-      const playerData = players.get(socket.id)
-      if (!playerData) return
-
-      io.to(playerData.roomId).emit('messageReceived', {
+  
+  joinRoom(socket, roomId) {
+    const room = this.rooms.get(roomId);
+    
+    if (room && room.players.length < room.maxPlayers) {
+      room.players.push(socket.id);
+      socket.join(roomId);
+      
+      // 通知房间内其他玩家
+      socket.to(roomId).emit('player_joined', {
         playerId: socket.id,
-        playerName: playerData.player.name,
-        message: data.message,
-        timestamp: Date.now()
-      })
-    })
-
-    // 离开房间
-    socket.on('leaveRoom', () => {
-      handlePlayerLeave(socket, io)
-    })
-
-    // 断开连接
-    socket.on('disconnect', () => {
-      handlePlayerLeave(socket, io)
-      console.log(`玩家断开: ${socket.id}`)
-    })
-  })
-}
-
-function handlePlayerLeave(socket, io) {
-  const playerData = players.get(socket.id)
-  if (!playerData) return
-
-  const room = rooms.get(playerData.roomId)
-  if (room) {
-    room.removePlayer(socket.id)
-    io.to(playerData.roomId).emit('playerLeft', { playerId: socket.id })
-
-    // 如果房间为空，删除房间
-    if (room.isEmpty()) {
-      rooms.delete(playerData.roomId)
+        player: this.players.get(socket.id)
+      });
+      
+      // 发送房间状态
+      socket.emit('room_state', room.getState());
     }
   }
-
-  players.delete(socket.id)
+  
+  handleAction(socket, action) {
+    const player = this.players.get(socket.id);
+    const room = this.getPlayerRoom(socket.id);
+    
+    if (player && room) {
+      // 验证操作
+      if (this.validateAction(action, player)) {
+        // 执行操作
+        const result = room.executeAction(action, player);
+        
+        // 广播结果
+        this.io.to(room.id).emit('action_result', result);
+        
+        // 检查游戏结束
+        if (room.checkGameOver()) {
+          this.endGame(room);
+        }
+      }
+    }
+  }
 }
-
-module.exports = { setupSocketHandlers }
 ```
 
-### 4. 游戏房间 (server/src/socket/GameRoom.js)
-
+### 2. 房间系统
 ```javascript
 class GameRoom {
-  constructor(id) {
-    this.id = id
-    this.players = new Map()
-    this.state = {
-      status: 'waiting', // waiting, playing, finished
-      startedAt: null,
-      scores: {}
+  constructor(config) {
+    this.id = config.id;
+    this.name = config.name;
+    this.maxPlayers = config.maxPlayers;
+    this.players = [];
+    this.state = 'waiting'; // waiting, playing, finished
+    this.gameState = {};
+  }
+  
+  addPlayer(playerId) {
+    if (this.players.length < this.maxPlayers) {
+      this.players.push(playerId);
+      
+      if (this.players.length >= this.minPlayers) {
+        this.state = 'ready';
+      }
+      
+      return true;
     }
-    this.maxPlayers = 4
-    this.createdAt = Date.now()
+    
+    return false;
   }
-
-  addPlayer(socketId, player) {
-    if (this.players.size >= this.maxPlayers) {
-      throw new Error('房间已满')
-    }
-    this.players.set(socketId, {
-      ...player,
-      socketId,
-      joinedAt: Date.now()
-    })
-    this.state.scores[socketId] = 0
-  }
-
-  removePlayer(socketId) {
-    this.players.delete(socketId)
-    delete this.state.scores[socketId]
-  }
-
-  updatePlayerPosition(socketId, position) {
-    const player = this.players.get(socketId)
-    if (player) {
-      player.position = position
+  
+  removePlayer(playerId) {
+    this.players = this.players.filter(p => p !== playerId);
+    
+    if (this.players.length === 0) {
+      this.state = 'empty';
     }
   }
-
-  handlePlayerAction(socketId, action) {
-    // 处理游戏动作
-    console.log(`玩家 ${socketId} 执行动作: ${action.type}`)
+  
+  startGame() {
+    if (this.state !== 'ready') return false;
+    
+    this.state = 'playing';
+    this.gameState = this.initGameState();
+    
+    return true;
   }
-
-  updateScore(socketId, score) {
-    this.state.scores[socketId] = (this.state.scores[socketId] || 0) + score
+  
+  executeAction(action, player) {
+    // 执行游戏操作
+    switch (action.type) {
+      case 'move':
+        return this.handleMove(action, player);
+      case 'attack':
+        return this.handleAttack(action, player);
+      case 'use_item':
+        return this.handleUseItem(action, player);
+      default:
+        return { success: false, error: '未知操作' };
+    }
   }
-
+  
+  checkGameOver() {
+    // 检查游戏结束条件
+    return this.gameState.gameOver;
+  }
+  
   getState() {
     return {
       id: this.id,
-      status: this.state.status,
-      players: Array.from(this.players.values()),
-      scores: this.state.scores,
-      maxPlayers: this.maxPlayers
-    }
-  }
-
-  isEmpty() {
-    return this.players.size === 0
-  }
-
-  isFull() {
-    return this.players.size >= this.maxPlayers
+      name: this.name,
+      players: this.players,
+      state: this.state,
+      gameState: this.gameState
+    };
   }
 }
-
-module.exports = GameRoom
 ```
 
-### 5. 前端 WebSocket 管理 (client/src/network/SocketManager.js)
-
+### 3. 状态同步系统
 ```javascript
-import { io } from 'socket.io-client'
-
-class SocketManager {
+class StateSync {
   constructor() {
-    this.socket = null
-    this.listeners = new Map()
+    this.tickRate = 20; // 每秒 20 次
+    this.lastTick = Date.now();
   }
-
-  connect(url) {
-    this.socket = io(url, {
-      autoConnect: true,
-      reconnection: true,
-      reconnectionAttempts: 5,
-      reconnectionDelay: 1000
-    })
-
-    this.socket.on('connect', () => {
-      console.log('WebSocket 连接成功')
-    })
-
-    this.socket.on('disconnect', () => {
-      console.log('WebSocket 断开连接')
-    })
-
-    this.socket.on('connect_error', (error) => {
-      console.error('WebSocket 连接错误:', error)
-    })
-
-    return this
-  }
-
-  joinRoom(roomId, player) {
-    this.socket.emit('joinRoom', { roomId, player })
-  }
-
-  leaveRoom() {
-    this.socket.emit('leaveRoom')
-  }
-
-  sendMove(position) {
-    this.socket.emit('playerMove', { position })
-  }
-
-  sendAction(action) {
-    this.socket.emit('playerAction', { action })
-  }
-
-  sendMessage(message) {
-    this.socket.emit('sendMessage', { message })
-  }
-
-  onPlayerJoined(callback) {
-    this.socket.on('playerJoined', callback)
-  }
-
-  onPlayerLeft(callback) {
-    this.socket.on('playerLeft', callback)
-  }
-
-  onPlayerMoved(callback) {
-    this.socket.on('playerMoved', callback)
-  }
-
-  onActionPerformed(callback) {
-    this.socket.on('actionPerformed', callback)
-  }
-
-  onMessageReceived(callback) {
-    this.socket.on('messageReceived', callback)
-  }
-
-  onRoomState(callback) {
-    this.socket.on('roomState', callback)
-  }
-
-  disconnect() {
-    if (this.socket) {
-      this.socket.disconnect()
+  
+  update(delta) {
+    const now = Date.now();
+    
+    if (now - this.lastTick >= 1000 / this.tickRate) {
+      this.syncState();
+      this.lastTick = now;
     }
   }
+  
+  syncState() {
+    const state = this.game.getState();
+    
+    // 广播给所有玩家
+    this.io.to(this.room.id).emit('state_update', {
+      timestamp: Date.now(),
+      state: state
+    });
+  }
+  
+  interpolateState(lastState, currentState, alpha) {
+    // 状态插值，使动画平滑
+    const interpolated = {};
+    
+    for (const key in currentState) {
+      if (typeof currentState[key] === 'number') {
+        interpolated[key] = lastState[key] + (currentState[key] - lastState[key]) * alpha;
+      } else {
+        interpolated[key] = currentState[key];
+      }
+    }
+    
+    return interpolated;
+  }
 }
-
-export default new SocketManager()
 ```
 
-### 6. Docker Compose 配置
-
-```yaml
-version: '3.8'
-
-services:
-  client:
-    build: ./client
-    ports:
-      - "5173:5173"
-    depends_on:
-      - server
-
-  server:
-    build: ./server
-    ports:
-      - "3000:3000"
-    environment:
-      - NODE_ENV=production
-      - MONGODB_URI=mongodb://mongo:27017/game
-      - JWT_SECRET=${JWT_SECRET}
-    depends_on:
-      - mongo
-
-  mongo:
-    image: mongo:6
-    ports:
-      - "27017:27017"
-    volumes:
-      - mongo-data:/data/db
-
-  nginx:
-    image: nginx:alpine
-    ports:
-      - "80:80"
-    volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf
-    depends_on:
-      - client
-      - server
-
-volumes:
-  mongo-data:
+### 4. 数据持久化系统
+```javascript
+class DataPersistence {
+  constructor() {
+    this.db = require('./database');
+  }
+  
+  async savePlayerData(playerId, data) {
+    await this.db.players.updateOne(
+      { _id: playerId },
+      { $set: data },
+      { upsert: true }
+    );
+  }
+  
+  async loadPlayerData(playerId) {
+    return await this.db.players.findOne({ _id: playerId });
+  }
+  
+  async saveGameResult(gameId, result) {
+    await this.db.games.updateOne(
+      { _id: gameId },
+      { $set: result },
+      { upsert: true }
+    );
+  }
+  
+  async getLeaderboard(limit = 10) {
+    return await this.db.players
+      .find({})
+      .sort({ score: -1 })
+      .limit(limit)
+      .toArray();
+  }
+  
+  async getPlayerStats(playerId) {
+    const stats = await this.db.games.aggregate([
+      { $match: { playerId } },
+      { $group: {
+        _id: null,
+        totalGames: { $sum: 1 },
+        wins: { $sum: { $cond: ['$won', 1, 0] } },
+        losses: { $sum: { $cond: ['$won', 0, 1] } },
+        totalScore: { $sum: '$score' }
+      }}
+    ]).toArray();
+    
+    return stats[0] || { totalGames: 0, wins: 0, losses: 0, totalScore: 0 };
+  }
+}
 ```
 
-## 使用方法
+### 5. 匹配系统
+```javascript
+class MatchmakingSystem {
+  constructor() {
+    this.queue = [];
+    this.matchSize = 2;
+  }
+  
+  addToQueue(player) {
+    this.queue.push({
+      playerId: player.id,
+      rating: player.rating,
+      joinedAt: Date.now()
+    });
+    
+    this.tryMatch();
+  }
+  
+  removeFromQueue(playerId) {
+    this.queue = this.queue.filter(p => p.playerId !== playerId);
+  }
+  
+  tryMatch() {
+    if (this.queue.length >= this.matchSize) {
+      // 按评分排序
+      this.queue.sort((a, b) => a.rating - b.rating);
+      
+      // 找到评分相近的玩家
+      const match = this.findMatch();
+      
+      if (match) {
+        this.createMatch(match);
+      }
+    }
+  }
+  
+  findMatch() {
+    // 找到评分最接近的玩家
+    for (let i = 0; i < this.queue.length - 1; i++) {
+      const diff = Math.abs(this.queue[i].rating - this.queue[i + 1].rating);
+      
+      if (diff <= 200) { // 评分差不超过 200
+        return [this.queue[i], this.queue[i + 1]];
+      }
+    }
+    
+    return null;
+  }
+  
+  createMatch(players) {
+    // 创建房间
+    const room = this.createRoom();
+    
+    // 移出队列
+    for (const player of players) {
+      this.removeFromQueue(player.playerId);
+      room.addPlayer(player.playerId);
+    }
+    
+    // 开始游戏
+    room.startGame();
+    
+    return room;
+  }
+}
+```
 
-1. 复制模板到新目录
-2. 配置 `.env` 文件
-3. 运行 `docker-compose up`
-4. 访问 `http://localhost`
+## 迭代策略
 
-## 扩展点
+### 第一版：基础联机
+- 简单服务器
+- 基础联机
+- 状态同步
+- 简单 UI
 
-- 添加新游戏类型：在 `GameService.js` 中实现
-- 添加新排行榜：在 `leaderboard.js` 路由中实现
-- 添加好友系统：创建 `FriendService`
-- 添加聊天系统：扩展 `SocketHandler`
-- 添加存档系统：创建 `SaveService`
+### 第二版：房间系统
+- 房间创建
+- 房间加入
+- 房间列表
+- 房间聊天
+
+### 第三版：匹配系统
+- 自动匹配
+- 评分系统
+- 匹配队列
+- 匹配历史
+
+### 第四版：数据持久化
+- 玩家数据保存
+- 游戏记录
+- 排行榜
+- 成就系统
+
+### 第五版：安全防护
+- 反作弊系统
+- 服务器验证
+- 数据加密
+- DDoS 防护
+
+## 常见错误
+
+1. **延迟太高**：要优化网络延迟
+2. **状态不同步**：要保证状态一致
+3. **没有持久化**：数据要保存到服务器
+4. **没有反作弊**：要有反作弊系统
+5. **没有匹配**：要有匹配系统

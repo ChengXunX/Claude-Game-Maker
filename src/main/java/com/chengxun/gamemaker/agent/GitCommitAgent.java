@@ -13,6 +13,12 @@ import java.util.UUID;
 
 public class GitCommitAgent extends BaseAgent {
 
+    /** 上次代码审查时间 */
+    private LocalDateTime lastReviewTime;
+
+    /** 代码审查冷却时间（分钟）：避免每轮都调用 Claude CLI */
+    private static final int REVIEW_COOLDOWN_MINUTES = 30;
+
     private static final Logger log = LoggerFactory.getLogger(GitCommitAgent.class);
 
     public GitCommitAgent(AgentDefinition definition,
@@ -29,14 +35,36 @@ public class GitCommitAgent extends BaseAgent {
     protected void doWork() {
         log.info("GitCommitAgent working...");
 
-        // 检查待审核的提交
-        String reviewResult = reviewRecentCommits();
-        if (reviewResult != null) {
-            saveKnowledge("last_review", reviewResult);
+        // 处理待处理的审查请求（优先处理人工请求）
+        processReviewRequests();
+
+        // 如果有工作流分配的待处理/进行中任务，跳过例行审查
+        boolean hasActiveTask = tasks.stream()
+            .anyMatch(t -> t.getStatus() == TaskAssignment.TaskStatus.PENDING
+                || t.getStatus() == TaskAssignment.TaskStatus.IN_PROGRESS);
+        if (hasActiveTask) {
+            log.debug("有活跃任务，跳过例行代码审查");
+            return;
         }
 
-        // 处理待处理的审查请求
-        processReviewRequests();
+        // 检查待审核的提交（带冷却时间，避免每轮都调用 Claude CLI）
+        if (shouldReview()) {
+            String reviewResult = reviewRecentCommits();
+            if (reviewResult != null) {
+                saveKnowledge("last_review", reviewResult);
+            }
+            lastReviewTime = LocalDateTime.now();
+        }
+    }
+
+    /**
+     * 判断是否需要进行代码审查
+     */
+    private boolean shouldReview() {
+        if (lastReviewTime == null) {
+            return true;
+        }
+        return LocalDateTime.now().isAfter(lastReviewTime.plusMinutes(REVIEW_COOLDOWN_MINUTES));
     }
 
     @Override

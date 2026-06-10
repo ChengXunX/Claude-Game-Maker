@@ -80,6 +80,12 @@ public class PerformanceManagementService {
     @Autowired
     private SystemConfigService configService;
 
+    @Autowired(required = false)
+    private com.chengxun.gamemaker.web.service.ProjectAgentConfigService projectAgentConfigService;
+
+    @Autowired(required = false)
+    private IntelligentScheduler intelligentScheduler;
+
     /**
      * 获取最大警告次数（从配置读取）
      */
@@ -151,6 +157,17 @@ public class PerformanceManagementService {
         review.setComments(comments);
         review.setHighlights(highlights);
 
+        // 从 ProjectAgentConfig 读取该角色的绩效评分权重并设置到评审记录
+        if (projectAgentConfigService != null && projectId != null) {
+            Map<String, Double> weights = projectAgentConfigService.getPerformanceWeights(projectId, agent.getRole());
+            String weightsStr = String.format("quality:%.1f,efficiency:%.1f,collaboration:%.1f,innovation:%.1f",
+                weights.getOrDefault("quality", 1.0),
+                weights.getOrDefault("efficiency", 1.0),
+                weights.getOrDefault("collaboration", 1.0),
+                weights.getOrDefault("innovation", 1.0));
+            review.setRoleWeights(weightsStr);
+        }
+
         // 计算综合评分
         review.calculateOverallScore();
 
@@ -164,6 +181,12 @@ public class PerformanceManagementService {
 
         // 记录日志
         logPerformanceReview(saved);
+
+        // 同步绩效评分到智能调度器
+        if (intelligentScheduler != null && saved.getOverallScore() != null) {
+            intelligentScheduler.syncPerformanceScore(agentId, saved.getOverallScore());
+            log.info("绩效评分已同步到智能调度器: Agent={}, Score={}", agentId, saved.getOverallScore());
+        }
 
         // 检查是否需要触发解雇流程
         checkAndTriggerDismissalIfNeeded(agentId, producerId, projectId);
@@ -336,6 +359,13 @@ public class PerformanceManagementService {
 
         log.info("Dismissal request {} approved by admin {}", request.getRequestNo(), adminId);
 
+        // 审批通过后自动执行解雇
+        try {
+            executeDismissal(requestId, adminName);
+        } catch (Exception e) {
+            log.warn("自动执行解雇失败（需手动执行）: {}", e.getMessage());
+        }
+
         return saved;
     }
 
@@ -391,6 +421,17 @@ public class PerformanceManagementService {
     }
 
     /**
+     * 检查Agent在指定评审周期是否已评审
+     *
+     * @param agentId Agent ID
+     * @param reviewPeriod 评审周期
+     * @return 是否已评审
+     */
+    public boolean hasReviewedInPeriod(String agentId, String reviewPeriod) {
+        return reviewRepository.findByAgentIdAndReviewPeriod(agentId, reviewPeriod).isPresent();
+    }
+
+    /**
      * 获取制作人的评审记录
      */
     public List<PerformanceReview> getProducerReviews(String producerId) {
@@ -402,6 +443,13 @@ public class PerformanceManagementService {
      */
     public List<PerformanceReview> getProjectReviews(String projectId) {
         return reviewRepository.findByProjectIdOrderByCreatedAtDesc(projectId);
+    }
+
+    /**
+     * 获取所有评审记录
+     */
+    public List<PerformanceReview> getAllReviews() {
+        return reviewRepository.findAllByOrderByCreatedAtDesc();
     }
 
     /**
@@ -738,5 +786,132 @@ public class PerformanceManagementService {
         String date = LocalDateTime.now().toString().substring(0, 10).replace("-", "");
         String random = UUID.randomUUID().toString().substring(0, 6).toUpperCase();
         return "REP-" + date + "-" + random;
+    }
+
+    // ===== 量化指标采集 =====
+
+    /**
+     * 采集Agent的量化指标
+     * 从日志系统中统计客观数据，用于辅助绩效评判
+     *
+     * @param agentId Agent ID
+     * @param days 统计天数
+     * @return 量化指标Map
+     */
+    public Map<String, Object> collectQuantitativeMetrics(String agentId, int days) {
+        Map<String, Object> metrics = new HashMap<>();
+        LocalDateTime since = LocalDateTime.now().minusDays(days);
+
+        // 任务完成数
+        long completedTasks = agentLogRepository.countByAgentIdAndActionAndCreatedAtAfter(
+            agentId, "TASK_COMPLETED", since);
+
+        // 任务失败数
+        long failedTasks = agentLogRepository.countByAgentIdAndActionAndCreatedAtAfter(
+            agentId, "TASK_FAILED", since);
+
+        // 错误数
+        long errors = agentLogRepository.countByAgentIdAndLevelAndCreatedAtAfter(
+            agentId, "ERROR", since);
+
+        // AI调用次数
+        long aiCalls = agentLogRepository.countByAgentIdAndActionAndCreatedAtAfter(
+            agentId, "AI_CALL", since);
+
+        // 计算派生指标
+        long totalTasks = completedTasks + failedTasks;
+        double taskCompletionRate = totalTasks > 0 ? (double) completedTasks / totalTasks * 100 : 0;
+        double errorRate = totalTasks > 0 ? (double) errors / totalTasks * 100 : 0;
+
+        metrics.put("completedTasks", completedTasks);
+        metrics.put("failedTasks", failedTasks);
+        metrics.put("errors", errors);
+        metrics.put("aiCalls", aiCalls);
+        metrics.put("totalTasks", totalTasks);
+        metrics.put("taskCompletionRate", Math.round(taskCompletionRate * 100.0) / 100.0);
+        metrics.put("errorRate", Math.round(errorRate * 100.0) / 100.0);
+        metrics.put("periodDays", days);
+
+        return metrics;
+    }
+
+    /**
+     * 基于量化指标计算建议评分
+     *
+     * @param metrics 量化指标
+     * @return 建议评分Map（quality, efficiency, collaboration, innovation）
+     */
+    public Map<String, Integer> calculateSuggestedScores(Map<String, Object> metrics) {
+        Map<String, Integer> scores = new HashMap<>();
+
+        double completionRate = (double) metrics.getOrDefault("taskCompletionRate", 0.0);
+        double errorRate = (double) metrics.getOrDefault("errorRate", 0.0);
+        long completedTasks = (long) metrics.getOrDefault("completedTasks", 0L);
+
+        // 质量评分：基于任务完成率和错误率
+        int quality = (int) Math.min(100, completionRate - errorRate * 2);
+        scores.put("quality", Math.max(0, quality));
+
+        // 效率评分：基于任务完成数量（假设每天完成2个任务为满分）
+        int efficiency = (int) Math.min(100, completedTasks * 10);
+        scores.put("efficiency", Math.max(0, efficiency));
+
+        // 协作和创新需要AI判断，默认给70分
+        scores.put("collaboration", 70);
+        scores.put("innovation", 70);
+
+        return scores;
+    }
+
+    /**
+     * 获取绩效趋势（最近N次评审）
+     *
+     * @param agentId Agent ID
+     * @param count 评审次数
+     * @return 趋势数据
+     */
+    public Map<String, Object> getPerformanceTrend(String agentId, int count) {
+        Map<String, Object> trend = new HashMap<>();
+
+        List<PerformanceReview> reviews = reviewRepository.findByAgentIdOrderByCreatedAtDesc(agentId);
+        List<Map<String, Object>> trendData = new ArrayList<>();
+
+        int previousScore = 0;
+        for (int i = 0; i < Math.min(count, reviews.size()); i++) {
+            PerformanceReview review = reviews.get(i);
+            Map<String, Object> data = new HashMap<>();
+            data.put("period", review.getReviewPeriod());
+            data.put("overallScore", review.getOverallScore());
+            data.put("grade", review.getGrade());
+
+            // 计算变化
+            if (previousScore > 0) {
+                data.put("change", review.getOverallScore() - previousScore);
+            }
+            previousScore = review.getOverallScore();
+
+            trendData.add(data);
+        }
+
+        trend.put("agentId", agentId);
+        trend.put("trendData", trendData);
+        trend.put("currentScore", reviews.isEmpty() ? 0 : reviews.get(0).getOverallScore());
+
+        // 判断趋势方向
+        if (reviews.size() >= 2) {
+            int latest = reviews.get(0).getOverallScore();
+            int previous = reviews.get(1).getOverallScore();
+            if (latest > previous + 5) {
+                trend.put("trend", "IMPROVING");
+            } else if (latest < previous - 5) {
+                trend.put("trend", "DECLINING");
+            } else {
+                trend.put("trend", "STABLE");
+            }
+        } else {
+            trend.put("trend", "INSUFFICIENT_DATA");
+        }
+
+        return trend;
     }
 }

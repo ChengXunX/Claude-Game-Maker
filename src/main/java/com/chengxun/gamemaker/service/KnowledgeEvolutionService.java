@@ -1,5 +1,6 @@
 package com.chengxun.gamemaker.service;
 
+import com.chengxun.gamemaker.agent.RolePromptLibrary;
 import com.chengxun.gamemaker.manager.MemoryManager;
 import com.chengxun.gamemaker.manager.SkillManager;
 import com.chengxun.gamemaker.model.GameProject;
@@ -44,6 +45,7 @@ public class KnowledgeEvolutionService {
     private final GameTemplateService templateService;
     private final MemoryManager memoryManager;
     private final SkillManager skillManager;
+    private final RolePromptLibrary rolePromptLibrary;
 
     /** 已处理的文档哈希，避免重复处理 */
     private final Map<String, String> processedDocuments = new ConcurrentHashMap<>();
@@ -54,16 +56,19 @@ public class KnowledgeEvolutionService {
     public KnowledgeEvolutionService(GameKnowledgeBase knowledgeBase,
                                      GameTemplateService templateService,
                                      MemoryManager memoryManager,
-                                     SkillManager skillManager) {
+                                     SkillManager skillManager,
+                                     RolePromptLibrary rolePromptLibrary) {
         this.knowledgeBase = knowledgeBase;
         this.templateService = templateService;
         this.memoryManager = memoryManager;
         this.skillManager = skillManager;
+        this.rolePromptLibrary = rolePromptLibrary;
     }
 
     /**
      * 初始化知识进化服务
      */
+    @jakarta.annotation.PostConstruct
     public void init() {
         try {
             Files.createDirectories(Path.of(KB_DIR));
@@ -261,6 +266,12 @@ public class KnowledgeEvolutionService {
             // 项目经验全局优化
             optimizeGloballyFromProjects();
 
+            // 进化角色提示词
+            evolveRolePrompts();
+
+            // 保存学习到的模式（每次进化后都保存，不等凌晨 2 点）
+            saveLearnedPatterns();
+
             log.info("知识自进化完成");
 
         } catch (Exception e) {
@@ -300,12 +311,44 @@ public class KnowledgeEvolutionService {
 
     /**
      * 收集所有项目的成功经验
+     * 从 learned-skills 文件中提取项目经验
      */
     private Map<String, List<ProjectExperience>> collectProjectExperiences() {
         Map<String, List<ProjectExperience>> experiences = new HashMap<>();
 
-        // 从知识库中提取项目经验
-        // 这里可以扩展为从数据库或文件中读取
+        try {
+            Path skillsDir = Path.of(LEARNED_SKILLS_DIR);
+            if (!Files.exists(skillsDir)) return experiences;
+
+            Files.list(skillsDir)
+                .filter(p -> p.toString().endsWith(".md"))
+                .forEach(path -> {
+                    try {
+                        String content = Files.readString(path);
+                        String description = extractFrontmatterField(content, "description");
+                        String learnedFrom = extractFrontmatterField(content, "learned-from");
+                        String name = extractFrontmatterField(content, "name");
+
+                        if (description != null && learnedFrom != null) {
+                            // learnedFrom 格式: projectId:agentRole
+                            String projectId = learnedFrom.contains(":")
+                                ? learnedFrom.substring(0, learnedFrom.indexOf(':'))
+                                : "global";
+
+                            ProjectExperience exp = new ProjectExperience();
+                            exp.setProjectId(projectId);
+                            exp.setDescription(description);
+                            exp.setSource(learnedFrom);
+
+                            experiences.computeIfAbsent(projectId, k -> new ArrayList<>()).add(exp);
+                        }
+                    } catch (IOException e) {
+                        log.debug("读取项目经验文件失败: {}", path);
+                    }
+                });
+        } catch (IOException e) {
+            log.warn("读取项目经验失败: {}", e.getMessage());
+        }
 
         return experiences;
     }
@@ -321,7 +364,7 @@ public class KnowledgeEvolutionService {
             String category = entry.getKey();
             List<ProjectExperience> projectExperiences = entry.getValue();
 
-            if (projectExperiences.size() >= 2) { // 至少2个项目有类似经验
+            if (!projectExperiences.isEmpty()) {
                 CommonPattern pattern = extractCommonPattern(projectExperiences);
                 if (pattern != null) {
                     patterns.put(category, pattern);
@@ -407,6 +450,8 @@ public class KnowledgeEvolutionService {
         private String technicalStack;
         private long duration;
         private boolean success;
+        private String description;
+        private String source;
 
         // Getters and Setters
         public String getProjectId() { return projectId; }
@@ -423,6 +468,10 @@ public class KnowledgeEvolutionService {
         public void setDuration(long duration) { this.duration = duration; }
         public boolean isSuccess() { return success; }
         public void setSuccess(boolean success) { this.success = success; }
+        public String getDescription() { return description; }
+        public void setDescription(String description) { this.description = description; }
+        public String getSource() { return source; }
+        public void setSource(String source) { this.source = source; }
     }
 
     /**
@@ -466,11 +515,12 @@ public class KnowledgeEvolutionService {
         CommonPattern pattern = new CommonPattern();
         pattern.setOccurrenceCount(experiences.size());
 
-        // 分析成功因素
+        // 分析成功因素（优先用 successFactor，没有则用 description）
         Map<String, Integer> factorCount = new HashMap<>();
         for (ProjectExperience exp : experiences) {
-            if (exp.getSuccessFactor() != null) {
-                factorCount.merge(exp.getSuccessFactor(), 1, Integer::sum);
+            String factor = exp.getSuccessFactor() != null ? exp.getSuccessFactor() : exp.getDescription();
+            if (factor != null) {
+                factorCount.merge(factor, 1, Integer::sum);
             }
         }
 
@@ -1050,6 +1100,363 @@ public class KnowledgeEvolutionService {
     }
 
     /**
+     * 从游戏验证结果中学习
+     * 将验证通过/失败的经验保存到知识库，供后续项目参考
+     *
+     * @param agentId 发起验证的 Agent ID
+     * @param projectId 项目 ID
+     * @param projectName 项目名称
+     * @param overallScore 总分 (0-100)
+     * @param dimensionScores 各维度评分 Map
+     * @param issues 发现的问题列表
+     * @param suggestions 改进建议列表
+     * @param passed 是否通过验证
+     */
+    public void learnFromGameVerification(String agentId, String projectId, String projectName,
+                                           int overallScore, Map<String, Integer> dimensionScores,
+                                           List<String> issues, List<String> suggestions, boolean passed) {
+        log.info("从游戏验证中学习: project={}, score={}, passed={}", projectName, overallScore, passed);
+
+        try {
+            // 1. 记录验证模式
+            String patternKey = "game_verification_" + (passed ? "pass" : "fail");
+            LearnedPattern pattern = learnedPatterns.get(patternKey);
+            if (pattern == null) {
+                pattern = new LearnedPattern(patternKey);
+                learnedPatterns.put(patternKey, pattern);
+            }
+            pattern.incrementFrequency();
+            pattern.addSource(projectId + ":" + agentId + ":" + System.currentTimeMillis());
+
+            // 2. 如果验证失败，记录问题和解决方案
+            if (!passed && issues != null && !issues.isEmpty()) {
+                String problemType = "game_quality_issues";
+                StringBuilder problemDesc = new StringBuilder();
+                problemDesc.append(String.format("项目 [%s] 验证未通过 (总分: %d/100)\n", projectName, overallScore));
+                problemDesc.append("问题:\n");
+                issues.forEach(issue -> problemDesc.append("- ").append(issue).append("\n"));
+
+                StringBuilder solution = new StringBuilder();
+                if (suggestions != null && !suggestions.isEmpty()) {
+                    solution.append("改进建议:\n");
+                    suggestions.forEach(s -> solution.append("- ").append(s).append("\n"));
+                }
+
+                knowledgeBase.recordSolution(problemType, problemDesc.toString(), solution.toString());
+
+                // 记录各维度低分的解决方案
+                if (dimensionScores != null) {
+                    for (Map.Entry<String, Integer> entry : dimensionScores.entrySet()) {
+                        if (entry.getValue() < 60) {
+                            String dimProblem = "game_" + entry.getKey() + "_low";
+                            knowledgeBase.recordSolution(dimProblem,
+                                String.format("%s 评分不足: %d/100", entry.getKey(), entry.getValue()),
+                                String.format("需要改进 %s 方面，参考建议: %s",
+                                    entry.getKey(),
+                                    suggestions != null ? String.join("; ", suggestions) : "无"));
+                        }
+                    }
+                }
+            }
+
+            // 3. 如果验证通过，提取成功模式
+            if (passed) {
+                String successPattern = "game_verification_success";
+                LearnedPattern successP = learnedPatterns.get(successPattern);
+                if (successP == null) {
+                    successP = new LearnedPattern(successPattern);
+                    learnedPatterns.put(successPattern, successP);
+                }
+                successP.incrementFrequency();
+                successP.addSource(projectId + ":" + overallScore);
+
+                // 如果多次验证成功，生成最佳实践
+                if (successP.getFrequency() >= 3) {
+                    String bestPractice = String.format(
+                        "基于 %d 次成功验证的经验，游戏项目质量关键因素：\n" +
+                        "- 总分通常在 %d 分以上\n" +
+                        "- 各维度均衡发展\n" +
+                        "- 核心玩法完整且可玩",
+                        successP.getFrequency(), overallScore);
+                    saveBestPractice("game_verification", bestPractice);
+                }
+            }
+
+            // 4. 保存验证历史到知识库文档
+            saveVerificationHistory(agentId, projectId, projectName, overallScore, dimensionScores, issues, suggestions, passed);
+
+            log.info("游戏验证学习完成: project={}, passed={}", projectName, passed);
+
+        } catch (Exception e) {
+            log.error("从游戏验证中学习失败", e);
+        }
+    }
+
+    /**
+     * 保存验证历史到知识库文档
+     */
+    private void saveVerificationHistory(String agentId, String projectId, String projectName,
+                                          int overallScore, Map<String, Integer> dimensionScores,
+                                          List<String> issues, List<String> suggestions, boolean passed) {
+        try {
+            Path historyPath = Path.of(KB_DIR, "verification-history", projectId + ".md");
+            Files.createDirectories(historyPath.getParent());
+
+            StringBuilder sb = new StringBuilder();
+
+            // 如果文件已存在，读取现有内容
+            if (Files.exists(historyPath)) {
+                sb.append(Files.readString(historyPath));
+                sb.append("\n---\n\n");
+            }
+
+            sb.append(String.format("## 验证记录 - %s\n\n", LocalDateTime.now()));
+            sb.append(String.format("- 项目: %s\n", projectName));
+            sb.append(String.format("- 总分: %d/100\n", overallScore));
+            sb.append(String.format("- 结果: %s\n", passed ? "✅ 通过" : "❌ 未通过"));
+            sb.append(String.format("- 发起者: %s\n\n", agentId));
+
+            if (dimensionScores != null && !dimensionScores.isEmpty()) {
+                sb.append("### 各维度评分\n\n");
+                for (Map.Entry<String, Integer> entry : dimensionScores.entrySet()) {
+                    String status = entry.getValue() >= 60 ? "✅" : "⚠️";
+                    sb.append(String.format("- %s %s: %d/100\n", status, entry.getKey(), entry.getValue()));
+                }
+                sb.append("\n");
+            }
+
+            if (issues != null && !issues.isEmpty()) {
+                sb.append("### 发现的问题\n\n");
+                issues.forEach(issue -> sb.append("- ").append(issue).append("\n"));
+                sb.append("\n");
+            }
+
+            if (suggestions != null && !suggestions.isEmpty()) {
+                sb.append("### 改进建议\n\n");
+                suggestions.forEach(s -> sb.append("- ").append(s).append("\n"));
+                sb.append("\n");
+            }
+
+            Files.writeString(historyPath, sb.toString());
+
+        } catch (IOException e) {
+            log.error("保存验证历史失败", e);
+        }
+    }
+
+    /**
+     * 查询游戏验证相关的知识
+     * 返回与游戏质量、验证相关的最佳实践和解决方案
+     *
+     * @param query 查询关键词
+     * @return 格式化的知识文本
+     */
+    public String queryVerificationKnowledge(String query) {
+        StringBuilder knowledge = new StringBuilder();
+
+        // 1. 查询验证相关的解决方案
+        Map<String, List<GameKnowledgeBase.Solution>> allSolutions = knowledgeBase.getAllSolutions();
+        for (Map.Entry<String, List<GameKnowledgeBase.Solution>> entry : allSolutions.entrySet()) {
+            String problemType = entry.getKey();
+            if (problemType.contains("game_") || problemType.contains("verification")) {
+                List<GameKnowledgeBase.Solution> solutions = entry.getValue();
+                if (!solutions.isEmpty()) {
+                    knowledge.append(String.format("### %s\n\n", problemType));
+                    for (GameKnowledgeBase.Solution sol : solutions.stream().limit(3).toList()) {
+                        knowledge.append(String.format("- **问题**: %s\n  **解决方案**: %s\n\n",
+                            sol.getProblemDescription().length() > 100
+                                ? sol.getProblemDescription().substring(0, 100) + "..." : sol.getProblemDescription(),
+                            sol.getSolution().length() > 200
+                                ? sol.getSolution().substring(0, 200) + "..." : sol.getSolution()));
+                    }
+                }
+            }
+        }
+
+        // 2. 查询验证相关的最佳实践
+        List<GameKnowledgeBase.BestPractice> bestPractices = knowledgeBase.getAllBestPractices();
+        for (GameKnowledgeBase.BestPractice bp : bestPractices) {
+            if (bp.getCategory().contains("game") || bp.getCategory().contains("verification")) {
+                knowledge.append(String.format("### 最佳实践: %s\n\n%s\n\n", bp.getTitle(), bp.getContent()));
+            }
+        }
+
+        return knowledge.toString();
+    }
+
+    /**
+     * 进化角色提示词
+     * 分析项目经验中的成功模式，将最佳实践融入角色提示词
+     * 优化后的提示词自动持久化到数据库
+     */
+    private void evolveRolePrompts() {
+        log.info("开始进化角色提示词...");
+
+        try {
+            // 收集所有角色的成功经验
+            Map<String, List<String>> roleExperiences = collectRoleExperiences();
+
+            for (Map.Entry<String, List<String>> entry : roleExperiences.entrySet()) {
+                String roleId = entry.getKey();
+                List<String> experiences = entry.getValue();
+
+                if (experiences.isEmpty()) continue;
+
+                // 获取当前提示词
+                String currentPrompt = rolePromptLibrary.getPrompt(roleId);
+                if (currentPrompt == null) continue;
+
+                // 分析经验，提取可增强的规范
+                String enhancement = analyzeExperiencesForEnhancement(roleId, experiences);
+                if (enhancement == null || enhancement.isEmpty()) continue;
+
+                // 检查是否已有此增强（避免重复添加）
+                if (currentPrompt.contains(enhancement)) continue;
+
+                // 追加增强内容到提示词
+                String evolvedPrompt = currentPrompt + "\n\n## 经验积累（自动生成）\n\n" + enhancement;
+
+                // 保存到数据库
+                String name = rolePromptLibrary.getRoleName(roleId);
+                String notifyTargets = String.join(",", rolePromptLibrary.getNotifyTargets(roleId));
+                String reviewer = rolePromptLibrary.getReviewer(roleId);
+                rolePromptLibrary.saveToDatabase(roleId, evolvedPrompt, name, notifyTargets, reviewer, "evolution");
+
+                log.info("角色 {} 提示词已进化，新增经验规范", roleId);
+            }
+
+            log.info("角色提示词进化完成");
+        } catch (Exception e) {
+            log.error("角色提示词进化失败", e);
+        }
+    }
+
+    /**
+     * 收集各角色的项目经验
+     * 从 learnedPatterns 和 learned-skills 文件中收集
+     *
+     * @return 角色ID -> 经验列表
+     */
+    private Map<String, List<String>> collectRoleExperiences() {
+        Map<String, List<String>> roleExperiences = new HashMap<>();
+
+        // 1. 从已学习的模式中收集高频经验
+        List<String> patternInsights = new ArrayList<>();
+        for (LearnedPattern pattern : learnedPatterns.values()) {
+            if (pattern.getFrequency() >= 2 && !pattern.getSources().isEmpty()) {
+                String insight = pattern.getKey() + "（出现 " + pattern.getFrequency() + " 次）";
+                patternInsights.add(insight);
+            }
+        }
+
+        // 2. 从 learned-skills 文件中收集经验
+        List<String> skillInsights = loadLearnedSkillInsights();
+
+        // 3. 合并所有经验
+        List<String> allInsights = new ArrayList<>();
+        allInsights.addAll(patternInsights);
+        allInsights.addAll(skillInsights);
+
+        if (!allInsights.isEmpty()) {
+            // 所有角色共享相同的经验库
+            for (String roleId : rolePromptLibrary.getAllRoles()) {
+                roleExperiences.put(roleId, allInsights);
+            }
+        }
+
+        return roleExperiences;
+    }
+
+    /**
+     * 从 learned-skills 文件中加载经验摘要
+     *
+     * @return 经验列表
+     */
+    private List<String> loadLearnedSkillInsights() {
+        List<String> insights = new ArrayList<>();
+        try {
+            Path skillsDir = Path.of(LEARNED_SKILLS_DIR);
+            if (!Files.exists(skillsDir)) return insights;
+
+            Files.list(skillsDir)
+                .filter(p -> p.toString().endsWith(".md"))
+                .sorted((a, b) -> { // 按修改时间倒序，取最新的
+                    try {
+                        return Files.getLastModifiedTime(b).compareTo(Files.getLastModifiedTime(a));
+                    } catch (IOException e) {
+                        return 0;
+                    }
+                })
+                .limit(20) // 最多读取 20 个最新技能
+                .forEach(path -> {
+                    try {
+                        String content = Files.readString(path);
+                        // 提取 YAML frontmatter 中的 description
+                        String description = extractFrontmatterField(content, "description");
+                        String learnedFrom = extractFrontmatterField(content, "learned-from");
+                        if (description != null && !description.isEmpty()) {
+                            String insight = description;
+                            if (learnedFrom != null) {
+                                insight += "（来源: " + learnedFrom + "）";
+                            }
+                            insights.add(insight);
+                        }
+                    } catch (IOException e) {
+                        log.debug("读取 learned-skill 文件失败: {}", path);
+                    }
+                });
+        } catch (IOException e) {
+            log.warn("读取 learned-skills 目录失败: {}", e.getMessage());
+        }
+        return insights;
+    }
+
+    /**
+     * 从 YAML frontmatter 中提取指定字段
+     */
+    private String extractFrontmatterField(String content, String fieldName) {
+        if (content == null) return null;
+        String[] lines = content.split("\n");
+        boolean inFrontmatter = false;
+        for (String line : lines) {
+            if (line.trim().equals("---")) {
+                if (inFrontmatter) break;
+                inFrontmatter = true;
+                continue;
+            }
+            if (inFrontmatter && line.startsWith(fieldName + ":")) {
+                return line.substring(fieldName.length() + 1).trim();
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 分析经验并提取可增强的规范
+     *
+     * @param roleId      角色ID
+     * @param experiences 经验列表
+     * @return 增强规范文本，无增强返回 null
+     */
+    private String analyzeExperiencesForEnhancement(String roleId, List<String> experiences) {
+        // 合并经验内容
+        StringBuilder enhancement = new StringBuilder();
+        enhancement.append("以下是从项目经验中自动提取的最佳实践：\n\n");
+
+        int added = 0;
+        for (String exp : experiences) {
+            if (exp == null || exp.length() < 20) continue;
+            // 截取关键信息
+            String summary = exp.length() > 200 ? exp.substring(0, 200) + "..." : exp;
+            enhancement.append("- ").append(summary).append("\n");
+            added++;
+            if (added >= 10) break; // 最多追加 10 条
+        }
+
+        return added > 0 ? enhancement.toString() : null;
+    }
+
+    /**
      * 获取知识进化统计信息
      *
      * @return 统计数据 Map
@@ -1064,6 +1471,76 @@ public class KnowledgeEvolutionService {
         stats.put("learnedSkillsCount", skillManager.getAllGlobalSkills().stream()
             .filter(s -> "learned".equals(s.getCategory())).count());
         return stats;
+    }
+
+    /**
+     * 获取已学习的模式列表（供前端展示）
+     *
+     * @return 模式列表
+     */
+    public List<Map<String, Object>> getLearnedPatternsList() {
+        List<Map<String, Object>> list = new ArrayList<>();
+        for (LearnedPattern pattern : learnedPatterns.values()) {
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("key", pattern.getKey());
+            item.put("frequency", pattern.getFrequency());
+            item.put("sources", pattern.getSources());
+            list.add(item);
+        }
+        // 按频率降序
+        list.sort((a, b) -> Integer.compare((int) b.get("frequency"), (int) a.get("frequency")));
+        return list;
+    }
+
+    /**
+     * 获取已学习的技能列表（供前端展示）
+     * 从 learned-skills 目录读取文件，提取元数据
+     *
+     * @return 技能列表
+     */
+    public List<Map<String, Object>> getLearnedSkillsList() {
+        List<Map<String, Object>> list = new ArrayList<>();
+        try {
+            Path skillsDir = Path.of(LEARNED_SKILLS_DIR);
+            if (!Files.exists(skillsDir)) return list;
+
+            Files.list(skillsDir)
+                .filter(p -> p.toString().endsWith(".md"))
+                .sorted((a, b) -> {
+                    try { return Files.getLastModifiedTime(b).compareTo(Files.getLastModifiedTime(a)); }
+                    catch (IOException e) { return 0; }
+                })
+                .limit(50)
+                .forEach(path -> {
+                    try {
+                        String content = Files.readString(path);
+                        Map<String, Object> item = new LinkedHashMap<>();
+                        String name = extractFrontmatterField(content, "name");
+                        String description = extractFrontmatterField(content, "description");
+                        String learnedFrom = extractFrontmatterField(content, "learned-from");
+                        String learnedAt = extractFrontmatterField(content, "learned-at");
+
+                        item.put("id", name != null ? name : path.getFileName().toString().replace(".md", ""));
+                        item.put("description", description != null ? description : "");
+                        item.put("learnedFrom", learnedFrom != null ? learnedFrom : "");
+                        item.put("learnedAt", learnedAt != null ? learnedAt : "");
+                        item.put("fileName", path.getFileName().toString());
+
+                        // 从文件名中提取项目信息
+                        if (learnedFrom != null && learnedFrom.contains(":")) {
+                            item.put("projectId", learnedFrom.substring(0, learnedFrom.indexOf(':')));
+                            item.put("agentRole", learnedFrom.substring(learnedFrom.indexOf(':') + 1));
+                        }
+
+                        list.add(item);
+                    } catch (IOException e) {
+                        log.debug("读取 learned-skill 文件失败: {}", path);
+                    }
+                });
+        } catch (IOException e) {
+            log.warn("读取 learned-skills 目录失败: {}", e.getMessage());
+        }
+        return list;
     }
 
     /**

@@ -77,7 +77,14 @@ export const authApi = {
   login: (data) => api.post('/v1/auth/login', data),
   logout: () => api.post('/v1/auth/logout'),
   getCurrentUser: () => api.get('/v1/auth/me'),
-  changePassword: (data) => api.post('/v1/auth/change-password', data)
+  changePassword: (data) => api.post('/v1/auth/change-password', data),
+  updateProfile: (data) => api.put('/v1/auth/profile', data),
+  requestEmailChange: (data) => api.post('/v1/auth/request-email-change', data),
+  // 邮箱换绑相关
+  checkEmailChangeCondition: () => api.get('/v1/auth/email-change-check'),
+  sendCurrentEmailCode: () => api.post('/v1/auth/send-current-email-code'),
+  sendNewEmailCode: (data) => api.post('/v1/auth/send-new-email-code', data),
+  changeEmail: (data) => api.post('/v1/auth/change-email', data)
 }
 
 export const agentApi = {
@@ -100,6 +107,7 @@ export const projectApi = {
   create: (data) => api.post('/projects/api/create', data),
   import: (data) => api.post('/projects/api/import', data),
   remove: (id) => api.post(`/projects/api/${id}/remove`),
+  archive: (id) => api.post(`/projects/api/${id}/archive`),
   refresh: (id) => api.post(`/projects/api/${id}/refresh`),
   setRules: (id, data) => api.post(`/projects/${id}/rules`, data),
   setGoal: (id, data) => api.post(`/projects/${id}/goal`, data),
@@ -107,7 +115,9 @@ export const projectApi = {
   getMilestones: (id) => api.get(`/projects/api/${id}/milestones`),
   getDirectories: (id) => api.get(`/projects/api/${id}/directories`),
   addDirectory: (id, data) => api.post(`/projects/api/${id}/directories`, data),
-  removeDirectory: (id, dirPath) => api.delete(`/projects/api/${id}/directories/${encodeURIComponent(dirPath)}`)
+  removeDirectory: (id, dirPath) => api.delete(`/projects/api/${id}/directories/${encodeURIComponent(dirPath)}`),
+  verifyMilestone: (projectId, milestoneId, data) => api.post(`/projects/api/${projectId}/milestones/${milestoneId}/verify`, data),
+  getVerificationDoc: (id) => api.get(`/projects/api/${id}/verification-doc`)
 }
 
 // ===== 游戏模板管理 API =====
@@ -163,9 +173,11 @@ export const tokenApi = {
   create: (data) => api.post('/tokens', data),
   update: (id, data) => api.put(`/tokens/${id}`, data),
   delete: (id) => api.delete(`/tokens/${id}`),
-  assign: (id, agentId) => api.post(`/tokens/${id}/assign`, { agentId }),
+  assign: (id, agentId, activation) => api.post(`/tokens/${id}/assign`, { agentId, activation: activation || 'immediate' }),
   unassign: (id) => api.post(`/tokens/${id}/unassign`),
-  getStats: () => api.get('/tokens/stats')
+  getStats: () => api.get('/tokens/stats'),
+  getAgents: () => api.get('/tokens/agents'),
+  testConnection: (data) => api.post('/configs/test-ai-connection', data, { timeout: 30000 })
 }
 
 // ===== 技能管理 API =====
@@ -210,6 +222,14 @@ export const configApi = {
   reveal: (id) => api.get(`/configs/${id}/reveal`)
 }
 
+// ===== 邮件配置 API =====
+export const emailApi = {
+  getSettings: () => api.get('/admin/api/settings/email'),
+  saveSettings: (data) => api.post('/admin/api/settings/email', data),
+  testConnection: (data) => api.post('/admin/api/settings/email/test', data, { timeout: 15000 }),
+  sendTestEmail: (toEmail, config) => api.post('/admin/api/settings/email/send-test', { toEmail, ...config }, { timeout: 15000 })
+}
+
 // ===== 设备信任 API =====
 export const deviceApi = {
   getAll: () => api.get('/devices'),
@@ -227,6 +247,12 @@ export const dingtalkApi = {
 // ===== Agent 招聘 API =====
 export const recruitmentApi = {
   getRoles: () => api.get('/recruitment/roles'),
+  getRoleDetail: (roleId) => api.get(`/recruitment/roles/${roleId}`),
+  updateRolePrompt: (roleId, data) => api.put(`/recruitment/roles/${roleId}/prompt`, data),
+  resetRolePrompt: (roleId) => api.post(`/recruitment/roles/${roleId}/reset-prompt`),
+  generateRolePrompt: (roleId, data) => api.post(`/recruitment/roles/${roleId}/generate-prompt`, data),
+  evolveRolePrompt: (roleId) => api.post(`/recruitment/roles/${roleId}/evolve`),
+  getEvolutionMeta: (roleId) => api.get(`/recruitment/roles/${roleId}/evolution-meta`),
   getTemplates: () => api.get('/recruitment/templates'),
   getCustomTemplates: () => api.get('/recruitment/custom-templates'),
   createCustomTemplate: (data) => api.post('/recruitment/custom-templates', data),
@@ -259,7 +285,8 @@ export const interventionApi = {
   cancel: (id, comment) => api.post(`/interventions/${id}/cancel`, { comment }),
   getStats: () => api.get('/interventions/stats'),
   getPending: () => api.get('/interventions/pending'),
-  getAgentInterventions: (agentId) => api.get(`/interventions/agent/${agentId}`)
+  getAgentInterventions: (agentId) => api.get(`/interventions/agent/${agentId}`),
+  startVersionIteration: (data) => api.post('/interventions/version-iteration', data)
 }
 
 // ===== Agent 健康 API =====
@@ -281,7 +308,8 @@ export const performanceApi = {
 
 // ===== 绩效管理 API =====
 export const performanceMgmtApi = {
-  getReviews: (params) => api.get('/performance-management/reviews/agent/me', { params }),
+  getAllReviews: () => api.get('/performance-management/reviews/producer/all'),
+  getReviewsByAgent: (agentId) => api.get(`/performance-management/reviews/agent/${agentId}`),
   createReview: (data) => api.post('/performance-management/reviews/submit', data),
   getDismissals: (params) => api.get('/performance-management/dismissals/all', { params }),
   getPendingDismissals: () => api.get('/performance-management/dismissals/pending'),
@@ -358,6 +386,16 @@ export const workflowApi = {
   getAgentScores: (role, projectId) => api.get('/workflow/agent-scores', { params: { role, projectId } })
 }
 
+// ===== 审批管理 API =====
+export const approvalApi = {
+  getAll: () => api.get('/approvals/all'),
+  getPending: () => api.get('/approvals/pending'),
+  getByProject: (projectId) => api.get(`/approvals/project/${projectId}`),
+  approve: (requestId, data) => api.post(`/approvals/${requestId}/approve`, data),
+  getCount: () => api.get('/approvals/count'),
+  getProjectCount: (projectId) => api.get(`/approvals/count/project/${projectId}`)
+}
+
 // ===== 全局搜索 API =====
 export const searchApi = {
   search: (params) => api.get('/search/api', { params }),
@@ -387,7 +425,9 @@ export const templateApi = {
   create: (data) => api.post('/notification-templates', data),
   update: (id, data) => api.put(`/notification-templates/${id}`, data),
   delete: (id) => api.delete(`/notification-templates/${id}`),
-  preview: (id, data) => api.post(`/notification-templates/${id}/preview`, data)
+  preview: (id, data) => api.post(`/notification-templates/${id}/preview`, data),
+  testSend: (id) => api.post(`/notification-templates/${id}/test`),
+  testSendEmail: (id, toEmail) => api.post(`/notification-templates/${id}/test-email`, { toEmail })
 }
 
 // ===== Agent 调度 API =====
@@ -397,7 +437,29 @@ export const schedulerApi = {
   triggerSchedule: () => api.post('/agent-scheduler/trigger'),
   getConfig: () => api.get('/agent-scheduler/config'),
   updateConfig: (data) => api.put('/agent-scheduler/config', data),
-  cancelTask: (taskId) => api.post(`/agent-scheduler/tasks/${taskId}/cancel`)
+  cancelTask: (taskId) => api.post(`/agent-scheduler/tasks/${taskId}/cancel`),
+  getProducerStatus: () => api.get('/agent-scheduler/producer-status'),
+  getProducerDecisions: (limit) => api.get('/agent-scheduler/producer-decisions', { params: { limit: limit || 10 } }),
+  // 智能调度统计
+  getStats: () => api.get('/scheduler/stats'),
+  // 协作统计
+  getCollaborationStats: () => api.get('/scheduler/collaboration/stats'),
+  // 获取项目协作会话
+  getProjectCollaborations: (projectId) => api.get(`/scheduler/collaboration/project/${projectId}`),
+  // 获取协作会话详情
+  getCollaborationSession: (sessionId) => api.get(`/scheduler/collaboration/session/${sessionId}`),
+  // 获取质量门禁配置
+  getQualityGateConfigs: () => api.get('/scheduler/quality-gates'),
+  // 执行质量评估
+  assessQuality: (projectId, data) => api.post(`/scheduler/quality-gates/assess/${projectId}`, data),
+  // 更新质量门禁配置
+  updateQualityGate: (gateId, data) => api.put(`/scheduler/quality-gates/${gateId}`, data),
+  // 获取 Agent 综合评估
+  getAgentEvaluations: (projectId) => api.get(`/scheduler/evaluations/${projectId}`),
+  // 获取质量评估历史
+  getQualityAssessmentHistory: (projectId) => api.get(`/scheduler/quality-gates/history/${projectId}`),
+  // 获取最新质量评估
+  getLatestQualityAssessment: (projectId) => api.get(`/scheduler/quality-gates/latest/${projectId}`)
 }
 
 // ===== 代码质量 API =====
@@ -457,7 +519,10 @@ export const knowledgeEvolutionApi = {
   learnFromGame: (data) => api.post('/knowledge-evolution/learn-from-game', data),
   extractFromMemory: (data) => api.post('/knowledge-evolution/extract-from-memory', data),
   organize: () => api.post('/knowledge-evolution/organize'),
-  evolve: () => api.post('/knowledge-evolution/evolve')
+  evolve: () => api.post('/knowledge-evolution/evolve'),
+  getStats: () => api.get('/knowledge-evolution/stats'),
+  getLearnedPatterns: () => api.get('/knowledge-evolution/learned-patterns'),
+  getLearnedSkills: () => api.get('/knowledge-evolution/learned-skills')
 }
 
 // ===== AI助手会话 API =====
@@ -495,3 +560,36 @@ export const contextHealthApi = {
   getSummary: () => api.get('/capabilities/health/summary'),
   recover: (agentId) => api.post(`/capabilities/health/${agentId}/recover`)
 }
+
+// ===== 游戏运行时验证 API =====
+export const gameVerifyApi = {
+  // 触发项目验证
+  verify: (projectId) => api.post(`/game-verify/${projectId}/verify`),
+  // AI 深度分析游戏质量（后台异步执行，设置较长超时防止误报）
+  analyze: (projectId) => api.post(`/game-verify/${projectId}/analyze`, null, { timeout: 60000 }),
+  // 获取分析任务状态（轮询接口，设置较长超时）
+  getTaskStatus: (taskId) => api.get(`/game-verify/task/${taskId}`, { timeout: 30000 }),
+  // 获取项目最新分析状态
+  getAnalysisStatus: (projectId) => api.get(`/game-verify/${projectId}/analyze/status`, { timeout: 15000 }),
+  // 获取项目分析历史
+  getAnalysisHistory: (projectId) => api.get(`/game-verify/${projectId}/analyze/history`, { timeout: 15000 }),
+  // 获取项目验证状态
+  getStatus: (projectId) => api.get(`/game-verify/${projectId}/status`),
+  // 批量获取验证状态
+  batchStatus: (projectIds) => api.post('/game-verify/batch-status', projectIds),
+  // 清除验证缓存
+  clearCache: (projectId) => api.delete(`/game-verify/${projectId}/cache`)
+}
+
+// ===== 项目Agent配置 API =====
+export const projectAgentConfigApi = {
+  getConfigs: (projectId) => api.get(`/projects/${projectId}/agents/configs`),
+  getConfig: (projectId, agentRole) => api.get(`/projects/${projectId}/agents/${agentRole}/config`),
+  saveConfig: (projectId, agentRole, data) => api.post(`/projects/${projectId}/agents/${agentRole}/config`, data),
+  getPrompt: (projectId, agentRole) => api.get(`/projects/${projectId}/agents/${agentRole}/prompt`),
+  optimizePrompt: (projectId, agentRole, params) => api.post(`/projects/${projectId}/agents/${agentRole}/optimize`, params || {}),
+  getWeights: (projectId, agentRole) => api.get(`/projects/${projectId}/agents/${agentRole}/weights`),
+  getPerformanceWeights: (projectId, agentRole) => api.get(`/projects/${projectId}/agents/${agentRole}/performance-weights`),
+  savePerformanceWeights: (projectId, agentRole, weights) => api.put(`/projects/${projectId}/agents/${agentRole}/performance-weights`, weights)
+}
+

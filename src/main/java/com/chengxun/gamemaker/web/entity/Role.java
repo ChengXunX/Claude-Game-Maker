@@ -1,5 +1,6 @@
 package com.chengxun.gamemaker.web.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.*;
 import jakarta.validation.constraints.NotBlank;
 import java.time.LocalDateTime;
@@ -8,6 +9,7 @@ import java.util.Set;
 
 @Entity
 @Table(name = "roles")
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class Role {
 
     @Id

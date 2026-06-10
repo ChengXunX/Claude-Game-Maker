@@ -18,54 +18,248 @@ examples: 分析这个错误日志|debug this error|修复这个异常
 ### 2. 根因定位
 - 检查代码逻辑
 - 验证输入数据
-- 检查依赖状态
-- 分析时间线
+- 分析调用栈
+- 复现问题
 
-### 3. 解决方案
-- 提供修复方案
-- 评估方案风险
-- 建议预防措施
+### 3. 修复方案
+- 提供修复建议
+- 说明修复原因
 - 验证修复效果
+- 防止问题复发
 
 ## 常见错误类型
 
-### 空指针异常
-- 检查对象初始化
-- 验证空值处理
-- 使用 Optional
+### 1. 语法错误
+```
+错误信息：SyntaxError: Unexpected token
+原因：代码语法错误
+修复：检查代码语法
+```
 
-### 类型转换异常
-- 检查类型兼容性
-- 验证数据格式
-- 添加类型检查
+### 2. 类型错误
+```
+错误信息：TypeError: Cannot read property 'x' of undefined
+原因：访问了undefined的属性
+修复：检查变量是否定义
+```
 
-### 数组越界
-- 检查数组边界
-- 验证索引计算
-- 添加边界检查
+### 3. 空指针错误
+```
+错误信息：NullPointerException
+原因：访问了null对象
+修复：添加空值检查
+```
 
-### 并发问题
-- 检查线程安全
-- 验证锁使用
-- 分析竞态条件
+### 4. 网络错误
+```
+错误信息：Network Error
+原因：网络请求失败
+修复：检查网络连接和URL
+```
 
-## 输出格式
+## 游戏调试技巧
 
-请按以下格式输出调试结果：
+### 1. 物理引擎调试
+```javascript
+// 开启物理调试
+this.physics.world.createDebugBody(body);
+this.physics.world.debug = true;
 
-**错误概述：**
-简要描述错误现象
+// 检查碰撞体
+console.log('Body size:', body.width, body.height);
+console.log('Body position:', body.x, body.y);
+console.log('Body velocity:', body.velocity.x, body.velocity.y);
+```
 
-**错误分析：**
-- 错误类型：xxx
-- 发生位置：xxx
-- 触发条件：xxx
+### 2. 状态调试
+```javascript
+// 打印游戏状态
+console.log('Game state:', this.game.state);
+console.log('Player state:', this.player.state);
+console.log('Enemy count:', this.enemies.length);
 
-**根因分析：**
-详细分析错误根源
+// 状态变化监听
+this.events.on('stateChanged', (oldState, newState) => {
+  console.log('State changed:', oldState, '->', newState);
+});
+```
 
-**修复方案：**
-提供具体的修复代码和步骤
+### 3. 性能调试
+```javascript
+// 帧率监控
+this.time.addEvent({
+  delay: 1000,
+  callback: () => {
+    console.log('FPS:', this.game.loop.actualFps);
+  },
+  loop: true
+});
 
-**预防建议：**
-建议如何避免类似问题
+// 内存监控
+console.log('Memory:', performance.memory);
+```
+
+### 4. 输入调试
+```javascript
+// 输入事件监听
+this.input.on('pointerdown', (pointer) => {
+  console.log('Click at:', pointer.x, pointer.y);
+});
+
+this.input.keyboard.on('keydown', (event) => {
+  console.log('Key pressed:', event.key);
+});
+```
+
+## 调试工具
+
+### 1. 浏览器工具
+```
+- Chrome DevTools：性能分析
+- Firefox Developer Tools：CSS调试
+- Safari Web Inspector：iOS调试
+```
+
+### 2. 游戏引擎工具
+```
+- Phaser Debug：Phaser调试工具
+- Unity Profiler：Unity性能分析
+- Unreal Insights：Unreal性能分析
+```
+
+### 3. 自定义工具
+```javascript
+// 调试面板
+class DebugPanel {
+  constructor() {
+    this.logs = [];
+    this.visible = false;
+  }
+  
+  log(message) {
+    this.logs.push({
+      time: Date.now(),
+      message
+    });
+    
+    if (this.logs.length > 100) {
+      this.logs.shift();
+    }
+  }
+  
+  render() {
+    if (!this.visible) return;
+    
+    // 渲染调试信息
+  }
+}
+```
+
+## 调试最佳实践
+
+### 1. 日志记录
+```javascript
+// 使用不同日志级别
+console.log('Info:', message);
+console.warn('Warning:', message);
+console.error('Error:', message);
+
+// 添加上下文信息
+console.error('Error in BattleSystem:', {
+  player: this.player.id,
+  enemy: enemy.id,
+  damage: damage
+});
+```
+
+### 2. 断点调试
+```javascript
+// 设置断点
+debugger;
+
+// 条件断点
+if (condition) {
+  debugger;
+}
+```
+
+### 3. 错误边界
+```javascript
+// 捕获错误
+try {
+  // 可能出错的代码
+} catch (error) {
+  console.error('Error:', error);
+  // 错误处理
+}
+
+// 错误边界
+window.onerror = (message, source, lineno, colno, error) => {
+  console.error('Global error:', { message, source, lineno, colno, error });
+  return true;
+};
+```
+
+## 常见游戏错误
+
+### 1. 碰撞检测问题
+```
+问题：角色穿墙
+原因：碰撞体设置不当
+修复：调整碰撞体大小和位置
+```
+
+### 2. 动画问题
+```
+问题：动画不播放
+原因：动画配置错误
+修复：检查动画帧和配置
+```
+
+### 3. 输入问题
+```
+问题：按键无响应
+原因：输入系统配置错误
+修复：检查输入绑定
+```
+
+### 4. 性能问题
+```
+问题：帧率低
+原因：渲染过多对象
+修复：使用对象池和视锥剔除
+```
+
+## 调试技巧
+
+### 1. 最小化复现
+```
+1. 找到复现步骤
+2. 简化复现条件
+3. 定位问题根源
+4. 验证修复效果
+```
+
+### 2. 二分法定位
+```
+1. 注释一半代码
+2. 检查问题是否还在
+3. 逐步缩小范围
+4. 找到问题代码
+```
+
+### 3. 对比分析
+```
+1. 找到正常工作的版本
+2. 对比两个版本的差异
+3. 找出导致问题的变更
+4. 修复问题
+```
+
+## 常见错误
+
+1. **错误信息不看**：要仔细阅读错误信息
+2. **不复现问题**：要先复现再修复
+3. **修复不验证**：要验证修复效果
+4. **不记录日志**：要记录关键日志
+5. **不总结经验**：要总结调试经验

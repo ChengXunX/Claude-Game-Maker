@@ -12,6 +12,14 @@ public class ApiToken {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    /** 所属用户 ID */
+    @Column(name = "user_id")
+    private Long userId;
+
+    /** Token 唯一标识 */
+    @Column(name = "token", unique = true, length = 255)
+    private String token;
+
     @NotBlank(message = "Token 名称不能为空")
     @Column(name = "token_name", nullable = false, length = 100)
     private String name;
@@ -28,6 +36,10 @@ public class ApiToken {
 
     @Column(name = "max_tokens")
     private Integer maxTokens = 4096;
+
+    /** 上下文窗口大小（token数），默认 200k，支持 1M 长上下文 */
+    @Column(name = "context_window")
+    private Integer contextWindow = 200000;
 
     @Enumerated(EnumType.STRING)
     @Column(length = 20)
@@ -90,6 +102,12 @@ public class ApiToken {
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
 
+    public Long getUserId() { return userId; }
+    public void setUserId(Long userId) { this.userId = userId; }
+
+    public String getToken() { return token; }
+    public void setToken(String token) { this.token = token; }
+
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
 
@@ -104,6 +122,9 @@ public class ApiToken {
 
     public Integer getMaxTokens() { return maxTokens; }
     public void setMaxTokens(Integer maxTokens) { this.maxTokens = maxTokens; }
+
+    public Integer getContextWindow() { return contextWindow; }
+    public void setContextWindow(Integer contextWindow) { this.contextWindow = contextWindow; }
 
     public TokenStatus getStatus() { return status; }
     public void setStatus(TokenStatus status) { this.status = status; }

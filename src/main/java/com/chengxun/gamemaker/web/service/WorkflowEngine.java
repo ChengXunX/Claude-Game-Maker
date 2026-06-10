@@ -70,6 +70,12 @@ public class WorkflowEngine {
     @Autowired
     private ApplicationEventPublisher eventPublisher;
 
+    @Autowired
+    private SystemConfigService systemConfigService;
+
+    @Autowired(required = false)
+    private com.chengxun.gamemaker.manager.ProjectManager projectManager;
+
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     /** 工作流模板（内存缓存） */
@@ -164,6 +170,7 @@ public class WorkflowEngine {
             "审查系统策划案的数值可行性、平衡性和完整性。检查数值框架是否合理、成长曲线是否平滑、经济系统是否平衡。审批通过后进入技术评审，不通过则打回修改");
         numericalReview.addDependency("plan");
         numericalReview.setRequiresApproval(true);
+        numericalReview.setImportance("HIGH");  // 数值策划审批是高重要程度
 
         // 步骤3：技术评审 — 服务端和客户端并行评审
         WorkflowStep serverTechReview = new WorkflowStep("server-tech-review", "服务端技术评审", "server-dev",
@@ -240,6 +247,7 @@ public class WorkflowEngine {
         acceptance.addDependency("client-self-test");
         acceptance.addDependency("numerical-self-test");
         acceptance.setRequiresApproval(true);
+        acceptance.setImportance("HIGH");  // 策划验收是高重要程度
 
         // 步骤8：测试 — 测试团队全面测试
         WorkflowStep testing = new WorkflowStep("test", "测试验证", "tester",
@@ -280,6 +288,7 @@ public class WorkflowEngine {
             "合并所有代码分支，执行构建流水线，部署到生产环境。进行线上冒烟测试，确认服务正常运行");
         deployStep.addDependency("regression");
         deployStep.setRequiresApproval(true);
+        deployStep.setImportance("CRITICAL");  // 部署上线是最高重要程度
 
         standard.addStep(planStep);
         standard.addStep(numericalReview);
@@ -419,6 +428,7 @@ public class WorkflowEngine {
             "对策划案进行专业审核，给出审核意见和是否通过的建议。审核不通过则打回修改");
         planReview.addDependency("plan-analyze");
         planReview.setRequiresApproval(true);
+        planReview.setImportance("HIGH");  // 策划案审核是高重要程度
         // 步骤4：策划案修改（如果被打回）
         WorkflowStep planRevise = new WorkflowStep("plan-revise", "策划案修改", "system-planner",
             "根据审核意见修改策划案，解决审核中发现的问题");
@@ -457,6 +467,7 @@ public class WorkflowEngine {
             "对代码进行专业审查，发现潜在问题，提供改进建议。审查不通过则返回修改");
         codeReviewStep.addDependency("integration-test");
         codeReviewStep.setRequiresApproval(true);
+        codeReviewStep.setImportance("HIGH");  // 代码审查是高重要程度
         // 步骤6：代码修改（如果审查不通过）
         WorkflowStep codeRevise = new WorkflowStep("code-revise", "代码修改", "server-dev",
             "根据审查意见修改代码，解决审查中发现的问题");
@@ -466,6 +477,7 @@ public class WorkflowEngine {
             "合并代码并部署到生产环境，进行线上验证");
         codeDeploy.addDependency("code-revise");
         codeDeploy.setRequiresApproval(true);
+        codeDeploy.setImportance("CRITICAL");  // 部署上线是最高重要程度
         codeDevFull.addStep(codeAnalyze);
         codeDevFull.addStep(codeWrite);
         codeDevFull.addStep(codeUnitTest);
@@ -484,6 +496,7 @@ public class WorkflowEngine {
             "快速审核策划案，给出通过或打回意见");
         pqReview.addDependency("write");
         pqReview.setRequiresApproval(true);
+        pqReview.setImportance("LOW");  // 快速审核是低重要程度
         WorkflowStep pqImplement = new WorkflowStep("implement", "快速落实", "system-planner",
             "将策划案快速转化为开发任务");
         pqImplement.addDependency("review");
@@ -598,6 +611,13 @@ public class WorkflowEngine {
      * 创建持久化记录并异步执行
      */
     public WorkflowInstance startWorkflow(String templateId, String projectId, Map<String, String> parameters) {
+        if (templateId == null || templateId.isEmpty()) {
+            throw new RuntimeException("工作流模板ID不能为空");
+        }
+        if (projectId == null || projectId.isEmpty()) {
+            throw new RuntimeException("项目ID不能为空");
+        }
+
         WorkflowTemplate template = templates.get(templateId);
         if (template == null) {
             throw new RuntimeException("工作流模板不存在: " + templateId);
@@ -607,7 +627,9 @@ public class WorkflowEngine {
 
         // 创建内存实例
         WorkflowInstance instance = new WorkflowInstance(instanceId, templateId, projectId);
-        instance.getParameters().putAll(parameters);
+        if (parameters != null) {
+            instance.getParameters().putAll(parameters);
+        }
         instance.setStatus(WorkflowStatus.RUNNING);
 
         // 初始化所有步骤的执行状态
@@ -759,8 +781,12 @@ public class WorkflowEngine {
 
             // 检查是否需要审批且未审批
             if (step.isRequiresApproval() && execution.getStatus() != StepStatus.READY) {
-                // 发起审批请求
-                requestApproval(instance, step, execution);
+                // 如果依赖已满足，先将状态更新为 READY，再发起审批请求
+                if (areDependenciesCompleted(instance, step)) {
+                    execution.setStatus(StepStatus.READY);
+                    updateStepExecution(instance.getId(), step.getId(), "READY", null, null, null, null);
+                    requestApproval(instance, step, execution);
+                }
                 continue;
             }
 
@@ -848,8 +874,10 @@ public class WorkflowEngine {
         updateStepExecution(instance.getId(), step.getId(), "RUNNING", agent.getId(), null, null, null);
 
         // 执行步骤（带超时）
+        // 查找项目的制作人Agent作为任务分配者，避免 workflow-engine 在 MessageBus 中不存在的警告
+        String assignerId = findProducerId(instance.getProjectId());
         try {
-            String result = executeStepWithTimeout(agent, step, inputData, step.getTimeoutMinutes());
+            String result = executeStepWithTimeout(agent, step, inputData, step.getTimeoutMinutes(), assignerId);
             handleStepSuccess(instance, step, execution, result);
         } catch (TimeoutException e) {
             log.warn("步骤超时: {} (实例: {})", step.getId(), instance.getId());
@@ -862,10 +890,29 @@ public class WorkflowEngine {
     }
 
     /**
+     * 查找项目中的制作人Agent ID
+     * 用于工作流任务分配时设置 assignerId，确保 Agent 汇报能正确路由
+     *
+     * @param projectId 项目ID
+     * @return 制作人Agent的ID，未找到时返回 "system"
+     */
+    private String findProducerId(String projectId) {
+        if (projectId == null || agentManager == null) return "system";
+        Agent producer = agentManager.getAgent(projectId + ":producer");
+        return producer != null ? producer.getId() : "system";
+    }
+
+    /**
      * 带超时的步骤执行
      * 使用CompletableFuture.orTimeout实现
+     *
+     * @param agent 执行任务的Agent
+     * @param step 工作流步骤
+     * @param inputData 输入数据
+     * @param timeoutMinutes 超时时间（分钟）
+     * @param assignerId 任务分配者ID（通常是制作人Agent）
      */
-    private String executeStepWithTimeout(Agent agent, WorkflowStep step, String inputData, int timeoutMinutes)
+    private String executeStepWithTimeout(Agent agent, WorkflowStep step, String inputData, int timeoutMinutes, String assignerId)
             throws TimeoutException, Exception {
         CompletableFuture<String> future = CompletableFuture.supplyAsync(() -> {
             // 创建任务
@@ -873,7 +920,8 @@ public class WorkflowEngine {
             task.setId(UUID.randomUUID().toString());
             task.setTitle(step.getName());
             task.setDescription(buildTaskDescription(step, inputData));
-            task.setAssignerId("workflow-engine");
+            task.setAssignerId(assignerId);
+            task.setStatus(TaskAssignment.TaskStatus.PENDING);
 
             // 分配任务给Agent
             agent.assignTask(task);
@@ -912,6 +960,7 @@ public class WorkflowEngine {
 
     /**
      * 收集依赖步骤的输出数据
+     * 包含AI文本响应和实际产出的文件内容
      */
     private String collectDependencyOutputs(WorkflowInstance instance, WorkflowStep step) {
         if (step.getDependencies().isEmpty()) return null;
@@ -924,7 +973,98 @@ public class WorkflowEngine {
                 inputData.append(depExecution.getResult()).append("\n\n");
             }
         }
+
+        // 新增：收集依赖步骤在项目目录中产出的文件内容
+        String projectDir = getProjectWorkDir(instance);
+        if (projectDir != null) {
+            String fileOutputs = collectRecentFileOutputs(projectDir);
+            if (!fileOutputs.isEmpty()) {
+                inputData.append("### 项目中已有的文件产出:\n");
+                inputData.append(fileOutputs).append("\n");
+            }
+        }
+
         return inputData.length() > 0 ? inputData.toString() : null;
+    }
+
+    /**
+     * 获取项目工作目录
+     */
+    private String getProjectWorkDir(WorkflowInstance instance) {
+        if (projectManager == null || instance.getProjectId() == null) return null;
+        try {
+            com.chengxun.gamemaker.model.GameProject project = projectManager.getProject(instance.getProjectId());
+            return project != null ? project.getWorkDir() : null;
+        } catch (Exception e) {
+            log.debug("获取项目工作目录失败: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 收集项目目录中最近产出的文件内容
+     * 扫描项目目录中的文档、配置和代码文件，供下游步骤参考
+     */
+    private String collectRecentFileOutputs(String projectDir) {
+        java.io.File dir = new java.io.File(projectDir);
+        if (!dir.exists() || !dir.isDirectory()) return "";
+
+        StringBuilder outputs = new StringBuilder();
+        // 扫描常见文件类型（通用，不限定具体技术栈）
+        String[] extensions = {
+            ".md", ".txt", ".json", ".yaml", ".yml", ".toml", ".ini", ".xml",
+            ".js", ".ts", ".jsx", ".tsx", ".vue", ".svelte",
+            ".py", ".java", ".cs", ".c", ".cpp", ".h", ".hpp",
+            ".go", ".rs", ".rb", ".php", ".swift", ".kt", ".dart", ".lua",
+            ".gd", ".gdscript", ".shader", ".hlsl", ".glsl",
+            ".html", ".css", ".scss", ".less"
+        };
+
+        scanAndCollectFiles(dir, outputs, extensions, 0, 3); // 最多扫描3层目录，最多收集2000字符
+
+        return outputs.length() > 2000 ? outputs.substring(0, 2000) + "\n...(文件产出截断)" : outputs.toString();
+    }
+
+    /**
+     * 递归扫描并收集文件内容
+     */
+    private void scanAndCollectFiles(java.io.File dir, StringBuilder outputs, String[] extensions, int depth, int maxDepth) {
+        if (depth > maxDepth || outputs.length() > 2000) return;
+
+        java.io.File[] files = dir.listFiles();
+        if (files == null) return;
+
+        for (java.io.File file : files) {
+            if (outputs.length() > 2000) break;
+
+            if (file.isDirectory()) {
+                if (!file.getName().equals("node_modules") && !file.getName().equals(".git")
+                    && !file.getName().equals(".claude") && !file.getName().equals("dist")
+                    && !file.getName().equals("build")) {
+                    scanAndCollectFiles(file, outputs, extensions, depth + 1, maxDepth);
+                }
+            } else {
+                String name = file.getName().toLowerCase();
+                for (String ext : extensions) {
+                    if (name.endsWith(ext)) {
+                        try {
+                            // 只读取较小的文件
+                            if (file.length() > 0 && file.length() < 10000) {
+                                String content = java.nio.file.Files.readString(file.toPath());
+                                if (content.length() > 500) {
+                                    content = content.substring(0, 500) + "\n...(截断)";
+                                }
+                                outputs.append("**").append(file.getName()).append("**\n```\n");
+                                outputs.append(content).append("\n```\n\n");
+                            }
+                        } catch (Exception e) {
+                            // 忽略读取错误
+                        }
+                        break;
+                    }
+                }
+            }
+        }
     }
 
     /**
@@ -1017,27 +1157,149 @@ public class WorkflowEngine {
 
     /**
      * 发起审批请求
+     * 根据审批级别决定审批方式：
+     * - AUTO: 自动审批（低于阈值）
+     * - PRODUCER: 制作人审批（日常事务）
+     * - HUMAN: 人工审批（重大决策）
      */
     private void requestApproval(WorkflowInstance instance, WorkflowStep step, StepExecution execution) {
-        execution.setStatus(StepStatus.WAITING_DEPENDENCIES);
+        String approvalLevel = step.getApprovalLevel();
 
+        // 检查审批级别
+        if ("AUTO".equals(approvalLevel)) {
+            // 自动审批
+            log.info("步骤审批级别为AUTO，自动审批: 步骤={}, 实例={}", step.getId(), instance.getId());
+            autoApproveStep(instance, step, execution);
+            return;
+        }
+
+        if ("PRODUCER".equals(approvalLevel)) {
+            // 制作人审批 - 发送给制作人处理
+            log.info("步骤审批级别为PRODUCER，发送给制作人审批: 步骤={}, 实例={}", step.getId(), instance.getId());
+            requestProducerApproval(instance, step, execution);
+            return;
+        }
+
+        // HUMAN级别 - 需要人工审批
+        log.info("步骤审批级别为HUMAN，需要人工审批: 步骤={}, 实例={}", step.getId(), instance.getId());
+        requestHumanApproval(instance, step, execution);
+    }
+
+    /**
+     * 自动审批步骤
+     */
+    private void autoApproveStep(WorkflowInstance instance, WorkflowStep step, StepExecution execution) {
+        Map<String, Object> detail = new HashMap<>();
+        detail.put("stepName", step.getName());
+        detail.put("approvalLevel", "AUTO");
+        detail.put("autoApproved", true);
+        auditService.logSystem(instance.getId(), step.getId(), WorkflowAuditService.ACTION_APPROVAL_APPROVED, detail);
+
+        // 更新步骤状态为READY并继续执行
+        execution.setStatus(StepStatus.READY);
+        executorService.submit(() -> executeWorkflow(instance));
+    }
+
+    /**
+     * 请求制作人审批
+     * 发送消息给制作人，由制作人自主决策
+     */
+    private void requestProducerApproval(WorkflowInstance instance, WorkflowStep step, StepExecution execution) {
         // 创建审批记录
         WorkflowApprovalEntity approval = new WorkflowApprovalEntity();
         approval.setInstanceId(instance.getId());
         approval.setStepId(step.getId());
-        approval.setStatus("PENDING");
+        approval.setStatus("PENDING_PRODUCER");  // 等待制作人审批
         approvalRepository.save(approval);
-
-        updateStepExecution(instance.getId(), step.getId(), "WAITING_DEPENDENCIES", null, null, null, null);
 
         Map<String, Object> detail = new HashMap<>();
         detail.put("stepName", step.getName());
+        detail.put("approvalLevel", "PRODUCER");
         auditService.logSystem(instance.getId(), step.getId(), WorkflowAuditService.ACTION_APPROVAL_REQUESTED, detail);
 
-        // 发布审批请求事件
+        // 发布审批请求事件（制作人会监听并处理）
         eventPublisher.publishEvent(new ApprovalRequiredEvent(instance.getId(), step.getId()));
 
-        log.info("审批请求已发起: 步骤={}, 实例={}", step.getId(), instance.getId());
+        log.info("制作人审批请求已发起: 步骤={}, 实例={}", step.getId(), instance.getId());
+    }
+
+    /**
+     * 请求人工审批
+     * 需要系统管理员（真人）审批
+     */
+    private void requestHumanApproval(WorkflowInstance instance, WorkflowStep step, StepExecution execution) {
+        // 创建审批记录
+        WorkflowApprovalEntity approval = new WorkflowApprovalEntity();
+        approval.setInstanceId(instance.getId());
+        approval.setStepId(step.getId());
+        approval.setStatus("PENDING");  // 等待人工审批
+        approvalRepository.save(approval);
+
+        Map<String, Object> detail = new HashMap<>();
+        detail.put("stepName", step.getName());
+        detail.put("approvalLevel", "HUMAN");
+        auditService.logSystem(instance.getId(), step.getId(), WorkflowAuditService.ACTION_APPROVAL_REQUESTED, detail);
+
+        // 发布审批请求事件（管理员会监听并处理）
+        eventPublisher.publishEvent(new ApprovalRequiredEvent(instance.getId(), step.getId()));
+
+        log.info("人工审批请求已发起: 步骤={}, 实例={}, 重要程度={}", step.getId(), instance.getId(), step.getImportance());
+    }
+
+    /**
+     * 制作人审批通过
+     * 用于PRODUCER级别的审批
+     */
+    public boolean producerApproveStep(String instanceId, String stepId, String producerId, String comment) {
+        Optional<WorkflowApprovalEntity> approvalOpt = approvalRepository.findByInstanceIdAndStepId(instanceId, stepId);
+        if (approvalOpt.isEmpty() || !"PENDING_PRODUCER".equals(approvalOpt.get().getStatus())) {
+            return false;
+        }
+
+        WorkflowApprovalEntity approval = approvalOpt.get();
+        approval.setApproverId(null);  // 制作人审批没有具体ID
+        approval.setApproverName("Producer");
+        approval.setStatus("APPROVED");
+        approval.setComment(comment);
+        approval.setDecidedAt(LocalDateTime.now());
+        approvalRepository.save(approval);
+
+        // 更新步骤状态为READY
+        updateStepExecution(instanceId, stepId, "READY", null, null, null, null);
+
+        // 更新内存中的状态
+        WorkflowInstance instance = getInstance(instanceId);
+        if (instance != null) {
+            StepExecution execution = instance.getStepExecutions().get(stepId);
+            if (execution != null) {
+                execution.setStatus(StepStatus.READY);
+            }
+
+            Map<String, Object> detail = new HashMap<>();
+            detail.put("approverName", "Producer");
+            detail.put("comment", comment);
+            auditService.logSystem(instanceId, stepId, WorkflowAuditService.ACTION_APPROVAL_APPROVED, detail);
+
+            // 继续执行
+            executorService.submit(() -> executeWorkflow(instance));
+        }
+
+        return true;
+    }
+
+    /**
+     * 获取重要程度等级数值，用于比较
+     * LOW=1, MEDIUM=2, HIGH=3, CRITICAL=4
+     */
+    private int getImportanceLevel(String importance) {
+        if (importance == null) return 2;  // 默认MEDIUM
+        return switch (importance.toUpperCase()) {
+            case "LOW" -> 1;
+            case "MEDIUM" -> 2;
+            case "HIGH" -> 3;
+            case "CRITICAL" -> 4;
+            default -> 2;
+        };
     }
 
     /**
@@ -1222,6 +1484,27 @@ public class WorkflowEngine {
         }
 
         return instance;
+    }
+
+    /**
+     * 获取指定项目的所有工作流实例
+     *
+     * @param projectId 项目 ID
+     * @return 工作流实例列表
+     */
+    public List<WorkflowInstance> getInstancesByProject(String projectId) {
+        List<WorkflowInstance> result = new ArrayList<>();
+
+        // 从数据库查询
+        List<WorkflowInstanceEntity> entities = instanceRepository.findByProjectIdOrderByCreatedAtDesc(projectId);
+        for (WorkflowInstanceEntity entity : entities) {
+            WorkflowInstance instance = getInstance(entity.getId());
+            if (instance != null) {
+                result.add(instance);
+            }
+        }
+
+        return result;
     }
 
     /**
@@ -1553,8 +1836,8 @@ public class WorkflowEngine {
                     if (deps != null) {
                         for (String dep : deps) step.addDependency(dep);
                     }
-                    if (stepData.containsKey("parallel")) step.setParallel((Boolean) stepData.get("parallel"));
-                    if (stepData.containsKey("requiresApproval")) step.setRequiresApproval((Boolean) stepData.get("requiresApproval"));
+                    if (stepData.containsKey("parallel") && stepData.get("parallel") != null) step.setParallel((Boolean) stepData.get("parallel"));
+                    if (stepData.containsKey("requiresApproval") && stepData.get("requiresApproval") != null) step.setRequiresApproval((Boolean) stepData.get("requiresApproval"));
                     template.addStep(step);
                 }
             }
@@ -1599,6 +1882,10 @@ public class WorkflowEngine {
         private int timeoutMinutes;
         private boolean requiresApproval;
         private int maxRetries;
+        /** 重要程度：LOW, MEDIUM, HIGH, CRITICAL */
+        private String importance;
+        /** 审批级别：AUTO(自动), PRODUCER(制作人审批), HUMAN(人工审批) */
+        private String approvalLevel;
 
         public WorkflowStep(String id, String name, String agentRole, String taskDescription) {
             this.id = id;
@@ -1610,6 +1897,8 @@ public class WorkflowEngine {
             this.timeoutMinutes = 60;  // 默认 60 分钟
             this.requiresApproval = false;
             this.maxRetries = 3;
+            this.importance = "MEDIUM";  // 默认中等重要程度
+            this.approvalLevel = "PRODUCER";  // 默认制作人审批
         }
 
         /**
@@ -1631,12 +1920,16 @@ public class WorkflowEngine {
         public int getTimeoutMinutes() { return timeoutMinutes; }
         public boolean isRequiresApproval() { return requiresApproval; }
         public int getMaxRetries() { return maxRetries; }
+        public String getImportance() { return importance; }
+        public String getApprovalLevel() { return approvalLevel; }
 
         public void addDependency(String stepId) { dependencies.add(stepId); }
         public void setParallel(boolean parallel) { this.parallel = parallel; }
         public void setTimeoutMinutes(int timeoutMinutes) { this.timeoutMinutes = timeoutMinutes; }
         public void setRequiresApproval(boolean requiresApproval) { this.requiresApproval = requiresApproval; }
         public void setMaxRetries(int maxRetries) { this.maxRetries = maxRetries; }
+        public void setImportance(String importance) { this.importance = importance; }
+        public void setApprovalLevel(String approvalLevel) { this.approvalLevel = approvalLevel; }
     }
 
     /** 工作流实例 */

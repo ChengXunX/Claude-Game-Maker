@@ -3,6 +3,7 @@ package com.chengxun.gamemaker.web.service;
 import com.chengxun.gamemaker.web.entity.Notification;
 import com.chengxun.gamemaker.web.entity.Notification.NotificationChannel;
 import com.chengxun.gamemaker.web.entity.Notification.NotificationType;
+import com.chengxun.gamemaker.web.entity.NotificationPreference;
 import com.chengxun.gamemaker.web.entity.User;
 import com.chengxun.gamemaker.web.repository.NotificationRepository;
 import com.chengxun.gamemaker.web.repository.UserRepository;
@@ -37,19 +38,22 @@ public class NotificationService {
     private final com.chengxun.gamemaker.dingtalk.DingTalkService dingTalkService;
     private final UserRepository userRepository;
     private final NotificationTemplateService templateService;
+    private final NotificationPreferenceService preferenceService;
 
     public NotificationService(NotificationRepository notificationRepository,
                                EmailService emailService,
                                com.chengxun.gamemaker.feishu.FeishuBotService feishuService,
                                com.chengxun.gamemaker.dingtalk.DingTalkService dingTalkService,
                                UserRepository userRepository,
-                               NotificationTemplateService templateService) {
+                               NotificationTemplateService templateService,
+                               NotificationPreferenceService preferenceService) {
         this.notificationRepository = notificationRepository;
         this.emailService = emailService;
         this.feishuService = feishuService;
         this.dingTalkService = dingTalkService;
         this.userRepository = userRepository;
         this.templateService = templateService;
+        this.preferenceService = preferenceService;
     }
 
     /**
@@ -80,8 +84,16 @@ public class NotificationService {
     public void sendNotification(Long userId, String title, String content, NotificationType type,
                                  NotificationChannel channel, String referenceId, String referenceType, String link) {
         try {
-            // 保存站内信
+            // 根据通知类型映射到偏好 key
+            String prefKey = mapToPreferenceKey(type);
+
+            // 站内信：始终保存（站内信不过滤偏好，用户可以在列表中看到）
             if (channel == NotificationChannel.SYSTEM || channel == null) {
+                // 检查偏好（userId 为 null 时跳过偏好检查，广播场景）
+                if (userId != null && !isPreferenceEnabled(userId, prefKey, NotificationPreference.Channel.IN_APP)) {
+                    log.debug("User {} disabled IN_APP notifications for {}", userId, prefKey);
+                    return;
+                }
                 Notification notification = new Notification();
                 notification.setUserId(userId);
                 notification.setTitle(title);
@@ -96,8 +108,10 @@ public class NotificationService {
             }
 
             // 发送邮件通知
-            if (channel == NotificationChannel.EMAIL) {
-                sendEmailNotification(userId, title, content);
+            if (channel == NotificationChannel.EMAIL && userId != null) {
+                if (isPreferenceEnabled(userId, prefKey, NotificationPreference.Channel.EMAIL)) {
+                    sendEmailNotification(userId, title, content);
+                }
             }
 
             // 发送飞书通知
@@ -115,6 +129,21 @@ public class NotificationService {
     }
 
     /**
+     * 将通知类型枚举映射到偏好 key
+     */
+    private String mapToPreferenceKey(NotificationType type) {
+        if (type == null) return "system";
+        return switch (type) {
+            case WARNING, ERROR -> "alert";
+            case TASK -> "approval";
+            case AGENT -> "agent_status";
+            case SUCCESS -> "performance";
+            case INFO -> "project";
+            case SYSTEM -> "system";
+        };
+    }
+
+    /**
      * 发送邮件通知
      * 从用户表获取邮箱地址并发送邮件
      *
@@ -128,8 +157,8 @@ public class NotificationService {
             User user = userOpt.get();
             String email = user.getEmail();
             if (email != null && !email.isEmpty()) {
-                // 使用验证码邮件功能发送通知
-                emailService.sendVerificationEmail(email, content);
+                // 使用通用邮件功能发送通知
+                emailService.sendGeneralEmail(email, title, content);
                 log.debug("Email notification sent to user {}: {}", userId, title);
             } else {
                 log.warn("User {} has no email address configured", userId);
@@ -297,5 +326,197 @@ public class NotificationService {
             "content", message
         );
         sendNotificationByTemplate(userId, "AGENT_SYSTEM", variables, NotificationType.AGENT);
+    }
+
+    /**
+     * 检查用户是否启用了指定通知类型和渠道
+     *
+     * @param userId 用户ID
+     * @param notificationType 通知类型
+     * @param channel 渠道
+     * @return 是否启用
+     */
+    private boolean isPreferenceEnabled(Long userId, String notificationType,
+                                         NotificationPreference.Channel channel) {
+        if (userId == null) return true;
+        try {
+            return preferenceService.isNotificationEnabled(userId, notificationType, channel);
+        } catch (Exception e) {
+            return true; // 出错时默认启用
+        }
+    }
+
+    /**
+     * 向所有管理员发送通知（自动检查偏好）
+     *
+     * @param notificationType 通知类型标识
+     * @param templateCode 模板编码
+     * @param variables 变量映射
+     * @param type 通知类型
+     */
+    public void notifyAdmins(String notificationType, String templateCode,
+                              Map<String, String> variables, NotificationType type) {
+        List<User> admins = userRepository.findByRoleName("ADMIN");
+        log.info("notifyAdmins called: type={}, templateCode={}, adminCount={}", notificationType, templateCode, admins.size());
+
+        for (User admin : admins) {
+            try {
+                // 站内信 - 系统级通知始终发送，不检查用户偏好
+                String title = variables.getOrDefault("title", "通知");
+                String content = variables.getOrDefault("content", "");
+                try {
+                    Map<String, String> rendered = templateService.renderTemplate(templateCode + "_SYSTEM", variables);
+                    title = rendered.getOrDefault("subject", title);
+                    content = rendered.getOrDefault("content", content);
+                    log.debug("Rendered SYSTEM template for admin {}: subject={}", admin.getUsername(), title);
+                } catch (Exception te) {
+                    try {
+                        Map<String, String> rendered = templateService.renderTemplate(templateCode, variables);
+                        title = rendered.getOrDefault("subject", title);
+                        content = rendered.getOrDefault("content", content);
+                        log.debug("Rendered template {} for admin {}: subject={}", templateCode, admin.getUsername(), title);
+                    } catch (Exception te2) {
+                        log.debug("Template {} not found, using variables", templateCode);
+                    }
+                }
+                sendSystemNotification(admin.getId(), title, content, type);
+                log.info("站内信通知已发送给管理员: {}", admin.getUsername());
+
+                // 邮件
+                if (emailService.isEmailEnabled() &&
+                    isPreferenceEnabled(admin.getId(), notificationType, NotificationPreference.Channel.EMAIL)) {
+                    String email = admin.getEmail();
+                    if (email != null && !email.isEmpty()) {
+                        String emailSubject = variables.getOrDefault("title", "通知");
+                        String emailContent = variables.getOrDefault("content", "");
+                        try {
+                            Map<String, String> rendered = templateService.renderTemplate(templateCode + "_EMAIL", variables);
+                            emailSubject = rendered.getOrDefault("subject", emailSubject);
+                            emailContent = rendered.getOrDefault("content", emailContent);
+                        } catch (Exception te) {
+                            try {
+                                Map<String, String> rendered = templateService.renderTemplate(templateCode, variables);
+                                emailSubject = rendered.getOrDefault("subject", emailSubject);
+                                emailContent = rendered.getOrDefault("content", emailContent);
+                            } catch (Exception te2) {
+                                // 模板不存在，使用变量中的内容
+                            }
+                        }
+                        emailService.sendGeneralEmail(email, emailSubject, emailContent);
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("Failed to send notification to admin {}: {}", admin.getUsername(), e.getMessage());
+            }
+        }
+
+        // 飞书（全局，不按用户偏好）
+        try {
+            if (feishuService.isEnabled()) {
+                Map<String, String> rendered = templateService.renderTemplate(templateCode + "_FEISHU", variables);
+                if (!rendered.isEmpty() && rendered.get("content") != null && !rendered.get("content").isEmpty()) {
+                    feishuService.sendMessage(rendered.get("content"));
+                }
+            }
+        } catch (Exception e) {
+            log.debug("Feishu notification failed: {}", e.getMessage());
+        }
+
+        // 钉钉（全局，不按用户偏好）
+        try {
+            if (dingTalkService.isEnabled()) {
+                Map<String, String> rendered = templateService.renderTemplate(templateCode + "_DINGTALK", variables);
+                if (!rendered.isEmpty() && rendered.get("content") != null && !rendered.get("content").isEmpty()) {
+                    dingTalkService.sendMarkdown(rendered.get("subject"), rendered.get("content"));
+                }
+            }
+        } catch (Exception e) {
+            log.debug("DingTalk notification failed: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * 向指定用户发送通知（检查偏好，支持多渠道）
+     *
+     * @param userId 用户ID
+     * @param notificationType 通知类型标识
+     * @param templateCode 模板编码基础名
+     * @param variables 变量映射
+     * @param type 通知类型
+     */
+    public void notifyUser(Long userId, String notificationType, String templateCode,
+                            Map<String, String> variables, NotificationType type) {
+        notifyUser(userId, notificationType, templateCode, variables, type, null);
+    }
+
+    /**
+     * 向指定用户发送通知（检查偏好，支持多渠道，支持跳转链接）
+     *
+     * @param userId 用户ID
+     * @param notificationType 通知类型标识
+     * @param templateCode 模板编码基础名
+     * @param variables 变量映射
+     * @param type 通知类型
+     * @param link 跳转链接（可选）
+     */
+    public void notifyUser(Long userId, String notificationType, String templateCode,
+                            Map<String, String> variables, NotificationType type, String link) {
+        try {
+            // 站内信
+            if (isPreferenceEnabled(userId, notificationType, NotificationPreference.Channel.IN_APP)) {
+                Map<String, String> rendered = templateService.renderTemplate(templateCode + "_SYSTEM", variables);
+                if (rendered.isEmpty() || rendered.get("content").isEmpty()) {
+                    rendered = templateService.renderTemplate(templateCode, variables);
+                }
+                String title = rendered.getOrDefault("subject", variables.getOrDefault("title", "通知"));
+                String content = rendered.getOrDefault("content", "");
+                sendSystemNotification(userId, title, content, type, link);
+            }
+
+            // 邮件
+            if (emailService.isEmailEnabled() &&
+                isPreferenceEnabled(userId, notificationType, NotificationPreference.Channel.EMAIL)) {
+                Optional<User> userOpt = userRepository.findById(userId);
+                if (userOpt.isPresent()) {
+                    String email = userOpt.get().getEmail();
+                    if (email != null && !email.isEmpty()) {
+                        Map<String, String> rendered = templateService.renderTemplate(templateCode + "_EMAIL", variables);
+                        if (rendered.isEmpty() || rendered.get("content").isEmpty()) {
+                            rendered = templateService.renderTemplate(templateCode, variables);
+                        }
+                        emailService.sendGeneralEmail(email, rendered.get("subject"), rendered.get("content"));
+                    }
+                }
+            }
+
+            // 飞书
+            if (feishuService.isEnabled() &&
+                isPreferenceEnabled(userId, notificationType, NotificationPreference.Channel.FEISHU)) {
+                Map<String, String> rendered = templateService.renderTemplate(templateCode + "_FEISHU", variables);
+                if (rendered.isEmpty() || rendered.get("content").isEmpty()) {
+                    rendered = templateService.renderTemplate(templateCode, variables);
+                }
+                String content = rendered.getOrDefault("content", "");
+                if (content != null && !content.isEmpty()) {
+                    feishuService.sendMessage(content);
+                }
+            }
+
+            // 钉钉
+            if (dingTalkService.isEnabled() &&
+                isPreferenceEnabled(userId, notificationType, NotificationPreference.Channel.DINGTALK)) {
+                Map<String, String> rendered = templateService.renderTemplate(templateCode + "_DINGTALK", variables);
+                if (rendered.isEmpty() || rendered.get("content").isEmpty()) {
+                    rendered = templateService.renderTemplate(templateCode, variables);
+                }
+                String subject = rendered.getOrDefault("subject", "通知");
+                String content = rendered.getOrDefault("content", "");
+                if (content != null && !content.isEmpty()) {
+                    dingTalkService.sendMarkdown(subject, content);
+                }
+            }
+        } catch (Exception e) {
+            log.error("Failed to notify user {}: {}", userId, e.getMessage());
+        }
     }
 }

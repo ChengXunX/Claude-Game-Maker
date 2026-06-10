@@ -1,5 +1,8 @@
 package com.chengxun.gamemaker.web.controller;
 
+import com.chengxun.gamemaker.agent.Agent;
+import com.chengxun.gamemaker.agent.ProducerAgent;
+import com.chengxun.gamemaker.manager.AgentManager;
 import com.chengxun.gamemaker.service.AgentScheduler;
 import com.chengxun.gamemaker.web.entity.ProjectMember;
 import com.chengxun.gamemaker.web.entity.User;
@@ -34,6 +37,9 @@ public class AgentSchedulerController {
 
     @Autowired
     private AgentScheduler agentScheduler;
+
+    @Autowired
+    private AgentManager agentManager;
 
     @Autowired
     private ProjectPermissionService permissionService;
@@ -200,5 +206,91 @@ public class AgentSchedulerController {
         if (runtimeId == null) return null;
         int lastColon = runtimeId.lastIndexOf(':');
         return lastColon > 0 ? runtimeId.substring(0, lastColon) : null;
+    }
+
+    /**
+     * 获取所有制作人的状态
+     * 包括工作周期数、任务追踪、审批等待状态等
+     */
+    @GetMapping("/producer-status")
+    @PreAuthorize("hasAnyAuthority('PERM_agents:view', 'PERM_agents:manage', 'PERM_admin:manage')")
+    public ResponseEntity<List<Map<String, Object>>> getProducerStatus() {
+        List<Map<String, Object>> result = new java.util.ArrayList<>();
+
+        for (String projectId : agentManager.getRegisteredProjectIds()) {
+            Agent producer = agentManager.getAgent(projectId, "producer");
+            if (producer == null) continue;
+
+            Map<String, Object> status = new java.util.HashMap<>();
+            status.put("projectId", projectId);
+            status.put("agentId", producer.getId());
+            status.put("agentName", producer.getName());
+            status.put("alive", producer.isAlive());
+            status.put("busy", producer.isBusy());
+
+            if (producer instanceof ProducerAgent producerAgent) {
+                status.putAll(producerAgent.getProducerStatus());
+            }
+
+            result.add(status);
+        }
+
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * 获取制作人最近的决策记录
+     * 从 Agent 日志中提取 DECISION 类型的记录，按 summary 去重（保留最新）
+     */
+    @Autowired
+    private com.chengxun.gamemaker.web.service.AgentLogService agentLogService;
+
+    @GetMapping("/producer-decisions")
+    @PreAuthorize("hasAnyAuthority('PERM_agents:view', 'PERM_agents:manage', 'PERM_admin:manage')")
+    public ResponseEntity<List<Map<String, Object>>> getProducerDecisions(
+            @RequestParam(defaultValue = "10") int limit) {
+        List<Map<String, Object>> result = new java.util.ArrayList<>();
+        // 多取一些以便去重后仍有足够数量
+        int fetchLimit = limit * 5;
+
+        for (String projectId : agentManager.getRegisteredProjectIds()) {
+            Agent producer = agentManager.getAgent(projectId, "producer");
+            if (producer == null) continue;
+
+            var logs = agentLogService.searchLogs(
+                producer.getId(), "DECISION", null, null, null, null, 0, fetchLimit);
+
+            for (var logEntry : logs.getContent()) {
+                Map<String, Object> decision = new java.util.HashMap<>();
+                decision.put("projectId", projectId);
+                decision.put("agentId", producer.getId());
+                decision.put("summary", logEntry.getSummary());
+                decision.put("decision", logEntry.getDecision());
+                decision.put("createdAt", logEntry.getCreatedAt());
+                result.add(decision);
+            }
+        }
+
+        // 按时间倒序排列
+        result.sort((a, b) -> {
+            java.time.LocalDateTime ta = (java.time.LocalDateTime) a.get("createdAt");
+            java.time.LocalDateTime tb = (java.time.LocalDateTime) b.get("createdAt");
+            return tb.compareTo(ta);
+        });
+
+        // 按 summary 去重：相同 summary 只保留最新的一条
+        List<Map<String, Object>> deduplicated = new java.util.ArrayList<>();
+        java.util.Set<String> seenSummaries = new java.util.HashSet<>();
+        for (Map<String, Object> decision : result) {
+            String summary = (String) decision.get("summary");
+            if (summary == null) summary = "";
+            // 截取前100字符作为去重key，避免微小差异导致不去重
+            String dedupKey = summary.length() > 100 ? summary.substring(0, 100) : summary;
+            if (seenSummaries.add(dedupKey)) {
+                deduplicated.add(decision);
+            }
+        }
+
+        return ResponseEntity.ok(deduplicated.stream().limit(limit).toList());
     }
 }

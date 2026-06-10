@@ -97,8 +97,8 @@
           @click="handleViewDetail(project)"
         >
           <div class="project-card-header">
-            <el-tag :type="project.status === 'ACTIVE' ? 'success' : 'info'" size="small">
-              {{ project.status === 'ACTIVE' ? '活跃' : project.status }}
+            <el-tag :type="getProjectStatusType(project.status)" size="small">
+              {{ getProjectStatusText(project.status) }}
             </el-tag>
             <el-dropdown @command="(cmd) => handleCommand(cmd, project)" @click.stop>
               <el-icon class="more-btn"><MoreFilled /></el-icon>
@@ -188,8 +188,8 @@
           </el-table-column>
           <el-table-column label="状态" width="80">
             <template #default="{ row }">
-              <el-tag :type="row.status === 'ACTIVE' ? 'success' : 'info'" size="small">
-                {{ row.status === 'ACTIVE' ? '活跃' : row.status }}
+              <el-tag :type="getProjectStatusType(row.status)" size="small">
+                {{ getProjectStatusText(row.status) }}
               </el-tag>
             </template>
           </el-table-column>
@@ -236,8 +236,8 @@
           <el-descriptions-item label="项目ID">{{ currentProject.id }}</el-descriptions-item>
           <el-descriptions-item label="名称">{{ currentProject.name }}</el-descriptions-item>
           <el-descriptions-item label="状态">
-            <el-tag :type="currentProject.status === 'ACTIVE' ? 'success' : 'info'" size="small">
-              {{ currentProject.status === 'ACTIVE' ? '活跃' : currentProject.status }}
+            <el-tag :type="getProjectStatusType(currentProject.status)" size="small">
+              {{ getProjectStatusText(currentProject.status) }}
             </el-tag>
           </el-descriptions-item>
           <el-descriptions-item label="描述">{{ currentProject.description || '暂无描述' }}</el-descriptions-item>
@@ -317,6 +317,30 @@
                 <span :class="{ 'task-done-text': task.status === 'COMPLETED' }">{{ task.description }}</span>
               </div>
             </div>
+            <!-- 验证信息 -->
+            <div v-if="milestone.verificationCriteria && milestone.verificationCriteria.length > 0" class="verification-section">
+              <div class="verification-title">验证标准：</div>
+              <ul class="verification-list">
+                <li v-for="(criteria, idx) in milestone.verificationCriteria" :key="idx">{{ criteria }}</li>
+              </ul>
+            </div>
+            <div v-if="milestone.verificationResult" class="verification-result">
+              <el-tag :type="milestone.verificationResult.includes('通过') ? 'success' : 'warning'" size="small">
+                {{ milestone.verificationResult }}
+              </el-tag>
+            </div>
+            <!-- 人工验证按钮（未完成的里程碑都可以验证） -->
+            <div v-if="milestone.status !== 'COMPLETED'" class="milestone-actions">
+              <el-button size="small" type="success" @click="handleVerifyMilestone(milestone, true)">
+                <el-icon><CircleCheck /></el-icon> 验证通过
+              </el-button>
+              <el-button size="small" type="warning" @click="handleVerifyMilestone(milestone, false)">
+                <el-icon><CircleClose /></el-icon> 验证未通过
+              </el-button>
+              <el-button size="small" type="primary" @click="handleInterveneMilestone(milestone)">
+                <el-icon><Warning /></el-icon> 发送干预
+              </el-button>
+            </div>
           </div>
         </div>
         <el-empty v-else description="暂无里程碑" :image-size="60" />
@@ -343,6 +367,38 @@
         <el-empty v-else description="暂未配置目录结构" :image-size="60">
           <el-button size="small" @click="showDirectoryDialog">配置目录</el-button>
         </el-empty>
+
+        <!-- 项目概况 -->
+        <el-divider>
+          <div class="divider-title">
+            <span>项目概况</span>
+            <el-tag :type="currentProject.running ? 'success' : 'info'" size="small">
+              {{ currentProject.running ? '运行中' : '已停止' }}
+            </el-tag>
+          </div>
+        </el-divider>
+        <div v-if="currentProject.projectOverview" class="overview-content">
+          <MarkdownRenderer :content="currentProject.projectOverview" />
+        </div>
+        <el-empty v-else description="暂无项目概况" :image-size="60">
+          <div class="overview-tip">里程碑完成后将自动更新项目概况</div>
+        </el-empty>
+
+        <!-- 项目规则 -->
+        <el-divider>
+          <div class="divider-title">
+            <span>项目规则</span>
+            <el-button size="small" text @click="showRulesDialog">
+              <el-icon><Edit /></el-icon> 编辑
+            </el-button>
+          </div>
+        </el-divider>
+        <div v-if="projectRules" class="rules-content">
+          <MarkdownRenderer :content="projectRules" />
+        </div>
+        <el-empty v-else description="暂未设置项目规则" :image-size="60">
+          <el-button size="small" @click="showRulesDialog">设置规则</el-button>
+        </el-empty>
       </template>
     </el-drawer>
 
@@ -366,7 +422,41 @@
           <el-select v-model="editForm.templateId" placeholder="选择游戏模板（可选）" clearable style="width: 100%">
             <el-option v-for="t in templates" :key="t.id" :label="t.name" :value="t.id" />
           </el-select>
+          <div v-if="editForm.templateId" class="form-tip" style="color: #67c23a;">已自动填充模板推荐的 Agent</div>
         </el-form-item>
+
+        <el-divider v-if="!isEdit" content-position="left">
+          默认 Agent（{{ editForm.agents.length + 1 }} 个，制作人固定 + {{ editForm.agents.length }} 个可选）
+        </el-divider>
+
+        <!-- 制作人（固定，不可取消） -->
+        <div v-if="!isEdit" class="agent-select-grid" style="margin-bottom: 12px;">
+          <div class="agent-select-item active fixed-agent">
+            <div class="agent-select-icon">🎬</div>
+            <div class="agent-select-info">
+              <div class="agent-select-name">制作人 <el-tag size="small" type="danger">必须</el-tag></div>
+              <div class="agent-select-desc">协调团队、分配任务、审查工作</div>
+            </div>
+            <el-icon class="agent-check"><CircleCheck /></el-icon>
+          </div>
+        </div>
+
+        <div v-if="!isEdit" class="agent-select-grid">
+          <div
+            v-for="role in availableRoles"
+            :key="role.role"
+            class="agent-select-item"
+            :class="{ active: editForm.agents.includes(role.role) }"
+            @click="toggleAgent(role.role)"
+          >
+            <div class="agent-select-icon">{{ role.icon }}</div>
+            <div class="agent-select-info">
+              <div class="agent-select-name">{{ role.name }}</div>
+              <div class="agent-select-desc">{{ role.description }}</div>
+            </div>
+            <el-icon v-if="editForm.agents.includes(role.role)" class="agent-check"><CircleCheck /></el-icon>
+          </div>
+        </div>
 
         <el-divider v-if="!isEdit" content-position="left">项目目标（可选）</el-divider>
 
@@ -544,6 +634,33 @@
         <el-button type="primary" @click="handleAddDir" :loading="savingDir">添加</el-button>
       </template>
     </el-dialog>
+
+    <!-- 规则编辑对话框 -->
+    <el-dialog
+      v-model="rulesDialogVisible"
+      title="编辑项目规则"
+      width="600px"
+    >
+      <el-alert type="info" :closable="false" class="mb-4">
+        <template #title>
+          <div>
+            <p>项目规则将通知给所有团队成员，帮助他们理解项目规范。</p>
+            <p>建议包含：代码规范、目录结构、运行部署流程、协作规范等。</p>
+          </div>
+        </template>
+      </el-alert>
+
+      <el-form :model="rulesForm" label-width="0">
+        <el-form-item>
+          <MarkdownEditor v-model="rulesForm.rules" :rows="15" placeholder="请输入项目规则..." />
+        </el-form-item>
+      </el-form>
+
+      <template #footer>
+        <el-button @click="rulesDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="handleSaveRules" :loading="savingRules">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -560,15 +677,16 @@
  * - 目标进度展示
  * - 快捷操作菜单
  */
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { projectApi, gameTemplateApi } from '@/api'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Search, Grid, List, Folder, CircleCheck, User, Aim,
   MoreFilled, Document, Edit, Delete, Box, Connection,
-  FolderOpened, Upload, Plus, Clock
+  FolderOpened, Upload, Plus, Clock, Warning, CircleClose
 } from '@element-plus/icons-vue'
+import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 
 const router = useRouter()
 const loading = ref(false)
@@ -586,6 +704,7 @@ const drawerVisible = ref(false)
 const currentProject = ref(null)
 const milestones = ref([])
 const directoryConfigs = ref([])
+const projectRules = ref('')
 
 // 编辑/创建
 const dialogVisible = ref(false)
@@ -616,11 +735,38 @@ const dirForm = ref({
   notes: ''
 })
 
+// 可选的 Agent 角色列表（制作人是固定的，不在此列表中）
+const availableRoles = [
+  { role: 'system-planner', name: '系统策划', description: '游戏系统设计、玩法策划', icon: '📋' },
+  { role: 'server-dev', name: '服务端开发', description: '后端逻辑、API接口、数据库', icon: '⚙️' },
+  { role: 'client-dev', name: '客户端开发', description: '前端逻辑、交互实现', icon: '💻' },
+  { role: 'ui-dev', name: 'UI设计', description: '界面设计、图标制作、视觉效果', icon: '🎨' },
+  { role: 'numerical-planner', name: '数值策划', description: '数值平衡、经济系统', icon: '📊' },
+  { role: 'tester', name: '测试工程师', description: '功能测试、性能测试、Bug报告', icon: '🧪' },
+  { role: 'git-commit', name: 'Git专员', description: '代码提交、分支管理、版本控制', icon: '📦' },
+  { role: 'security-expert', name: '安全工程师', description: '安全审计、漏洞检测', icon: '🛡️' },
+  { role: 'data-analyst', name: '数据分析师', description: '玩家行为分析、留存分析', icon: '📈' },
+  { role: 'ai-engineer', name: 'AI工程师', description: 'NPC行为AI、寻路算法', icon: '🤖' },
+  { role: 'devops', name: '运维工程师', description: 'CI/CD、服务器部署、监控', icon: '🚀' },
+  { role: 'audio-dev', name: '音频设计师', description: '音效设计、背景音乐', icon: '🎵' },
+  { role: 'narrative-planner', name: '剧情策划', description: '世界观构建、剧情设计', icon: '📖' },
+  { role: 'level-design', name: '关卡设计师', description: '关卡流程、地图布局', icon: '🗺️' },
+  { role: 'performance-engineer', name: '性能优化', description: '性能分析、瓶颈定位', icon: '⚡' }
+]
+
+// 模板对应的默认 Agent 配置（前端预设，制作人已固定，此处只列可选角色）
+const templateAgentPresets = {
+  'h5-casual': ['server-dev', 'client-dev', 'system-planner', 'ui-dev'],
+  'rpg-server': ['server-dev', 'system-planner', 'numerical-planner', 'tester'],
+  'unity-mobile': ['client-dev', 'ui-dev', 'system-planner', 'tester']
+}
+
 const editForm = ref({
   name: '',
   description: '',
   workDir: '',
   templateId: '',
+  agents: ['system-planner'],
   goal: '',
   goalType: 'GAME_DEVELOPMENT',
   apiKey: '',
@@ -642,6 +788,17 @@ const activeProjectsCount = computed(() => projects.value.filter(p => p.status =
 const totalAgentsCount = computed(() => projects.value.reduce((sum, p) => sum + (p.agentIds?.length || 0), 0))
 const projectsWithGoalCount = computed(() => projects.value.filter(p => p.goal).length)
 
+// 监听模板选择，自动更新 Agent 列表
+watch(() => editForm.value.templateId, (newTemplateId) => {
+  if (isEdit.value) return
+  if (newTemplateId && templateAgentPresets[newTemplateId]) {
+    editForm.value.agents = [...templateAgentPresets[newTemplateId]]
+  } else if (!newTemplateId) {
+    // 清空模板时恢复默认
+    editForm.value.agents = ['system-planner']
+  }
+})
+
 /** 筛选后的项目 */
 const filteredProjects = computed(() => {
   let result = projects.value
@@ -660,6 +817,19 @@ const filteredProjects = computed(() => {
 })
 
 /** 截断文本 */
+/** 切换 Agent 选择 */
+const toggleAgent = (role) => {
+  const idx = editForm.value.agents.indexOf(role)
+  if (idx >= 0) {
+    // 至少保留一个 Agent
+    if (editForm.value.agents.length > 1) {
+      editForm.value.agents.splice(idx, 1)
+    }
+  } else {
+    editForm.value.agents.push(role)
+  }
+}
+
 const truncateText = (text, maxLen) => {
   if (!text) return ''
   return text.length > maxLen ? text.substring(0, maxLen) + '...' : text
@@ -673,6 +843,21 @@ const truncatePath = (path) => {
     return '.../' + parts.slice(-2).join('/')
   }
   return path
+}
+
+/** 获取项目状态文本 */
+const getProjectStatusText = (status) => {
+  const map = { 'ACTIVE': '活跃', 'PAUSED': '暂停', 'COMPLETED': '已完成', 'ARCHIVED': '已归档', 'CREATED': '已创建' }
+  return map[status] || status
+}
+
+/** 获取项目状态标签类型 */
+const getProjectStatusType = (status) => {
+  if (status === 'ACTIVE') return 'success'
+  if (status === 'COMPLETED') return 'success'
+  if (status === 'ARCHIVED') return 'info'
+  if (status === 'PAUSED') return 'warning'
+  return 'info'
 }
 
 /** 获取目标状态 */
@@ -739,6 +924,7 @@ const handleCreate = () => {
     description: '',
     workDir: '',
     templateId: '',
+    agents: ['system-planner'],
     goal: '',
     goalType: 'GAME_DEVELOPMENT',
     apiKey: '',
@@ -752,9 +938,10 @@ const handleCreate = () => {
 const handleViewDetail = async (project) => {
   currentProject.value = project
   drawerVisible.value = true
-  // 加载里程碑和目录配置
+  // 加载里程碑、目录配置和项目规则
   await loadMilestones(project.id)
   await loadDirectoryConfigs(project.id)
+  await loadProjectRules(project.id)
 }
 
 /** 加载里程碑列表 */
@@ -776,6 +963,42 @@ const loadDirectoryConfigs = async (projectId) => {
   } catch (error) {
     console.error('加载目录配置失败:', error)
     directoryConfigs.value = []
+  }
+}
+
+/** 加载项目规则 */
+const loadProjectRules = async (projectId) => {
+  try {
+    const data = await projectApi.getVerificationDoc(projectId)
+    projectRules.value = data?.rules || ''
+  } catch (error) {
+    console.error('加载项目规则失败:', error)
+    projectRules.value = ''
+  }
+}
+
+/** 显示规则编辑对话框 */
+/** 规则编辑对话框 */
+const rulesDialogVisible = ref(false)
+const rulesForm = ref({ rules: '' })
+const savingRules = ref(false)
+
+const showRulesDialog = () => {
+  rulesForm.value.rules = projectRules.value || ''
+  rulesDialogVisible.value = true
+}
+
+const handleSaveRules = async () => {
+  savingRules.value = true
+  try {
+    await projectApi.setRules(currentProject.value.id, { rules: rulesForm.value.rules })
+    ElMessage.success('项目规则已保存')
+    projectRules.value = rulesForm.value.rules
+    rulesDialogVisible.value = false
+  } catch (error) {
+    ElMessage.error('保存失败')
+  } finally {
+    savingRules.value = false
   }
 }
 
@@ -898,6 +1121,54 @@ const handleSaveGoal = async () => {
   }
 }
 
+/** 人工验证里程碑 */
+const handleVerifyMilestone = async (milestone, passed) => {
+  try {
+    const { value: comment } = await ElMessageBox.prompt(
+      `请确认验证 ${passed ? '通过' : '未通过'} 里程碑 "${milestone.title}"`,
+      passed ? '验证通过' : '验证未通过',
+      {
+        confirmButtonText: '确认',
+        cancelButtonText: '取消',
+        inputPlaceholder: '请输入验证备注（可选）',
+        inputType: 'textarea'
+      }
+    )
+
+    const result = await projectApi.verifyMilestone(currentProject.value.id, milestone.id, {
+      passed,
+      comment: comment || ''
+    })
+
+    if (result.success) {
+      ElMessage.success(result.message)
+      // 刷新里程碑列表
+      loadMilestones(currentProject.value.id)
+    } else {
+      ElMessage.error(result.message || '验证失败')
+    }
+  } catch (error) {
+    if (error !== 'cancel') {
+      ElMessage.error('验证操作失败')
+    }
+  }
+}
+
+/** 对里程碑发送干预 */
+const handleInterveneMilestone = (milestone) => {
+  // 跳转到干预页面，传递项目和里程碑信息
+  const projectId = currentProject.value.id
+  const agentId = `${projectId}:${milestone.assignedAgentRole}`
+  router.push({
+    path: '/interventions',
+    query: {
+      agentId,
+      milestoneId: milestone.id,
+      milestoneTitle: milestone.title
+    }
+  })
+}
+
 /** 编辑项目 */
 const handleEdit = (project) => {
   isEdit.value = true
@@ -939,14 +1210,18 @@ const handleCommand = (command, project) => {
 /** 归档项目 */
 const handleArchive = async (project) => {
   try {
-    await ElMessageBox.confirm(`确定要归档项目 "${project.name}" 吗？归档后项目将变为只读状态。`, '归档确认', {
+    await ElMessageBox.confirm(`确定要归档项目 "${project.name}" 吗？归档后项目将变为只读状态，所有 Agent 将被停止。`, '归档确认', {
       confirmButtonText: '归档',
       cancelButtonText: '取消',
       type: 'warning'
     })
-    // TODO: 调用归档 API
-    ElMessage.success('项目已归档')
-    loadProjects()
+    const result = await projectApi.archive(project.id)
+    if (result.success) {
+      ElMessage.success('项目已归档')
+      loadProjects()
+    } else {
+      ElMessage.error(result.message || '归档失败')
+    }
   } catch (error) {
     if (error !== 'cancel') {
       ElMessage.error('归档失败')
@@ -1077,10 +1352,15 @@ onMounted(() => {
 }
 
 .stat-card {
+  cursor: default;
+}
+
+.stat-card :deep(.el-card__body) {
   display: flex;
   align-items: center;
   gap: 16px;
-  padding: 16px;
+  padding: 20px;
+  min-height: 80px;
 }
 
 .stat-icon {
@@ -1095,18 +1375,22 @@ onMounted(() => {
 
 .stat-info {
   flex: 1;
+  min-width: 0;
 }
 
 .stat-value {
-  font-size: 24px;
+  font-size: 28px;
   font-weight: bold;
   color: var(--el-text-color-primary);
+  line-height: 1.2;
+  white-space: nowrap;
 }
 
 .stat-label {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--el-text-color-secondary);
   margin-top: 4px;
+  white-space: nowrap;
 }
 
 /* 卡片头部 */
@@ -1260,6 +1544,74 @@ onMounted(() => {
   font-size: 12px;
 }
 
+/* Agent 选择网格 */
+.agent-select-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 4px;
+}
+
+.agent-select-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 2px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+  position: relative;
+}
+
+.agent-select-item:hover {
+  border-color: var(--el-color-primary-light-5);
+  background: var(--el-color-primary-light-9);
+}
+
+.agent-select-item.active {
+  border-color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+}
+
+.agent-select-item.fixed-agent {
+  cursor: default;
+  opacity: 0.85;
+  border-style: dashed;
+}
+
+.agent-select-icon {
+  font-size: 20px;
+  flex-shrink: 0;
+}
+
+.agent-select-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.agent-select-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+
+.agent-select-desc {
+  font-size: 11px;
+  color: var(--el-text-color-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-check {
+  color: var(--el-color-primary);
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
 /* 详情抽屉 */
 .drawer-actions {
   display: flex;
@@ -1372,6 +1724,41 @@ onMounted(() => {
   color: var(--el-text-color-placeholder);
 }
 
+/* 验证部分样式 */
+.verification-section {
+  margin-top: 8px;
+  padding-left: 40px;
+}
+
+.verification-title {
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+  margin-bottom: 4px;
+}
+
+.verification-list {
+  margin: 0;
+  padding-left: 16px;
+  font-size: 12px;
+  color: var(--el-text-color-regular);
+}
+
+.verification-list li {
+  margin-bottom: 2px;
+}
+
+.verification-result {
+  margin-top: 8px;
+  padding-left: 40px;
+}
+
+.milestone-actions {
+  margin-top: 12px;
+  padding-left: 40px;
+  display: flex;
+  gap: 8px;
+}
+
 /* 目录配置列表 */
 .directory-list {
   display: flex;
@@ -1407,6 +1794,48 @@ onMounted(() => {
   color: var(--el-text-color-placeholder);
   margin-top: 2px;
   padding-left: 22px;
+}
+
+/* 项目概况样式 */
+.overview-content {
+  background: var(--el-fill-color-lighter);
+  border-radius: 6px;
+  padding: 12px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.overview-text {
+  font-family: monospace;
+  font-size: 12px;
+  color: var(--el-text-color-regular);
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+}
+
+.overview-tip {
+  font-size: 12px;
+  color: var(--el-text-color-placeholder);
+  margin-top: 8px;
+}
+
+/* 项目规则样式 */
+.rules-content {
+  background: var(--el-fill-color-lighter);
+  border-radius: 6px;
+  padding: 12px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.rules-text {
+  font-family: monospace;
+  font-size: 12px;
+  color: var(--el-text-color-regular);
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
 }
 
 /* 目录配置对话框 */

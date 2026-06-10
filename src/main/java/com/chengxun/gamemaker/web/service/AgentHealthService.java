@@ -178,7 +178,7 @@ public class AgentHealthService {
     /**
      * 获取健康统计
      *
-     * @return 统计数据
+     * @return 统计数据（扁平结构，直接兼容前端）
      */
     public Map<String, Object> getHealthStatistics() {
         Map<String, Object> stats = new HashMap<>();
@@ -189,26 +189,34 @@ public class AgentHealthService {
         for (Object[] row : statusCounts) {
             statusMap.put(((AgentHealth.HealthStatus) row[0]).name(), (Long) row[1]);
         }
+
+        // 扁平化输出，兼容前端直接读取 stats.healthyCount 等
+        long healthyCount = statusMap.getOrDefault("HEALTHY", 0L);
+        long warningCount = statusMap.getOrDefault("WARNING", 0L);
+        long unhealthyCount = statusMap.getOrDefault("UNHEALTHY", 0L);
+        long offlineCount = statusMap.getOrDefault("OFFLINE", 0L);
+
+        stats.put("healthyCount", healthyCount);
+        stats.put("warningCount", warningCount);
+        stats.put("unhealthyCount", unhealthyCount);
+        stats.put("offlineCount", offlineCount);
         stats.put("statusCounts", statusMap);
 
         // 需要重启的Agent
         List<AgentHealth> needsRestart = healthRepository.findAgentsNeedingRestart();
         stats.put("needsRestartCount", needsRestart.size());
-        stats.put("needsRestartAgents", needsRestart.stream()
-            .map(AgentHealth::getAgentId)
-            .toList());
 
         // 响应缓慢的Agent
         List<AgentHealth> slowAgents = healthRepository.findSlowAgents();
         stats.put("slowAgentCount", slowAgents.size());
-        stats.put("slowAgents", slowAgents.stream()
-            .map(AgentHealth::getAgentId)
-            .toList());
 
         // 总体健康率
         long totalAgents = agentManager.getAllAgents().size();
-        long healthyAgents = statusMap.getOrDefault("HEALTHY", 0L);
-        double healthRate = totalAgents > 0 ? (double) healthyAgents / totalAgents * 100 : 0;
+        if (totalAgents == 0) {
+            // 如果数据库没有记录但有活跃 Agent，从内存统计
+            totalAgents = healthyCount + warningCount + unhealthyCount + offlineCount;
+        }
+        double healthRate = totalAgents > 0 ? (double) healthyCount / totalAgents * 100 : 0;
         stats.put("healthRate", Math.round(healthRate * 100.0) / 100.0);
         stats.put("totalAgents", totalAgents);
 
@@ -308,6 +316,7 @@ public class AgentHealthService {
 
     /**
      * 收集单个Agent的指标
+     * 真实健康评估：基于活跃度、错误率、响应时间、任务完成率等多维度
      */
     private void collectAgentMetrics(Agent agent) {
         AgentHealth health = getOrCreateHealth(agent.getId());
@@ -321,22 +330,101 @@ public class AgentHealthService {
             health.setProjectId(baseAgent.getProjectId());
         }
 
-        // 更新状态
-        if (!agent.isAlive()) {
-            health.setHealthStatus(AgentHealth.HealthStatus.OFFLINE);
-        }
+        // 更新活跃任务数
+        health.setActiveTasks(agent.isBusy() ? 1 : 0);
 
-        // 计算运行时间
+        // 计算运行时间（首次发现活跃 Agent 时自动记录启动时间）
         Long startTime = agentStartTimes.get(agent.getId());
+        if (startTime == null && agent.isAlive()) {
+            startTime = System.currentTimeMillis();
+            agentStartTimes.put(agent.getId(), startTime);
+        }
         if (startTime != null) {
             health.setUptimeSeconds((System.currentTimeMillis() - startTime) / 1000);
         }
 
-        // 更新最后活动时间
-        health.setLastActivityTime(LocalDateTime.now());
+        // 真实健康评估
+        if (!agent.isAlive()) {
+            // Agent 不存活，标记为离线
+            health.setHealthStatus(AgentHealth.HealthStatus.OFFLINE);
+        } else {
+            // Agent 存活，综合评估健康状态
+            evaluateHealthStatus(health, agent);
+        }
+
+        // 更新最后活动时间（仅当 Agent 有活动时）
+        if (agent.isAlive() && (agent.isBusy() || !agent.getPendingMessages().isEmpty())) {
+            health.setLastActivityTime(LocalDateTime.now());
+        }
+
+        // 更新检查时间
+        health.setCheckTime(LocalDateTime.now());
 
         // 保存
         healthRepository.save(health);
+    }
+
+    /**
+     * 综合评估 Agent 健康状态
+     * 基于多个维度进行加权评分：
+     * 1. 活跃度（最后活动时间距今多久）
+     * 2. 错误率和连续错误次数
+     * 3. 响应时间
+     * 4. 待处理消息积压
+     */
+    private void evaluateHealthStatus(AgentHealth health, Agent agent) {
+        int unhealthyScore = 0; // 不健康因素累计分数
+
+        // 1. 活跃度检查：如果 Agent 长时间无活动，降级
+        if (health.getLastActivityTime() != null) {
+            long idleMinutes = java.time.Duration.between(health.getLastActivityTime(), LocalDateTime.now()).toMinutes();
+            if (idleMinutes > 60) {
+                unhealthyScore += 3; // 超过1小时无活动
+            } else if (idleMinutes > 30) {
+                unhealthyScore += 1; // 超过30分钟无活动
+            }
+        }
+
+        // 2. 错误率检查
+        if (health.getConsecutiveErrors() != null && health.getConsecutiveErrors() >= 10) {
+            unhealthyScore += 5; // 连续错误过多
+        } else if (health.getConsecutiveErrors() != null && health.getConsecutiveErrors() >= 3) {
+            unhealthyScore += 2;
+        }
+
+        if (health.getErrorRate() != null && health.getErrorRate() > 50) {
+            unhealthyScore += 4; // 错误率过高
+        } else if (health.getErrorRate() != null && health.getErrorRate() > 20) {
+            unhealthyScore += 2;
+        }
+
+        // 3. 响应时间检查
+        if (health.getAvgResponseTimeMs() != null) {
+            if (health.getAvgResponseTimeMs() > 10000) {
+                unhealthyScore += 4; // 响应极慢
+            } else if (health.getAvgResponseTimeMs() > 5000) {
+                unhealthyScore += 2;
+            } else if (health.getAvgResponseTimeMs() > 3000) {
+                unhealthyScore += 1;
+            }
+        }
+
+        // 4. 待处理消息积压检查
+        int pendingCount = agent.getPendingMessages().size();
+        if (pendingCount > 20) {
+            unhealthyScore += 3; // 消息严重积压
+        } else if (pendingCount > 10) {
+            unhealthyScore += 1;
+        }
+
+        // 综合判定
+        if (unhealthyScore >= 5) {
+            health.setHealthStatus(AgentHealth.HealthStatus.UNHEALTHY);
+        } else if (unhealthyScore >= 2) {
+            health.setHealthStatus(AgentHealth.HealthStatus.WARNING);
+        } else {
+            health.setHealthStatus(AgentHealth.HealthStatus.HEALTHY);
+        }
     }
 
     /**

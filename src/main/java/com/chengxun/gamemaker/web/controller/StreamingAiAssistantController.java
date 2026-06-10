@@ -109,7 +109,7 @@ public class StreamingAiAssistantController {
         ctx.append("1. **使用 API 管理资源**：创建工作流模板、技能、游戏模板等必须调用对应的 API\n");
         ctx.append("2. **绝对禁止修改任何代码文件**：你没有权限修改 Java/Vue/JS/Python 等任何源代码文件。修改代码文件会导致系统损坏！\n");
         ctx.append("3. **主动使用 API 查询数据**：当用户询问系统状态时，必须调用对应的 API 获取实时数据\n");
-        ctx.append("4. **你拥有完整的系统访问能力**：所有 48 个 API 都可以直接调用，API 完全可用\n\n");
+        ctx.append("4. **你拥有完整的系统访问能力**：所有 82 个 API 都可以直接调用，API 完全可用\n\n");
         ctx.append("## 🚫 严格禁止的行为（违反会导致任务失败）\n\n");
         ctx.append("- ❌ 禁止直接修改任何代码文件（.java、.vue、.js、.py 等）\n");
         ctx.append("- ❌ 禁止使用 Write、Edit 等文件操作工具修改源代码\n");
@@ -163,6 +163,69 @@ public class StreamingAiAssistantController {
         ctx.append("- 恢复 Agent：`curl -X POST http://127.0.0.1:19922/api/agents/{id}/resume`\n");
         ctx.append("- `get_agent_health`：查看 Agent 健康状态\n");
         ctx.append("- `get_agent_logs`：查看 Agent 运行日志\n\n");
+        ctx.append("### 文件管理\n");
+        ctx.append("- `search_files`：按关键词搜索文件\n");
+        ctx.append("- `list_files`：列出文件列表\n");
+        ctx.append("- `get_file_usage`：查看 Agent 存储用量\n\n");
+
+        ctx.append("### Agent 招聘\n");
+        ctx.append("- `recruit_agent`：招聘新 Agent（需指定制作人）\n");
+        ctx.append("- `list_recruited_agents`：查看已招聘 Agent\n");
+        ctx.append("- `delete_agent`：删除非核心 Agent\n\n");
+
+        ctx.append("### 项目详情\n");
+        ctx.append("- `get_project_detail`：获取项目完整信息\n");
+        ctx.append("- `set_project_goal`：设置项目目标\n");
+        ctx.append("- `get_project_milestones`：查看里程碑进度\n\n");
+
+        ctx.append("### 调度器\n");
+        ctx.append("- `get_scheduler_status`：查看调度器状态\n");
+        ctx.append("- `trigger_schedule`：手动触发调度\n\n");
+
+        ctx.append("### 系统诊断\n");
+        ctx.append("- `run_diagnostic`：运行完整诊断\n");
+        ctx.append("- `quick_health_check`：快速自检\n\n");
+
+        ctx.append("### 代码浏览\n");
+        ctx.append("- `browse_code`：浏览项目代码目录\n");
+        ctx.append("- `read_code_file`：读取代码文件内容\n\n");
+
+        ctx.append("### MCP 管理（外部工具集成）\n");
+        ctx.append("你可以管理 MCP（Model Context Protocol）服务器，集成外部工具：\n");
+        ctx.append("- `list_mcp_servers`：查看所有 MCP 服务器\n");
+        ctx.append("- `get_mcp_server`：查看 MCP 服务器详情\n");
+        ctx.append("- `add_mcp_server`：添加 MCP 服务器\n");
+        ctx.append("- `test_mcp_server`：测试 MCP 服务器连接\n");
+        ctx.append("- `toggle_mcp_server`：启用/禁用 MCP 服务器\n");
+        ctx.append("- `delete_mcp_server`：删除 MCP 服务器\n");
+        ctx.append("- `list_mcp_tools`：查看 MCP 服务器的工具列表\n");
+        ctx.append("- `bind_mcp_to_agent`：将 MCP 服务器绑定到 Agent\n");
+        ctx.append("- `install_mcp_from_template`：从模板安装 MCP（支持 Unity、Godot、Redis、Steam、PlayFab、Firebase、Jira）\n\n");
+
+        ctx.append("### 通知 & 模板\n");
+        ctx.append("- `list_notification_templates`：查看通知模板\n");
+        ctx.append("- `list_custom_agent_templates`：查看自定义 Agent 模板\n");
+        ctx.append("- `create_custom_agent_template`：创建自定义 Agent 模板\n\n");
+
+        ctx.append("### 知识库\n");
+        ctx.append("- `get_knowledge_stats`：知识库统计\n");
+        ctx.append("- `get_solutions`：查询问题解决方案\n\n");
+
+        ctx.append("### 版本迭代\n");
+        ctx.append("- `start_version_iteration`：对已完成项目发起版本迭代，制作人会分析需求并启动新的开发流程\n\n");
+
+        ctx.append("### 项目Agent配置\n");
+        ctx.append("- `list_project_agent_configs`：获取项目中所有Agent的自定义配置\n");
+        ctx.append("- `get_agent_config`：获取项目中指定角色Agent的配置\n");
+        ctx.append("- `save_agent_config`：保存或更新Agent配置（自定义系统提示词、能力提示词、项目上下文）\n");
+        ctx.append("- `optimize_agent_prompt`：使用AI分析项目需求，优化Agent的提示词配置\n");
+        ctx.append("- `get_agent_weights`：获取Agent的职责权重\n\n");
+
+        ctx.append("### 能力管理\n");
+        ctx.append("- `list_capabilities`：获取能力列表，可按角色或分类筛选\n");
+        ctx.append("- `create_capability`：创建新的Agent能力\n");
+        ctx.append("- `toggle_capability`：启用或禁用Agent能力\n\n");
+
         ctx.append("### 其他工具\n");
         ctx.append("- 游戏模板：`list_game_templates` / `create_game_template` / `delete_game_template`\n");
         ctx.append("- 技能管理：`list_skills` / `create_skill`\n");
@@ -173,6 +236,7 @@ public class StreamingAiAssistantController {
         ctx.append("- 用户管理：`list_users` / `list_roles`\n");
         ctx.append("- CI/CD：`list_pipelines` / `trigger_pipeline`\n");
         ctx.append("- 代码审查：`list_reviews`\n");
+        ctx.append("- 通知管理：`list_notifications` / `mark_notification_read` / `mark_all_notifications_read`\n");
         ctx.append("- 通用API调用：`call_api`（可调用任意系统API端点）\n\n");
 
         // 当前系统状态

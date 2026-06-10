@@ -623,6 +623,7 @@ CREATE TABLE IF NOT EXISTS api_tokens (
     api_url VARCHAR(500),
     model VARCHAR(100),
     max_tokens INT DEFAULT 4096,
+    context_window INT DEFAULT 200000,
     agent_id VARCHAR(50),
     permissions TEXT,
     status VARCHAR(20) DEFAULT 'ACTIVE',
@@ -721,6 +722,13 @@ CREATE TABLE IF NOT EXISTS agent_presets (
     supports_code_execution BOOLEAN DEFAULT TRUE COMMENT '是否支持代码执行',
     supports_file_operations BOOLEAN DEFAULT TRUE COMMENT '是否支持文件操作',
     api_provider VARCHAR(50) DEFAULT 'anthropic' COMMENT 'API 提供商',
+    prompt TEXT COMMENT '角色系统提示词（完整角色定义）',
+    notify_targets VARCHAR(500) DEFAULT 'producer' COMMENT '完成任务后的通知目标角色（逗号分隔）',
+    reviewer VARCHAR(50) COMMENT '审查者角色',
+    role_name VARCHAR(100) COMMENT '角色中文名称',
+    prompt_version INT DEFAULT 0 COMMENT '提示词版本号（每次进化/编辑+1）',
+    last_evolution_source VARCHAR(50) COMMENT '上次进化来源：manual/ai/evolution',
+    last_evolution_at DATETIME COMMENT '上次进化时间',
     is_system BOOLEAN DEFAULT FALSE COMMENT '是否系统内置',
     source_agent_id VARCHAR(200) COMMENT '来源 Agent ID',
     source_project_id VARCHAR(100) COMMENT '来源项目 ID',
@@ -955,3 +963,73 @@ CREATE TABLE IF NOT EXISTS workflow_audit_logs (
 -- 完成
 -- ============================================
 SELECT 'MySQL 数据库建表完成！' AS message;
+
+-- ============================================
+-- 项目级Agent配置表（新增）
+-- ============================================
+CREATE TABLE IF NOT EXISTS project_agent_configs (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '配置ID',
+    project_id VARCHAR(100) NOT NULL COMMENT '项目ID',
+    agent_role VARCHAR(50) NOT NULL COMMENT 'Agent角色',
+    custom_system_prompt TEXT COMMENT '自定义系统提示词',
+    custom_capability_prompt TEXT COMMENT '自定义能力提示词',
+    responsibility_weights TEXT COMMENT '职责权重（JSON格式）',
+    project_context TEXT COMMENT '项目特定上下文',
+    optimization_suggestions TEXT COMMENT 'AI优化建议',
+    is_active TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否启用',
+    version INT NOT NULL DEFAULT 1 COMMENT '版本号',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    INDEX idx_pac_project (project_id),
+    INDEX idx_pac_agent (project_id, agent_role),
+    INDEX idx_pac_active (project_id, agent_role, is_active)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='项目级Agent配置表';
+
+-- ============================================
+-- 游戏分析任务表（新增）
+-- ============================================
+CREATE TABLE IF NOT EXISTS game_analysis_tasks (
+    task_id VARCHAR(50) PRIMARY KEY COMMENT '任务ID',
+    project_id VARCHAR(100) NOT NULL COMMENT '项目ID',
+    project_name VARCHAR(200) COMMENT '项目名称',
+    project_dir VARCHAR(500) COMMENT '项目目录',
+    project_goal TEXT COMMENT '项目目标',
+    requested_by VARCHAR(100) COMMENT '请求者',
+    status VARCHAR(20) NOT NULL DEFAULT 'PENDING' COMMENT '任务状态：PENDING,RUNNING,COMPLETED,FAILED',
+    progress INT NOT NULL DEFAULT 0 COMMENT '进度 0-100',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    started_at TIMESTAMP NULL COMMENT '开始时间',
+    completed_at TIMESTAMP NULL COMMENT '完成时间',
+    error_message TEXT COMMENT '错误信息',
+    overall_score INT COMMENT '综合评分',
+    runnable_score INT COMMENT '可运行性评分',
+    playable_score INT COMMENT '可玩性评分',
+    completeness_score INT COMMENT '完整性评分',
+    uiux_score INT COMMENT 'UI/UX评分',
+    code_quality_score INT COMMENT '代码质量评分',
+    summary TEXT COMMENT '分析摘要',
+    strengths_json TEXT COMMENT '优点（JSON格式）',
+    issues_json TEXT COMMENT '问题（JSON格式）',
+    suggestions_json TEXT COMMENT '建议（JSON格式）',
+    INDEX idx_gat_project (project_id),
+    INDEX idx_gat_status (status),
+    INDEX idx_gat_time (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='游戏分析任务表';
+
+-- 版本评估持久化表
+CREATE TABLE IF NOT EXISTS version_evaluations (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '主键',
+    project_id VARCHAR(100) NOT NULL COMMENT '项目ID',
+    milestone_id VARCHAR(100) NOT NULL COMMENT '里程碑ID',
+    milestone_title VARCHAR(200) COMMENT '里程碑标题',
+    evaluated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '评估时间',
+    efficiency_score INT DEFAULT 0 COMMENT '效率评分(0-100)',
+    quality_score INT DEFAULT 0 COMMENT '质量评分(0-100)',
+    overall_score INT DEFAULT 0 COMMENT '综合评分(0-100)',
+    missing_roles TEXT COMMENT '缺失角色(JSON数组)',
+    redundant_roles TEXT COMMENT '冗余角色(JSON数组)',
+    recommendations TEXT COMMENT '建议列表(JSON数组)',
+    agent_evaluations_json TEXT COMMENT 'Agent评估详情(JSON)',
+    INDEX idx_ve_project (project_id),
+    INDEX idx_ve_milestone (milestone_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='版本评估持久化表';

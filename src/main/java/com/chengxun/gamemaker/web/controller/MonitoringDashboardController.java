@@ -3,7 +3,7 @@ package com.chengxun.gamemaker.web.controller;
 import com.chengxun.gamemaker.web.entity.ProjectMember;
 import com.chengxun.gamemaker.web.entity.User;
 import com.chengxun.gamemaker.web.service.AgentHealthService;
-import com.chengxun.gamemaker.web.service.AlertRuleEngine;
+import com.chengxun.gamemaker.web.service.AlertService;
 import com.chengxun.gamemaker.web.service.MetricsCollectorService;
 import com.chengxun.gamemaker.web.service.ProjectPermissionService;
 import com.chengxun.gamemaker.web.service.UserService;
@@ -39,7 +39,7 @@ public class MonitoringDashboardController {
     private MetricsCollectorService metricsService;
 
     @Autowired
-    private AlertRuleEngine alertEngine;
+    private AlertService alertService;
 
     @Autowired
     private AgentHealthService healthService;
@@ -71,7 +71,7 @@ public class MonitoringDashboardController {
         overview.put("errors", metricsService.getErrorStatistics());
 
         // 告警统计
-        overview.put("alerts", alertEngine.getAlertStatistics());
+        overview.put("alerts", alertService.getAlertStatistics());
 
         // Agent健康统计
         overview.put("agentHealth", healthService.getHealthStatistics());
@@ -124,7 +124,7 @@ public class MonitoringDashboardController {
     @GetMapping("/alerts")
     @PreAuthorize("hasAuthority('PERM_system:monitor')")
     public ResponseEntity<Map<String, Object>> getAlertStatistics() {
-        return ResponseEntity.ok(alertEngine.getAlertStatistics());
+        return ResponseEntity.ok(alertService.getAlertStatistics());
     }
 
     /**

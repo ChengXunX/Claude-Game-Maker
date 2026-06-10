@@ -62,6 +62,9 @@ public class LogApiController {
     public ResponseEntity<?> list(
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) String action,
+            @RequestParam(required = false) String targetType,
+            @RequestParam(required = false) String projectId,
+            @RequestParam(required = false) String status,
             @RequestParam(required = false) String startDate,
             @RequestParam(required = false) String endDate,
             @RequestParam(defaultValue = "0") int page,
@@ -73,22 +76,35 @@ public class LogApiController {
         Specification<OperationLog> spec = (root, query, cb) -> {
             List<Predicate> predicates = new ArrayList<>();
 
-            // 关键词搜索
+            // 关键词搜索（搜 username、targetName 和 detail）
             if (keyword != null && !keyword.trim().isEmpty()) {
                 String pattern = "%" + keyword.trim() + "%";
                 Predicate keywordPredicate = cb.or(
                     cb.like(root.get("username"), pattern),
-                    cb.like(root.get("action"), pattern),
                     cb.like(root.get("targetName"), pattern),
-                    cb.like(root.get("detail"), pattern),
-                    cb.like(root.get("ipAddress"), pattern)
+                    cb.like(root.get("detail"), pattern)
                 );
                 predicates.add(keywordPredicate);
             }
 
-            // 操作类型筛选
+            // 操作类型筛选（前缀匹配，如 CREATE 匹配 CREATE_PROJECT、CREATE_AGENT 等）
             if (action != null && !action.trim().isEmpty()) {
-                predicates.add(cb.equal(root.get("action"), action.trim()));
+                predicates.add(cb.like(root.get("action"), action.trim() + "%"));
+            }
+
+            // 目标类型筛选
+            if (targetType != null && !targetType.trim().isEmpty()) {
+                predicates.add(cb.equal(root.get("targetType"), targetType.trim()));
+            }
+
+            // 项目ID筛选
+            if (projectId != null && !projectId.trim().isEmpty()) {
+                predicates.add(cb.equal(root.get("projectId"), projectId.trim()));
+            }
+
+            // 状态筛选
+            if (status != null && !status.trim().isEmpty()) {
+                predicates.add(cb.equal(root.get("status"), status.trim()));
             }
 
             // 开始日期筛选
@@ -137,7 +153,9 @@ public class LogApiController {
     }
 
     /**
-     * 导出日志为 CSV 格式
+     * 导出日志为 CSV 格式（分页流式查询，避免大数据量 OOM）
+     *
+     * 每次查询 1000 条，逐页写入 CSV，内存占用恒定
      *
      * @param keyword 搜索关键词（可选）
      * @param action 操作类型（可选）
@@ -148,24 +166,61 @@ public class LogApiController {
     @PreAuthorize("hasAuthority('PERM_logs:view') or hasRole('ADMIN')")
     public ResponseEntity<String> export(
             @RequestParam(required = false) String keyword,
-            @RequestParam(required = false) String action) {
+            @RequestParam(required = false) String action,
+            @RequestParam(required = false) String targetType,
+            @RequestParam(required = false) String projectId) {
 
-        var logs = logRepository.findAll(Sort.by(Sort.Direction.DESC, "createdAt"));
+        // 构建查询条件
+        Specification<OperationLog> spec = (root, query, cb) -> {
+            List<Predicate> predicates = new ArrayList<>();
+            if (keyword != null && !keyword.trim().isEmpty()) {
+                String pattern = "%" + keyword.trim() + "%";
+                predicates.add(cb.or(
+                    cb.like(root.get("username"), pattern),
+                    cb.like(root.get("targetName"), pattern),
+                    cb.like(root.get("detail"), pattern)
+                ));
+            }
+            if (action != null && !action.trim().isEmpty()) {
+                predicates.add(cb.equal(root.get("action"), action.trim()));
+            }
+            if (targetType != null && !targetType.trim().isEmpty()) {
+                predicates.add(cb.equal(root.get("targetType"), targetType.trim()));
+            }
+            if (projectId != null && !projectId.trim().isEmpty()) {
+                predicates.add(cb.equal(root.get("projectId"), projectId.trim()));
+            }
+            return cb.and(predicates.toArray(new Predicate[0]));
+        };
 
         StringBuilder csv = new StringBuilder();
         csv.append("ID,时间,用户,操作,目标,详情,IP地址,状态\n");
 
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
-        for (OperationLog operationLog : logs) {
-            csv.append(operationLog.getId()).append(",");
-            csv.append(operationLog.getCreatedAt() != null ? operationLog.getCreatedAt().format(formatter) : "").append(",");
-            csv.append(escapeCsv(operationLog.getUsername())).append(",");
-            csv.append(escapeCsv(operationLog.getAction())).append(",");
-            csv.append(escapeCsv(operationLog.getTargetName())).append(",");
-            csv.append(escapeCsv(operationLog.getDetail())).append(",");
-            csv.append(escapeCsv(operationLog.getIpAddress())).append(",");
-            csv.append(operationLog.getStatus()).append("\n");
+        // 分页查询，每页 1000 条
+        int page = 0;
+        int pageSize = 1000;
+        boolean hasMore = true;
+
+        while (hasMore) {
+            PageRequest pageRequest = PageRequest.of(page, pageSize,
+                Sort.by(Sort.Direction.DESC, "createdAt"));
+            Page<OperationLog> logPage = logRepository.findAll(spec, pageRequest);
+
+            for (OperationLog operationLog : logPage.getContent()) {
+                csv.append(operationLog.getId()).append(",");
+                csv.append(operationLog.getCreatedAt() != null ? operationLog.getCreatedAt().format(formatter) : "").append(",");
+                csv.append(escapeCsv(operationLog.getUsername())).append(",");
+                csv.append(escapeCsv(operationLog.getAction())).append(",");
+                csv.append(escapeCsv(operationLog.getTargetName())).append(",");
+                csv.append(escapeCsv(operationLog.getDetail())).append(",");
+                csv.append(escapeCsv(operationLog.getIpAddress())).append(",");
+                csv.append(operationLog.getStatus()).append("\n");
+            }
+
+            hasMore = logPage.hasNext();
+            page++;
         }
 
         HttpHeaders headers = new HttpHeaders();

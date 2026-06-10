@@ -1,582 +1,436 @@
 ---
-name: game-template-design-studio
-description: 游戏设计工作室模板 - 可视化关卡编辑、实时预览、素材管理、作品发布
-category: game-template
-triggerPattern: design, 设计, editor, 编辑器, creative, 创作, sandbox, 沙盒, build, 建造, maker, 制作
+name: 游戏设计工作室游戏开发模板
+description: 游戏设计工作室游戏开发模板，适用于游戏编辑器、创作工具类游戏
+trigger: design, 设计, editor, 编辑器, creative, 创作, sandbox, 沙盒, build, 建造, maker, 制作
+examples: Mario Maker|LittleBigPlanet|Roblox|Dreams|Core
 ---
 
-# 游戏设计工作室模板
+# 游戏设计工作室游戏开发模板
 
-## 概述
+## 游戏设计核心原则
 
-让玩家沉浸式设计自己游戏作品的创作平台，包含：
-- **可视化编辑器**：拖拽式关卡设计、实时预览
-- **素材系统**：内置素材库、自定义素材上传
-- **逻辑编辑器**：可视化编程、触发器系统
-- **作品管理**：保存、版本控制、发布分享
-- **测试环境**：即时测试、调试工具
-- **模板系统**：预设模板快速开始
+### 核心循环（持续进行）
+```
+设计关卡 → 测试游玩 → 调整优化 → 发布分享 → 获得反馈
+```
+- **创作自由**：玩家可以自由创作
+- **即时反馈**：设计后立刻能玩
+- **分享展示**：分享自己的作品
 
-## 核心代码
+### 玩家心理学
+- **"创作满足"的成就感**：创作自己的游戏
+- **"即时测试"的乐趣**：设计后立刻能玩
+- **"分享炫耀"的欲望**：展示自己的作品
+- **"学习成长"的过程**：从新手到大师
 
-### 1. 编辑器核心 (EditorCore.js)
+### 设计工作室设计要点
+```
+设计工作室核心：
+1. 可视化编辑：拖拽式操作
+2. 即时预览：设计后立刻能玩
+3. 丰富素材：提供足够素材
+4. 分享系统：能分享作品
+```
 
+## 核心系统设计
+
+### 1. 可视化编辑器
 ```javascript
-export class EditorCore {
-  constructor(canvas) {
-    this.canvas = canvas
-    this.ctx = canvas.getContext('2d')
-    this.scene = {
-      objects: [],
-      triggers: [],
-      metadata: {
-        name: '未命名作品',
-        author: '',
-        description: '',
-        version: '1.0.0'
-      }
-    }
-    this.selectedObject = null
-    this.gridSize = 32
-    this.showGrid = true
-    this.zoom = 1
-    this.panX = 0
-    this.panY = 0
-    this.history = []
-    this.historyIndex = -1
-    this.maxHistory = 50
+class VisualEditor {
+  constructor() {
+    this.grid = new Grid(100, 100);
+    this.selectedTool = 'select';
+    this.selectedAsset = null;
+    this.history = [];
+    this.undoStack = [];
   }
-
-  // 添加对象
-  addObject(type, x, y, properties = {}) {
-    const obj = {
+  
+  selectTool(tool) {
+    this.selectedTool = tool;
+  }
+  
+  selectAsset(asset) {
+    this.selectedAsset = asset;
+  }
+  
+  handleClick(x, y) {
+    switch (this.selectedTool) {
+      case 'select':
+        this.selectObject(x, y);
+        break;
+      case 'place':
+        this.placeObject(x, y, this.selectedAsset);
+        break;
+      case 'delete':
+        this.deleteObject(x, y);
+        break;
+      case 'paint':
+        this.paintTerrain(x, y);
+        break;
+    }
+  }
+  
+  placeObject(x, y, asset) {
+    const object = {
       id: this.generateId(),
-      type,
-      x,
-      y,
-      width: properties.width || 32,
-      height: properties.height || 32,
-      rotation: 0,
-      properties: { ...properties },
-      visible: true,
-      locked: false
-    }
-
-    this.scene.objects.push(obj)
-    this.saveHistory()
-    this.render()
-    return obj
+      asset: asset,
+      position: { x, y },
+      properties: asset.defaultProperties
+    };
+    
+    this.grid.set(x, y, object);
+    this.history.push({ type: 'place', object });
+    this.undoStack = [];
+    
+    this.render();
   }
-
-  // 删除对象
-  removeObject(id) {
-    this.scene.objects = this.scene.objects.filter(o => o.id !== id)
-    if (this.selectedObject?.id === id) {
-      this.selectedObject = null
-    }
-    this.saveHistory()
-    this.render()
-  }
-
-  // 选择对象
-  selectObject(x, y) {
-    const obj = this.findObjectAt(x, y)
-    this.selectedObject = obj
-    this.render()
-    return obj
-  }
-
-  // 移动对象
-  moveObject(id, x, y) {
-    const obj = this.scene.objects.find(o => o.id === id)
-    if (obj) {
-      obj.x = x
-      obj.y = y
-      this.saveHistory()
-      this.render()
+  
+  deleteObject(x, y) {
+    const object = this.grid.get(x, y);
+    if (object) {
+      this.grid.remove(x, y);
+      this.history.push({ type: 'delete', object });
+      this.undoStack = [];
+      
+      this.render();
     }
   }
-
-  // 查找指定位置的对象
-  findObjectAt(x, y) {
-    for (let i = this.scene.objects.length - 1; i >= 0; i--) {
-      const obj = this.scene.objects[i]
-      if (x >= obj.x && x <= obj.x + obj.width &&
-          y >= obj.y && y <= obj.y + obj.height) {
-        return obj
-      }
-    }
-    return null
-  }
-
-  // 保存历史（撤销/重做）
-  saveHistory() {
-    this.history = this.history.slice(0, this.historyIndex + 1)
-    this.history.push(JSON.stringify(this.scene))
-    this.historyIndex = this.history.length - 1
-
-    if (this.history.length > this.maxHistory) {
-      this.history.shift()
-      this.historyIndex--
-    }
-  }
-
-  // 撤销
+  
   undo() {
-    if (this.historyIndex > 0) {
-      this.historyIndex--
-      this.scene = JSON.parse(this.history[this.historyIndex])
-      this.render()
-    }
-  }
-
-  // 重做
-  redo() {
-    if (this.historyIndex < this.history.length - 1) {
-      this.historyIndex++
-      this.scene = JSON.parse(this.history[this.historyIndex])
-      this.render()
-    }
-  }
-
-  // 渲染编辑器
-  render() {
-    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height)
-    this.ctx.save()
-    this.ctx.scale(this.zoom, this.zoom)
-    this.ctx.translate(this.panX, this.panY)
-
-    // 绘制网格
-    if (this.showGrid) {
-      this.drawGrid()
-    }
-
-    // 绘制对象
-    this.scene.objects.forEach(obj => {
-      if (obj.visible) {
-        this.drawObject(obj)
-      }
-    })
-
-    // 绘制选中框
-    if (this.selectedObject) {
-      this.drawSelection(this.selectedObject)
-    }
-
-    this.ctx.restore()
-  }
-
-  drawGrid() {
-    this.ctx.strokeStyle = '#eee'
-    this.ctx.lineWidth = 0.5
-    for (let x = 0; x < this.canvas.width / this.zoom; x += this.gridSize) {
-      this.ctx.beginPath()
-      this.ctx.moveTo(x, 0)
-      this.ctx.lineTo(x, this.canvas.height / this.zoom)
-      this.ctx.stroke()
-    }
-    for (let y = 0; y < this.canvas.height / this.zoom; y += this.gridSize) {
-      this.ctx.beginPath()
-      this.ctx.moveTo(0, y)
-      this.ctx.lineTo(this.canvas.width / this.zoom, y)
-      this.ctx.stroke()
-    }
-  }
-
-  drawObject(obj) {
-    this.ctx.fillStyle = obj.properties.color || '#4CAF50'
-    this.ctx.fillRect(obj.x, obj.y, obj.width, obj.height)
-
-    if (obj.properties.text) {
-      this.ctx.fillStyle = '#fff'
-      this.ctx.font = '12px Arial'
-      this.ctx.textAlign = 'center'
-      this.ctx.fillText(obj.properties.text, obj.x + obj.width/2, obj.y + obj.height/2 + 4)
-    }
-  }
-
-  drawSelection(obj) {
-    this.ctx.strokeStyle = '#2196F3'
-    this.ctx.lineWidth = 2
-    this.ctx.setLineDash([5, 5])
-    this.ctx.strokeRect(obj.x - 2, obj.y - 2, obj.width + 4, obj.height + 4)
-    this.ctx.setLineDash([])
-  }
-
-  generateId() {
-    return Date.now().toString(36) + Math.random().toString(36).substr(2, 9)
-  }
-}
-```
-
-### 2. 素材管理器 (AssetManager.js)
-
-```javascript
-export class AssetManager {
-  constructor() {
-    this.assets = new Map()
-    this.categories = {
-      characters: { name: '角色', icon: '👤', assets: [] },
-      objects: { name: '物体', icon: '📦', assets: [] },
-      backgrounds: { name: '背景', icon: '🖼️', assets: [] },
-      effects: { name: '特效', icon: '✨', assets: [] },
-      sounds: { name: '音效', icon: '🔊', assets: [] },
-      ui: { name: 'UI', icon: '🎨', assets: [] }
-    }
-    this.loadBuiltinAssets()
-  }
-
-  loadBuiltinAssets() {
-    // 角色
-    this.addAsset('characters', 'hero', '英雄', '/assets/characters/hero.png', { width: 32, height: 48 })
-    this.addAsset('characters', 'villain', '反派', '/assets/characters/villain.png', { width: 32, height: 48 })
-    this.addAsset('characters', 'npc', 'NPC', '/assets/characters/npc.png', { width: 32, height: 48 })
-
-    // 物体
-    this.addAsset('objects', 'coin', '金币', '/assets/objects/coin.png', { width: 16, height: 16 })
-    this.addAsset('objects', 'gem', '宝石', '/assets/objects/gem.png', { width: 16, height: 16 })
-    this.addAsset('objects', 'key', '钥匙', '/assets/objects/key.png', { width: 16, height: 16 })
-    this.addAsset('objects', 'door', '门', '/assets/objects/door.png', { width: 32, height: 48 })
-    this.addAsset('objects', 'chest', '宝箱', '/assets/objects/chest.png', { width: 32, height: 32 })
-
-    // 背景
-    this.addAsset('backgrounds', 'forest', '森林', '/assets/backgrounds/forest.png', { width: 800, height: 600 })
-    this.addAsset('backgrounds', 'cave', '洞穴', '/assets/backgrounds/cave.png', { width: 800, height: 600 })
-    this.addAsset('backgrounds', 'city', '城市', '/assets/backgrounds/city.png', { width: 800, height: 600 })
-
-    // 特效
-    this.addAsset('effects', 'explosion', '爆炸', '/assets/effects/explosion.png', { width: 64, height: 64 })
-    this.addAsset('effects', 'sparkle', '闪光', '/assets/effects/sparkle.png', { width: 32, height: 32 })
-  }
-
-  addAsset(category, id, name, url, size) {
-    const asset = { id, name, url, size, category }
-    this.assets.set(`${category}/${id}`, asset)
-    this.categories[category].assets.push(asset)
-  }
-
-  getAsset(category, id) {
-    return this.assets.get(`${category}/${id}`)
-  }
-
-  getCategoryAssets(category) {
-    return this.categories[category]?.assets || []
-  }
-
-  async uploadAsset(category, file) {
-    const id = file.name.replace(/\.[^.]+$/, '')
-    const url = URL.createObjectURL(file)
-    const size = await this.getImageSize(file)
-
-    this.addAsset(category, id, id, url, size)
-    return this.getAsset(category, id)
-  }
-
-  getImageSize(file) {
-    return new Promise((resolve) => {
-      const img = new Image()
-      img.onload = () => resolve({ width: img.width, height: img.height })
-      img.src = URL.createObjectURL(file)
-    })
-  }
-}
-```
-
-### 3. 触发器系统 (TriggerSystem.js)
-
-```javascript
-export class TriggerSystem {
-  constructor() {
-    this.triggers = []
-    this.conditions = {
-      'collision': { name: '碰撞', params: ['objectA', 'objectB'] },
-      'click': { name: '点击', params: ['objectId'] },
-      'timer': { name: '定时', params: ['seconds'] },
-      'score': { name: '分数达到', params: ['value'] },
-      'health': { name: '生命值', params: ['value', 'operator'] },
-      'position': { name: '位置', params: ['objectId', 'x', 'y', 'radius'] },
-      'variable': { name: '变量', params: ['name', 'operator', 'value'] }
-    }
-    this.actions = {
-      'move': { name: '移动', params: ['objectId', 'x', 'y', 'speed'] },
-      'spawn': { name: '生成', params: ['assetId', 'x', 'y'] },
-      'destroy': { name: '销毁', params: ['objectId'] },
-      'score': { name: '加分', params: ['value'] },
-      'message': { name: '显示消息', params: ['text', 'duration'] },
-      'sound': { name: '播放音效', params: ['soundId'] },
-      'variable': { name: '设置变量', params: ['name', 'value'] },
-      'scene': { name: '切换场景', params: ['sceneId'] }
-    }
-  }
-
-  addTrigger(config) {
-    const trigger = {
-      id: this.generateId(),
-      name: config.name,
-      condition: config.condition,
-      actions: config.actions,
-      enabled: true,
-      oneShot: config.oneShot || false,
-      triggered: false
-    }
-    this.triggers.push(trigger)
-    return trigger
-  }
-
-  removeTrigger(id) {
-    this.triggers = this.triggers.filter(t => t.id !== id)
-  }
-
-  checkTriggers(context) {
-    this.triggers.forEach(trigger => {
-      if (!trigger.enabled) return
-      if (trigger.oneShot && trigger.triggered) return
-
-      if (this.evaluateCondition(trigger.condition, context)) {
-        trigger.triggered = true
-        trigger.actions.forEach(action => {
-          this.executeAction(action, context)
-        })
-      }
-    })
-  }
-
-  evaluateCondition(condition, context) {
-    switch (condition.type) {
-      case 'collision':
-        return context.checkCollision(condition.objectA, condition.objectB)
-      case 'click':
-        return context.isClicked(condition.objectId)
-      case 'timer':
-        return context.getElapsedTime() >= condition.seconds * 1000
-      case 'score':
-        return context.getScore() >= condition.value
-      default:
-        return false
-    }
-  }
-
-  executeAction(action, context) {
+    if (this.history.length === 0) return;
+    
+    const action = this.history.pop();
+    this.undoStack.push(action);
+    
     switch (action.type) {
-      case 'move':
-        context.moveObject(action.objectId, action.x, action.y, action.speed)
-        break
-      case 'spawn':
-        context.spawnObject(action.assetId, action.x, action.y)
-        break
-      case 'destroy':
-        context.destroyObject(action.objectId)
-        break
-      case 'score':
-        context.addScore(action.value)
-        break
-      case 'message':
-        context.showMessage(action.text, action.duration)
-        break
+      case 'place':
+        this.grid.remove(action.object.position.x, action.object.position.y);
+        break;
+      case 'delete':
+        this.grid.set(action.object.position.x, action.object.position.y, action.object);
+        break;
     }
+    
+    this.render();
   }
-
-  generateId() {
-    return 'trigger_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5)
+  
+  redo() {
+    if (this.undoStack.length === 0) return;
+    
+    const action = this.undoStack.pop();
+    this.history.push(action);
+    
+    switch (action.type) {
+      case 'place':
+        this.grid.set(action.object.position.x, action.object.position.y, action.object);
+        break;
+      case 'delete':
+        this.grid.remove(action.object.position.x, action.object.position.y);
+        break;
+    }
+    
+    this.render();
   }
 }
 ```
 
-### 4. 作品管理 (ProjectManager.js)
-
+### 2. 素材系统
 ```javascript
-export class ProjectManager {
+class AssetSystem {
   constructor() {
-    this.projects = []
-    this.currentProject = null
+    this.assets = {};
+    this.categories = ['terrain', 'objects', 'characters', 'effects', 'ui'];
   }
+  
+  addAsset(config) {
+    this.assets[config.id] = {
+      id: config.id,
+      name: config.name,
+      category: config.category,
+      type: config.type, // sprite, tilemap, prefab
+      url: config.url,
+      properties: config.properties,
+      defaultProperties: config.defaultProperties
+    };
+  }
+  
+  getAssetsByCategory(category) {
+    return Object.values(this.assets).filter(a => a.category === category);
+  }
+  
+  getAsset(assetId) {
+    return this.assets[assetId];
+  }
+  
+  searchAssets(query) {
+    const lowerQuery = query.toLowerCase();
+    return Object.values(this.assets).filter(a => 
+      a.name.toLowerCase().includes(lowerQuery)
+    );
+  }
+}
 
-  createProject(name, template) {
-    const project = {
+const DEFAULT_ASSETS = [
+  { id: 'grass', name: '草地', category: 'terrain', type: 'tile' },
+  { id: 'stone', name: '石头', category: 'terrain', type: 'tile' },
+  { id: 'water', name: '水', category: 'terrain', type: 'tile' },
+  { id: 'tree', name: '树', category: 'objects', type: 'sprite' },
+  { id: 'house', name: '房子', category: 'objects', type: 'sprite' },
+  { id: 'coin', name: '金币', category: 'objects', type: 'sprite' },
+  { id: 'player', name: '玩家', category: 'characters', type: 'prefab' },
+  { id: 'enemy', name: '敌人', category: 'characters', type: 'prefab' }
+];
+```
+
+### 3. 逻辑编辑器
+```javascript
+class LogicEditor {
+  constructor() {
+    this.triggers = [];
+    this.actions = [];
+    this.connections = [];
+  }
+  
+  addTrigger(config) {
+    this.triggers.push({
       id: this.generateId(),
-      name,
-      template: template || 'blank',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      version: '1.0.0',
-      scenes: [],
-      assets: [],
-      settings: {
-        width: 800,
-        height: 600,
-        backgroundColor: '#f0f0f0'
-      }
-    }
-
-    this.projects.push(project)
-    this.currentProject = project
-    this.save()
-    return project
+      type: config.type, // collision, timer, input, event
+      condition: config.condition,
+      position: config.position
+    });
   }
-
-  loadProject(id) {
-    const project = this.projects.find(p => p.id === id)
-    if (project) {
-      this.currentProject = project
-    }
-    return project
+  
+  addAction(config) {
+    this.actions.push({
+      id: this.generateId(),
+      type: config.type, // move, spawn, destroy, change, play
+      parameters: config.parameters,
+      position: config.position
+    });
   }
-
-  saveProject() {
-    if (!this.currentProject) return
-    this.currentProject.updatedAt = new Date().toISOString()
-    this.save()
+  
+  connect(triggerId, actionId) {
+    this.connections.push({
+      trigger: triggerId,
+      action: actionId
+    });
   }
-
-  save() {
-    localStorage.setItem('game-projects', JSON.stringify(this.projects))
-  }
-
-  load() {
-    const data = localStorage.getItem('game-projects')
-    if (data) {
-      this.projects = JSON.parse(data)
-    }
-  }
-
-  deleteProject(id) {
-    this.projects = this.projects.filter(p => p.id !== id)
-    if (this.currentProject?.id === id) {
-      this.currentProject = null
-    }
-    this.save()
-  }
-
-  exportProject(id) {
-    const project = this.projects.find(p => p.id === id)
-    if (project) {
-      const data = JSON.stringify(project, null, 2)
-      const blob = new Blob([data], { type: 'application/json' })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `${project.name}.json`
-      a.click()
-      URL.revokeObjectURL(url)
-    }
-  }
-
-  importProject(file) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader()
-      reader.onload = (e) => {
-        try {
-          const project = JSON.parse(e.target.result)
-          project.id = this.generateId()
-          this.projects.push(project)
-          this.save()
-          resolve(project)
-        } catch (err) {
-          reject(err)
+  
+  execute() {
+    // 执行所有触发器
+    for (const trigger of this.triggers) {
+      if (this.checkTrigger(trigger)) {
+        // 执行连接的动作
+        const connectedActions = this.connections
+          .filter(c => c.trigger === trigger.id)
+          .map(c => this.actions.find(a => a.id === c.action));
+        
+        for (const action of connectedActions) {
+          this.executeAction(action);
         }
       }
-      reader.readAsText(file)
-    })
+    }
   }
-
-  generateId() {
-    return 'project_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9)
+  
+  checkTrigger(trigger) {
+    switch (trigger.type) {
+      case 'collision':
+        return this.checkCollision(trigger.condition);
+      case 'timer':
+        return this.checkTimer(trigger.condition);
+      case 'input':
+        return this.checkInput(trigger.condition);
+      case 'event':
+        return this.checkEvent(trigger.condition);
+      default:
+        return false;
+    }
+  }
+  
+  executeAction(action) {
+    switch (action.type) {
+      case 'move':
+        this.moveObject(action.parameters);
+        break;
+      case 'spawn':
+        this.spawnObject(action.parameters);
+        break;
+      case 'destroy':
+        this.destroyObject(action.parameters);
+        break;
+      case 'change':
+        this.changeProperty(action.parameters);
+        break;
+      case 'play':
+        this.playSound(action.parameters);
+        break;
+    }
   }
 }
 ```
 
-### 5. 测试运行器 (TestRunner.js)
-
+### 4. 测试系统
 ```javascript
-export class TestRunner {
-  constructor(editor) {
-    this.editor = editor
-    this.isRunning = false
-    this.gameState = null
-    this.startTime = null
+class TestSystem {
+  constructor() {
+    this.isTesting = false;
+    this.testState = {};
   }
-
-  start() {
-    this.isRunning = true
-    this.startTime = Date.now()
-    this.gameState = {
+  
+  startTest() {
+    this.isTesting = true;
+    this.testState = {
       score: 0,
-      health: 100,
-      variables: {},
-      objects: JSON.parse(JSON.stringify(this.editor.scene.objects))
+      lives: 3,
+      timer: 0
+    };
+    
+    // 初始化游戏世界
+    this.initGameWorld();
+    
+    // 开始游戏循环
+    this.startGameLoop();
+  }
+  
+  stopTest() {
+    this.isTesting = false;
+    this.stopGameLoop();
+  }
+  
+  initGameWorld() {
+    // 从编辑器状态初始化游戏世界
+    const editorState = this.editor.getState();
+    
+    for (const object of editorState.objects) {
+      this.gameWorld.addObject(object);
     }
-    return this.gameState
+    
+    // 设置玩家
+    this.gameWorld.setPlayer(editorState.player);
   }
-
-  stop() {
-    this.isRunning = false
-    this.gameState = null
+  
+  update(delta) {
+    if (!this.isTesting) return;
+    
+    this.testState.timer += delta;
+    
+    // 更新游戏世界
+    this.gameWorld.update(delta);
+    
+    // 检查胜负条件
+    this.checkWinLose();
   }
-
-  update(deltaTime) {
-    if (!this.isRunning) return
-
-    // 更新对象状态
-    this.gameState.objects.forEach(obj => {
-      if (obj.properties.velocity) {
-        obj.x += obj.properties.velocity.x * deltaTime
-        obj.y += obj.properties.velocity.y * deltaTime
-      }
-
-      if (obj.properties.gravity) {
-        obj.properties.velocity = obj.properties.velocity || { x: 0, y: 0 }
-        obj.properties.velocity.y += obj.properties.gravity * deltaTime
-      }
-    })
-  }
-
-  getStats() {
-    return {
-      duration: Date.now() - this.startTime,
-      score: this.gameState?.score || 0,
-      objectCount: this.gameState?.objects.length || 0
+  
+  checkWinLose() {
+    // 检查胜利条件
+    if (this.gameWorld.checkWinCondition()) {
+      this.showWinScreen();
+      this.stopTest();
+    }
+    
+    // 检查失败条件
+    if (this.gameWorld.checkLoseCondition()) {
+      this.showLoseScreen();
+      this.stopTest();
     }
   }
 }
 ```
 
-## 设计工具功能
+### 5. 发布系统
+```javascript
+class PublishSystem {
+  constructor() {
+    this.publishedLevels = [];
+  }
+  
+  async publishLevel(levelData) {
+    // 验证关卡
+    if (!this.validateLevel(levelData)) {
+      return { success: false, error: '关卡验证失败' };
+    }
+    
+    // 上传关卡
+    const response = await fetch('/api/levels', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(levelData)
+    });
+    
+    const result = await response.json();
+    
+    if (result.success) {
+      this.publishedLevels.push(result.level);
+      return { success: true, level: result.level };
+    }
+    
+    return { success: false, error: result.error };
+  }
+  
+  validateLevel(levelData) {
+    // 验证关卡是否有玩家起点
+    if (!levelData.playerStart) return false;
+    
+    // 验证关卡是否有终点或目标
+    if (!levelData.goal && !levelData.winCondition) return false;
+    
+    // 验证关卡大小
+    if (levelData.objects.length < 5) return false;
+    
+    return true;
+  }
+  
+  async getPublishedLevels(page = 1, limit = 20) {
+    const response = await fetch(`/api/levels?page=${page}&limit=${limit}`);
+    return await response.json();
+  }
+  
+  async playLevel(levelId) {
+    const response = await fetch(`/api/levels/${levelId}`);
+    const level = await response.json();
+    
+    this.testSystem.loadLevel(level);
+    this.testSystem.startTest();
+  }
+}
+```
 
-### 可视化编辑器
+## 迭代策略
 
-- **拖拽放置**：从素材库拖拽到画布
-- **实时预览**：所见即所得
-- **网格对齐**：自动对齐网格
-- **多选操作**：框选多个对象
-- **撤销/重做**：最多50步历史
+### 第一版：基础编辑器
+- 简单编辑器
+- 基础素材
+- 拖拽放置
+- 本地保存
 
-### 逻辑编辑器
+### 第二版：素材系统
+- 多种素材
+- 素材分类
+- 搜索功能
+- 自定义素材
 
-- **触发器**：碰撞、点击、定时、分数等条件
-- **动作**：移动、生成、销毁、加分等操作
-- **变量**：全局变量和对象变量
-- **条件分支**：if/else 逻辑
+### 第三版：逻辑编辑器
+- 触发器系统
+- 动作系统
+- 可视化连接
+- 测试功能
 
-### 素材系统
+### 第四版：发布系统
+- 发布关卡
+- 关卡浏览
+- 点赞评论
+- 排行榜
 
-- **内置素材**：角色、物体、背景、特效
-- **自定义上传**：支持图片和音效
-- **素材分类**：按类型组织
-- **素材预览**：缩略图预览
+### 第五版：社区功能
+- 关卡分享
+- 创作比赛
+- 社区互动
+- 排行榜
 
-## 使用方法
+## 常见错误
 
-1. 打开设计工作室
-2. 创建新作品或选择模板
-3. 拖拽素材到画布
-4. 设置触发器和逻辑
-5. 测试运行
-6. 保存并发布
-
-## 扩展点
-
-- 添加新素材类型：在 `AssetManager` 中扩展
-- 添加新触发器：在 `TriggerSystem` 中扩展
-- 添加新动作：在 `TriggerSystem` 中扩展
-- 添加协作功能：集成 WebSocket
-- 添加版本控制：集成 Git
+1. **编辑太复杂**：要简单易用
+2. **素材太少**：要有足够素材
+3. **不能测试**：要能即时测试
+4. **不能分享**：要能分享作品
+5. **没有教程**：要有新手教程

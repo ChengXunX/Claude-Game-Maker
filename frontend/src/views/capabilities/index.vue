@@ -79,6 +79,7 @@
             <el-option label="项目" value="project" />
             <el-option label="代码" value="code" />
             <el-option label="部署" value="deploy" />
+            <el-option label="验证" value="verification" />
           </el-select>
           <el-select v-model="filterStatus" placeholder="状态筛选" clearable @change="filterLocal" style="width: 120px">
             <el-option label="全部状态" value="" />
@@ -232,11 +233,36 @@
               <el-col :span="12">
                 <el-form-item label="执行方式" prop="executionType">
                   <el-select v-model="form.executionType" placeholder="选择执行方式" style="width: 100%">
-                    <el-option label="Java执行器" value="java" />
-                    <el-option label="Prompt模板" value="prompt" />
-                    <el-option label="消息发送" value="message" />
-                    <el-option label="脚本执行" value="script" />
-                    <el-option label="API调用" value="api" />
+                    <el-option label="Java执行器" value="java">
+                      <div>
+                        <span>Java执行器</span>
+                        <span style="color: #909399; font-size: 12px; margin-left: 8px;">调用Java类执行，适合系统级操作</span>
+                      </div>
+                    </el-option>
+                    <el-option label="Prompt模板" value="prompt">
+                      <div>
+                        <span>Prompt模板</span>
+                        <span style="color: #909399; font-size: 12px; margin-left: 8px;">通过AI提示词驱动，适合智能任务</span>
+                      </div>
+                    </el-option>
+                    <el-option label="消息发送" value="message">
+                      <div>
+                        <span>消息发送</span>
+                        <span style="color: #909399; font-size: 12px; margin-left: 8px;">发送消息给Agent或外部系统</span>
+                      </div>
+                    </el-option>
+                    <el-option label="脚本执行" value="script">
+                      <div>
+                        <span>脚本执行</span>
+                        <span style="color: #909399; font-size: 12px; margin-left: 8px;">运行Shell/Python脚本，适合自动化任务</span>
+                      </div>
+                    </el-option>
+                    <el-option label="API调用" value="api">
+                      <div>
+                        <span>API调用</span>
+                        <span style="color: #909399; font-size: 12px; margin-left: 8px;">调用外部HTTP接口，适合集成第三方服务</span>
+                      </div>
+                    </el-option>
                   </el-select>
                 </el-form-item>
               </el-col>
@@ -252,6 +278,7 @@
                     <el-option label="项目" value="project" />
                     <el-option label="代码" value="code" />
                     <el-option label="部署" value="deploy" />
+                    <el-option label="验证" value="verification" />
                   </el-select>
                 </el-form-item>
               </el-col>
@@ -279,24 +306,46 @@
           </el-tab-pane>
 
           <el-tab-pane label="执行配置" name="execution">
+            <el-alert type="info" :closable="false" style="margin-bottom: 16px;">
+              执行配置定义了Agent调用此能力时的具体执行方式。不同的执行方式需要填写不同的配置参数。
+            </el-alert>
+
             <el-form-item label="执行器类名" v-if="form.executionType === 'java'">
               <el-input v-model="form.executorClass" placeholder="如：com.example.CreateAgentExecutor" />
+              <div class="form-tip">实现 CapabilityExecutor 接口的 Java 类全限定名</div>
             </el-form-item>
             <el-form-item label="Prompt模板" v-if="form.executionType === 'prompt'">
-              <el-input v-model="form.promptTemplate" type="textarea" :rows="8" placeholder="输入Prompt模板，支持变量：{{agentId}}, {{projectId}}, {{taskDescription}}" />
+              <MarkdownEditor v-model="form.promptTemplate" :rows="8" placeholder="输入Prompt模板，支持变量：{{agentId}}, {{projectId}}, {{taskDescription}}" />
+              <div class="form-tip">AI 执行时使用的提示词模板，可用变量：{{agentId}}、{{projectId}}、{{taskDescription}}</div>
             </el-form-item>
             <el-form-item label="脚本内容" v-if="form.executionType === 'script'">
-              <el-input v-model="form.scriptContent" type="textarea" :rows="8" placeholder="输入脚本内容" />
+              <el-input v-model="form.scriptContent" type="textarea" :rows="8" placeholder="#!/bin/bash&#10;echo 'Hello World'" />
+              <div class="form-tip">Shell 或 Python 脚本内容，支持变量替换</div>
             </el-form-item>
             <el-form-item label="API地址" v-if="form.executionType === 'api'">
-              <el-input v-model="form.apiUrl" placeholder="如：/api/external/execute" />
+              <el-input v-model="form.apiUrl" placeholder="如：/api/external/execute 或 https://example.com/api" />
+              <div class="form-tip">外部 API 的 URL 地址，支持相对路径和绝对路径</div>
             </el-form-item>
-            <el-form-item label="超时时间(秒)">
-              <el-input-number v-model="form.timeout" :min="1" :max="300" />
+            <el-form-item label="消息目标" v-if="form.executionType === 'message'">
+              <el-input v-model="form.messageTarget" placeholder="如：agent:producer 或 channel:dev-team" />
+              <div class="form-tip">消息发送目标，格式：agent:{id} 或 channel:{name}</div>
             </el-form-item>
-            <el-form-item label="重试次数">
-              <el-input-number v-model="form.retryCount" :min="0" :max="5" />
-            </el-form-item>
+
+            <el-divider>执行策略</el-divider>
+            <el-row :gutter="16">
+              <el-col :span="12">
+                <el-form-item label="超时时间(秒)">
+                  <el-input-number v-model="form.timeout" :min="1" :max="300" style="width: 100%" />
+                  <div class="form-tip">执行超时时间，超时后自动终止（建议：简单任务30秒，复杂任务120秒）</div>
+                </el-form-item>
+              </el-col>
+              <el-col :span="12">
+                <el-form-item label="重试次数">
+                  <el-input-number v-model="form.retryCount" :min="0" :max="5" style="width: 100%" />
+                  <div class="form-tip">失败后自动重试次数（0=不重试，建议：关键任务1-2次）</div>
+                </el-form-item>
+              </el-col>
+            </el-row>
           </el-tab-pane>
 
           <el-tab-pane label="关联技能" name="skills">
@@ -348,10 +397,10 @@
         <el-form-item label="执行方式">
           <el-select v-model="aiForm.executionType" placeholder="选择执行方式" style="width: 100%">
             <el-option label="自动选择" value="" />
-            <el-option label="Java执行器" value="java" />
-            <el-option label="Prompt模板" value="prompt" />
-            <el-option label="脚本执行" value="script" />
-            <el-option label="API调用" value="api" />
+            <el-option label="Java执行器 - 系统级操作" value="java" />
+            <el-option label="Prompt模板 - AI智能任务" value="prompt" />
+            <el-option label="脚本执行 - 自动化任务" value="script" />
+            <el-option label="API调用 - 集成第三方" value="api" />
           </el-select>
         </el-form-item>
       </el-form>
@@ -426,6 +475,7 @@
  */
 import { ref, computed, onMounted } from 'vue'
 import { capabilityApi, skillApi, agentApi } from '@/api'
+import MarkdownEditor from '@/components/MarkdownEditor.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 const loading = ref(false)
@@ -463,6 +513,7 @@ const form = ref({
   promptTemplate: '',
   scriptContent: '',
   apiUrl: '',
+  messageTarget: '',
   timeout: 30,
   retryCount: 1,
   relatedSkillIds: [],
@@ -493,7 +544,7 @@ const stats = computed(() => {
     total: list.length,
     enabled: list.filter(c => c.enabled).length,
     disabled: list.filter(c => !c.enabled).length,
-    roles: new Set(list.map(c => c.agentRole)).size
+    roles: roles.value.length  // 使用实际的角色列表长度
   }
 })
 
@@ -611,6 +662,7 @@ const handleCreate = () => {
     promptTemplate: '',
     scriptContent: '',
     apiUrl: '',
+    messageTarget: '',
     timeout: 30,
     retryCount: 1,
     relatedSkillIds: [],
@@ -1072,6 +1124,13 @@ onMounted(() => {
 
 .mb-4 {
   margin-bottom: 16px;
+}
+
+.form-tip {
+  color: #909399;
+  font-size: 12px;
+  margin-top: 4px;
+  line-height: 1.4;
 }
 
 /* 响应式 */

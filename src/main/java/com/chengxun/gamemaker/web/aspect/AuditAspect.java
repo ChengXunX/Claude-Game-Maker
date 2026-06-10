@@ -15,6 +15,8 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 
 import java.lang.annotation.*;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * 统一审计日志切面
@@ -64,36 +66,65 @@ public class AuditAspect {
         String className = joinPoint.getTarget().getClass().getSimpleName();
         String methodName = joinPoint.getSignature().getName();
 
-        // 获取当前用户（避免数据库查询）
+        // 获取当前用户
+        Long userId = null;
         String username = "system";
         try {
             Authentication auth = SecurityContextHolder.getContext().getAuthentication();
             if (auth != null && auth.isAuthenticated()) {
                 username = auth.getName();
+                // 尝试获取用户ID
+                try {
+                    User user = userService.getUserByUsername(username);
+                    if (user != null) {
+                        userId = user.getId();
+                    }
+                } catch (Exception ignored) {}
             }
         } catch (Exception e) {
             // 忽略
         }
 
-        // 记录参数
-        String params = null;
+        // 记录请求参数
+        String requestParams = null;
         if (auditable.logParams()) {
             try {
                 Object[] args = joinPoint.getArgs();
                 if (args != null && args.length > 0) {
-                    params = SensitiveDataMasker.mask(objectMapper.writeValueAsString(args));
+                    // 过滤掉 Authentication 等不可序列化的参数
+                    List<Object> serializableArgs = new java.util.ArrayList<>();
+                    for (Object arg : args) {
+                        if (arg != null && !(arg instanceof Authentication)) {
+                            serializableArgs.add(arg);
+                        }
+                    }
+                    if (!serializableArgs.isEmpty()) {
+                        requestParams = SensitiveDataMasker.mask(
+                            objectMapper.writeValueAsString(serializableArgs));
+                    }
                 }
             } catch (Exception e) {
-                params = "[序列化失败]";
+                requestParams = "[序列化失败: " + e.getMessage() + "]";
             }
         }
 
         Object result = null;
         boolean success = true;
         String errorMessage = null;
+        String responseData = null;
 
         try {
             result = joinPoint.proceed();
+
+            // 记录响应数据
+            if (auditable.logResult() && result != null) {
+                try {
+                    responseData = objectMapper.writeValueAsString(result);
+                } catch (Exception e) {
+                    responseData = "[序列化失败: " + e.getMessage() + "]";
+                }
+            }
+
             return result;
         } catch (Throwable e) {
             success = false;
@@ -105,13 +136,17 @@ public class AuditAspect {
             // 构建描述
             String fullDesc = String.format("[%s.%s] %s", className, methodName,
                 description.isEmpty() ? action : description);
-            if (!success) {
-                fullDesc += " [FAILED: " + errorMessage + "]";
-            }
+
+            // 确定目标类型（从类名推导）
+            String targetType = className.replace("Controller", "").replace("Service", "");
 
             // 记录操作日志
             try {
-                operationLogService.log(null, action, fullDesc, params, duration);
+                operationLogService.logAudit(
+                    userId, username, action, targetType,
+                    className + "." + methodName, fullDesc,
+                    requestParams, responseData, duration, success, errorMessage
+                );
             } catch (Exception e) {
                 log.warn("Failed to write audit log: {}", e.getMessage());
             }

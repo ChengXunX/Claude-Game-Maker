@@ -3,6 +3,8 @@ package com.chengxun.gamemaker.web.entity;
 import jakarta.persistence.*;
 import jakarta.validation.constraints.NotBlank;
 import java.time.LocalDateTime;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * Agent干预记录实体
@@ -103,6 +105,14 @@ public class AgentIntervention {
     @Column(name = "message_id", length = 100)
     private String messageId;
 
+    /** 额外数据（JSON格式存储） */
+    @Column(name = "additional_data", columnDefinition = "TEXT")
+    private String additionalDataJson;
+
+    /** 额外数据（运行时使用，不持久化） */
+    @Transient
+    private Map<String, String> additionalData;
+
     // ===== 执行状态 =====
 
     /** 干预状态 */
@@ -156,6 +166,8 @@ public class AgentIntervention {
         TASK_REASSIGN,
         /** 紧急指令 */
         URGENT_INSTRUCTION,
+        /** 版本迭代：对已完成项目发起新版本迭代 */
+        VERSION_ITERATION,
         /** 其他 */
         OTHER
     }
@@ -260,6 +272,7 @@ public class AgentIntervention {
             case TASK_CANCEL -> "任务取消";
             case TASK_REASSIGN -> "任务重新分配";
             case URGENT_INSTRUCTION -> "紧急指令";
+            case VERSION_ITERATION -> "版本迭代";
             case OTHER -> "其他";
         };
     }
@@ -328,6 +341,55 @@ public class AgentIntervention {
 
     public String getMessageId() { return messageId; }
     public void setMessageId(String messageId) { this.messageId = messageId; }
+
+    public String getAdditionalDataJson() { return additionalDataJson; }
+    public void setAdditionalDataJson(String additionalDataJson) { this.additionalDataJson = additionalDataJson; }
+
+    public Map<String, String> getAdditionalData() {
+        if (additionalData == null) {
+            additionalData = new HashMap<>();
+            // 从JSON解析
+            if (additionalDataJson != null && !additionalDataJson.isEmpty()) {
+                try {
+                    // 简单解析JSON格式的key-value对
+                    String json = additionalDataJson.trim();
+                    if (json.startsWith("{") && json.endsWith("}")) {
+                        json = json.substring(1, json.length() - 1);
+                        String[] pairs = json.split(",");
+                        for (String pair : pairs) {
+                            String[] kv = pair.split(":", 2);
+                            if (kv.length == 2) {
+                                String key = kv[0].trim().replace("\"", "");
+                                String value = kv[1].trim().replace("\"", "");
+                                additionalData.put(key, value);
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    // 解析失败，返回空Map
+                }
+            }
+        }
+        return additionalData;
+    }
+
+    public void setAdditionalData(Map<String, String> additionalData) {
+        this.additionalData = additionalData;
+        // 转换为JSON字符串
+        if (additionalData != null && !additionalData.isEmpty()) {
+            StringBuilder json = new StringBuilder("{");
+            boolean first = true;
+            for (Map.Entry<String, String> entry : additionalData.entrySet()) {
+                if (!first) json.append(",");
+                json.append("\"").append(entry.getKey()).append("\":\"").append(entry.getValue()).append("\"");
+                first = false;
+            }
+            json.append("}");
+            this.additionalDataJson = json.toString();
+        } else {
+            this.additionalDataJson = null;
+        }
+    }
 
     public Status getStatus() { return status; }
     public void setStatus(Status status) { this.status = status; }

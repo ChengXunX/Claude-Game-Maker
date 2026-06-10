@@ -1,5 +1,7 @@
 package com.chengxun.gamemaker.web.service;
 
+import com.chengxun.gamemaker.manager.ProjectManager;
+import com.chengxun.gamemaker.model.GameProject;
 import com.chengxun.gamemaker.web.entity.*;
 import com.chengxun.gamemaker.web.repository.*;
 import org.slf4j.Logger;
@@ -12,7 +14,7 @@ import java.util.stream.Collectors;
 
 /**
  * 全局搜索服务
- * 支持搜索项目、任务、日志、Agent等
+ * 支持搜索项目、Agent、告警、审查、日志、干预等
  *
  * 主要功能：
  * - 跨模块搜索
@@ -42,6 +44,18 @@ public class SearchService {
     @Autowired
     private TokenUsageRepository tokenUsageRepository;
 
+    @Autowired
+    private AgentHealthRepository healthRepository;
+
+    @Autowired
+    private AgentInterventionRepository agentInterventionRepository;
+
+    @Autowired
+    private NotificationRepository notificationRepository;
+
+    @Autowired
+    private ProjectManager projectManager;
+
     /**
      * 全局搜索
      * @param keyword 搜索关键词
@@ -57,16 +71,34 @@ public class SearchService {
 
         String searchKeyword = keyword.trim().toLowerCase();
 
+        // 搜索项目
+        List<Map<String, Object>> projectResults = searchProjects(searchKeyword, limit);
+        if (!projectResults.isEmpty()) {
+            results.put("projects", projectResults);
+        }
+
         // 搜索Agent
         List<Map<String, Object>> agentResults = searchAgents(searchKeyword, limit);
         if (!agentResults.isEmpty()) {
             results.put("agents", agentResults);
         }
 
+        // 搜索Agent健康记录
+        List<Map<String, Object>> healthResults = searchAgentHealth(searchKeyword, limit);
+        if (!healthResults.isEmpty()) {
+            results.put("health", healthResults);
+        }
+
         // 搜索告警
         List<Map<String, Object>> alertResults = searchAlerts(searchKeyword, limit);
         if (!alertResults.isEmpty()) {
             results.put("alerts", alertResults);
+        }
+
+        // 搜索干预记录
+        List<Map<String, Object>> interventionResults = searchInterventions(searchKeyword, limit);
+        if (!interventionResults.isEmpty()) {
+            results.put("interventions", interventionResults);
         }
 
         // 搜索代码审查
@@ -81,8 +113,100 @@ public class SearchService {
             results.put("logs", logResults);
         }
 
+        // 搜索通知
+        List<Map<String, Object>> notificationResults = searchNotifications(searchKeyword, limit);
+        if (!notificationResults.isEmpty()) {
+            results.put("notifications", notificationResults);
+        }
+
         log.info("Search completed for '{}': found {} result types", keyword, results.size());
         return results;
+    }
+
+    /**
+     * 搜索项目
+     */
+    private List<Map<String, Object>> searchProjects(String keyword, int limit) {
+        return projectManager.getAllProjects().stream()
+            .filter(p -> matchesKeyword(p.getName(), keyword) ||
+                         matchesKeyword(p.getDescription(), keyword) ||
+                         matchesKeyword(p.getId(), keyword) ||
+                         matchesKeyword(p.getWorkDir(), keyword))
+            .limit(limit)
+            .map(p -> {
+                Map<String, Object> result = new HashMap<>();
+                result.put("type", "project");
+                result.put("id", p.getId());
+                result.put("title", p.getName());
+                result.put("subtitle", p.getDescription() != null ? p.getDescription() : p.getWorkDir());
+                result.put("link", "/projects");
+                return result;
+            })
+            .collect(Collectors.toList());
+    }
+
+    /**
+     * 搜索Agent健康记录
+     */
+    private List<Map<String, Object>> searchAgentHealth(String keyword, int limit) {
+        return healthRepository.findAll().stream()
+            .filter(h -> matchesKeyword(h.getAgentName(), keyword) ||
+                         matchesKeyword(h.getAgentId(), keyword) ||
+                         matchesKeyword(h.getAgentRole(), keyword))
+            .limit(limit)
+            .map(h -> {
+                Map<String, Object> result = new HashMap<>();
+                result.put("type", "health");
+                result.put("id", h.getAgentId());
+                result.put("title", h.getAgentName() != null ? h.getAgentName() : h.getAgentId());
+                result.put("subtitle", "健康状态: " + (h.getHealthStatus() != null ? h.getHealthStatus() : "未知"));
+                result.put("link", "/health");
+                return result;
+            })
+            .collect(Collectors.toList());
+    }
+
+    /**
+     * 搜索干预记录
+     */
+    private List<Map<String, Object>> searchInterventions(String keyword, int limit) {
+        return agentInterventionRepository.findAll().stream()
+            .filter(i -> matchesKeyword(i.getInterventionNo(), keyword) ||
+                         matchesKeyword(i.getAgentName(), keyword) ||
+                         matchesKeyword(i.getInstruction(), keyword) ||
+                         matchesKeyword(i.getReason(), keyword))
+            .limit(limit)
+            .map(i -> {
+                Map<String, Object> result = new HashMap<>();
+                result.put("type", "intervention");
+                result.put("id", i.getId().toString());
+                result.put("title", i.getInterventionNo() != null ? i.getInterventionNo() : "干预记录");
+                result.put("subtitle", (i.getAgentName() != null ? i.getAgentName() : i.getAgentId()) +
+                    " - " + (i.getInstruction() != null ? i.getInstruction().substring(0, Math.min(50, i.getInstruction().length())) : ""));
+                result.put("link", "/interventions");
+                return result;
+            })
+            .collect(Collectors.toList());
+    }
+
+    /**
+     * 搜索通知
+     */
+    private List<Map<String, Object>> searchNotifications(String keyword, int limit) {
+        return notificationRepository.findAll().stream()
+            .filter(n -> matchesKeyword(n.getTitle(), keyword) ||
+                         matchesKeyword(n.getContent(), keyword))
+            .limit(limit)
+            .map(n -> {
+                Map<String, Object> result = new HashMap<>();
+                result.put("type", "notification");
+                result.put("id", n.getId().toString());
+                result.put("title", n.getTitle());
+                result.put("subtitle", n.getContent() != null ? n.getContent().substring(0, Math.min(50, n.getContent().length())) : "");
+                result.put("link", "/notifications");
+                return result;
+            })
+            .collect(Collectors.toList());
     }
 
     /**
@@ -194,10 +318,17 @@ public class SearchService {
 
         String searchPrefix = prefix.trim().toLowerCase();
 
+        // 从项目名称获取建议
+        projectManager.getAllProjects().stream()
+            .map(GameProject::getName)
+            .filter(name -> name != null && name.toLowerCase().contains(searchPrefix))
+            .limit(3)
+            .forEach(suggestions::add);
+
         // 从Agent名称获取建议
         performanceRepository.findAll().stream()
             .map(AgentPerformance::getAgentName)
-            .filter(name -> name != null && name.toLowerCase().startsWith(searchPrefix))
+            .filter(name -> name != null && name.toLowerCase().contains(searchPrefix))
             .limit(5)
             .forEach(suggestions::add);
 
@@ -205,6 +336,13 @@ public class SearchService {
         alertRecordRepository.findAll().stream()
             .map(AlertRecord::getTitle)
             .filter(title -> title != null && title.toLowerCase().contains(searchPrefix))
+            .limit(3)
+            .forEach(suggestions::add);
+
+        // 从干预记录获取建议
+        agentInterventionRepository.findAll().stream()
+            .map(AgentIntervention::getAgentName)
+            .filter(name -> name != null && name.toLowerCase().contains(searchPrefix))
             .limit(3)
             .forEach(suggestions::add);
 

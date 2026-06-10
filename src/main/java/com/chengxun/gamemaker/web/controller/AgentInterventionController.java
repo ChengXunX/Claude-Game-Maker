@@ -492,4 +492,75 @@ public class AgentInterventionController {
     public ResponseEntity<Map<String, Object>> getStatistics() {
         return ResponseEntity.ok(interventionService.getInterventionStatistics());
     }
+
+    // ===== 版本迭代 =====
+
+    /**
+     * 发起版本迭代
+     * 对已完成的项目发起新版本迭代，制作人会分析需求并重新启动Agent
+     *
+     * @param request 版本迭代请求
+     * @param authentication 当前认证用户
+     * @return 迭代结果
+     */
+    @Operation(summary = "发起版本迭代", description = "对已完成的项目发起新版本迭代")
+    @ApiResponses(value = {
+        @ApiResponse(responseCode = "200", description = "迭代已发起"),
+        @ApiResponse(responseCode = "400", description = "参数错误"),
+        @ApiResponse(responseCode = "403", description = "权限不足")
+    })
+    @PostMapping("/version-iteration")
+    @PreAuthorize("hasAuthority('PERM_agents:manage')")
+    public ResponseEntity<Map<String, Object>> startVersionIteration(
+            @Valid @RequestBody VersionIterationRequest request,
+            Authentication authentication) {
+        UserInfo userInfo = getCurrentUserInfo(authentication);
+
+        log.info("Version iteration requested: projectId={}, userId={}, requirements={}",
+                request.getProjectId(), userInfo.getUserId(), request.getRequirements());
+
+        // 发送版本迭代干预
+        AgentIntervention intervention = interventionService.sendVersionIteration(
+            userInfo.getUserId(), userInfo.getUsername(), userInfo.getRoleName(),
+            request.getProjectId(), request.getRequirements(), request.getVersion(),
+            request.getPriority(), request.getDeadline()
+        );
+
+        log.info("Version iteration started: interventionId={}, interventionNo={}",
+                intervention.getId(), intervention.getInterventionNo());
+
+        return ResponseEntity.ok(Map.of(
+            "status", "success",
+            "interventionId", intervention.getId(),
+            "interventionNo", intervention.getInterventionNo(),
+            "message", "版本迭代已发起，制作人将分析需求并启动迭代"
+        ));
+    }
+
+    /**
+     * 版本迭代请求DTO
+     */
+    public static class VersionIterationRequest {
+        /** 项目ID */
+        private String projectId;
+        /** 迭代需求描述 */
+        private String requirements;
+        /** 版本号 */
+        private String version;
+        /** 优先级 */
+        private String priority;
+        /** 截止时间 */
+        private String deadline;
+
+        public String getProjectId() { return projectId; }
+        public void setProjectId(String projectId) { this.projectId = projectId; }
+        public String getRequirements() { return requirements; }
+        public void setRequirements(String requirements) { this.requirements = requirements; }
+        public String getVersion() { return version; }
+        public void setVersion(String version) { this.version = version; }
+        public String getPriority() { return priority; }
+        public void setPriority(String priority) { this.priority = priority; }
+        public String getDeadline() { return deadline; }
+        public void setDeadline(String deadline) { this.deadline = deadline; }
+    }
 }

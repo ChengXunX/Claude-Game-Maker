@@ -84,7 +84,7 @@ public class DingTalkController {
             if (request.containsKey("secret")) {
                 config.setSecret((String) request.get("secret"));
             }
-            if (request.containsKey("enabled")) {
+            if (request.containsKey("enabled") && request.get("enabled") != null) {
                 config.setEnabled((Boolean) request.get("enabled"));
             }
 
@@ -136,7 +136,8 @@ public class DingTalkController {
     @PreAuthorize("hasAuthority('PERM_system:manage')")
     public String testConnectionForm(RedirectAttributes redirectAttributes) {
         Map<String, Object> result = dingTalkService.testConnection();
-        if ((Boolean) result.get("success")) {
+        Boolean success = (Boolean) result.get("success");
+        if (success != null && success) {
             redirectAttributes.addFlashAttribute("success", result.get("message"));
         } else {
             redirectAttributes.addFlashAttribute("error", result.get("message"));

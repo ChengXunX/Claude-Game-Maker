@@ -1,11 +1,16 @@
 package com.chengxun.gamemaker.service;
 
+import com.chengxun.gamemaker.manager.AgentManager;
+import com.chengxun.gamemaker.model.AgentMessage;
 import com.chengxun.gamemaker.web.entity.AgentCapability;
 import com.chengxun.gamemaker.web.repository.AgentCapabilityRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReadWriteLock;
@@ -21,6 +26,7 @@ import java.util.stream.Collectors;
  * - 支持项目级覆盖（projectId 非空时覆盖全局默认）
  * - 提供参数验证
  * - 支持热更新（清除缓存后重新加载）
+ * - 能力变更后自动通知相关 Agent
  *
  * @author chengxun
  * @since 2.0.0
@@ -35,6 +41,10 @@ public class CapabilityRegistry {
 
     private final AgentCapabilityRepository capabilityRepository;
 
+    @Autowired
+    @Lazy
+    private AgentManager agentManager;
+
     /**
      * 内存缓存
      * key: cacheKey（格式: agentRole 或 agentRole:projectId）
@@ -44,6 +54,9 @@ public class CapabilityRegistry {
 
     /** 所有能力的扁平缓存（管理界面用） */
     private volatile List<AgentCapability> allCapabilities = Collections.emptyList();
+
+    /** 能力变更历史记录 */
+    private final List<CapabilityChangeRecord> changeHistory = new ArrayList<>();
 
     public CapabilityRegistry(AgentCapabilityRepository capabilityRepository) {
         this.capabilityRepository = capabilityRepository;
@@ -302,34 +315,228 @@ public class CapabilityRegistry {
 
     /**
      * 保存能力定义
+     * 保存后自动重新加载缓存并通知相关 Agent
      */
     public AgentCapability save(AgentCapability capability) {
+        boolean isNew = capability.getId() == null;
         AgentCapability saved = capabilityRepository.save(capability);
+
         // 重新加载对应角色的缓存
         reloadCapabilities(saved.getAgentRole());
+
+        // 记录变更历史
+        recordChange(saved, isNew ? "CREATE" : "UPDATE",
+            isNew ? "创建能力" : "更新能力");
+
+        // 通知相关 Agent
+        notifyAgentsCapabilityChanged(saved.getAgentRole(), saved.getProjectId(),
+            isNew ? "新增" : "更新", saved.getCapabilityName());
+
         return saved;
     }
 
     /**
      * 切换能力启用状态
+     * 切换后自动重新加载缓存并通知相关 Agent
      */
     public AgentCapability toggleEnabled(Long capabilityId) {
         AgentCapability cap = capabilityRepository.findById(capabilityId)
             .orElseThrow(() -> new RuntimeException("能力不存在: " + capabilityId));
+
+        boolean oldEnabled = cap.isEnabled();
         cap.setEnabled(!cap.isEnabled());
         AgentCapability saved = capabilityRepository.save(cap);
+
+        // 重新加载对应角色的缓存
         reloadCapabilities(saved.getAgentRole());
+
+        // 记录变更历史
+        String action = saved.isEnabled() ? "启用" : "禁用";
+        recordChange(saved, "TOGGLE", action + "能力");
+
+        // 通知相关 Agent
+        notifyAgentsCapabilityChanged(saved.getAgentRole(), saved.getProjectId(),
+            action, saved.getCapabilityName());
+
         return saved;
     }
 
     /**
      * 删除能力
+     * 删除后自动重新加载缓存并通知相关 Agent
      */
     public void delete(Long capabilityId) {
         AgentCapability cap = capabilityRepository.findById(capabilityId)
             .orElseThrow(() -> new RuntimeException("能力不存在: " + capabilityId));
+
+        String role = cap.getAgentRole();
+        String projectId = cap.getProjectId();
+        String capName = cap.getCapabilityName();
+
         capabilityRepository.deleteById(capabilityId);
-        reloadCapabilities(cap.getAgentRole());
+
+        // 重新加载对应角色的缓存
+        reloadCapabilities(role);
+
+        // 记录变更历史
+        recordChange(cap, "DELETE", "删除能力");
+
+        // 通知相关 Agent
+        notifyAgentsCapabilityChanged(role, projectId, "删除", capName);
+    }
+
+    /**
+     * 批量更新能力
+     * 批量操作后自动重新加载缓存并通知相关 Agent
+     */
+    public List<AgentCapability> batchUpdate(List<AgentCapability> capabilities) {
+        List<AgentCapability> saved = capabilityRepository.saveAll(capabilities);
+
+        // 收集受影响的角色
+        Set<String> affectedRoles = saved.stream()
+            .map(AgentCapability::getAgentRole)
+            .collect(Collectors.toSet());
+
+        // 重新加载所有受影响角色的缓存
+        affectedRoles.forEach(this::reloadCapabilities);
+
+        // 记录变更历史
+        recordChange(null, "BATCH_UPDATE",
+            String.format("批量更新 %d 个能力", saved.size()));
+
+        // 通知所有受影响角色的 Agent
+        affectedRoles.forEach(role ->
+            notifyAgentsCapabilityChanged(role, null, "批量更新", "多个能力"));
+
+        return saved;
+    }
+
+    /**
+     * 记录能力变更历史
+     */
+    private synchronized void recordChange(AgentCapability capability, String action, String description) {
+        CapabilityChangeRecord record = new CapabilityChangeRecord();
+        record.setTimestamp(LocalDateTime.now());
+        record.setAction(action);
+        record.setDescription(description);
+        if (capability != null) {
+            record.setCapabilityName(capability.getCapabilityName());
+            record.setAgentRole(capability.getAgentRole());
+            record.setProjectId(capability.getProjectId());
+        }
+        changeHistory.add(record);
+
+        // 只保留最近 1000 条记录
+        if (changeHistory.size() > 1000) {
+            changeHistory.remove(0);
+        }
+
+        log.info("Capability change recorded: {} - {}", action, description);
+    }
+
+    /**
+     * 通知相关 Agent 能力已变更
+     */
+    private void notifyAgentsCapabilityChanged(String agentRole, String projectId,
+                                                String action, String capabilityName) {
+        if (agentManager == null) {
+            log.debug("AgentManager not available, skipping notification");
+            return;
+        }
+
+        try {
+            // 构建通知消息
+            String message = String.format(
+                "## 能力变更通知\n\n" +
+                "**操作**: %s\n" +
+                "**能力**: %s\n" +
+                "**角色**: %s\n" +
+                "%s\n" +
+                "**时间**: %s\n\n" +
+                "你的能力配置已更新，新的能力将在下一个工作周期生效。",
+                action, capabilityName, agentRole,
+                projectId != null ? "**项目**: " + projectId + "\n" : "",
+                LocalDateTime.now());
+
+            // 获取相关 Agent 并发送通知
+            if (projectId != null && !projectId.isEmpty()) {
+                // 通知项目下的特定角色 Agent
+                String agentId = projectId + ":" + agentRole;
+                sendNotificationToAgent(agentId, message);
+            } else {
+                // 通知所有该角色的 Agent
+                agentManager.getAllAgents().stream()
+                    .filter(agent -> agentRole.equals(agent.getRole()))
+                    .forEach(agent -> sendNotificationToAgent(agent.getId(), message));
+            }
+
+            log.info("Notified agents about capability change: role={}, action={}, capability={}",
+                agentRole, action, capabilityName);
+        } catch (Exception e) {
+            log.warn("Failed to notify agents about capability change: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * 向单个 Agent 发送通知
+     */
+    private void sendNotificationToAgent(String agentId, String message) {
+        try {
+            com.chengxun.gamemaker.agent.Agent agent = agentManager.getAgent(agentId);
+            if (agent != null && agent.isAlive()) {
+                AgentMessage notification = AgentMessage.builder()
+                    .fromAgentId("system")
+                    .toAgentId(agentId)
+                    .type(AgentMessage.MessageType.NOTIFY)
+                    .content(message)
+                    .build();
+                agent.receiveMessage(notification);
+            }
+        } catch (Exception e) {
+            log.debug("Failed to send notification to agent {}: {}", agentId, e.getMessage());
+        }
+    }
+
+    /**
+     * 获取能力变更历史
+     */
+    public List<CapabilityChangeRecord> getChangeHistory() {
+        return new ArrayList<>(changeHistory);
+    }
+
+    /**
+     * 获取能力变更历史（按角色过滤）
+     */
+    public List<CapabilityChangeRecord> getChangeHistoryByRole(String agentRole) {
+        return changeHistory.stream()
+            .filter(record -> agentRole.equals(record.getAgentRole()))
+            .collect(Collectors.toList());
+    }
+
+    /**
+     * 能力变更记录
+     */
+    public static class CapabilityChangeRecord {
+        private LocalDateTime timestamp;
+        private String action;
+        private String description;
+        private String capabilityName;
+        private String agentRole;
+        private String projectId;
+
+        // Getters and Setters
+        public LocalDateTime getTimestamp() { return timestamp; }
+        public void setTimestamp(LocalDateTime timestamp) { this.timestamp = timestamp; }
+        public String getAction() { return action; }
+        public void setAction(String action) { this.action = action; }
+        public String getDescription() { return description; }
+        public void setDescription(String description) { this.description = description; }
+        public String getCapabilityName() { return capabilityName; }
+        public void setCapabilityName(String capabilityName) { this.capabilityName = capabilityName; }
+        public String getAgentRole() { return agentRole; }
+        public void setAgentRole(String agentRole) { this.agentRole = agentRole; }
+        public String getProjectId() { return projectId; }
+        public void setProjectId(String projectId) { this.projectId = projectId; }
     }
 
     // ===== 验证结果内部类 =====

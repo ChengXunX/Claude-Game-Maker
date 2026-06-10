@@ -1,5 +1,6 @@
 package com.chengxun.gamemaker.web.controller;
 
+import com.chengxun.gamemaker.config.AppConfig;
 import com.chengxun.gamemaker.web.dto.UserDTO;
 import com.chengxun.gamemaker.web.entity.Role;
 import com.chengxun.gamemaker.web.entity.User;
@@ -9,6 +10,10 @@ import com.chengxun.gamemaker.web.service.UserService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 
+import com.chengxun.gamemaker.web.service.EmailService;
+import com.chengxun.gamemaker.web.service.SettingsService;
+
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -39,12 +44,19 @@ public class AdminApiController {
     private final UserService userService;
     private final RoleService roleService;
     private final OperationLogService logService;
+    private final EmailService emailService;
+    private final SettingsService settingsService;
+    private final AppConfig appConfig;
 
     public AdminApiController(UserService userService, RoleService roleService,
-                              OperationLogService logService) {
+                              OperationLogService logService, EmailService emailService,
+                              SettingsService settingsService, AppConfig appConfig) {
         this.userService = userService;
         this.roleService = roleService;
         this.logService = logService;
+        this.emailService = emailService;
+        this.settingsService = settingsService;
+        this.appConfig = appConfig;
     }
 
     // ===== 用户管理 =====
@@ -306,6 +318,223 @@ public class AdminApiController {
         } catch (Exception e) {
             log.error("Failed to delete role", e);
             return ResponseEntity.badRequest().body(Map.of("success", false, "message", e.getMessage()));
+        }
+    }
+
+
+    // ===== 邮件配置 API =====
+
+    /**
+     * 获取邮件配置
+     */
+    @GetMapping("/api/settings/email")
+    public ResponseEntity<Map<String, Object>> getEmailSettings() {
+        Map<String, Object> settings = new HashMap<>();
+        settings.put("emailEnabled", emailService.isEmailEnabled());
+        settings.put("smtpHost", emailService.getSmtpHost());
+        settings.put("smtpPort", emailService.getSmtpPort());
+        settings.put("smtpUsername", emailService.getSmtpUsername());
+        settings.put("emailFrom", emailService.getEmailFrom());
+        settings.put("senderName", emailService.getSenderName());
+        settings.put("proxyEmail", emailService.getProxyEmail());
+        return ResponseEntity.ok(settings);
+    }
+
+    /**
+     * 保存邮件配置
+     */
+    @PostMapping("/api/settings/email")
+    public ResponseEntity<Map<String, Object>> saveEmailSettings(@RequestBody Map<String, Object> request,
+                                                                  Authentication authentication) {
+        try {
+            boolean enabled = Boolean.parseBoolean(String.valueOf(request.getOrDefault("emailEnabled", false)));
+            String host = (String) request.get("smtpHost");
+            int port = Integer.parseInt(String.valueOf(request.getOrDefault("smtpPort", 587)));
+            String username = (String) request.get("smtpUsername");
+            String password = (String) request.get("smtpPassword");
+            String from = (String) request.get("emailFrom");
+            String senderName = (String) request.get("senderName");
+            // 前端使用 replyTo 字段，后端使用 proxyEmail 字段
+            String proxyEmail = (String) request.getOrDefault("replyTo", request.get("proxyEmail"));
+
+            settingsService.saveEmailSettings(enabled, host, port, username, password, from, senderName, proxyEmail);
+            logService.log(getUserId(authentication), "UPDATE_SETTINGS", "邮件配置", "Updated email settings", null);
+
+            return ResponseEntity.ok(Map.of("success", true, "message", "邮件配置已保存"));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "保存失败: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * 测试邮件连接
+     * 实际连接 SMTP 服务器验证配置是否正确
+     */
+    @PostMapping("/api/settings/email/test")
+    public ResponseEntity<Map<String, Object>> testEmailConnection(@RequestBody Map<String, Object> request) {
+        try {
+            String host = (String) request.get("smtpHost");
+            int port = Integer.parseInt(String.valueOf(request.getOrDefault("smtpPort", 587)));
+            String username = (String) request.get("smtpUsername");
+            String password = (String) request.get("smtpPassword");
+
+            // 创建临时邮件发送器进行实际连接测试
+            org.springframework.mail.javamail.JavaMailSenderImpl testSender =
+                new org.springframework.mail.javamail.JavaMailSenderImpl();
+            testSender.setHost(host);
+            testSender.setPort(port);
+            if (username != null && !username.isEmpty()) {
+                testSender.setUsername(username);
+            }
+            if (password != null && !password.isEmpty()) {
+                testSender.setPassword(password);
+            }
+
+            java.util.Properties props = testSender.getJavaMailProperties();
+            props.put("mail.transport.protocol", "smtp");
+            props.put("mail.smtp.auth", "true");
+            props.put("mail.smtp.connectiontimeout", "5000");
+            props.put("mail.smtp.timeout", "5000");
+
+            if (port == 465) {
+                props.put("mail.smtp.ssl.enable", "true");
+                props.put("mail.smtp.socketFactory.class", "javax.net.ssl.SSLSocketFactory");
+                props.put("mail.smtp.socketFactory.port", "465");
+            } else if (port == 587) {
+                props.put("mail.smtp.starttls.enable", "true");
+            }
+
+            // 实际连接测试
+            testSender.testConnection();
+
+            return ResponseEntity.ok(Map.of("success", true, "message", "邮件连接测试成功"));
+        } catch (Exception e) {
+            log.error("Email connection test failed", e);
+            return ResponseEntity.ok(Map.of("success", false, "message", "连接测试失败: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * 发送测试邮件到指定邮箱
+     * 支持使用当前填写的配置（可能还没保存）
+     */
+    @SuppressWarnings("unchecked")
+    @PostMapping("/api/settings/email/send-test")
+    public ResponseEntity<Map<String, Object>> sendTestEmail(@RequestBody Map<String, Object> request) {
+        try {
+            String toEmail = (String) request.get("toEmail");
+            if (toEmail == null || toEmail.isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of(
+                    "success", false,
+                    "message", "请提供收件邮箱地址"
+                ));
+            }
+
+            // 获取邮件配置（优先使用请求中的配置，否则使用当前保存的配置）
+            String smtpHost = (String) request.get("smtpHost");
+            String smtpPortStr = String.valueOf(request.getOrDefault("smtpPort", "587"));
+            String smtpUsername = (String) request.get("smtpUsername");
+            String smtpPassword = (String) request.get("smtpPassword");
+            String emailFrom = (String) request.get("emailFrom");
+            String senderName = (String) request.get("senderName");
+            String replyTo = (String) request.get("replyTo");
+
+            // 如果请求中没有配置，使用当前保存的配置
+            if (smtpHost == null || smtpHost.isEmpty()) {
+                smtpHost = emailService.getSmtpHost();
+            }
+            if (smtpUsername == null || smtpUsername.isEmpty()) {
+                smtpUsername = emailService.getSmtpUsername();
+            }
+            if (smtpPassword == null || smtpPassword.isEmpty()) {
+                smtpPassword = appConfig.getEmail().getSmtpPassword();
+            }
+            if (emailFrom == null || emailFrom.isEmpty()) {
+                emailFrom = emailService.getEmailFrom();
+            }
+
+            int smtpPort = 587;
+            try {
+                smtpPort = Integer.parseInt(smtpPortStr);
+            } catch (NumberFormatException e) {
+                // 使用默认端口
+            }
+
+            // 创建临时邮件发送器
+            org.springframework.mail.javamail.JavaMailSenderImpl testSender =
+                new org.springframework.mail.javamail.JavaMailSenderImpl();
+            testSender.setHost(smtpHost);
+            testSender.setPort(smtpPort);
+            if (smtpUsername != null && !smtpUsername.isEmpty()) {
+                testSender.setUsername(smtpUsername);
+            }
+            if (smtpPassword != null && !smtpPassword.isEmpty()) {
+                testSender.setPassword(smtpPassword);
+            }
+
+            // 配置邮件属性
+            java.util.Properties props = testSender.getJavaMailProperties();
+            props.put("mail.transport.protocol", "smtp");
+            props.put("mail.smtp.auth", "true");
+            props.put("mail.smtp.connectiontimeout", "10000");
+            props.put("mail.smtp.timeout", "10000");
+
+            if (smtpPort == 465) {
+                props.put("mail.smtp.ssl.enable", "true");
+                props.put("mail.smtp.starttls.enable", "false");
+                props.put("mail.smtp.socketFactory.class", "javax.net.ssl.SSLSocketFactory");
+                props.put("mail.smtp.socketFactory.port", "465");
+            } else if (smtpPort == 587) {
+                props.put("mail.smtp.starttls.enable", "true");
+                props.put("mail.smtp.ssl.enable", "false");
+            }
+
+            // 构建发件人地址（支持发件人名称）
+            String fromAddress;
+            if (senderName != null && !senderName.isEmpty()) {
+                fromAddress = String.format("%s <%s>", senderName, emailFrom);
+            } else {
+                fromAddress = emailFrom;
+            }
+
+            // 发送测试邮件
+            org.springframework.mail.SimpleMailMessage message = new org.springframework.mail.SimpleMailMessage();
+            message.setFrom(fromAddress);
+            message.setTo(toEmail);
+            message.setSubject("ChengXun Game Maker - 邮件配置测试");
+
+            String content = "这是一封测试邮件，用于验证邮件配置是否正确。\n\n" +
+                "如果您收到此邮件，说明邮件服务配置成功！\n\n" +
+                "配置信息：\n" +
+                "- SMTP 服务器: " + smtpHost + ":" + smtpPort + "\n" +
+                "- 登录账号: " + smtpUsername + "\n" +
+                "- 发件人地址: " + emailFrom + "\n" +
+                (senderName != null && !senderName.isEmpty() ? "- 发件人名称: " + senderName + "\n" : "") +
+                (replyTo != null && !replyTo.isEmpty() ? "- 回复地址: " + replyTo + "\n" : "") +
+                "\n发送时间: " + java.time.LocalDateTime.now().format(
+                    java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")) +
+                "\n\n--\nChengXun Game Maker";
+
+            message.setText(content);
+
+            // 设置回复地址
+            if (replyTo != null && !replyTo.isEmpty()) {
+                message.setReplyTo(replyTo);
+            }
+
+            testSender.send(message);
+            log.info("Test email sent to: {} using config: {}:{}", toEmail, smtpHost, smtpPort);
+
+            return ResponseEntity.ok(Map.of(
+                "success", true,
+                "message", "测试邮件已发送到 " + toEmail
+            ));
+        } catch (Exception e) {
+            log.error("Send test email failed", e);
+            return ResponseEntity.ok(Map.of(
+                "success", false,
+                "message", "发送测试邮件失败: " + e.getMessage()
+            ));
         }
     }
 

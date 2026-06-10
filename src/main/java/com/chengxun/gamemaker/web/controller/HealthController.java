@@ -55,6 +55,7 @@ public class HealthController {
      */
     @GetMapping
     @Operation(summary = "系统健康检查", description = "返回系统整体健康状态")
+    @PreAuthorize("hasAnyAuthority('PERM_system:monitor', 'PERM_admin:manage')")
     public ResponseEntity<Map<String, Object>> health() {
         Map<String, Object> health = new HashMap<>();
         health.put("status", "UP");
@@ -78,46 +79,116 @@ public class HealthController {
     }
 
     /**
-     * 获取系统详细信息
+     * 获取系统详细信息（综合监控数据）
+     * 返回 JVM、磁盘、线程、Agent、项目、数据库等全面信息
      *
      * @return 系统详细信息
      */
     @GetMapping("/info")
     @Operation(summary = "系统信息", description = "返回系统详细配置信息")
+    @PreAuthorize("hasAnyAuthority('PERM_system:monitor', 'PERM_admin:manage')")
     public ResponseEntity<Map<String, Object>> info() {
-        Map<String, Object> info = new HashMap<>();
-        info.put("name", "ChengXun Game Maker");
-        info.put("version", "1.0.0");
-        info.put("timestamp", LocalDateTime.now());
-
-        // 操作系统信息
-        info.put("osName", System.getProperty("os.name"));
-        info.put("osArch", System.getProperty("os.arch"));
-        info.put("osVersion", System.getProperty("os.version"));
+        Runtime runtime = Runtime.getRuntime();
+        java.lang.management.MemoryMXBean memoryBean = java.lang.management.ManagementFactory.getMemoryMXBean();
+        java.lang.management.ThreadMXBean threadBean = java.lang.management.ManagementFactory.getThreadMXBean();
+        java.lang.management.RuntimeMXBean runtimeBean = java.lang.management.ManagementFactory.getRuntimeMXBean();
 
         // JVM 信息
-        Runtime runtime = Runtime.getRuntime();
+        long heapUsed = memoryBean.getHeapMemoryUsage().getUsed() / (1024 * 1024);
+        long heapMax = memoryBean.getHeapMemoryUsage().getMax() / (1024 * 1024);
+        long nonHeapUsed = memoryBean.getNonHeapMemoryUsage().getUsed() / (1024 * 1024);
+        long totalUsed = (memoryBean.getHeapMemoryUsage().getUsed() + memoryBean.getNonHeapMemoryUsage().getUsed()) / (1024 * 1024);
+        long totalMax = runtime.maxMemory() / (1024 * 1024);
+
         Map<String, Object> jvm = new HashMap<>();
-        jvm.put("javaVersion", System.getProperty("java.version"));
-        jvm.put("maxMemory", runtime.maxMemory() / 1024 / 1024 + " MB");
-        jvm.put("totalMemory", runtime.totalMemory() / 1024 / 1024 + " MB");
-        jvm.put("freeMemory", runtime.freeMemory() / 1024 / 1024 + " MB");
+        jvm.put("heapUsedMB", heapUsed);
+        jvm.put("heapMaxMB", heapMax);
+        jvm.put("nonHeapUsedMB", nonHeapUsed);
+        jvm.put("usedMemoryMB", totalUsed);
+        jvm.put("maxMemoryMB", totalMax);
         jvm.put("availableProcessors", runtime.availableProcessors());
-        jvm.put("usedMemory", (runtime.totalMemory() - runtime.freeMemory()) / 1024 / 1024 + " MB");
-        info.put("jvm", jvm);
+        jvm.put("javaVersion", System.getProperty("java.version"));
 
-        // Agent 统计
-        Map<String, Object> agentStats = new java.util.HashMap<>();
-        List<?> agents = agentManager.getAllAgents();
-        agentStats.put("total", agents.size());
-        agentStats.put("busy", agents.stream().filter(a -> ((com.chengxun.gamemaker.agent.Agent) a).isBusy()).count());
-        agentStats.put("alive", agents.stream().filter(a -> ((com.chengxun.gamemaker.agent.Agent) a).isAlive()).count());
-        info.put("agents", agentStats);
+        // 运行时间
+        long uptimeMs = runtimeBean.getUptime();
+        long days = uptimeMs / 86400000;
+        long hours = (uptimeMs % 86400000) / 3600000;
+        long minutes = (uptimeMs % 3600000) / 60000;
+        jvm.put("uptimeFormatted", days > 0 ? days + "天" + hours + "时" + minutes + "分" : hours + "时" + minutes + "分");
 
-        // 项目统计
-        info.put("totalProjects", projectManager.getAllProjects().size());
+        // 线程信息
+        Map<String, Object> threads = new HashMap<>();
+        threads.put("threadCount", threadBean.getThreadCount());
+        threads.put("peakThreadCount", threadBean.getPeakThreadCount());
+        threads.put("daemonThreadCount", threadBean.getDaemonThreadCount());
 
-        return ResponseEntity.ok(info);
+        // 磁盘信息
+        java.io.File root = new java.io.File("/");
+        Map<String, Object> disk = new HashMap<>();
+        long totalSpace = root.getTotalSpace() / (1024 * 1024 * 1024);
+        long freeSpace = root.getFreeSpace() / (1024 * 1024 * 1024);
+        long usedSpace = totalSpace - freeSpace;
+        disk.put("totalGB", totalSpace);
+        disk.put("freeGB", freeSpace);
+        disk.put("usedGB", usedSpace);
+        disk.put("usagePercent", totalSpace > 0 ? Math.round(usedSpace * 100.0 / totalSpace) : 0);
+
+        // Agent 信息
+        var agents = agentManager.getAllAgents();
+        long aliveCount = agents.stream().filter(a -> a.isAlive()).count();
+        long busyCount = agents.stream().filter(a -> a.isBusy()).count();
+        Map<String, Object> agentInfo = new HashMap<>();
+        agentInfo.put("total", agents.size());
+        agentInfo.put("alive", aliveCount);
+        agentInfo.put("busy", busyCount);
+
+        // Agent 列表
+        List<Map<String, Object>> agentList = new java.util.ArrayList<>();
+        for (var agent : agents) {
+            Map<String, Object> agentData = new HashMap<>();
+            agentData.put("id", agent.getId());
+            agentData.put("name", agent.getName());
+            agentData.put("role", agent.getRole());
+            agentData.put("alive", agent.isAlive());
+            agentData.put("busy", agent.isBusy());
+            agentList.add(agentData);
+        }
+
+        // 项目信息
+        var projects = projectManager.getAllProjects();
+        long activeProjects = projects.stream().filter(p -> "ACTIVE".equals(p.getStatus())).count();
+        Map<String, Object> projectInfo = new HashMap<>();
+        projectInfo.put("total", projects.size());
+        projectInfo.put("active", activeProjects);
+
+        // 系统负载
+        double loadAverage = -1;
+        try {
+            com.sun.management.OperatingSystemMXBean osBean =
+                (com.sun.management.OperatingSystemMXBean) java.lang.management.ManagementFactory.getOperatingSystemMXBean();
+            loadAverage = osBean.getSystemLoadAverage();
+        } catch (Exception ignored) {}
+
+        // 数据库状态
+        Map<String, Object> database = new HashMap<>();
+        database.put("status", "UP");
+        database.put("version", "MySQL");
+
+        // 组装返回
+        Map<String, Object> result = new HashMap<>();
+        result.put("jvm", jvm);
+        result.put("threads", threads);
+        result.put("disk", disk);
+        result.put("agents", agentInfo);
+        result.put("agentList", agentList);
+        result.put("projects", projectInfo);
+        result.put("osName", System.getProperty("os.name") + " " + System.getProperty("os.version"));
+        result.put("loadAverage", loadAverage >= 0 ? String.format("%.2f", loadAverage) : "N/A");
+        result.put("database", database);
+        result.put("javaVersion", System.getProperty("java.version"));
+        result.put("availableProcessors", runtime.availableProcessors());
+
+        return ResponseEntity.ok(result);
     }
 
     /**

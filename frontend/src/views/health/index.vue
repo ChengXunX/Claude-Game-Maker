@@ -147,18 +147,26 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="连续错误" width="100" align="center">
+        <el-table-column label="错误率" width="80" align="center">
           <template #default="{ row }">
-            <span :class="{ 'error-count': row.consecutiveErrors > 0 }">
-              {{ row.consecutiveErrors || 0 }}
+            <span :class="{ 'error-count': (row.errorRate || 0) > 10 }">
+              {{ row.errorRate ? row.errorRate.toFixed(1) + '%' : '0%' }}
             </span>
           </template>
         </el-table-column>
         <el-table-column label="平均响应" width="100" align="center">
           <template #default="{ row }">
-            <span :class="{ 'slow-response': row.avgResponseTime > 5000 }">
-              {{ row.avgResponseTime ? row.avgResponseTime + 'ms' : '-' }}
+            <span :class="{ 'slow-response': (row.avgResponseTimeMs || row.avgResponseTime) > 5000 }">
+              {{ (row.avgResponseTimeMs || row.avgResponseTime) ? (row.avgResponseTimeMs || row.avgResponseTime) + 'ms' : '-' }}
             </span>
+          </template>
+        </el-table-column>
+        <el-table-column label="告警原因" min-width="150" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span v-if="row.healthStatus === 'WARNING' || row.healthStatus === 'UNHEALTHY'" class="warning-reason">
+              {{ getWarningReason(row) }}
+            </span>
+            <span v-else class="text-muted">-</span>
           </template>
         </el-table-column>
         <el-table-column label="运行时间" width="100">
@@ -215,7 +223,7 @@
             </span>
           </el-descriptions-item>
           <el-descriptions-item label="平均响应时间">
-            {{ currentAgent.avgResponseTime ? currentAgent.avgResponseTime + 'ms' : '-' }}
+            {{ (currentAgent.avgResponseTimeMs || currentAgent.avgResponseTime) ? (currentAgent.avgResponseTimeMs || currentAgent.avgResponseTime) + 'ms' : '-' }}
           </el-descriptions-item>
           <el-descriptions-item label="运行时间">
             {{ formatUptime(currentAgent.uptimeSeconds) }}
@@ -231,15 +239,15 @@
           <div class="metric-item">
             <span class="metric-label">响应时间</span>
             <el-progress
-              :percentage="getResponseTimePercent(currentAgent.avgResponseTime)"
-              :color="getResponseTimeColor(currentAgent.avgResponseTime)"
+              :percentage="getResponseTimePercent(currentAgent.avgResponseTimeMs || currentAgent.avgResponseTime)"
+              :color="getResponseTimeColor(currentAgent.avgResponseTimeMs || currentAgent.avgResponseTime)"
             />
           </div>
           <div class="metric-item">
             <span class="metric-label">错误率</span>
             <el-progress
-              :percentage="getErrorRatePercent(currentAgent.consecutiveErrors)"
-              :color="getErrorRateColor(currentAgent.consecutiveErrors)"
+              :percentage="getErrorRatePercent(currentAgent.errorRate || 0)"
+              :color="getErrorRateColor(currentAgent.errorRate || 0)"
             />
           </div>
         </div>
@@ -375,7 +383,18 @@ const getRoleTagType = (role) => {
     'system-planner': 'info',
     'numerical-planner': 'info',
     'tester': '',
-    'git-commit': 'info'
+    'git-commit': 'info',
+    'security-expert': 'danger',
+    'data-analyst': 'success',
+    'tech-artist': 'warning',
+    'product-manager': 'primary',
+    'localization': '',
+    'ai-engineer': 'primary',
+    'performance-engineer': 'warning',
+    'audio-dev': 'success',
+    'narrative-planner': 'info',
+    'level-design': 'warning',
+    'devops': 'primary'
   }
   return typeMap[role] || ''
 }
@@ -390,7 +409,18 @@ const getRoleLabel = (role) => {
     'system-planner': '系统策划',
     'numerical-planner': '数值策划',
     'tester': '测试',
-    'git-commit': 'Git专员'
+    'git-commit': 'Git专员',
+    'security-expert': '安全工程师',
+    'data-analyst': '数据分析师',
+    'tech-artist': '技术美术',
+    'product-manager': '产品经理',
+    'localization': '本地化',
+    'ai-engineer': 'AI工程师',
+    'performance-engineer': '性能优化',
+    'audio-dev': '音频设计',
+    'narrative-planner': '剧情策划',
+    'level-design': '关卡设计',
+    'devops': '运维工程师'
   }
   return labelMap[role] || role
 }
@@ -449,18 +479,28 @@ const getResponseTimeColor = (time) => {
   return '#f56c6c'
 }
 
-/** 获取错误率百分比 */
-const getErrorRatePercent = (errors) => {
-  if (!errors) return 0
-  // 5次错误为100%
-  return Math.min(100, (errors / 5) * 100)
+/** 获取错误率百分比（直接使用 errorRate 百分比值） */
+const getErrorRatePercent = (rate) => {
+  if (!rate) return 0
+  return Math.min(100, Math.round(rate))
 }
 
 /** 获取错误率颜色 */
-const getErrorRateColor = (errors) => {
-  if (!errors) return '#67c23a'
-  if (errors < 2) return '#e6a23c'
+const getErrorRateColor = (rate) => {
+  if (!rate) return '#67c23a'
+  if (rate < 10) return '#67c23a'
+  if (rate < 30) return '#e6a23c'
   return '#f56c6c'
+}
+
+/** 获取告警原因 */
+const getWarningReason = (agent) => {
+  const reasons = []
+  if (agent.consecutiveErrors >= 3) reasons.push(`连续 ${agent.consecutiveErrors} 次错误`)
+  if (agent.errorRate > 20) reasons.push(`错误率 ${agent.errorRate.toFixed(1)}%`)
+  if ((agent.avgResponseTimeMs || agent.avgResponseTime) > 5000) reasons.push('响应缓慢')
+  if (agent.lastErrorMessage) reasons.push(agent.lastErrorMessage.substring(0, 50))
+  return reasons.length > 0 ? reasons.join('；') : '需关注'
 }
 
 /** 项目切换 */
@@ -487,12 +527,39 @@ const formatTime = (time) => {
 const loadHealth = async () => {
   loading.value = true
   try {
+    const params = {}
+    if (selectedProjectId.value) {
+      params.projectId = selectedProjectId.value
+    }
+
     const [healthData, statsData] = await Promise.all([
-      healthApi.getAll(),
-      healthApi.getStats()
+      healthApi.getAll(params),
+      healthApi.getStats(params)
     ])
-    agents.value = healthData || []
-    stats.value = statsData || {}
+
+    // 按项目筛选数据
+    let filteredAgents = healthData || []
+    if (selectedProjectId.value) {
+      filteredAgents = filteredAgents.filter(agent =>
+        agent.projectId === selectedProjectId.value
+      )
+    }
+
+    agents.value = filteredAgents
+
+    // 重新计算统计数据（基于筛选后的数据）
+    const filteredStats = {
+      healthyCount: filteredAgents.filter(a => a.healthStatus === 'HEALTHY').length,
+      warningCount: filteredAgents.filter(a => a.healthStatus === 'WARNING').length,
+      unhealthyCount: filteredAgents.filter(a => a.healthStatus === 'UNHEALTHY').length,
+      offlineCount: filteredAgents.filter(a => a.healthStatus === 'OFFLINE').length,
+      totalAgents: filteredAgents.length
+    }
+    filteredStats.healthRate = filteredStats.totalAgents > 0
+      ? Math.round((filteredStats.healthyCount / filteredStats.totalAgents) * 100 * 100) / 100
+      : 0
+
+    stats.value = filteredStats
   } catch (error) {
     ElMessage.error('加载健康数据失败')
   } finally {
@@ -589,10 +656,15 @@ onUnmounted(() => {
 }
 
 .stat-card {
+  cursor: default;
+}
+
+.stat-card :deep(.el-card__body) {
   display: flex;
   align-items: center;
   gap: 16px;
-  padding: 16px;
+  padding: 20px;
+  min-height: 80px;
 }
 
 .stat-icon {
@@ -607,12 +679,15 @@ onUnmounted(() => {
 
 .stat-info {
   flex: 1;
+  min-width: 0;
 }
 
 .stat-value {
-  font-size: 24px;
+  font-size: 28px;
   font-weight: bold;
   color: var(--el-text-color-primary);
+  line-height: 1.2;
+  white-space: nowrap;
 }
 
 .stat-value.success { color: var(--el-color-success); }
@@ -621,9 +696,10 @@ onUnmounted(() => {
 .stat-value.info { color: var(--el-color-info); }
 
 .stat-label {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--el-text-color-secondary);
   margin-top: 4px;
+  white-space: nowrap;
 }
 
 /* 健康率 */
@@ -707,6 +783,16 @@ onUnmounted(() => {
 /* 慢响应 */
 .slow-response {
   color: var(--el-color-warning);
+}
+
+/* 告警原因 */
+.warning-reason {
+  color: var(--el-color-danger);
+  font-size: 12px;
+}
+
+.text-muted {
+  color: var(--el-text-color-placeholder);
 }
 
 /* 行样式 */

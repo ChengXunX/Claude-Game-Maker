@@ -59,6 +59,34 @@ public abstract class BaseAgent implements Agent {
     /** 知识进化服务 - 通过setter注入，连接知识库自学习与 Agent 自进化 */
     protected KnowledgeEvolutionService knowledgeEvolutionService;
 
+    /** 通知服务 - 通过setter注入，用于发送告警通知 */
+    protected com.chengxun.gamemaker.web.service.NotificationService notificationService;
+
+    /** 告警服务 - 通过setter注入，用于创建系统告警 */
+    protected com.chengxun.gamemaker.web.service.AlertService alertService;
+
+    /** Token 服务 - 通过setter注入，用于记录 Token 消耗 */
+    protected com.chengxun.gamemaker.web.service.ApiTokenService apiTokenService;
+
+    /** Agent 管理器 - 通过setter注入，用于 Token 自动分配 */
+    protected com.chengxun.gamemaker.manager.AgentManager agentManagerRef;
+
+    /** 干预服务 - 通过setter注入，用于处理人工干预消息 */
+    protected com.chengxun.gamemaker.service.AgentInterventionService interventionService;
+
+    /** 项目看板 - 通过setter注入，用于获取团队协作上下文 */
+    protected com.chengxun.gamemaker.service.ProjectBoard projectBoard;
+
+    /** 事件总线 - 通过setter注入，用于发布和订阅事件 */
+    protected com.chengxun.gamemaker.service.EventBus eventBus;
+
+    /**
+     * 消息到达回调
+     * 当收到新消息时触发，用于事件驱动的即时任务处理
+     * 由 AgentManager 在创建 Agent 时设置
+     */
+    private volatile Runnable messageArrivedCallback;
+
     protected AgentContext agentContext;
     protected GameProject currentProject;
     protected String currentConversationId;
@@ -133,6 +161,48 @@ public abstract class BaseAgent implements Agent {
         this.knowledgeEvolutionService = knowledgeEvolutionService;
     }
 
+    /** 设置通知服务 */
+    public void setNotificationService(com.chengxun.gamemaker.web.service.NotificationService notificationService) {
+        this.notificationService = notificationService;
+    }
+
+    /** 设置告警服务 */
+    public void setAlertService(com.chengxun.gamemaker.web.service.AlertService alertService) {
+        this.alertService = alertService;
+    }
+
+    /** 设置 Token 服务 */
+    public void setApiTokenService(com.chengxun.gamemaker.web.service.ApiTokenService apiTokenService) {
+        this.apiTokenService = apiTokenService;
+    }
+
+    /** 设置 Agent 管理器引用 */
+    public void setAgentManagerRef(com.chengxun.gamemaker.manager.AgentManager agentManagerRef) {
+        this.agentManagerRef = agentManagerRef;
+    }
+
+    public void setInterventionService(com.chengxun.gamemaker.service.AgentInterventionService interventionService) {
+        this.interventionService = interventionService;
+    }
+
+    public void setProjectBoard(com.chengxun.gamemaker.service.ProjectBoard projectBoard) {
+        this.projectBoard = projectBoard;
+    }
+
+    public void setEventBus(com.chengxun.gamemaker.service.EventBus eventBus) {
+        this.eventBus = eventBus;
+    }
+
+    /**
+     * 设置消息到达回调
+     * 当收到新消息时触发回调，用于事件驱动调度
+     *
+     * @param callback 回调函数
+     */
+    public void setMessageArrivedCallback(Runnable callback) {
+        this.messageArrivedCallback = callback;
+    }
+
     /**
      * 记录 Agent 日志
      *
@@ -145,8 +215,10 @@ public abstract class BaseAgent implements Agent {
         if (agentLogService != null) {
             try {
                 String projectId = currentProject != null ? currentProject.getId() : null;
+                // 自动获取当前任务 ID
+                String taskId = agentContext != null ? agentContext.getCurrentTaskId() : null;
                 agentLogService.logAsync(getId(), getName(), action, level, summary, detail,
-                    projectId, null, null, null);
+                    projectId, taskId, null, null);
             } catch (Exception e) {
                 log.warn("Failed to write agent log: {}", e.getMessage());
             }
@@ -208,6 +280,24 @@ public abstract class BaseAgent implements Agent {
     }
 
     /**
+     * 记录 Agent AI 调用日志（含输入输出详情）
+     *
+     * @param summary    摘要
+     * @param input      AI 输入内容
+     * @param output     AI 输出内容
+     * @param durationMs 耗时
+     */
+    protected void logAiCall(String summary, String input, String output, long durationMs) {
+        if (agentLogService != null) {
+            try {
+                agentLogService.aiCall(getId(), getName(), summary, input, output, durationMs);
+            } catch (Exception e) {
+                log.warn("Failed to write agent AI call log: {}", e.getMessage());
+            }
+        }
+    }
+
+    /**
      * 记录 Agent 任务日志
      */
     protected void logTask(String action, String summary, String taskId) {
@@ -215,6 +305,20 @@ public abstract class BaseAgent implements Agent {
             try {
                 String projectId = currentProject != null ? currentProject.getId() : null;
                 agentLogService.taskLog(getId(), getName(), action, summary, taskId, projectId);
+            } catch (Exception e) {
+                log.warn("Failed to write agent task log: {}", e.getMessage());
+            }
+        }
+    }
+
+    /**
+     * 记录 Agent 任务日志（含详情）
+     */
+    protected void logTask(String action, String summary, String detail, String taskId) {
+        if (agentLogService != null) {
+            try {
+                String projectId = currentProject != null ? currentProject.getId() : null;
+                agentLogService.logAsync(getId(), getName(), action, "INFO", summary, detail, projectId, taskId, null, null);
             } catch (Exception e) {
                 log.warn("Failed to write agent task log: {}", e.getMessage());
             }
@@ -274,8 +378,9 @@ public abstract class BaseAgent implements Agent {
 
     @Override
     public void initialize() {
+        String initProjectName = definition.getProjectId() != null ? definition.getProjectId() : "全局";
         log.info("Initializing agent: {} ({})", getName(), getId());
-        logInfo("AGENT_STARTED", "Agent 开始初始化");
+        logInfo("AGENT_STARTED", String.format("Agent 开始初始化，角色: %s，项目: %s", getRole(), initProjectName));
 
         // 初始化项目
         initProject();
@@ -309,9 +414,10 @@ public abstract class BaseAgent implements Agent {
         // 开始新的对话
         startNewConversation();
 
-        log.info("Agent initialized: {} (runtimeId={}) for project: {}", getName(), getId(),
-            currentProject != null ? currentProject.getName() : "global");
-        logInfo("AGENT_STARTED", "Agent 初始化完成，项目: " + (currentProject != null ? currentProject.getName() : "全局"));
+        String initializedProjectName = currentProject != null ? currentProject.getName() : "全局";
+        log.info("Agent initialized: {} (runtimeId={}) for project: {}", getName(), getId(), initializedProjectName);
+        logInfo("AGENT_STARTED", String.format("Agent 初始化完成，角色: %s，项目: %s，工作目录: %s",
+            getRole(), initializedProjectName, definition.getWorkDir() != null ? definition.getWorkDir() : "未设置"));
     }
 
     protected void initProject() {
@@ -382,19 +488,21 @@ public abstract class BaseAgent implements Agent {
         } else {
             messageBus.registerAgent(this);
         }
+        String projectName = currentProject != null ? currentProject.getName() : "全局";
         log.info("Agent started: {} (runtimeId={})", getName(), getId());
-        logInfo("AGENT_STARTED", "Agent 已启动");
+        logInfo("AGENT_STARTED", String.format("Agent 已启动，角色: %s，项目: %s", getRole(), projectName));
     }
 
     @Override
     public void stop() {
-        logInfo("AGENT_STOPPED", "Agent 正在停止");
+        String projectName = currentProject != null ? currentProject.getName() : "全局";
+        logInfo("AGENT_STOPPED", String.format("Agent 正在停止，角色: %s，项目: %s", getRole(), projectName));
         running = false;
         messageBus.unregisterAgent(getId());
         saveContext();
         createSnapshot();
         log.info("Agent stopped: {}", getName());
-        logInfo("AGENT_STOPPED", "Agent 已停止");
+        logInfo("AGENT_STOPPED", String.format("Agent 已停止，角色: %s，项目: %s", getRole(), projectName));
     }
 
     @Override
@@ -409,22 +517,57 @@ public abstract class BaseAgent implements Agent {
 
     @Override
     public void work() {
-        if (!running || busy) {
+        if (!running) {
             return;
         }
 
+        // 即使 Agent 正在忙，也要处理消息队列（干预等高优先级消息不能被阻塞）
+        if (!busy) {
+            processPendingMessagesAndWork();
+        } else {
+            // busy 状态下只处理消息，不执行 doWork
+            processPendingMessages();
+        }
+    }
+
+    private void processPendingMessagesAndWork() {
         busy = true;
+        // 为本工作周期生成唯一 taskId，使所有日志自动关联
+        String workTaskId = "work-" + System.currentTimeMillis() + "-" + UUID.randomUUID().toString().substring(0, 8);
+        agentContext.setCurrentTaskId(workTaskId);
+
         long startTime = System.currentTimeMillis();
+        String projectName = currentProject != null ? currentProject.getName() : "全局";
+        int pendingMsgCount = pendingMessages.size();
+        int taskCount = tasks.size();
         try {
-            logInfo("TASK_STARTED", "开始执行工作任务");
+            logAgent("TASK_STARTED", "INFO",
+                String.format("[%s] %s 开始工作周期，项目: %s，待处理消息: %d，已有任务: %d",
+                    workTaskId, getName(), projectName, pendingMsgCount, taskCount),
+                String.format("Agent ID: %s\n角色: %s\n项目: %s\n工作目录: %s\n会话ID: %s\n待处理消息: %d\n已有任务: %d\n工作周期ID: %s",
+                    getId(), getRole(), projectName,
+                    definition.getWorkDir() != null ? definition.getWorkDir() : "未设置",
+                    definition.getSessionId() != null ? definition.getSessionId() : "无",
+                    pendingMsgCount, taskCount, workTaskId));
             processPendingMessages();
             doWork();
             long duration = System.currentTimeMillis() - startTime;
-            logInfo("TASK_COMPLETED", "工作任务完成，耗时: " + duration + "ms");
+            logAgent("TASK_COMPLETED", "INFO",
+                String.format("[%s] %s 工作周期完成，项目: %s，耗时: %dms",
+                    workTaskId, getName(), projectName, duration),
+                String.format("Agent ID: %s\n角色: %s\n项目: %s\n工作周期ID: %s\n耗时: %dms\n完成时间: %s",
+                    getId(), getRole(), projectName, workTaskId, duration,
+                    java.time.LocalDateTime.now()));
         } catch (Exception e) {
             log.error("Error in agent work: {}", getName(), e);
-            logError("TASK_FAILED", "工作任务执行失败: " + e.getMessage(), null);
+            logError("TASK_FAILED",
+                String.format("[%s] %s 工作周期失败，项目: %s，异常: %s", workTaskId, getName(), projectName, e.getClass().getSimpleName()),
+                String.format("Agent ID: %s\n角色: %s\n项目: %s\n工作周期ID: %s\n异常类型: %s\n异常信息: %s\n堆栈:\n%s",
+                    getId(), getRole(), projectName, workTaskId,
+                    e.getClass().getName(), e.getMessage(),
+                    e.getStackTrace().length > 0 ? java.util.Arrays.stream(e.getStackTrace()).limit(10).map(StackTraceElement::toString).collect(java.util.stream.Collectors.joining("\n")) : "无"));
         } finally {
+            agentContext.setCurrentTaskId(null);
             busy = false;
         }
     }
@@ -435,11 +578,107 @@ public abstract class BaseAgent implements Agent {
         AgentMessage message;
         while ((message = pendingMessages.poll()) != null) {
             try {
+                // 拦截干预消息，自动处理（不依赖子类实现）
+                if (message.getType() == AgentMessage.MessageType.SYSTEM
+                    && message.getContent() != null
+                    && message.getContent().contains("人工干预通知")) {
+                    handleInterventionMessage(message);
+                    continue;
+                }
                 handleMessage(message);
             } catch (Exception e) {
                 log.error("Error processing message for agent {}: {}", getName(), e.getMessage());
             }
         }
+    }
+
+    /**
+     * 处理人工干预消息
+     * 自动确认干预、将指令注入上下文、等待后续工作周期真正执行
+     *
+     * 【重要设计原则】
+     * 对于 INSTRUCTION 类型的干预，不能立即标记为"已执行"，
+     * 因为 AI 的回复只是"说"它会执行，并没有真正调用任何能力。
+     * 正确的做法是：把干预指令注入到 Agent 的工作上下文中，
+     * 让 Agent 在后续的工作周期中，基于干预指令做出真正的决策和行动。
+     *
+     * @param message 干预消息
+     */
+    private void handleInterventionMessage(AgentMessage message) {
+        String content = message.getContent();
+        log.info("Agent [{}] 收到人工干预消息，开始处理", getName());
+
+        // 从消息中提取干预编号
+        String interventionNo = extractInterventionNo(content);
+
+        // 找到对应的干预记录
+        if (interventionService == null) {
+            log.warn("干预服务未注入，无法处理干预消息");
+            return;
+        }
+
+        com.chengxun.gamemaker.web.entity.AgentIntervention intervention = null;
+        if (interventionNo != null) {
+            // 通过编号查找
+            intervention = interventionService.getInterventionsByNo(interventionNo);
+        }
+
+        if (intervention == null) {
+            log.warn("未找到干预记录，编号: {}", interventionNo);
+            return;
+        }
+
+        try {
+            // 1. 确认干预
+            if (intervention.getStatus() == com.chengxun.gamemaker.web.entity.AgentIntervention.Status.PENDING) {
+                interventionService.acknowledgeIntervention(intervention.getId(), getName() + " 已收到干预指令");
+            }
+
+            // 2. 将干预指令注入到工作上下文中（而不是立即执行）
+            String instruction = intervention.getInstruction();
+            if (instruction != null && !instruction.isEmpty()) {
+                log.info("Agent [{}] 将干预指令注入工作上下文: {}", getName(),
+                    instruction.length() > 100 ? instruction.substring(0, 100) + "..." : instruction);
+
+                // 将干预指令保存到工作记忆中，让后续工作周期可以看到并执行
+                String interventionKey = "pending_intervention_" + interventionNo;
+                agentContext.addWorkingMemory(interventionKey, instruction);
+
+                // 同时保存到经验记忆中，让 buildWorkContext 可以加载
+                saveExperience("intervention_" + interventionNo,
+                    String.format("[干预指令 %s] 类型: %s | 指令: %s | 状态: 待执行",
+                        interventionNo,
+                        intervention.getInterventionTypeDescription(),
+                        instruction != null ? instruction : "无"));
+
+                // 3. 标记干预为"已确认，等待执行"（而不是"已执行"）
+                // 注：这里不调用 executeIntervention，而是让后续工作周期来真正执行
+                logInfo("INTERVENTION_RECEIVED", String.format("已收到干预指令 [%s]，类型: %s，将在下一个工作周期中执行\n\n指令: %s",
+                    interventionNo, intervention.getInterventionTypeDescription(),
+                    instruction != null && instruction.length() > 200
+                        ? instruction.substring(0, 200) + "..." : instruction));
+            }
+
+        } catch (Exception e) {
+            log.error("处理干预消息失败: {}", e.getMessage());
+            try {
+                interventionService.rejectIntervention(intervention.getId(), "处理失败: " + e.getMessage());
+            } catch (Exception ex) {
+                log.error("标记干预失败也失败了: {}", ex.getMessage());
+            }
+        }
+    }
+
+    /**
+     * 从干预消息内容中提取干预编号
+     * 消息格式: **干预编号**: INT-20260608-XXXXXX
+     */
+    private String extractInterventionNo(String content) {
+        if (content == null) return null;
+        java.util.regex.Matcher matcher = java.util.regex.Pattern
+            .compile("\\*?\\*?干预编号\\*?\\*?[：:]\\s*(INT-[\\w-]+)")
+            .matcher(content);
+        return matcher.find() ? matcher.group(1) : null;
     }
 
     protected abstract void handleMessage(AgentMessage message);
@@ -453,8 +692,6 @@ public abstract class BaseAgent implements Agent {
         busy = true;
         long startTime = System.currentTimeMillis();
         try {
-            // 记录 AI 调用开始
-            logInfo("AI_CALL", "开始调用 AI，消息长度: " + message.length());
 
             // 注入推理深度指令
             int depth = definition.getReasoningDepth();
@@ -499,12 +736,23 @@ public abstract class BaseAgent implements Agent {
                 contextMonitor.updateActivityTime(getId());
             }
 
-            // 记录 AI 调用完成
+            // 记录 AI 调用完成（含输入输出详情）
             long duration = System.currentTimeMillis() - startTime;
-            logAiCall("AI 调用完成，响应长度: " + (response != null ? response.length() : 0), duration);
+            int respLen = response != null ? response.length() : 0;
+            String logInput = message.length() > 5000 ? message.substring(0, 5000) + "\n...[截断，总长: " + message.length() + "]" : message;
+            String logOutput = response != null && response.length() > 10000
+                ? response.substring(0, 10000) + "\n...[截断，总长: " + response.length() + "]" : response;
+            logAiCall(String.format("AI 调用完成，输入长度: %d，响应长度: %d，耗时: %dms", message.length(), respLen, duration),
+                logInput, logOutput, duration);
+
+            // 记录 Token 消耗（估算：中文约2字符/token，英文约4字符/token）
+            recordTokenUsage(message.length(), respLen);
 
             // 解析 Claude 输出中的能力调用
             response = processCapabilityActions(response);
+
+            // 检测 AI 响应中的权限错误，自动通知管理员
+            detectAndNotifyPermissionErrors(response);
 
             saveConversationMessage("assistant", response);
 
@@ -534,13 +782,44 @@ public abstract class BaseAgent implements Agent {
     @Override
     public void receiveMessage(AgentMessage message) {
         pendingMessages.offer(message);
+        String content = message.getContent() != null ? message.getContent() : "";
+        String contentPreview = content.length() > 80 ? content.substring(0, 80) + "..." : content;
         log.debug("Agent {} received message from {}", getName(), message.getFromAgentId());
-        logInfo("MESSAGE_RECEIVED", "收到来自 " + message.getFromAgentId() + " 的消息，类型: " + message.getType());
+        // summary 存摘要，detail 存完整消息
+        logAgent("MESSAGE_RECEIVED", "INFO",
+            String.format("收到来自 %s 的消息，类型: %s，内容预览: %s",
+                message.getFromAgentId(), message.getType(), contentPreview),
+            String.format("来源: %s\n目标: %s\n类型: %s\n消息ID: %s\n完整内容:\n%s",
+                message.getFromAgentId(), message.getToAgentId(), message.getType(),
+                message.getId() != null ? message.getId() : "无",
+                content.length() > 5000 ? content.substring(0, 5000) + "\n...[截断]" : content));
+
+        // 事件驱动：收到消息后触发回调，让调度器立即安排 Agent 工作
+        // 避免等待下一个定时周期（5分钟）才处理消息
+        if (messageArrivedCallback != null) {
+            try {
+                messageArrivedCallback.run();
+            } catch (Exception e) {
+                log.debug("Message arrived callback failed for agent {}: {}", getId(), e.getMessage());
+            }
+        }
     }
 
     @Override
     public List<AgentMessage> getPendingMessages() {
         return new ArrayList<>(pendingMessages);
+    }
+
+    /**
+     * 清除所有待处理消息
+     * 用于取消任务时清空消息队列
+     */
+    public void clearPendingMessages() {
+        int count = pendingMessages.size();
+        pendingMessages.clear();
+        if (count > 0) {
+            log.info("已清除 Agent {} 的 {} 条待处理消息", getName(), count);
+        }
     }
 
     @Override
@@ -554,8 +833,43 @@ public abstract class BaseAgent implements Agent {
     public void assignTask(TaskAssignment task) {
         tasks.add(task);
         agentContext.setCurrentTaskId(task.getId());
+        String desc = task.getDescription() != null && !task.getDescription().isEmpty()
+            ? task.getDescription() : "无";
+        String summary = desc.length() > 100 ? desc.substring(0, 100) + "..." : desc;
         log.info("Task assigned to {}: {}", getName(), task.getTitle());
-        logTask("TASK_RECEIVED", "接收任务: " + task.getTitle(), task.getId());
+        // summary 存摘要，detail 存完整描述
+        logTask("TASK_RECEIVED",
+            String.format("接收任务: %s，描述: %s", task.getTitle(), summary),
+            String.format("任务ID: %s\n任务标题: %s\n分配者: %s\n完整描述:\n%s",
+                task.getId(), task.getTitle(),
+                task.getAssignerId() != null ? task.getAssignerId() : "系统",
+                desc),
+            task.getId());
+
+        // 自动发送任务确认给分配者
+        sendTaskConfirmation(task);
+    }
+
+    /**
+     * 发送任务确认消息
+     * 当 Agent 收到任务时，自动向分配者发送确认
+     */
+    private void sendTaskConfirmation(TaskAssignment task) {
+        if (task.getAssignerId() == null || task.getAssignerId().isEmpty()) return;
+
+        try {
+            AgentMessage confirmation = AgentMessage.builder()
+                .fromAgentId(getId())
+                .toAgentId(task.getAssignerId())
+                .type(AgentMessage.MessageType.RESPONSE)
+                .content(String.format("TASK_ACCEPTED:%s|%s|%s",
+                    task.getId(), task.getTitle(), getName()))
+                .build();
+            sendMessage(confirmation);
+            log.info("任务确认已发送: {} -> {} (任务: {})", getName(), task.getAssignerId(), task.getTitle());
+        } catch (Exception e) {
+            log.warn("发送任务确认失败: {}", e.getMessage());
+        }
     }
 
     @Override
@@ -577,6 +891,25 @@ public abstract class BaseAgent implements Agent {
     }
 
     // ===== 上下文管理增强 =====
+
+    /**
+     * 保存 API 配置到 AgentContext（持久化）
+     * 用于 Token 分配时将 API 配置持久化到文件
+     *
+     * @param apiKey API Key
+     * @param apiUrl API URL
+     * @param model  模型
+     */
+    public void saveApiConfigToContext(String apiKey, String apiUrl, String model) {
+        if (apiKey != null) agentContext.setApiKey(apiKey);
+        if (apiUrl != null) agentContext.setApiUrl(apiUrl);
+        if (model != null) agentContext.setModel(model);
+        // 持久化到文件
+        saveContext();
+        log.info("Saved API config to context: agentId={}, apiKey={}..., apiUrl={}, model={}",
+            getId(), apiKey != null ? apiKey.substring(0, Math.min(10, apiKey.length())) : "null",
+            apiUrl, model);
+    }
 
     @Override
     public void saveContext() {
@@ -1202,6 +1535,242 @@ public abstract class BaseAgent implements Agent {
             knowledgeEvolutionService.extractInsightsFromTaskCompletion(getId(), taskDescription, result, success);
         } catch (Exception e) {
             log.debug("Failed to feed task completion to knowledge base: {}", e.getMessage());
+        }
+    }
+
+    // ===== Token 消耗记录 =====
+
+    /**
+     * 记录 Token 消耗
+     * 基于输入输出字符数估算 Token 用量，并更新到绑定的 Token 记录
+     * 如果 Agent 没有绑定 Token，尝试自动分配一个
+     *
+     * @param inputChars  输入字符数
+     * @param outputChars 输出字符数
+     */
+    private void recordTokenUsage(int inputChars, int outputChars) {
+        if (apiTokenService == null) return;
+
+        try {
+            // 估算 Token 数量：中文约2字符/token，英文约4字符/token，取平均值约3
+            long estimatedTokens = (inputChars + outputChars) / 3;
+            if (estimatedTokens <= 0) return;
+
+            // 查找当前 Agent 绑定的 Token
+            com.chengxun.gamemaker.web.entity.ApiToken token =
+                apiTokenService.getActiveTokenForAgent(getId());
+
+            // 如果没有绑定 Token，尝试自动分配
+            if (token == null && agentManagerRef != null) {
+                token = autoAssignTokenIfNeeded();
+            }
+
+            if (token != null) {
+                apiTokenService.recordUsage(token.getId(), estimatedTokens);
+                log.debug("Token usage recorded: agent={}, token={}, estimated={}",
+                    getId(), token.getName(), estimatedTokens);
+            }
+        } catch (Exception e) {
+            log.debug("Failed to record token usage: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * 自动分配 Token（如果当前 Agent 没有绑定）
+     * 从 Token 池中查找匹配角色的最佳可用 Token 并绑定
+     *
+     * @return 分配到的 Token，如果没有可用 Token 则返回 null
+     */
+    private com.chengxun.gamemaker.web.entity.ApiToken autoAssignTokenIfNeeded() {
+        if (apiTokenService == null) return null;
+
+        try {
+            com.chengxun.gamemaker.web.entity.ApiToken token =
+                apiTokenService.findBestTokenForRole(getRole());
+            if (token == null) return null;
+
+            // 绑定 Token 到当前 Agent
+            token.setAssignedAgentId(getId());
+            token.setAssignedAgentName(getName());
+            apiTokenService.saveToken(token);
+
+            // 将 Token 配置应用到 Agent Definition
+            if (token.getApiKey() != null) definition.setApiKey(token.getApiKey());
+            if (token.getApiUrl() != null) definition.setApiUrl(token.getApiUrl());
+            if (token.getModel() != null) definition.setModel(token.getModel());
+
+            log.info("Auto-assigned token '{}' to agent {} (role: {})",
+                token.getName(), getId(), getRole());
+            return token;
+        } catch (Exception e) {
+            log.debug("Failed to auto-assign token for agent {}: {}", getId(), e.getMessage());
+            return null;
+        }
+    }
+
+    // ===== 权限错误检测和告警 =====
+
+    /**
+     * 权限错误关键词模式（不区分大小写）
+     * 只匹配真正的文件系统权限错误，避免 AI 正常讨论代码时误触发
+     */
+    private static final java.util.List<String> PERMISSION_ERROR_PATTERNS = java.util.List.of(
+        "permission denied",
+        "access denied",
+        "operation not permitted",
+        "read-only file system",
+        "eacces",
+        "eperm"
+    );
+
+    /**
+     * 文件系统错误上下文关键词（用于二次确认，必须同时包含上述模式之一 + 以下关键词之一）
+     * 防止 "permission denied" 出现在非文件操作上下文中误报
+     */
+    private static final java.util.List<String> FILE_CONTEXT_KEYWORDS = java.util.List.of(
+        "file",
+        "directory",
+        "dir",
+        "path",
+        "folder",
+        "/home/",
+        "/var/",
+        "/tmp/",
+        "mkdir",
+        "rm ",
+        "cp ",
+        "mv ",
+        "chmod",
+        "chown"
+    );
+
+    /** 上次权限错误通知时间（防止频繁通知） */
+    private volatile long lastPermissionErrorNotifyTime = 0;
+
+    /** 权限错误通知最小间隔（毫秒）：10分钟 */
+    private static final long PERMISSION_ERROR_NOTIFY_COOLDOWN = 600000;
+
+    /**
+     * 检测 AI 响应中的文件权限错误，自动通知管理员并创建告警
+     *
+     * 检测逻辑：
+     * 1. 扫描 AI 响应文本中的权限错误关键词
+     * 2. 如果检测到，记录错误日志
+     * 3. 通知管理员（带冷却时间，防止频繁通知）
+     * 4. 创建系统告警
+     *
+     * @param response AI 的响应文本
+     */
+    protected void detectAndNotifyPermissionErrors(String response) {
+        if (response == null || response.isEmpty()) return;
+
+        String lowerResponse = response.toLowerCase();
+
+        // 第一层：匹配权限错误关键词
+        boolean hasPermissionError = PERMISSION_ERROR_PATTERNS.stream()
+            .anyMatch(lowerResponse::contains);
+        if (!hasPermissionError) return;
+
+        // 第二层：确认是文件系统上下文（而非数据库、网络等其他场景）
+        boolean hasFileContext = FILE_CONTEXT_KEYWORDS.stream()
+            .anyMatch(lowerResponse::contains);
+        if (!hasFileContext) {
+            log.debug("检测到权限关键词但非文件系统上下文，跳过: {}", getId());
+            return;
+        }
+
+        // 冷却检查：避免同一 Agent 短时间内重复通知
+        long now = System.currentTimeMillis();
+        if (now - lastPermissionErrorNotifyTime < PERMISSION_ERROR_NOTIFY_COOLDOWN) {
+            log.debug("权限错误通知冷却中，跳过: {}", getId());
+            return;
+        }
+        lastPermissionErrorNotifyTime = now;
+
+        String projectName = currentProject != null ? currentProject.getName() : "全局";
+        String errorSummary = String.format("Agent [%s] 在项目 [%s] 中遇到文件权限错误", getName(), projectName);
+
+        // 提取错误上下文（包含错误信息的行）
+        String errorContext = extractPermissionErrorContext(response);
+
+        // 记录 Agent 错误日志
+        logError("FILE_PERMISSION_ERROR", errorSummary, errorContext);
+
+        log.warn("检测到文件权限错误: agent={}, project={}", getId(), projectName);
+
+        // 通知管理员
+        notifyAdminPermissionError(errorSummary, errorContext);
+
+        // 创建系统告警
+        createPermissionErrorAlert(errorSummary, errorContext);
+    }
+
+    /**
+     * 从 AI 响应中提取权限错误的上下文信息
+     */
+    private String extractPermissionErrorContext(String response) {
+        StringBuilder context = new StringBuilder();
+        String[] lines = response.split("\n");
+        for (String line : lines) {
+            String lowerLine = line.toLowerCase();
+            boolean hasPermissionKeyword = PERMISSION_ERROR_PATTERNS.stream().anyMatch(lowerLine::contains);
+            boolean hasFileContext = FILE_CONTEXT_KEYWORDS.stream().anyMatch(lowerLine::contains);
+            if (hasPermissionKeyword && hasFileContext) {
+                context.append(line.trim()).append("\n");
+            }
+        }
+        // 最多返回 500 字符
+        String result = context.toString().trim();
+        return result.length() > 500 ? result.substring(0, 500) + "..." : result;
+    }
+
+    /**
+     * 通知管理员文件权限错误
+     * 通过 NotificationService 发送多渠道通知（站内信、邮件、飞书、钉钉）
+     */
+    private void notifyAdminPermissionError(String summary, String detail) {
+        if (notificationService == null) return;
+
+        try {
+            java.util.Map<String, String> variables = java.util.Map.of(
+                "agentName", getName(),
+                "agentRole", getRole(),
+                "projectName", currentProject != null ? currentProject.getName() : "全局",
+                "errorDetail", detail.length() > 200 ? detail.substring(0, 200) + "..." : detail,
+                "title", "Agent 文件权限错误",
+                "content", summary + "\n\n" + detail,
+                "ruleName", "Agent 文件权限错误",
+                "priorityDesc", "警告",
+                "triggerValue", "权限不足",
+                "thresholdValue", "需要可写权限"
+            );
+            notificationService.notifyAdmins("alert", "ALERT",
+                variables, com.chengxun.gamemaker.web.entity.Notification.NotificationType.WARNING);
+        } catch (Exception e) {
+            log.warn("发送权限错误通知失败: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * 创建系统告警
+     */
+    private void createPermissionErrorAlert(String summary, String detail) {
+        if (alertService == null) return;
+        try {
+            com.chengxun.gamemaker.web.entity.AlertRecord alert = new com.chengxun.gamemaker.web.entity.AlertRecord();
+            alert.setTitle(summary);
+            alert.setDetail(detail);
+            alert.setPriority("WARNING");
+            alert.setStatus("PENDING");
+            alert.setMetric("AGENT_PERMISSION_ERROR");
+            alert.setAgentId(getId());
+            alert.setAgentName(getName());
+            alert.setProjectId(getProjectId());
+            alert.setRuleName("Agent 文件权限错误检测");
+            alert.setCreatedAt(java.time.LocalDateTime.now());
+            alertService.saveAlert(alert);
+        } catch (Exception e) {
+            log.debug("创建告警失败: {}", e.getMessage());
         }
     }
 }

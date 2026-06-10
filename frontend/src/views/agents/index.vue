@@ -119,6 +119,15 @@
               </el-tag>
             </template>
           </el-table-column>
+          <el-table-column label="Token" width="180">
+            <template #default="{ row }">
+              <div v-if="row.tokenName" class="token-cell">
+                <el-tag type="success" size="small">{{ row.tokenName }}</el-tag>
+                <span class="token-model">{{ row.tokenModel || '' }}</span>
+              </div>
+              <span v-else class="text-muted">未分配</span>
+            </template>
+          </el-table-column>
           <el-table-column label="推理深度" width="200">
             <template #default="{ row }">
               <div class="reasoning-depth-cell">
@@ -161,6 +170,7 @@
                 {{ row.alive ? '停止' : '启动' }}
               </el-button>
               <el-button type="info" size="small" text @click="handleRestart(row)" v-permission="'agents:manage'">重启</el-button>
+              <el-button type="warning" size="small" text @click="handleEditToken(row)" v-permission="'agents:manage'">Token</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -224,7 +234,7 @@
     <el-drawer
       v-model="drawerVisible"
       :title="currentAgent?.name || 'Agent 详情'"
-      size="450px"
+      size="550px"
       direction="rtl"
     >
       <template v-if="currentAgent">
@@ -247,7 +257,23 @@
           <el-descriptions-item label="推理深度">
             {{ getDepthLabel(currentAgent.reasoningDepth) }}
           </el-descriptions-item>
+          <el-descriptions-item label="通知目标" v-if="roleDetail.notifyTargets">
+            {{ roleDetail.notifyTargets }}
+          </el-descriptions-item>
+          <el-descriptions-item label="审查者" v-if="roleDetail.reviewer">
+            {{ roleDetail.reviewer || '无' }}
+          </el-descriptions-item>
         </el-descriptions>
+
+        <!-- 角色提示词预览 -->
+        <el-divider>角色提示词</el-divider>
+        <div class="prompt-preview" v-if="roleDetail.prompt">
+          <div class="prompt-content">{{ roleDetail.prompt.substring(0, 500) }}{{ roleDetail.prompt.length > 500 ? '...' : '' }}</div>
+          <el-button type="primary" text size="small" @click="showFullPrompt = true">
+            查看完整提示词
+          </el-button>
+        </div>
+        <el-empty v-else description="暂无角色提示词" :image-size="60" />
 
         <el-divider>快捷操作</el-divider>
         <div class="drawer-actions">
@@ -256,6 +282,9 @@
           </el-button>
           <el-button @click="handleQuery(currentAgent)">
             <el-icon><ChatDotRound /></el-icon> 发送消息
+          </el-button>
+          <el-button type="success" @click="handleGoToDetail(currentAgent)">
+            <el-icon><MagicStick /></el-icon> 提示词优化
           </el-button>
           <el-button
             :type="currentAgent.alive ? 'warning' : 'success'"
@@ -271,6 +300,14 @@
       </template>
     </el-drawer>
 
+    <!-- 完整提示词弹窗 -->
+    <el-dialog v-model="showFullPrompt" title="角色提示词" width="700px" top="5vh">
+      <div class="full-prompt-content">{{ roleDetail.prompt }}</div>
+      <template #footer>
+        <el-button @click="showFullPrompt = false">关闭</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 发送任务对话框 -->
     <el-dialog v-model="taskDialogVisible" title="发送任务" width="500px">
       <el-form :model="taskForm" label-width="80px">
@@ -278,17 +315,46 @@
           <el-input :model-value="taskForm.agentName" disabled />
         </el-form-item>
         <el-form-item label="任务内容" required>
-          <el-input
-            v-model="taskForm.content"
-            type="textarea"
-            :rows="4"
-            placeholder="请输入任务内容..."
-          />
+          <MarkdownEditor v-model="taskForm.content" :rows="4" placeholder="请输入任务内容..." />
         </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="taskDialogVisible = false">取消</el-button>
         <el-button type="primary" @click="handleSubmitTask" :loading="sendingTask">发送</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- Token 编辑对话框 -->
+    <el-dialog v-model="tokenDialogVisible" title="分配 Token" width="500px">
+      <el-form :model="tokenForm" label-width="120px">
+        <el-form-item label="Agent">
+          <el-input :model-value="tokenForm.agentName" disabled />
+        </el-form-item>
+        <el-form-item label="当前 Token">
+          <span v-if="tokenForm.currentTokenName" class="current-token">{{ tokenForm.currentTokenName }}</span>
+          <span v-else class="text-muted">未分配</span>
+        </el-form-item>
+        <el-form-item label="选择 Token" required>
+          <el-select v-model="tokenForm.tokenId" placeholder="选择 Token" style="width: 100%" filterable>
+            <el-option
+              v-for="token in availableTokens"
+              :key="token.id"
+              :label="`${token.name} (${token.model || '未设置'}) - ${token.maskedApiKey || '••••'}`"
+              :value="token.id"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="生效方式">
+          <el-radio-group v-model="tokenForm.activation">
+            <el-radio value="immediate">立即生效</el-radio>
+            <el-radio value="pending">等待任务完成</el-radio>
+          </el-radio-group>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="handleUnassignToken" type="danger" v-if="tokenForm.currentTokenName">解绑</el-button>
+        <el-button @click="tokenDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="handleAssignToken" :loading="assigningToken">确认分配</el-button>
       </template>
     </el-dialog>
 
@@ -333,12 +399,13 @@
  */
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { agentApi } from '@/api'
+import { agentApi, tokenApi, recruitmentApi } from '@/api'
+import MarkdownEditor from '@/components/MarkdownEditor.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Folder, InfoFilled, Search, List, Grid, User,
   CircleCheck, Loading, Coffee, Promotion,
-  ChatDotRound, VideoPlay, RefreshRight
+  ChatDotRound, VideoPlay, RefreshRight, MagicStick
 } from '@element-plus/icons-vue'
 import ProjectSelector from '@/components/ProjectSelector.vue'
 import { useUserStore } from '@/stores/user'
@@ -360,6 +427,8 @@ const selectedAgents = ref([])
 // 详情抽屉
 const drawerVisible = ref(false)
 const currentAgent = ref(null)
+const roleDetail = ref({})
+const showFullPrompt = ref(false)
 
 // 发送任务
 const taskDialogVisible = ref(false)
@@ -368,6 +437,18 @@ const taskForm = ref({
   agentId: '',
   agentName: '',
   content: ''
+})
+
+// Token 编辑
+const tokenDialogVisible = ref(false)
+const assigningToken = ref(false)
+const availableTokens = ref([])
+const tokenForm = ref({
+  agentId: '',
+  agentName: '',
+  currentTokenName: '',
+  tokenId: null,
+  activation: 'immediate'
 })
 
 // 推理深度选项
@@ -414,7 +495,18 @@ const getRoleTagType = (role) => {
     'system-planner': 'info',
     'numerical-planner': 'info',
     'tester': '',
-    'git-commit': 'info'
+    'git-commit': 'info',
+    'security-expert': 'danger',
+    'data-analyst': 'success',
+    'tech-artist': 'warning',
+    'product-manager': 'primary',
+    'localization': '',
+    'ai-engineer': 'primary',
+    'performance-engineer': 'warning',
+    'audio-dev': 'success',
+    'narrative-planner': 'info',
+    'level-design': 'warning',
+    'devops': 'primary'
   }
   return typeMap[role] || ''
 }
@@ -429,7 +521,18 @@ const getRoleLabel = (role) => {
     'system-planner': '系统策划',
     'numerical-planner': '数值策划',
     'tester': '测试',
-    'git-commit': 'Git专员'
+    'git-commit': 'Git专员',
+    'security-expert': '安全工程师',
+    'data-analyst': '数据分析师',
+    'tech-artist': '技术美术',
+    'product-manager': '产品经理',
+    'localization': '本地化',
+    'ai-engineer': 'AI工程师',
+    'performance-engineer': '性能优化',
+    'audio-dev': '音频设计',
+    'narrative-planner': '剧情策划',
+    'level-design': '关卡设计',
+    'devops': '运维工程师'
   }
   return labelMap[role] || role
 }
@@ -476,9 +579,28 @@ const handleSelectionChange = (selection) => {
 }
 
 /** 查看详情 */
-const handleViewDetail = (agent) => {
+const handleViewDetail = async (agent) => {
   currentAgent.value = agent
   drawerVisible.value = true
+  // 加载角色详情（提示词、通知目标、审查者）
+  try {
+    const detail = await recruitmentApi.getRoleDetail(agent.role)
+    roleDetail.value = detail || {}
+  } catch {
+    roleDetail.value = {}
+  }
+}
+
+/** 跳转到Agent详情页（提示词优化等功能） */
+const handleGoToDetail = (agent) => {
+  const projectId = agent.projectId || agent.id?.split(':')[0] || route.query.projectId
+  const agentRole = agent.role || agent.id?.split(':')[1]
+  if (projectId && agentRole) {
+    drawerVisible.value = false
+    router.push(`/agents/${projectId}/${agentRole}`)
+  } else {
+    ElMessage.warning('无法确定Agent的项目和角色信息')
+  }
 }
 
 /** 发送任务 */
@@ -587,6 +709,58 @@ const handleReasoningDepthChange = async (agent, newDepth) => {
   }
 }
 
+/** 打开 Token 编辑对话框 */
+const handleEditToken = async (agent) => {
+  tokenForm.value = {
+    agentId: agent.id,
+    agentName: agent.name,
+    currentTokenName: agent.tokenName || '',
+    tokenId: agent.tokenId || null,
+    activation: 'immediate'
+  }
+  // 加载可用 Token 列表
+  try {
+    const tokens = await tokenApi.getAll()
+    availableTokens.value = (tokens || []).filter(t => t.status === 'ACTIVE')
+  } catch {
+    availableTokens.value = []
+  }
+  tokenDialogVisible.value = true
+}
+
+/** 提交 Token 分配 */
+const handleAssignToken = async () => {
+  if (!tokenForm.value.tokenId) {
+    ElMessage.warning('请选择 Token')
+    return
+  }
+  assigningToken.value = true
+  try {
+    await tokenApi.assign(tokenForm.value.tokenId, tokenForm.value.agentId, tokenForm.value.activation)
+    ElMessage.success('Token 已分配')
+    tokenDialogVisible.value = false
+    loadAgents()
+  } catch (error) {
+    ElMessage.error('分配失败')
+  } finally {
+    assigningToken.value = false
+  }
+}
+
+/** 解绑 Token */
+const handleUnassignToken = async () => {
+  if (!tokenForm.value.tokenId) return
+  try {
+    await ElMessageBox.confirm('确定要解绑该 Agent 的 Token 吗？', '确认', { type: 'warning' })
+    await tokenApi.unassign(tokenForm.value.tokenId)
+    ElMessage.success('Token 已解绑')
+    tokenDialogVisible.value = false
+    loadAgents()
+  } catch (error) {
+    if (error !== 'cancel') ElMessage.error('解绑失败')
+  }
+}
+
 /** 批量停止 */
 const handleBatchStop = async () => {
   try {
@@ -673,10 +847,15 @@ onMounted(() => {
 }
 
 .stat-card {
+  cursor: default;
+}
+
+.stat-card :deep(.el-card__body) {
   display: flex;
   align-items: center;
   gap: 16px;
-  padding: 16px;
+  padding: 20px;
+  min-height: 80px;
 }
 
 .stat-icon {
@@ -691,18 +870,22 @@ onMounted(() => {
 
 .stat-info {
   flex: 1;
+  min-width: 0;
 }
 
 .stat-value {
-  font-size: 24px;
+  font-size: 28px;
   font-weight: bold;
   color: var(--el-text-color-primary);
+  line-height: 1.2;
+  white-space: nowrap;
 }
 
 .stat-label {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--el-text-color-secondary);
   margin-top: 4px;
+  white-space: nowrap;
 }
 
 /* 卡片头部 */
@@ -802,6 +985,35 @@ onMounted(() => {
   gap: 8px;
 }
 
+/* 角色提示词预览 */
+.prompt-preview {
+  background: #f5f7fa;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.prompt-content {
+  font-size: 12px;
+  line-height: 1.6;
+  color: #606266;
+  white-space: pre-wrap;
+  max-height: 200px;
+  overflow-y: auto;
+  margin-bottom: 8px;
+}
+
+.full-prompt-content {
+  font-size: 13px;
+  line-height: 1.8;
+  color: #303133;
+  white-space: pre-wrap;
+  max-height: 65vh;
+  overflow-y: auto;
+  background: #f5f7fa;
+  border-radius: 8px;
+  padding: 16px;
+}
+
 /* 推理深度 */
 .reasoning-depth-cell {
   display: flex;
@@ -852,6 +1064,28 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+/* Token 单元格 */
+.token-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.token-model {
+  font-size: 11px;
+  color: #909399;
+}
+
+.text-muted {
+  color: #909399;
+  font-size: 12px;
+}
+
+.current-token {
+  font-weight: 500;
+  color: #67c23a;
 }
 
 /* 响应式 */

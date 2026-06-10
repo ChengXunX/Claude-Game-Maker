@@ -4,6 +4,7 @@ import com.chengxun.gamemaker.web.entity.AlertRecord;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -73,4 +74,15 @@ public interface AlertRecordRepository extends JpaRepository<AlertRecord, Long> 
      */
     @Query("SELECT COUNT(r) FROM AlertRecord r WHERE r.createdAt >= :since")
     Long countSince(@Param("since") LocalDateTime since);
+
+    /**
+     * 分批删除指定时间之前的已解决告警记录
+     *
+     * @param cutoff 截止时间
+     * @param limit 每批删除数量
+     * @return 实际删除的记录数
+     */
+    @Modifying
+    @Query(value = "DELETE FROM alert_records WHERE created_at < :cutoff AND status IN ('RESOLVED', 'IGNORED') LIMIT :limit", nativeQuery = true)
+    int deleteResolvedBefore(@Param("cutoff") LocalDateTime cutoff, @Param("limit") int limit);
 }

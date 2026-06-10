@@ -17,6 +17,7 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -209,6 +210,9 @@ public class ProjectManager {
         // 创建项目配置目录
         initProjectDirectories(project);
 
+        // 确保工作目录本身也有正确权限
+        ensureWorkDirectoryPermissions(workPath);
+
         // 应用模板（如果有）
         if (templateId != null && !templateId.isEmpty()) {
             boolean applied = templateService.applyTemplate(templateId, workPath);
@@ -316,14 +320,22 @@ public class ProjectManager {
     }
 
     /**
-     * 从索引中移除项目（不删除实际文件）
+     * 从索引中移除项目，并清理项目配置目录
+     * 删除 .game-maker/ 目录防止 getOrCreateProject() 从磁盘重新加载
      *
      * @param projectId 项目ID
      * @return 是否成功移除
      */
+    @CacheEvict(value = CacheConfig.CACHE_PROJECTS, allEntries = true)
     public boolean removeFromIndex(String projectId) {
         if (!projectIndex.containsKey(projectId)) {
             return false;
+        }
+
+        // 清理项目配置目录（.game-maker/），防止 Agent 重新加载项目
+        GameProject project = projects.get(projectId);
+        if (project != null) {
+            cleanupProjectConfigDir(project);
         }
 
         projectIndex.remove(projectId);
@@ -332,6 +344,37 @@ public class ProjectManager {
 
         log.info("Project removed from index: {}", projectId);
         return true;
+    }
+
+    /**
+     * 清理项目配置目录（.game-maker/）
+     * 只删除系统配置目录，不删除项目工作目录本身（可能包含用户代码）
+     *
+     * @param project 项目
+     */
+    private void cleanupProjectConfigDir(GameProject project) {
+        try {
+            Path configDir = Path.of(project.getProjectConfigDir());
+            if (Files.exists(configDir) && configDir.toString().contains(".game-maker")) {
+                deleteDirectory(configDir);
+                log.info("Project config directory cleaned: {}", configDir);
+            }
+        } catch (Exception e) {
+            log.warn("Failed to cleanup project config dir for {}: {}", project.getId(), e.getMessage());
+        }
+    }
+
+    /**
+     * 递归删除目录
+     */
+    private void deleteDirectory(Path dir) throws IOException {
+        if (Files.isDirectory(dir)) {
+            List<Path> entries = Files.list(dir).toList();
+            for (Path entry : entries) {
+                deleteDirectory(entry);
+            }
+        }
+        Files.deleteIfExists(dir);
     }
 
     /**
@@ -506,16 +549,175 @@ public class ProjectManager {
 
     /**
      * 初始化项目目录
+     * 创建项目所需的配置、技能、记忆、上下文等目录
+     * 确保目录有正确的写入权限
      */
     public void initProjectDirectories(GameProject project) {
         try {
-            Files.createDirectories(Path.of(project.getProjectConfigDir()));
-            Files.createDirectories(Path.of(project.getSkillsDir()));
-            Files.createDirectories(Path.of(project.getMemoryDir()));
-            Files.createDirectories(Path.of(project.getContextsDir()));
+            Path configDir = Path.of(project.getProjectConfigDir());
+            Path skillsDir = Path.of(project.getSkillsDir());
+            Path memoryDir = Path.of(project.getMemoryDir());
+            Path contextsDir = Path.of(project.getContextsDir());
+
+            Files.createDirectories(configDir);
+            Files.createDirectories(skillsDir);
+            Files.createDirectories(memoryDir);
+            Files.createDirectories(contextsDir);
+
+            // 修复权限：如果以 root 运行，将目录所有权改为项目工作目录的所有者
+            fixDirectoryOwnership(project);
+
+            // 确保新创建的目录有正确的权限
+            setDirectoryPermissions(configDir);
+            setDirectoryPermissions(skillsDir);
+            setDirectoryPermissions(memoryDir);
+            setDirectoryPermissions(contextsDir);
+
             log.info("Project directories initialized: {}", project.getId());
         } catch (IOException e) {
             log.error("Failed to create project directories: {}", project.getId(), e);
+        }
+    }
+
+    /**
+     * 设置目录权限为 775（owner 和 group 可写，other 可读可执行）
+     *
+     * @param dir 目录路径
+     */
+    private void setDirectoryPermissions(Path dir) {
+        try {
+            if (Files.exists(dir)) {
+                Files.setPosixFilePermissions(dir,
+                    PosixFilePermissions.fromString("rwxrwxr-x"));
+            }
+        } catch (Exception e) {
+            log.debug("设置目录权限失败: {} - {}", dir, e.getMessage());
+        }
+    }
+
+    /**
+     * 修复项目目录的所有权
+     * 当 Java 应用以 root 运行时，创建的目录属于 root，
+     * Agent 的 CLI 进程（以项目目录所有者运行）无法写入。
+     * 此方法将 .game-maker/ 及子目录的所有权改为项目工作目录的所有者。
+     *
+     * @param project 项目
+     */
+    private void fixDirectoryOwnership(GameProject project) {
+        try {
+            // 检查是否以 root 运行
+            String currentUser = System.getProperty("user.name");
+            if (!"root".equals(currentUser)) {
+                return; // 非 root 用户不需要修复
+            }
+
+            // 获取项目工作目录的所有者
+            Path workDir = Path.of(project.getWorkDir());
+            if (!Files.exists(workDir)) {
+                return;
+            }
+
+            String ownerName;
+            try {
+                ownerName = (String) Files.getAttribute(workDir, "unix:ownerName");
+            } catch (Exception e) {
+                log.debug("无法获取目录所有者: {}", e.getMessage());
+                return;
+            }
+
+            if ("root".equals(ownerName) || ownerName == null) {
+                return; // 工作目录也是 root，无需修复
+            }
+
+            // 获取所有者的 UID 和 GID
+            java.nio.file.attribute.UserPrincipal owner;
+            java.nio.file.attribute.GroupPrincipal group;
+            try {
+                owner = Files.getOwner(workDir);
+                group = Files.readAttributes(workDir, java.nio.file.attribute.PosixFileAttributes.class).group();
+            } catch (Exception e) {
+                log.debug("无法获取目录属性: {}", e.getMessage());
+                return;
+            }
+
+            // 递归修复 .game-maker/ 目录的所有权
+            Path configDir = Path.of(project.getProjectConfigDir());
+            if (Files.exists(configDir)) {
+                fixOwnershipRecursive(configDir, owner, group);
+                log.info("已修复项目目录所有权: {} -> {}", configDir, ownerName);
+            }
+
+        } catch (Exception e) {
+            log.warn("修复目录所有权失败: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * 递归修复目录和文件的所有权
+     */
+    private void fixOwnershipRecursive(Path dir,
+                                        java.nio.file.attribute.UserPrincipal owner,
+                                        java.nio.file.attribute.GroupPrincipal group) {
+        try {
+            Files.setOwner(dir, owner);
+            try {
+                Files.setAttribute(dir, "posix:group", group);
+            } catch (Exception e) {
+                // 忽略 group 设置失败
+            }
+
+            if (Files.isDirectory(dir)) {
+                try (var stream = Files.list(dir)) {
+                    for (Path entry : stream.toList()) {
+                        fixOwnershipRecursive(entry, owner, group);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.debug("修复文件所有权失败: {} - {}", dir, e.getMessage());
+        }
+    }
+
+    /**
+     * 确保工作目录有正确的写入权限
+     * 检查当前用户是否可以写入目录，如果不能则尝试修复权限
+     *
+     * @param workPath 工作目录路径
+     */
+    private void ensureWorkDirectoryPermissions(Path workPath) {
+        try {
+            if (!Files.exists(workPath)) {
+                return;
+            }
+
+            // 检查当前用户是否可以写入
+            if (!Files.isWritable(workPath)) {
+                log.warn("工作目录不可写: {}，尝试修复权限", workPath);
+
+                // 尝试设置宽松权限
+                try {
+                    Files.setPosixFilePermissions(workPath,
+                        PosixFilePermissions.fromString("rwxrwxr-x"));
+                    log.info("已设置工作目录权限: {}", workPath);
+                } catch (Exception e) {
+                    log.error("无法修复工作目录权限: {} - {}", workPath, e.getMessage());
+                    log.error("请手动执行: chmod 775 {} 或 chown -R $(whoami) {}", workPath, workPath);
+                }
+            }
+
+            // 确保 .game-maker 子目录也可写
+            Path gameMakerDir = workPath.resolve(".game-maker");
+            if (Files.exists(gameMakerDir) && !Files.isWritable(gameMakerDir)) {
+                try {
+                    Files.setPosixFilePermissions(gameMakerDir,
+                        PosixFilePermissions.fromString("rwxrwxr-x"));
+                    log.info("已设置 .game-maker 目录权限: {}", gameMakerDir);
+                } catch (Exception e) {
+                    log.warn("无法修复 .game-maker 目录权限: {}", e.getMessage());
+                }
+            }
+        } catch (Exception e) {
+            log.debug("检查工作目录权限失败: {}", e.getMessage());
         }
     }
 

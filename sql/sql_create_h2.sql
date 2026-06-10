@@ -582,6 +582,7 @@ CREATE TABLE IF NOT EXISTS api_tokens (
     api_url VARCHAR(500),
     model VARCHAR(100),
     max_tokens INT DEFAULT 4096,
+    context_window INT DEFAULT 200000,
     agent_id VARCHAR(50),
     permissions TEXT,
     status VARCHAR(20) DEFAULT 'ACTIVE',
@@ -671,6 +672,13 @@ CREATE TABLE IF NOT EXISTS agent_presets (
     supports_code_execution BOOLEAN DEFAULT TRUE,
     supports_file_operations BOOLEAN DEFAULT TRUE,
     api_provider VARCHAR(50) DEFAULT 'anthropic',
+    prompt TEXT,
+    notify_targets VARCHAR(500) DEFAULT 'producer',
+    reviewer VARCHAR(50),
+    role_name VARCHAR(100),
+    prompt_version INT DEFAULT 0,
+    last_evolution_source VARCHAR(50),
+    last_evolution_at TIMESTAMP,
     is_system BOOLEAN DEFAULT FALSE,
     source_agent_id VARCHAR(200),
     source_project_id VARCHAR(100),
@@ -914,3 +922,96 @@ CREATE INDEX IF NOT EXISTS idx_wfal_created ON workflow_audit_logs(created_at);
 -- 完成
 -- ============================================
 -- H2 数据库建表完成
+
+-- ============================================
+-- 项目级Agent配置表（新增）
+-- ============================================
+CREATE TABLE IF NOT EXISTS project_agent_configs (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    project_id VARCHAR(100) NOT NULL,
+    agent_role VARCHAR(50) NOT NULL,
+    custom_system_prompt TEXT,
+    custom_capability_prompt TEXT,
+    responsibility_weights TEXT,
+    project_context TEXT,
+    optimization_suggestions TEXT,
+    is_active TINYINT(1) NOT NULL DEFAULT 1,
+    version INT NOT NULL DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_pac_project ON project_agent_configs(project_id);
+CREATE INDEX IF NOT EXISTS idx_pac_agent ON project_agent_configs(project_id, agent_role);
+CREATE INDEX IF NOT EXISTS idx_pac_active ON project_agent_configs(project_id, agent_role, is_active);
+
+-- 版本评估持久化表
+CREATE TABLE IF NOT EXISTS version_evaluations (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    project_id VARCHAR(100) NOT NULL,
+    milestone_id VARCHAR(100) NOT NULL,
+    milestone_title VARCHAR(200),
+    evaluated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    efficiency_score INT DEFAULT 0,
+    quality_score INT DEFAULT 0,
+    overall_score INT DEFAULT 0,
+    missing_roles TEXT,
+    redundant_roles TEXT,
+    recommendations TEXT,
+    agent_evaluations_json TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_ve_project ON version_evaluations(project_id);
+CREATE INDEX IF NOT EXISTS idx_ve_milestone ON version_evaluations(milestone_id);
+
+-- 系统常量表
+CREATE TABLE IF NOT EXISTS system_constants (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    constant_key VARCHAR(100) NOT NULL UNIQUE,
+    name VARCHAR(100) NOT NULL,
+    description VARCHAR(500),
+    default_value VARCHAR(500),
+    value_type VARCHAR(20) DEFAULT 'string',
+    group_name VARCHAR(50),
+    unit VARCHAR(20),
+    min_value BIGINT,
+    max_value BIGINT,
+    require_restart BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_sc_group ON system_constants(group_name);
+
+-- 质量门禁配置表
+CREATE TABLE IF NOT EXISTS quality_gate_configs (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    gate_id VARCHAR(50) NOT NULL UNIQUE,
+    name VARCHAR(100) NOT NULL,
+    description VARCHAR(500),
+    level INT NOT NULL DEFAULT 1,
+    min_score INT NOT NULL DEFAULT 60,
+    blocking BOOLEAN DEFAULT FALSE,
+    check_items TEXT,
+    enabled BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_qgc_level ON quality_gate_configs(level);
+CREATE INDEX IF NOT EXISTS idx_qgc_enabled ON quality_gate_configs(enabled);
+
+-- 知识库表
+CREATE TABLE IF NOT EXISTS knowledge_base (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    category VARCHAR(50) NOT NULL,
+    subcategory VARCHAR(50),
+    title VARCHAR(200) NOT NULL,
+    content TEXT,
+    tags VARCHAR(500),
+    source VARCHAR(50) DEFAULT 'system',
+    usage_count INT DEFAULT 0,
+    effectiveness_score DOUBLE DEFAULT 0.0,
+    enabled BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_kb_category ON knowledge_base(category);
+CREATE INDEX IF NOT EXISTS idx_kb_source ON knowledge_base(source);
+CREATE INDEX IF NOT EXISTS idx_kb_enabled ON knowledge_base(enabled);

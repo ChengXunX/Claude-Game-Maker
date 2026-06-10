@@ -89,6 +89,7 @@ public class AgentApiController {
 
     /**
      * 获取 Agent 详情
+     * 返回 Agent 的完整信息，包括任务列表、工作记忆、推理深度等
      */
     @GetMapping("/project/{projectId}/{agentRole}")
     @Operation(summary = "获取 Agent 详情")
@@ -105,8 +106,44 @@ public class AgentApiController {
         info.put("role", agent.getRole());
         info.put("busy", agent.isBusy());
         info.put("alive", agent.isAlive());
-        info.put("tasks", agent.getTasks().size());
         info.put("projectId", projectId);
+
+        // 任务列表
+        List<Map<String, Object>> taskList = agent.getTasks().stream().map(t -> {
+            Map<String, Object> task = new HashMap<>();
+            task.put("id", t.getId());
+            task.put("title", t.getTitle());
+            task.put("status", t.getStatus().name());
+            task.put("priority", t.getPriority().name());
+            task.put("createdAt", t.getCreatedAt());
+            task.put("completedAt", t.getCompletedAt());
+            return task;
+        }).toList();
+        info.put("tasks", taskList);
+        info.put("taskCount", taskList.size());
+
+        // 当前任务
+        var currentTask = agent.getTasks().stream()
+            .filter(t -> t.getStatus() == com.chengxun.gamemaker.model.TaskAssignment.TaskStatus.IN_PROGRESS)
+            .findFirst().orElse(null);
+        if (currentTask != null) {
+            Map<String, Object> current = new HashMap<>();
+            current.put("id", currentTask.getId());
+            current.put("title", currentTask.getTitle());
+            current.put("description", currentTask.getDescription());
+            current.put("status", currentTask.getStatus().name());
+            info.put("currentTask", current);
+        }
+
+        // 推理深度
+        if (agent instanceof com.chengxun.gamemaker.agent.BaseAgent baseAgent) {
+            info.put("reasoningDepth", baseAgent.getDefinition().getReasoningDepth());
+            info.put("workDir", baseAgent.getDefinition().getWorkDir());
+        }
+
+        // 待处理消息数
+        info.put("pendingMessages", agent.getPendingMessages().size());
+
         return ResponseEntity.ok(info);
     }
 

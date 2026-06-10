@@ -323,6 +323,16 @@ public class PermissionController {
         return Map.of("count", permissionService.getPendingCount());
     }
 
+    /**
+     * 获取待审批的权限申请列表
+     */
+    @GetMapping("/api/pending")
+    @ResponseBody
+    @PreAuthorize("hasAuthority('PERM_admin:manage')")
+    public List<PermissionRequest> getPendingRequests() {
+        return permissionService.getPendingRequests();
+    }
+
     // ===== 权限定义管理 =====
 
     /**

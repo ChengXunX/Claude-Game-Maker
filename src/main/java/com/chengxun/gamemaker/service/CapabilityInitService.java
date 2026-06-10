@@ -190,6 +190,20 @@ public class CapabilityInitService {
             "quality_control", false, null, ++priority,
             "{\"action\":\"enum:report,assign,prioritize,close|required\",\"bugId\":\"string\",\"severity\":\"enum:low,medium,high,critical\"}");
 
+        // ===== 5.1 游戏验证类 =====
+
+        save(role, "verifyGameProject", "验证游戏项目", "验证游戏项目的结构完整性和代码质量",
+            "verification", false, null, ++priority,
+            "{\"projectDir\":\"string\",\"includeQualityAnalysis\":\"boolean|default=true\"}");
+
+        save(role, "verifyGameQuality", "深度质量分析", "使用 AI 深度分析游戏的可玩性、玩法完整性、UI/UX 质量",
+            "verification", false, null, ++priority,
+            "{\"projectDir\":\"string\",\"projectName\":\"string\",\"projectGoal\":\"string\"}");
+
+        save(role, "verifyAndImprove", "验证并改进", "验证游戏项目并在失败时自动生成改进建议",
+            "verification", false, null, ++priority,
+            "{\"projectDir\":\"string\",\"autoImprove\":\"boolean|default=false\",\"targetAgent\":\"string\"}");
+
         // ===== 6. 监控与报告类 =====
 
         save(role, "queryAgentStatus", "查询成员状态", "查询指定 Agent 的当前工作状态和任务进展",
@@ -222,7 +236,25 @@ public class CapabilityInitService {
             "communication", true, "REQUEST_DECISION", ++priority,
             "{\"decisionType\":\"string|required\",\"options\":\"string|required\",\"recommendation\":\"string\",\"rationale\":\"string\"}");
 
-        // ===== 8. 测试管理类 =====
+        // ===== 8. 战略决策升级类 =====
+
+        save(role, "escalateStrategicDecision", "升级战略决策", "将重大战略决策升级为人工审批，适用于项目方向、玩法大调整等关键决策",
+            "strategic_decision", true, "ESCALATE_DECISION", ++priority,
+            "{\"decisionType\":\"enum:PROJECT_DIRECTION,GAMEPLAY_CHANGE,ARCHITECTURE_CHANGE,BUDGET_ALLOCATION,TEAM_RESTRUCTURE,TECHNOLOGY_STACK,RELEASE_STRATEGY|required\",\"description\":\"string|required\",\"impact\":\"string|required\",\"options\":\"string\"}");
+
+        save(role, "requestDelivery", "申请项目交付", "当项目满足交付条件时，申请管理员审批交付。这是重大决策，需要人工确认",
+            "strategic_decision", true, "DELIVERY", ++priority,
+            "{\"reason\":\"string\"}");
+
+        save(role, "evaluateNextVersion", "评估下一版本", "评估当前版本完成情况，决定是否需要规划下一个版本或申请交付",
+            "project_management", false, null, ++priority,
+            "{}");
+
+        save(role, "evaluateCurrentVersion", "评估当前版本", "分析当前版本的Agent绩效、人手缺失与冗余，生成版本评估报告",
+            "project_management", false, null, ++priority,
+            "{\"milestoneId\":\"string|required\"}");
+
+        // ===== 9. 测试管理类 =====
 
         save(role, "createTestPlan", "制定测试计划", "为项目制定测试计划和测试用例",
             "testing", false, null, ++priority,
@@ -296,27 +328,43 @@ public class CapabilityInitService {
     private void initServerDevCapabilities() {
         String role = "server-dev";
 
+        // 代码开发能力
         save(role, "executeCode", "执行代码任务", "在工作目录中执行代码开发任务",
-            "task", false, null, 1,
+            "code", false, null, 1,
             "{\"taskDescription\":\"string|required\"}");
 
         save(role, "reviewCode", "审查代码", "审查指定代码文件或目录的质量",
-            "task", false, null, 2,
+            "code", false, null, 2,
             "{\"targetPath\":\"string\",\"scope\":\"string\"}");
 
-        save(role, "reportProgress", "汇报进度", "向制作人汇报当前任务进度",
-            "communication", false, null, 3,
-            "{\"taskId\":\"string\",\"progress\":\"string|required\"}");
-
-        save(role, "requestHelp", "请求帮助", "向其他 Agent 请求技术帮助",
-            "communication", false, null, 4,
-            "{\"targetAgent\":\"string\",\"question\":\"string|required\"}");
-
         save(role, "commitCode", "提交代码", "将工作目录中的代码变更提交到 Git",
-            "task", false, null, 5,
+            "code", false, null, 3,
             "{\"message\":\"string\",\"files\":\"string\"}");
 
-        log.info("ServerDev capabilities initialized: 5");
+        save(role, "debugCode", "调试代码", "调试代码问题",
+            "code", false, null, 4,
+            "{\"targetPath\":\"string\",\"issue\":\"string|required\"}");
+
+        save(role, "refactorCode", "重构代码", "重构代码以提高质量",
+            "code", false, null, 5,
+            "{\"targetPath\":\"string\",\"refactorType\":\"enum:extract,inline,movemethod,renames\"}");
+
+        // 测试能力
+        save(role, "runTests", "运行测试", "运行项目测试",
+            "testing", false, null, 10,
+            "{\"testType\":\"enum:unit,integration,all\",\"scope\":\"string\"}");
+
+        // 构建和部署能力
+        save(role, "buildProject", "构建项目", "构建项目",
+            "build", false, null, 20,
+            "{\"buildType\":\"enum:debug,release\",\"platform\":\"string\"}");
+
+        // 汇报能力
+        save(role, "reportProgress", "汇报进度", "向制作人汇报当前任务进度",
+            "communication", false, null, 30,
+            "{\"taskId\":\"string\",\"progress\":\"string|required\"}");
+
+        log.info("ServerDev capabilities initialized");
     }
 
     // ===== SystemPlanner 能力集 =====
@@ -344,7 +392,11 @@ public class CapabilityInitService {
             "communication", false, null, 5,
             "{\"taskId\":\"string\",\"progress\":\"string|required\"}");
 
-        log.info("SystemPlanner capabilities initialized: 5");
+        save(role, "decomposeTasks", "分解任务", "将里程碑分解为具体可执行的任务，包含输入/输出/验收标准",
+            "project_management", false, null, 6,
+            "{\"milestoneId\":\"string|required\",\"milestoneTitle\":\"string|required\",\"milestoneDescription\":\"string\",\"goal\":\"string\"}");
+
+        log.info("SystemPlanner capabilities initialized: 6");
     }
 
     // ===== NumericalPlanner 能力集 =====
@@ -428,31 +480,47 @@ public class CapabilityInitService {
     private void initTesterCapabilities() {
         String role = "tester";
 
+        // 测试计划和执行
         save(role, "createTestPlan", "制定测试计划", "为项目制定测试计划和测试用例",
-            "task", false, null, 1,
+            "testing", false, null, 1,
             "{\"testScope\":\"string|required\",\"testTypes\":\"enum:functional,performance,compatibility,security\",\"priority\":\"enum:high,medium,low\"}");
 
         save(role, "executeTest", "执行测试", "执行测试用例并记录结果",
-            "task", false, null, 2,
+            "testing", false, null, 2,
             "{\"testType\":\"enum:functional,performance,regression|required\",\"scope\":\"string\"}");
 
+        save(role, "runAutomatedTest", "运行自动化测试", "运行自动化测试脚本",
+            "testing", false, null, 3,
+            "{\"testScript\":\"string|required\",\"environment\":\"string\"}");
+
+        // 缺陷管理
         save(role, "reportBug", "报告缺陷", "发现 Bug 时创建缺陷报告",
-            "task", false, null, 3,
+            "testing", false, null, 10,
             "{\"title\":\"string|required\",\"severity\":\"enum:critical,high,medium,low|required\",\"steps\":\"string|required\",\"expected\":\"string\",\"actual\":\"string\"}");
 
-        save(role, "reviewTestResults", "审查测试结果", "审查测试报告，评估质量状态",
-            "task", false, null, 4,
-            "{\"testReportId\":\"string\",\"focus\":\"string\"}");
-
         save(role, "manageBugList", "管理缺陷列表", "查看和管理项目中的 Bug 列表",
-            "task", false, null, 5,
+            "testing", false, null, 11,
             "{\"action\":\"enum:list,assign,prioritize,close|required\",\"bugId\":\"string\",\"assignee\":\"string\"}");
 
+        // 质量分析
+        save(role, "reviewTestResults", "审查测试结果", "审查测试报告，评估质量状态",
+            "testing", false, null, 20,
+            "{\"testReportId\":\"string\",\"focus\":\"string\"}");
+
+        save(role, "analyzeQuality", "质量分析", "分析代码和测试质量",
+            "testing", false, null, 21,
+            "{\"scope\":\"enum:code,tests,coverage\",\"metrics\":\"string\"}");
+
+        save(role, "verifyGameQuality", "游戏质量验证", "验证游戏项目的质量",
+            "testing", false, null, 22,
+            "{\"projectDir\":\"string\",\"projectName\":\"string\"}");
+
+        // 汇报能力
         save(role, "reportProgress", "汇报进度", "向制作人汇报测试进度",
-            "communication", false, null, 6,
+            "communication", false, null, 30,
             "{\"taskId\":\"string\",\"progress\":\"string|required\"}");
 
-        log.info("Tester capabilities initialized: 6");
+        log.info("Tester capabilities initialized");
     }
 
     // ===== SecurityExpert 能力集 =====
@@ -852,21 +920,71 @@ public class CapabilityInitService {
             "narrative-planner", "level-design", "devops"};
 
         for (String role : roles) {
+            // ===== 通信能力 =====
             save(role, "sendMessage", "发送消息", "向其他 Agent 发送消息",
                 "communication", false, null, 20,
                 "{\"targetAgent\":\"string|required\",\"content\":\"string|required\",\"type\":\"string\"}");
 
+            save(role, "broadcastMessage", "广播消息", "向项目内所有 Agent 广播消息",
+                "communication", false, null, 21,
+                "{\"content\":\"string|required\",\"messageType\":\"enum:info,warning,urgent\"}");
+
+            save(role, "requestHelp", "请求帮助", "向其他 Agent 请求技术帮助",
+                "communication", false, null, 22,
+                "{\"targetAgent\":\"string\",\"question\":\"string|required\"}");
+
+            // ===== 知识管理能力 =====
             save(role, "saveKnowledge", "保存知识", "将知识保存到记忆系统",
-                "monitoring", false, null, 21,
+                "knowledge", false, null, 30,
                 "{\"key\":\"string|required\",\"value\":\"string|required\"}");
 
+            save(role, "loadKnowledge", "加载知识", "从记忆系统加载知识",
+                "knowledge", false, null, 31,
+                "{\"key\":\"string|required\"}");
+
+            save(role, "queryKnowledge", "查询知识", "查询知识库中的相关知识",
+                "knowledge", false, null, 32,
+                "{\"query\":\"string|required\",\"category\":\"string\"}");
+
+            // ===== 上下文管理能力 =====
             save(role, "compactContext", "压缩上下文", "压缩当前对话上下文以释放空间",
-                "monitoring", false, null, 22,
+                "context", false, null, 40,
                 "{}");
 
+            save(role, "recoverContext", "恢复上下文", "从快照恢复工作上下文",
+                "context", false, null, 41,
+                "{}");
+
+            // ===== 状态汇报能力 =====
             save(role, "reportStatus", "汇报状态", "向制作人汇报当前工作状态",
-                "communication", false, null, 23,
+                "communication", false, null, 50,
                 "{\"status\":\"string|required\",\"details\":\"string\"}");
+
+            save(role, "reportProgress", "汇报进度", "汇报任务进度",
+                "communication", false, null, 51,
+                "{\"taskId\":\"string\",\"progress\":\"string|required\"}");
+
+            // ===== 验证能力 =====
+            save(role, "verifyWithCriteria", "标准验证", "根据指定标准验证任务完成情况",
+                "verification", false, null, 60,
+                "{\"criteria\":\"array\",\"projectRoot\":\"string\",\"reportContent\":\"string\"}");
+
+            save(role, "verifyGameProject", "验证游戏项目", "验证游戏项目的结构完整性和代码质量",
+                "verification", false, null, 61,
+                "{\"projectDir\":\"string\",\"includeQualityAnalysis\":\"boolean|default=false\"}");
+
+            save(role, "verifyGameQuality", "深度质量分析", "使用 AI 深度分析游戏质量",
+                "verification", false, null, 62,
+                "{\"projectDir\":\"string\",\"projectName\":\"string\",\"projectGoal\":\"string\"}");
+
+            // ===== 任务管理能力 =====
+            save(role, "executeTask", "执行任务", "执行分配的任务",
+                "task", false, null, 70,
+                "{\"taskDescription\":\"string|required\"}");
+
+            save(role, "requestReview", "请求审查", "请求其他 Agent 审查工作成果",
+                "task", false, null, 71,
+                "{\"targetAgent\":\"string|required\",\"reviewContent\":\"string|required\"}");
         }
 
         log.info("Common capabilities initialized for {} roles", roles.length);

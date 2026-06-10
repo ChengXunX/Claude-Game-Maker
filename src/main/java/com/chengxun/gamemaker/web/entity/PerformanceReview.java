@@ -91,6 +91,10 @@ public class PerformanceReview {
     @Column(name = "overall_score")
     private Integer overallScore;
 
+    /** 角色权重配置（用于自定义角色，格式：quality:1.4,efficiency:1.2,collaboration:1.0,innovation:0.8） */
+    @Column(name = "role_weights", length = 200)
+    private String roleWeights;
+
     // ===== 评价内容 =====
 
     /** 优点 */
@@ -141,22 +145,144 @@ public class PerformanceReview {
     }
 
     /**
-     * 计算综合评分
+     * 计算综合评分（支持角色差异化权重）
+     *
+     * 不同角色的权重配置：
+     * - 开发类（server-dev, client-dev, ui-dev）：质量权重高
+     * - 策划类（system-planner, numerical-planner）：创新权重高
+     * - 测试类（tester）：质量权重最高
+     * - 其他：平均权重
      */
     public void calculateOverallScore() {
-        int total = 0;
-        int count = 0;
+        // 获取角色权重
+        double[] weights = getRoleWeights(agentRole);
 
-        if (qualityScore != null) { total += qualityScore; count++; }
-        if (efficiencyScore != null) { total += efficiencyScore; count++; }
-        if (collaborationScore != null) { total += collaborationScore; count++; }
-        if (innovationScore != null) { total += innovationScore; count++; }
+        double weightedSum = 0;
+        double totalWeight = 0;
 
-        if (count > 0) {
-            this.overallScore = total / count;
+        if (qualityScore != null) {
+            weightedSum += qualityScore * weights[0];
+            totalWeight += weights[0];
+        }
+        if (efficiencyScore != null) {
+            weightedSum += efficiencyScore * weights[1];
+            totalWeight += weights[1];
+        }
+        if (collaborationScore != null) {
+            weightedSum += collaborationScore * weights[2];
+            totalWeight += weights[2];
+        }
+        if (innovationScore != null) {
+            weightedSum += innovationScore * weights[3];
+            totalWeight += weights[3];
+        }
+
+        if (totalWeight > 0) {
+            this.overallScore = (int) Math.round(weightedSum / totalWeight);
         } else {
             this.overallScore = 0;
         }
+    }
+
+    /**
+     * 角色权重缓存（支持自定义角色配置）
+     * key: 角色名称
+     * value: [质量权重, 效率权重, 协作权重, 创新权重]
+     */
+    private static final java.util.Map<String, double[]> ROLE_WEIGHTS = new java.util.HashMap<>();
+
+    // 预设角色权重
+    static {
+        // 开发类：质量优先
+        ROLE_WEIGHTS.put("server-dev", new double[]{1.4, 1.2, 1.0, 0.8});
+        ROLE_WEIGHTS.put("client-dev", new double[]{1.4, 1.2, 1.0, 0.8});
+        ROLE_WEIGHTS.put("ui-dev", new double[]{1.4, 1.2, 1.0, 0.8});
+        // 策划类：创新优先
+        ROLE_WEIGHTS.put("system-planner", new double[]{1.0, 0.8, 1.2, 1.4});
+        ROLE_WEIGHTS.put("numerical-planner", new double[]{1.0, 0.8, 1.2, 1.4});
+        // 测试类：质量最高
+        ROLE_WEIGHTS.put("tester", new double[]{1.6, 1.0, 1.0, 0.6});
+        // Git专员：效率优先
+        ROLE_WEIGHTS.put("git-commit", new double[]{1.0, 1.4, 1.0, 0.8});
+        // 制作人：均衡
+        ROLE_WEIGHTS.put("producer", new double[]{1.0, 1.0, 1.2, 1.0});
+    }
+
+    /**
+     * 获取角色权重配置
+     * 返回数组：[质量权重, 效率权重, 协作权重, 创新权重]
+     *
+     * 优先级：
+     * 1. 自定义配置（从数据库/配置文件加载）
+     * 2. 预设角色权重
+     * 3. 默认平均权重
+     */
+    private double[] getRoleWeights(String role) {
+        if (role == null) return new double[]{1.0, 1.0, 1.0, 1.0};
+
+        // 先查预设权重
+        double[] weights = ROLE_WEIGHTS.get(role);
+        if (weights != null) {
+            return weights;
+        }
+
+        // 自定义角色使用默认平均权重
+        // 可以通过 roleWeights 字段覆盖
+        if (this.roleWeights != null && !this.roleWeights.isEmpty()) {
+            return parseRoleWeights(this.roleWeights);
+        }
+
+        // 默认平均权重
+        return new double[]{1.0, 1.0, 1.0, 1.0};
+    }
+
+    /**
+     * 解析权重配置字符串
+     * 格式：quality:1.4,efficiency:1.2,collaboration:1.0,innovation:0.8
+     */
+    private double[] parseRoleWeights(String weightsStr) {
+        double[] weights = new double[]{1.0, 1.0, 1.0, 1.0};
+        try {
+            String[] parts = weightsStr.split(",");
+            for (String part : parts) {
+                String[] kv = part.split(":");
+                if (kv.length == 2) {
+                    String key = kv[0].trim();
+                    double value = Double.parseDouble(kv[1].trim());
+                    switch (key) {
+                        case "quality" -> weights[0] = value;
+                        case "efficiency" -> weights[1] = value;
+                        case "collaboration" -> weights[2] = value;
+                        case "innovation" -> weights[3] = value;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            // 解析失败使用默认权重
+        }
+        return weights;
+    }
+
+    /**
+     * 动态添加角色权重配置
+     * 用于自定义角色注册时设置权重
+     *
+     * @param role 角色名称
+     * @param qualityWeight 质量权重
+     * @param efficiencyWeight 效率权重
+     * @param collaborationWeight 协作权重
+     * @param innovationWeight 创新权重
+     */
+    public static void registerRoleWeights(String role, double qualityWeight, double efficiencyWeight,
+                                            double collaborationWeight, double innovationWeight) {
+        ROLE_WEIGHTS.put(role, new double[]{qualityWeight, efficiencyWeight, collaborationWeight, innovationWeight});
+    }
+
+    /**
+     * 获取所有已配置的角色权重
+     */
+    public static java.util.Map<String, double[]> getAllRoleWeights() {
+        return new java.util.HashMap<>(ROLE_WEIGHTS);
     }
 
     /**
@@ -231,6 +357,9 @@ public class PerformanceReview {
 
     public Integer getOverallScore() { return overallScore; }
     public void setOverallScore(Integer overallScore) { this.overallScore = overallScore; }
+
+    public String getRoleWeights() { return roleWeights; }
+    public void setRoleWeights(String roleWeights) { this.roleWeights = roleWeights; }
 
     public String getStrengths() { return strengths; }
     public void setStrengths(String strengths) { this.strengths = strengths; }

@@ -672,6 +672,7 @@ CREATE TABLE IF NOT EXISTS `api_tokens` (
   `api_url` varchar(500) DEFAULT NULL,
   `model` varchar(100) DEFAULT NULL,
   `max_tokens` int DEFAULT NULL,
+  `context_window` int DEFAULT 200000,
   `priority` varchar(20) DEFAULT NULL,
   `agent_tags` varchar(500) DEFAULT NULL,
   `assigned_agent_id` varchar(50) DEFAULT NULL,

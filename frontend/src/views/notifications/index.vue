@@ -96,6 +96,8 @@ const LINK_MAP = {
   'TASK': '/agents',
   'AGENT': '/agents',
   'SYSTEM': '/admin/settings',
+  'APPROVAL': '/approvals',
+  'EMAIL_CHANGE': '/profile',
   'INFO': null,
   'WARNING': null,
   'ERROR': null,

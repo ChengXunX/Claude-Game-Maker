@@ -1,808 +1,307 @@
 ---
-name: game-template-party-coop
-description: 派对合作游戏模板 - 类似胡闹厨房的多人合作游戏，支持多设备联机
-category: game-template
-triggerPattern: party, 派对, coop, 合作, overcooked, 胡闹厨房, multiplayer, 联机, cook, 烹饪, kitchen, 厨房
+name: 派对合作游戏开发模板
+description: 派对合作游戏开发模板，适用于胡闹厨房、多人合作类游戏
+trigger: party, 派对, coop, 合作, overcooked, 胡闹厨房, multiplayer, 联机, cook, 烹饪
+examples: 胡闹厨房|Overcooked|Moving Out|Tools Up|Unrailed
 ---
 
-# 派对合作游戏模板（胡闹厨房风格）
+# 派对合作游戏开发模板
 
-## 概述
+## 游戏设计核心原则
 
-完整的多人合作派对游戏模板，类似《胡闹厨房》(Overcooked)。支持：
-- **多人联机**：WebSocket 实时通信，支持 2-4 人
-- **订单系统**：动态生成订单，限时完成
-- **厨房系统**：切菜、烹饪、装盘、上菜流程
-- **协作机制**：玩家分工合作，传递食材
-- **关卡系统**：多种厨房布局，递增难度
-- **计分系统**：小费、连击、评价
-
-## 项目结构
-
+### 核心循环（每关 3-5 分钟）
 ```
-game-party-coop/
-├── index.html
-├── package.json
-├── server/
-│   └── index.js              # Socket.IO 服务端
-├── src/
-│   ├── main.js
-│   ├── config.js
-│   ├── scenes/
-│   │   ├── BootScene.js
-│   │   ├── MenuScene.js
-│   │   ├── LobbyScene.js     # 大厅（创建/加入房间）
-│   │   ├── GameScene.js      # 游戏场景
-│   │   └── ResultScene.js    # 结果场景
-│   ├── entities/
-│   │   ├── Player.js          # 玩家角色
-│   │   ├── Kitchen.js         # 厨房
-│   │   ├── Station.js         # 工作台（切菜台、灶台等）
-│   │   ├── Ingredient.js      # 食材
-│   │   ├── Dish.js            # 菜品
-│   │   └── Order.js           # 订单
-│   ├── systems/
-│   │   ├── OrderSystem.js     # 订单系统
-│   │   ├── CookingSystem.js   # 烹饪系统
-│   │   ├── ScoreSystem.js     # 计分系统
-│   │   ├── TimerSystem.js     # 计时系统
-│   │   └── SyncSystem.js      # 同步系统
-│   ├── network/
-│   │   ├── SocketManager.js   # Socket 管理
-│   │   └── StateSync.js       # 状态同步
-│   ├── data/
-│   │   ├── recipes.js         # 食谱数据
-│   │   ├── levels.js          # 关卡数据
-│   │   └── ingredients.js     # 食材数据
-│   └── ui/
-│       ├── HUD.js
-│       ├── OrderBoard.js      # 订单板
-│       ├── ScoreBoard.js      # 计分板
-│       └── MiniMap.js         # 小地图
-└── assets/
+接单 → 分工合作 → 完成任务 → 得分 → 下一关
+```
+- **合作性**：必须多人配合
+- **紧张感**：时间紧迫
+- **欢乐感**：失败也很有趣
+
+### 玩家心理学
+- **"合作成功"的成就感**：和朋友一起通关
+- **"手忙脚乱"的欢乐感**：混乱中的乐趣
+- **"分工配合"的默契感**：完美配合的爽感
+- **"搞笑失败"的乐趣**：失败也很有趣
+
+### 派对游戏设计要点
+```
+派对核心：
+1. 简单操作：任何人都能玩
+2. 必须合作：单人无法完成
+3. 时间紧迫：增加紧张感
+4. 欢乐氛围：失败也要有趣
 ```
 
-## 核心代码
+## 核心系统设计
 
-### 1. 游戏配置 (config.js)
-
+### 1. 订单系统
 ```javascript
-export const GAME_CONFIG = {
-  width: 1200,
-  height: 800,
-  maxPlayers: 4,
-  roundTime: 180,           // 回合时间（秒）
-  orderTimeout: 60,         // 订单超时（秒）
-  maxActiveOrders: 5,       // 最大活跃订单数
-  tileSize: 48,             // 地图格子大小
-  playerSpeed: 200,         // 玩家移动速度
-  carryCapacity: 1,         // 携带食材数量
-  chopTime: 3000,           // 切菜时间（毫秒）
-  cookTime: 5000,           // 烹饪时间（毫秒）
-  washTime: 2000,           // 洗碗时间（毫秒）
-  scorePerDish: 50,         // 每道菜基础分
-  comboBonus: 1.5,          // 连击加成倍数
-  tipMultiplier: 0.1,       // 小费倍数（每剩余秒）
-  levels: [
-    { id: 1, name: '新手厨房', players: 2, orders: 5 },
-    { id: 2, name: '双人厨房', players: 2, orders: 8 },
-    { id: 3, name: '团队厨房', players: 4, orders: 12 },
-    { id: 4, name: '混乱厨房', players: 4, orders: 15, obstacles: true },
-    { id: 5, name: '地狱厨房', players: 4, orders: 20, obstacles: true, moving: true }
-  ]
-}
-```
-
-### 2. 食谱数据 (recipes.js)
-
-```javascript
-export const RECIPES = {
-  salad: {
-    name: '沙拉',
-    ingredients: ['lettuce', 'tomato'],
-    steps: ['chop', 'chop', 'plate'],
-    time: 30,
-    score: 30,
-    difficulty: 1
-  },
-  burger: {
-    name: '汉堡',
-    ingredients: ['bun', 'patty', 'lettuce'],
-    steps: ['cook', 'chop', 'assemble'],
-    time: 45,
-    score: 50,
-    difficulty: 2
-  },
-  pizza: {
-    name: '披萨',
-    ingredients: ['dough', 'cheese', 'tomato'],
-    steps: ['roll', 'assemble', 'cook'],
-    time: 60,
-    score: 70,
-    difficulty: 3
-  },
-  sushi: {
-    name: '寿司',
-    ingredients: ['rice', 'fish', 'seaweed'],
-    steps: ['cook', 'slice', 'roll'],
-    time: 50,
-    score: 60,
-    difficulty: 2
-  },
-  steak: {
-    name: '牛排',
-    ingredients: ['beef', 'potato'],
-    steps: ['cook', 'cook', 'plate'],
-    time: 40,
-    score: 80,
-    difficulty: 3
-  },
-  pasta: {
-    name: '意面',
-    ingredients: ['pasta', 'tomato', 'cheese'],
-    steps: ['cook', 'cook', 'plate'],
-    time: 55,
-    score: 65,
-    difficulty: 2
-  }
-}
-```
-
-### 3. 玩家角色 (Player.js)
-
-```javascript
-export class Player extends Phaser.Physics.Arcade.Sprite {
-  constructor(scene, x, y, playerData) {
-    super(scene, x, y, 'player')
-    this.playerId = playerData.id
-    this.playerName = playerData.name
-    this.playerIndex = playerData.index
-    this.speed = GAME_CONFIG.playerSpeed
-    this.carrying = null          // 携带的食材/菜品
-    this.currentStation = null    // 当前交互的工作台
-    this.isChopping = false
-    this.isCooking = false
-    this.score = 0
-    this.dishesServed = 0
-
-    // 玩家颜色
-    this.colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4']
-    this.setTint(Phaser.Display.Color.HexStringToColor(this.colors[playerIndex]).color)
-  }
-
-  update(cursors) {
-    if (this.isChopping || this.isCooking) return
-
-    let vx = 0, vy = 0
-    if (cursors.left.isDown) vx = -this.speed
-    if (cursors.right.isDown) vx = this.speed
-    if (cursors.up.isDown) vy = -this.speed
-    if (cursors.down.isDown) vy = this.speed
-    this.setVelocity(vx, vy)
-
-    // 更新动画
-    this.updateAnimation(vx, vy)
-  }
-
-  updateAnimation(vx, vy) {
-    if (vx === 0 && vy === 0) {
-      this.play('idle', true)
-    } else if (Math.abs(vx) > Math.abs(vy)) {
-      this.play(vx > 0 ? 'walk-right' : 'walk-left', true)
-    } else {
-      this.play(vy > 0 ? 'walk-down' : 'walk-up', true)
-    }
-  }
-
-  // 交互：拿起/放下
-  interact() {
-    if (this.carrying) {
-      this.tryPlace()
-    } else {
-      this.tryPickup()
-    }
-  }
-
-  tryPickup() {
-    if (!this.currentStation) return false
-
-    const item = this.currentStation.takeItem()
-    if (item) {
-      this.carrying = item
-      this.updateCarryDisplay()
-      return true
-    }
-    return false
-  }
-
-  tryPlace() {
-    if (!this.currentStation) return false
-
-    const placed = this.currentStation.placeItem(this.carrying)
-    if (placed) {
-      this.carrying = null
-      this.updateCarryDisplay()
-
-      // 触发工作台处理
-      this.currentStation.process()
-      return true
-    }
-    return false
-  }
-
-  updateCarryDisplay() {
-    // 更新头顶显示的食材图标
-    if (this.carrySprite) this.carrySprite.destroy()
-
-    if (this.carrying) {
-      this.carrySprite = this.scene.add.image(0, -20, this.carrying.type)
-      this.add(this.carrySprite)
-    }
-  }
-
-  startChopping(station) {
-    if (this.isChopping) return
-    this.isChopping = true
-    this.setVelocity(0, 0)
-
-    // 进度条
-    this.progressBar = this.scene.add.graphics()
-    this.updateProgress(0)
-
-    const chopInterval = setInterval(() => {
-      this.chopProgress = (this.chopProgress || 0) + 10
-      this.updateProgress(this.chopProgress)
-
-      if (this.chopProgress >= 100) {
-        clearInterval(chopInterval)
-        this.finishChopping(station)
-      }
-    }, GAME_CONFIG.chopTime / 10)
-  }
-
-  finishChopping(station) {
-    this.isChopping = false
-    this.chopProgress = 0
-    if (this.progressBar) this.progressBar.destroy()
-
-    station.completeChop()
-  }
-}
-```
-
-### 4. 工作台 (Station.js)
-
-```javascript
-export class Station extends Phaser.GameObjects.Container {
-  constructor(scene, x, y, type) {
-    super(scene, x, y)
-    this.stationType = type
-    this.items = []
-    this.processing = false
-    this.processProgress = 0
-
-    // 工作台图像
-    this.image = scene.add.image(0, 0, `station-${type}`)
-    this.add(this.image)
-
-    // 交互提示
-    this.interactHint = scene.add.text(0, -30, '', {
-      fontSize: '12px',
-      backgroundColor: '#00000088',
-      color: '#fff',
-      padding: { x: 4, y: 2 }
-    })
-    this.add(this.interactHint)
-    this.interactHint.setVisible(false)
-
-    scene.add.existing(this)
-  }
-
-  canAccept(item) {
-    switch (this.stationType) {
-      case 'chop':
-        return item.needsChop && !this.processing
-      case 'stove':
-        return item.needsCook && !this.processing
-      case 'plate':
-        return item.readyToPlate
-      case 'sink':
-        return item.needsWash
-      case 'trash':
-        return true
-      case 'counter':
-        return this.items.length < 3
-      default:
-        return false
-    }
-  }
-
-  placeItem(item) {
-    if (!this.canAccept(item)) return false
-
-    this.items.push(item)
-    this.updateDisplay()
-    return true
-  }
-
-  takeItem() {
-    if (this.items.length === 0) return null
-    if (this.processing) return null
-
-    const item = this.items.pop()
-    this.updateDisplay()
-    return item
-  }
-
-  process() {
-    if (this.processing || this.items.length === 0) return
-
-    const item = this.items[this.items.length - 1]
-
-    switch (this.stationType) {
-      case 'chop':
-        this.startChopping(item)
-        break
-      case 'stove':
-        this.startCooking(item)
-        break
-      case 'plate':
-        this.plateDish(item)
-        break
-    }
-  }
-
-  startChopping(item) {
-    this.processing = true
-    this.processProgress = 0
-
-    // 播放切菜动画
-    this.playChopAnimation()
-
-    const interval = setInterval(() => {
-      this.processProgress += 10
-      this.updateProgressDisplay(this.processProgress)
-
-      if (this.processProgress >= 100) {
-        clearInterval(interval)
-        item.chopped = true
-        item.needsChop = false
-        this.processing = false
-        this.updateDisplay()
-      }
-    }, GAME_CONFIG.chopTime / 10)
-  }
-
-  startCooking(item) {
-    this.processing = true
-    this.processProgress = 0
-
-    const interval = setInterval(() => {
-      this.processProgress += 10
-      this.updateProgressDisplay(this.processProgress)
-
-      if (this.processProgress >= 100) {
-        clearInterval(interval)
-        item.cooked = true
-        item.needsCook = false
-        this.processing = false
-        this.updateDisplay()
-      }
-    }, GAME_CONFIG.cookTime / 10)
-  }
-}
-```
-
-### 5. 订单系统 (OrderSystem.js)
-
-```javascript
-export class OrderSystem {
-  constructor(scene) {
-    this.scene = scene
-    this.orders = []
-    this.completedOrders = 0
-    this.failedOrders = 0
-    this.maxOrders = GAME_CONFIG.maxActiveOrders
-    this.comboCount = 0
-  }
-
-  generateOrder() {
-    if (this.orders.length >= this.maxOrders) return null
-
-    const recipes = Object.keys(RECIPES)
-    const recipeKey = recipes[Math.floor(Math.random() * recipes.length)]
-    const recipe = RECIPES[recipeKey]
-
-    const order = {
-      id: `order-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
-      recipe: recipeKey,
-      recipeName: recipe.name,
-      ingredients: [...recipe.ingredients],
-      status: 'pending',
-      createdAt: Date.now(),
-      timeout: GAME_CONFIG.orderTimeout * 1000,
-      score: recipe.score
-    }
-
-    this.orders.push(order)
-    this.scene.events.emit('newOrder', order)
-
-    return order
-  }
-
-  completeOrder(orderId, servedDish) {
-    const order = this.orders.find(o => o.id === orderId)
-    if (!order) return null
-
-    // 验证菜品
-    if (!this.validateDish(order, servedDish)) {
-      return { success: false, reason: 'wrong_dish' }
-    }
-
-    // 计算分数
-    const elapsed = Date.now() - order.createdAt
-    const remaining = Math.max(0, order.timeout - elapsed)
-    const tip = Math.floor(remaining * GAME_CONFIG.tipMultiplier)
-
-    // 连击加成
-    this.comboCount++
-    const comboMultiplier = Math.min(3, 1 + (this.comboCount - 1) * 0.5)
-
-    const score = Math.floor((order.score + tip) * comboMultiplier)
-
-    // 更新状态
-    order.status = 'completed'
-    order.completedAt = Date.now()
-    order.scoreEarned = score
-
-    this.completedOrders++
-
-    this.scene.events.emit('orderCompleted', {
-      order,
-      score,
-      combo: this.comboCount,
-      tip
-    })
-
-    // 清理已完成订单
-    this.orders = this.orders.filter(o => o.id !== orderId)
-
-    return { success: true, score, combo: this.comboCount }
-  }
-
-  validateDish(order, dish) {
-    if (!dish) return false
-    const recipe = RECIPES[order.recipe]
-    if (!recipe) return false
-
-    // 检查食材是否匹配
-    const required = [...recipe.ingredients].sort()
-    const provided = [...dish.ingredients].sort()
-
-    if (required.length !== provided.length) return false
-    return required.every((ing, i) => ing === provided[i])
-  }
-
-  checkTimeouts() {
-    const now = Date.now()
-    const expired = this.orders.filter(o =>
-      o.status === 'pending' && (now - o.createdAt) > o.timeout
-    )
-
-    expired.forEach(order => {
-      order.status = 'failed'
-      this.failedOrders++
-      this.comboCount = 0 // 断连击
-      this.scene.events.emit('orderExpired', order)
-    })
-
-    this.orders = this.orders.filter(o => o.status !== 'failed')
-  }
-
-  getActiveOrders() {
-    return this.orders.filter(o => o.status === 'pending')
-  }
-}
-```
-
-### 6. 游戏场景 (GameScene.js)
-
-```javascript
-export class GameScene extends Phaser.Scene {
+class OrderSystem {
   constructor() {
-    super('GameScene')
+    this.orders = [];
+    this.maxOrders = 5;
+    this.orderTimer = 0;
+    this.orderInterval = 10; // 每 10 秒一个新订单
   }
-
-  init(data) {
-    this.roomId = data.roomId
-    this.players = data.players
-    this.levelId = data.levelId || 1
-    this.level = GAME_CONFIG.levels.find(l => l.id === this.levelId)
-  }
-
-  create() {
-    // 创建厨房地图
-    this.createKitchen()
-
-    // 创建玩家
-    this.createPlayers()
-
-    // 创建订单系统
-    this.orderSystem = new OrderSystem(this)
-    this.setupOrderGeneration()
-
-    // 创建计分系统
-    this.scoreSystem = new ScoreSystem(this)
-
-    // 创建计时系统
-    this.timerSystem = new TimerSystem(this, GAME_CONFIG.roundTime)
-    this.timerSystem.onTimeUp(() => this.endRound())
-    this.timerSystem.start()
-
-    // 设置输入
-    this.setupInput()
-
-    // 设置碰撞
-    this.setupCollisions()
-
-    // 创建 UI
-    this.hud = new HUD(this)
-    this.orderBoard = new OrderBoard(this)
-    this.scoreBoard = new ScoreBoard(this)
-
-    // 网络同步
-    this.setupNetworkSync()
-  }
-
-  createKitchen() {
-    const levelData = this.getLevelData()
-
-    // 创建地面
-    this.add.tileSprite(0, 0, GAME_CONFIG.width, GAME_CONFIG.height, 'floor')
-
-    // 创建墙壁
-    this.walls = this.physics.add.staticGroup()
-    levelData.walls.forEach(wall => {
-      this.walls.create(wall.x, wall.y, 'wall')
-    })
-
-    // 创建工作台
-    this.stations = []
-    levelData.stations.forEach(stationData => {
-      const station = new Station(this, stationData.x, stationData.y, stationData.type)
-      this.stations.push(station)
-    })
-
-    // 创建上菜窗口
-    this.servingWindow = new ServingWindow(this, levelData.servingWindow.x, levelData.servingWindow.y)
-
-    // 创建障碍物（高级关卡）
-    if (levelData.obstacles) {
-      this.obstacles = this.physics.add.group()
-      levelData.obstacles.forEach(obs => {
-        const obstacle = this.physics.add.image(obs.x, obs.y, obs.type)
-        obstacle.body.setImmovable(true)
-        this.obstacles.add(obstacle)
-      })
+  
+  update(delta) {
+    this.orderTimer += delta;
+    
+    if (this.orderTimer >= this.orderInterval && this.orders.length < this.maxOrders) {
+      this.generateOrder();
+      this.orderTimer = 0;
+    }
+    
+    // 检查订单超时
+    for (const order of this.orders) {
+      order.timer -= delta;
+      if (order.timer <= 0) {
+        this.failOrder(order);
+      }
     }
   }
-
-  createPlayers() {
-    this.playerGroup = this.physics.add.group()
-    const spawnPoints = this.getLevelData().spawnPoints
-
-    this.players.forEach((playerData, index) => {
-      const spawn = spawnPoints[index]
-      const player = new Player(this, spawn.x, spawn.y, {
-        ...playerData,
-        index
-      })
-
-      this.playerGroup.add(player)
-
-      if (playerData.isLocal) {
-        this.localPlayer = player
-      }
-    })
+  
+  generateOrder() {
+    const recipes = Object.values(RECIPES);
+    const recipe = recipes[Math.floor(Math.random() * recipes.length)];
+    
+    this.orders.push({
+      id: this.generateId(),
+      recipe: recipe,
+      timer: recipe.timeLimit,
+      status: 'waiting'
+    });
   }
-
-  setupInput() {
-    // 键盘输入
-    this.cursors = this.input.keyboard.createCursorKeys()
-    this.spaceKey = this.input.keyboard.addKey('SPACE')
-    this.eKey = this.input.keyboard.addKey('E')
-
-    // 交互键
-    this.eKey.on('down', () => {
-      this.localPlayer?.interact()
-    })
-
-    // 丢弃键
-    this.spaceKey.on('down', () => {
-      this.localPlayer?.drop()
-    })
-  }
-
-  setupNetworkSync() {
-    // 同步玩家位置
-    this.time.addEvent({
-      delay: 50, // 20fps
-      callback: () => {
-        if (this.localPlayer) {
-          SocketManager.sendMove({
-            x: this.localPlayer.x,
-            y: this.localPlayer.y,
-            carrying: this.localPlayer.carrying?.type
-          })
-        }
-      },
-      loop: true
-    })
-
-    // 接收其他玩家位置
-    SocketManager.onPlayerMoved((data) => {
-      const player = this.findPlayer(data.playerId)
-      if (player) {
-        this.tweens.add({
-          targets: player,
-          x: data.x,
-          y: data.y,
-          duration: 50,
-          ease: 'Linear'
-        })
-      }
-    })
-  }
-
-  update() {
-    this.localPlayer?.update(this.cursors)
-    this.orderSystem?.checkTimeouts()
-    this.hud?.update()
-    this.orderBoard?.update()
-  }
-
-  endRound() {
-    const stats = {
-      completed: this.orderSystem.completedOrders,
-      failed: this.orderSystem.failedOrders,
-      totalScore: this.scoreSystem.totalScore,
-      level: this.levelId
+  
+  completeOrder(orderId, dish) {
+    const order = this.orders.find(o => o.id === orderId);
+    if (!order) return false;
+    
+    if (this.matchRecipe(order.recipe, dish)) {
+      order.status = 'completed';
+      this.addScore(order.recipe.score);
+      this.removeOrder(orderId);
+      return true;
     }
-
-    this.scene.start('ResultScene', stats)
+    
+    return false;
   }
 }
+
+const RECIPES = {
+  burger: { name: '汉堡', ingredients: ['bun', 'meat', 'lettuce'], timeLimit: 30, score: 100 },
+  pizza: { name: '披萨', ingredients: ['dough', 'cheese', 'tomato'], timeLimit: 45, score: 150 },
+  salad: { name: '沙拉', ingredients: ['lettuce', 'tomato', 'cucumber'], timeLimit: 20, score: 80 }
+};
 ```
 
-### 7. Socket.IO 服务端 (server/index.js)
-
+### 2. 厨房系统
 ```javascript
-const io = require('socket.io')(3000, {
-  cors: { origin: '*' }
-})
-
-const rooms = new Map()
-
-io.on('connection', (socket) => {
-  console.log(`Player connected: ${socket.id}`)
-
-  socket.on('createRoom', (data) => {
-    const room = {
-      id: generateRoomId(),
-      host: socket.id,
-      players: [{ id: socket.id, name: data.playerName, ready: false }],
-      levelId: data.levelId || 1,
-      state: 'waiting'
+class KitchenSystem {
+  constructor() {
+    this.stations = [];
+    this.items = [];
+  }
+  
+  addStation(config) {
+    this.stations.push({
+      id: config.id,
+      type: config.type, // cutting, cooking, plating, washing
+      position: config.position,
+      occupied: false,
+      currentItem: null
+    });
+  }
+  
+  placeItem(stationId, item) {
+    const station = this.stations.find(s => s.id === stationId);
+    if (!station || station.occupied) return false;
+    
+    station.currentItem = item;
+    station.occupied = true;
+    
+    return true;
+  }
+  
+  processItem(stationId) {
+    const station = this.stations.find(s => s.id === stationId);
+    if (!station || !station.occupied) return null;
+    
+    const item = station.currentItem;
+    
+    switch (station.type) {
+      case 'cutting':
+        item.state = 'cut';
+        break;
+      case 'cooking':
+        item.state = 'cooked';
+        break;
+      case 'plating':
+        item.state = 'plated';
+        break;
     }
-    rooms.set(room.id, room)
-    socket.join(room.id)
-    socket.roomId = room.id
-    socket.emit('roomCreated', room)
-  })
-
-  socket.on('joinRoom', (data) => {
-    const room = rooms.get(data.roomId)
-    if (!room) {
-      socket.emit('error', { message: '房间不存在' })
-      return
-    }
-    if (room.players.length >= 4) {
-      socket.emit('error', { message: '房间已满' })
-      return
-    }
-
-    room.players.push({ id: socket.id, name: data.playerName, ready: false })
-    socket.join(room.id)
-    socket.roomId = room.id
-    io.to(room.id).emit('playerJoined', room)
-  })
-
-  socket.on('playerReady', () => {
-    const room = rooms.get(socket.roomId)
-    if (!room) return
-
-    const player = room.players.find(p => p.id === socket.id)
-    if (player) player.ready = true
-
-    // 检查是否所有玩家准备就绪
-    if (room.players.length >= 2 && room.players.every(p => p.ready)) {
-      room.state = 'playing'
-      io.to(room.id).emit('gameStart', { roomId: room.id, players: room.players })
-    }
-  })
-
-  socket.on('playerMove', (data) => {
-    socket.to(socket.roomId).emit('playerMoved', {
-      playerId: socket.id,
-      ...data
-    })
-  })
-
-  socket.on('orderCompleted', (data) => {
-    io.to(socket.roomId).emit('orderCompleted', {
-      playerId: socket.id,
-      ...data
-    })
-  })
-
-  socket.on('dishServed', (data) => {
-    io.to(socket.roomId).emit('dishServed', {
-      playerId: socket.id,
-      ...data
-    })
-  })
-
-  socket.on('disconnect', () => {
-    const room = rooms.get(socket.roomId)
-    if (room) {
-      room.players = room.players.filter(p => p.id !== socket.id)
-      io.to(socket.roomId).emit('playerLeft', { playerId: socket.id })
-      if (room.players.length === 0) {
-        rooms.delete(socket.roomId)
-      }
-    }
-  })
-})
-
-function generateRoomId() {
-  return Math.random().toString(36).substr(2, 6).toUpperCase()
+    
+    return item;
+  }
 }
 ```
 
-## 游戏玩法
+### 3. 角色系统
+```javascript
+class ChefSystem {
+  constructor() {
+    this.chefs = [];
+  }
+  
+  addChef(config) {
+    this.chefs.push({
+      id: config.id,
+      name: config.name,
+      position: config.position,
+      speed: config.speed,
+      carrying: null,
+      action: null
+    });
+  }
+  
+  pickUp(chefId, itemId) {
+    const chef = this.chefs.find(c => c.id === chefId);
+    if (!chef || chef.carrying) return false;
+    
+    chef.carrying = itemId;
+    return true;
+  }
+  
+  putDown(chefId, stationId) {
+    const chef = this.chefs.find(c => c.id === chefId);
+    if (!chef || !chef.carrying) return false;
+    
+    const station = this.stations.find(s => s.id === stationId);
+    if (!station) return false;
+    
+    this.placeItem(stationId, chef.carrying);
+    chef.carrying = null;
+    
+    return true;
+  }
+  
+  useStation(chefId, stationId) {
+    const chef = this.chefs.find(c => c.id === chefId);
+    if (!chef) return false;
+    
+    const station = this.stations.find(s => s.id === stationId);
+    if (!station || station.occupied) return false;
+    
+    chef.action = 'using_station';
+    this.processItem(stationId);
+    
+    return true;
+  }
+}
+```
 
-1. **创建/加入房间**：玩家创建房间或输入房间号加入
-2. **选择关卡**：房主选择厨房关卡
-3. **游戏开始**：所有玩家准备后自动开始
-4. **合作完成订单**：
-   - 从冰箱取食材
-   - 在切菜台切菜
-   - 在灶台烹饪
-   - 装盘后送到上菜窗口
-5. **计分**：根据完成速度和连击计算分数
-6. **结算**：时间结束后显示成绩
+### 4. 评分系统
+```javascript
+class ScoringSystem {
+  constructor() {
+    this.score = 0;
+    this.combo = 0;
+    this.maxCombo = 0;
+  }
+  
+  addScore(amount) {
+    this.combo++;
+    this.maxCombo = Math.max(this.maxCombo, this.combo);
+    
+    const bonus = Math.floor(amount * (1 + this.combo * 0.1));
+    this.score += bonus;
+    
+    this.showScorePopup(bonus);
+  }
+  
+  resetCombo() {
+    this.combo = 0;
+  }
+  
+  getStarRating() {
+    const thresholds = this.getLevelThresholds();
+    
+    if (this.score >= thresholds.three) return 3;
+    if (this.score >= thresholds.two) return 2;
+    if (this.score >= thresholds.one) return 1;
+    return 0;
+  }
+}
+```
 
-## 操作说明
+### 5. 关卡系统
+```javascript
+class LevelSystem {
+  constructor() {
+    this.currentLevel = 1;
+    this.levels = LEVELS;
+  }
+  
+  getLevelConfig() {
+    return this.levels[this.currentLevel - 1];
+  }
+  
+  checkLevelComplete() {
+    const config = this.getLevelConfig();
+    return this.score >= config.targetScore;
+  }
+  
+  advanceLevel() {
+    this.currentLevel++;
+    this.loadLevel(this.getLevelConfig());
+  }
+}
 
-| 按键 | 功能 |
-|------|------|
-| 方向键 | 移动 |
-| E | 交互（拿起/放下/切菜） |
-| 空格 | 丢弃食材 |
+const LEVELS = [
+  { level: 1, name: '入门厨房', targetScore: 100, orderInterval: 15, maxOrders: 3 },
+  { level: 2, name: '双人厨房', targetScore: 200, orderInterval: 12, maxOrders: 4 },
+  { level: 3, name: '忙碌厨房', targetScore: 350, orderInterval: 10, maxOrders: 5 },
+  { level: 4, name: '混乱厨房', targetScore: 500, orderInterval: 8, maxOrders: 6 },
+  { level: 5, name: '地狱厨房', targetScore: 700, orderInterval: 6, maxOrders: 7 }
+];
+```
 
-## 使用方法
+## 迭代策略
 
-1. 启动服务端 `node server/index.js`
-2. 启动客户端 `npm run dev`
-3. 多个浏览器/设备访问
-4. 创建房间或加入房间
-5. 开始游戏
+### 第一版：基础厨房
+- 1 种菜谱
+- 简单厨房
+- 双人合作
+- 基础 UI
 
-## 扩展点
+### 第二版：订单系统
+- 多种菜谱
+- 订单系统
+- 计时系统
+- 计分系统
 
-- 添加新食谱：在 `recipes.js` 中定义
-- 添加新关卡：在 `levels.js` 中定义
-- 添加新食材：在 `ingredients.js` 中定义
-- 添加成就系统：创建 `AchievementManager`
-- 添加排行榜：创建 `LeaderboardManager`
-- 添加语音聊天：集成 WebRTC
+### 第三版：厨房扩展
+- 多种厨房
+- 特殊机制
+- 道具系统
+- 成就系统
+
+### 第四版：深度玩法
+- 10 个关卡
+- 多种模式
+- 排行榜
+- 解锁系统
+
+### 第五版：多人模式
+- 4 人合作
+- 在线联机
+- 房间系统
+- 社区功能
+
+## 常见错误
+
+1. **不需要合作**：必须多人配合才能完成
+2. **操作太复杂**：操作要简单
+3. **时间太紧**：时间要合理
+4. **没有反馈**：要有视觉和音效反馈
+5. **失败太沮丧**：失败要有趣

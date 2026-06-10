@@ -27,9 +27,9 @@
             {{ row.permissions?.length || 0 }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="150" fixed="right">
+        <el-table-column label="操作" width="200" fixed="right">
           <template #default="{ row }">
-            <el-button type="primary" size="small" text @click="handleEdit(row)">编辑</el-button>
+            <el-button type="primary" size="small" text @click="handleEdit(row)" :disabled="row.system">编辑</el-button>
             <el-button type="danger" size="small" text @click="handleDelete(row)" :disabled="row.system">
               删除
             </el-button>
@@ -76,6 +76,7 @@
         <el-button type="primary" @click="handleSave">保存</el-button>
       </template>
     </el-dialog>
+
   </div>
 </template>
 

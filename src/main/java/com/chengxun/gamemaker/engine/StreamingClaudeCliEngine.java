@@ -130,46 +130,99 @@ public class StreamingClaudeCliEngine {
         }
 
         List<String> command = new ArrayList<>();
-        command.add(installPath);
-        command.add("--print");
-        command.add("--input-format");
-        command.add("text");
-        command.add("--output-format");
-        command.add("stream-json");
-        command.add("--verbose");
-        command.add("--dangerously-skip-permissions");
 
-        if (model != null && !model.isEmpty()) {
-            command.add("--model");
-            command.add(model);
-        }
+        // Claude CLI 禁止 root 使用 --dangerously-skip-permissions
+        // 检测 root 时以项目目录所有者身份运行
+        boolean isRoot = "root".equals(System.getProperty("user.name"));
 
-        if (sessionId != null && !sessionId.isEmpty()) {
-            command.add("--resume");
-            command.add(sessionId);
-        }
-
-        // 生成 MCP 配置文件，让 Claude CLI 可以调用后端 API 工具
+        // 生成 MCP 配置文件
+        File mcpConfigFile = null;
         if (userToken != null && !userToken.isEmpty()) {
-            File mcpConfigFile = generateMcpConfig(userToken);
+            mcpConfigFile = generateMcpConfig(userToken);
+            if (mcpConfigFile != null) {
+                log.info("MCP config generated for agent: {}, token: {}...", agentId, userToken.substring(0, Math.min(20, userToken.length())));
+            }
+        }
+
+        if (isRoot) {
+            // 获取项目目录的所有者作为运行用户（支持任意部署用户）
+            String runUser = System.getenv("RUN_USER");
+            if (runUser == null || runUser.isEmpty() || "root".equals(runUser)) {
+                try {
+                    java.nio.file.Path projectDir = java.nio.file.Paths.get(System.getProperty("user.dir"));
+                    runUser = (String) java.nio.file.Files.getAttribute(projectDir, "unix:ownerName");
+                } catch (Exception e) {
+                    runUser = "nobody";
+                }
+            }
+            log.info("Running as root, dropping to user: {}", runUser);
+            command.add("su");
+            command.add("-s");
+            command.add("/bin/bash");
+            command.add(runUser);
+            command.add("-c");
+
+            StringBuilder cmd = new StringBuilder();
+            // 注入环境变量
+            if (apiKey != null && !apiKey.isEmpty()) {
+                cmd.append("ANTHROPIC_API_KEY='").append(apiKey.replace("'", "'\\''")).append("' ");
+            }
+            if (apiUrl != null && !apiUrl.isEmpty()) {
+                cmd.append("ANTHROPIC_BASE_URL='").append(apiUrl.replace("'", "'\\''")).append("' ");
+            }
+            cmd.append(installPath);
+            cmd.append(" --print");
+            cmd.append(" --input-format text");
+            cmd.append(" --output-format stream-json");
+            cmd.append(" --verbose");
+            cmd.append(" --dangerously-skip-permissions");
+            if (model != null && !model.isEmpty()) {
+                cmd.append(" --model ").append(model);
+            }
+            if (sessionId != null && !sessionId.isEmpty()) {
+                cmd.append(" --resume ").append(sessionId);
+            }
+            if (mcpConfigFile != null) {
+                cmd.append(" --mcp-config ").append(mcpConfigFile.getAbsolutePath());
+            }
+            command.add(cmd.toString());
+        } else {
+            command.add(installPath);
+            command.add("--print");
+            command.add("--input-format");
+            command.add("text");
+            command.add("--output-format");
+            command.add("stream-json");
+            command.add("--verbose");
+            command.add("--dangerously-skip-permissions");
+            if (model != null && !model.isEmpty()) {
+                command.add("--model");
+                command.add(model);
+            }
+            if (sessionId != null && !sessionId.isEmpty()) {
+                command.add("--resume");
+                command.add(sessionId);
+            }
             if (mcpConfigFile != null) {
                 command.add("--mcp-config");
                 command.add(mcpConfigFile.getAbsolutePath());
-                log.info("MCP config generated for agent: {}, token: {}...", agentId, userToken.substring(0, Math.min(20, userToken.length())));
+            }
+
+            // 非 root 模式：通过 ProcessBuilder 设置环境变量
+            Map<String, String> env = pb.environment();
+            if (apiKey != null && !apiKey.isEmpty()) {
+                env.put("ANTHROPIC_API_KEY", apiKey);
+            } else {
+                env.remove("ANTHROPIC_API_KEY");
+            }
+            if (apiUrl != null && !apiUrl.isEmpty()) {
+                env.put("ANTHROPIC_BASE_URL", apiUrl);
             }
         }
 
         pb.command(command);
 
-        Map<String, String> env = pb.environment();
-        if (apiKey != null && !apiKey.isEmpty()) {
-            env.put("ANTHROPIC_API_KEY", apiKey);
-        }
-        if (apiUrl != null && !apiUrl.isEmpty()) {
-            env.put("ANTHROPIC_BASE_URL", apiUrl);
-        }
-
-        log.info("Creating streaming Claude CLI process for agent: {}, command: {}", agentId, command);
+        log.info("Creating streaming Claude CLI process for agent: {}, model: {}", agentId, model);
 
         Process process = pb.start();
         ProcessInfo processInfo = new ProcessInfo(process);

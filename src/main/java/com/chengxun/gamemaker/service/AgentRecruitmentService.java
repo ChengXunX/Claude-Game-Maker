@@ -2,6 +2,8 @@ package com.chengxun.gamemaker.service;
 
 import com.chengxun.gamemaker.agent.Agent;
 import com.chengxun.gamemaker.agent.BaseAgent;
+import com.chengxun.gamemaker.agent.RolePromptLibrary;
+import com.chengxun.gamemaker.engine.ClaudeCliEngine;
 import com.chengxun.gamemaker.manager.AgentManager;
 import com.chengxun.gamemaker.model.AgentDefinition;
 import com.chengxun.gamemaker.model.AgentDefinition.AgentStatus;
@@ -39,6 +41,12 @@ public class AgentRecruitmentService {
 
     @Autowired
     private DynamicCapabilityService dynamicCapabilityService;
+
+    @Autowired
+    private RolePromptLibrary rolePromptLibrary;
+
+    @Autowired(required = false)
+    private ClaudeCliEngine cliEngine;
 
     /** 核心Agent角色（不可删除） */
     private static final Set<String> CORE_ROLES = Set.of(
@@ -586,34 +594,301 @@ public class AgentRecruitmentService {
 
     /**
      * 获取可招聘的角色列表
-     * 包括预设角色和用户自定义角色
+     * 以 RolePromptLibrary 中定义的角色为基准，合并预设模板的能力和文件类型
+     * 包括内置角色和用户自定义角色
      */
     public List<Map<String, Object>> getRecruitableRoles() {
         List<Map<String, Object>> roles = new ArrayList<>();
 
-        // 预设角色
-        for (RoleTemplate template : PRESET_TEMPLATES.values()) {
+        // 以 RolePromptLibrary 中的角色为基准
+        for (String roleId : rolePromptLibrary.getAllRoles()) {
             Map<String, Object> role = new HashMap<>();
-            role.put("role", template.getRole());
-            role.put("name", template.getName());
-            role.put("description", template.getDescription());
-            role.put("preset", true);
-            role.put("capabilities", template.getDefaultCapabilities());
+            role.put("role", roleId);
+            role.put("name", rolePromptLibrary.getRoleName(roleId));
+            role.put("preset", rolePromptLibrary.isKnownRole(roleId) && !customTemplates.containsKey(roleId));
+
+            // 合并预设模板的能力和文件类型
+            RoleTemplate preset = PRESET_TEMPLATES.get(roleId);
+            if (preset != null) {
+                role.put("description", preset.getDescription());
+                role.put("capabilities", preset.getDefaultCapabilities());
+            } else {
+                role.put("description", "");
+                role.put("capabilities", Set.of());
+            }
+
+            // 合并自定义模板
+            RoleTemplate custom = customTemplates.get(roleId);
+            if (custom != null) {
+                role.put("description", custom.getDescription());
+                role.put("capabilities", custom.getDefaultCapabilities());
+                role.put("preset", false);
+            }
+
             roles.add(role);
         }
 
-        // 用户自定义角色
-        for (RoleTemplate template : customTemplates.values()) {
-            Map<String, Object> role = new HashMap<>();
-            role.put("role", template.getRole());
-            role.put("name", template.getName());
-            role.put("description", template.getDescription());
-            role.put("preset", false);
-            role.put("capabilities", template.getDefaultCapabilities());
-            roles.add(role);
+        // 补充 PRESET_TEMPLATES 中有但 RolePromptLibrary 中没有的角色（兼容旧数据）
+        for (RoleTemplate template : PRESET_TEMPLATES.values()) {
+            boolean alreadyIncluded = roles.stream()
+                .anyMatch(r -> template.getRole().equals(r.get("role")));
+            if (!alreadyIncluded) {
+                Map<String, Object> role = new HashMap<>();
+                role.put("role", template.getRole());
+                role.put("name", template.getName());
+                role.put("description", template.getDescription());
+                role.put("preset", true);
+                role.put("capabilities", template.getDefaultCapabilities());
+                roles.add(role);
+            }
         }
 
         return roles;
+    }
+
+    /**
+     * 获取角色详情（含提示词、通知目标、审查者）
+     *
+     * @param roleId 角色标识
+     * @return 角色详情
+     */
+    public Map<String, Object> getRoleDetail(String roleId) {
+        Map<String, Object> detail = new HashMap<>();
+        detail.put("role", roleId);
+        detail.put("name", rolePromptLibrary.getRoleName(roleId));
+        detail.put("prompt", rolePromptLibrary.getPrompt(roleId));
+        detail.put("notifyTargets", String.join(",", rolePromptLibrary.getNotifyTargets(roleId)));
+        detail.put("reviewer", rolePromptLibrary.getReviewer(roleId));
+        detail.put("known", rolePromptLibrary.isKnownRole(roleId));
+        return detail;
+    }
+
+    /**
+     * 更新角色提示词（保存到数据库）
+     *
+     * @param roleId        角色标识
+     * @param prompt        新的系统提示词
+     * @param notifyTargets 通知目标（逗号分隔）
+     * @param reviewer      审查者角色
+     * @return 操作结果
+     */
+    public Map<String, Object> updateRolePrompt(String roleId, String prompt, String notifyTargets, String reviewer) {
+        Map<String, Object> result = new HashMap<>();
+        try {
+            String name = rolePromptLibrary.getRoleName(roleId);
+            rolePromptLibrary.saveToDatabase(roleId, prompt, name, notifyTargets, reviewer);
+            result.put("success", true);
+            result.put("message", "角色提示词已更新");
+        } catch (Exception e) {
+            result.put("success", false);
+            result.put("message", "更新失败: " + e.getMessage());
+        }
+        return result;
+    }
+
+    /**
+     * 获取角色进化元数据
+     *
+     * @param roleId 角色标识
+     * @return 进化元数据（版本号、来源、时间）
+     */
+    public Map<String, Object> getEvolutionMeta(String roleId) {
+        return rolePromptLibrary.getEvolutionMeta(roleId);
+    }
+
+    /**
+     * 重置角色提示词到文件默认版本（清除数据库版本）
+     *
+     * @param roleId 角色标识
+     * @return 操作结果
+     */
+    public Map<String, Object> resetRolePrompt(String roleId) {
+        Map<String, Object> result = new HashMap<>();
+        try {
+            rolePromptLibrary.removeFromDatabase(roleId);
+            result.put("success", true);
+            result.put("message", "已重置为文件默认版本");
+            result.put("prompt", rolePromptLibrary.getPrompt(roleId));
+        } catch (Exception e) {
+            result.put("success", false);
+            result.put("message", "重置失败: " + e.getMessage());
+        }
+        return result;
+    }
+
+    /**
+     * AI 自动生成角色提示词
+     *
+     * @param roleId      角色标识
+     * @param name        角色中文名称
+     * @param description 角色描述
+     * @return 生成结果
+     */
+    public Map<String, Object> generateRolePrompt(String roleId, String name, String description) {
+        Map<String, Object> result = new HashMap<>();
+        try {
+            String aiPrompt = String.format("""
+                你是一个游戏开发团队管理专家。请为以下角色生成完整的系统提示词：
+
+                角色标识：%s
+                角色名称：%s
+                角色描述：%s
+
+                请按以下结构生成 Markdown 格式的角色提示词（直接输出，不要有多余说明）：
+
+                # 角色：{中文名}（{英文名}）
+
+                ## 身份定位
+                一句话说明你在团队中的定位和价值。
+
+                ## 核心职责
+                1. **职责一**：具体说明
+                2. **职责二**：具体说明
+                3. **职责三**：具体说明
+
+                ## 技术栈/工具
+                - 工具1：用途
+                - 工具2：用途
+
+                ## 工作流程
+                接收任务 → 分析需求 → 制定方案 → 执行工作 → 自检 → 汇报
+
+                ## 输入规范
+                | 来源角色 | 输入内容 | 触发条件 |
+
+                ## 输出规范
+                | 输出内容 | 接收角色 | 格式要求 |
+
+                ## 协作协议
+                上游/下游/审查者
+
+                ## 工作边界
+                可修改/只读/禁止修改
+
+                ## 质量标准
+                - [ ] 检查项1
+                - [ ] 检查项2
+
+                ## 错误处理
+                | 错误类型 | 处理方式 |
+
+                ## 升级规则
+                什么情况下必须上报制作人
+                """, roleId, name != null ? name : roleId, description != null ? description : "");
+
+            // 调用 Claude CLI 生成
+            String generated = callClaude(aiPrompt);
+            if (generated == null || generated.isEmpty()) {
+                result.put("success", false);
+                result.put("message", "AI 未返回结果");
+                return result;
+            }
+
+            // 保存到数据库
+            String notifyTargets = "producer";
+            String reviewer = "producer";
+            rolePromptLibrary.saveToDatabase(roleId, generated, name, notifyTargets, reviewer, "ai");
+
+            result.put("success", true);
+            result.put("message", "AI 已生成角色提示词并保存");
+            result.put("prompt", generated);
+        } catch (Exception e) {
+            result.put("success", false);
+            result.put("message", "生成失败: " + e.getMessage());
+        }
+        return result;
+    }
+
+    /**
+     * AI 主动进化角色提示词
+     * 分析当前提示词和项目经验，生成更优版本
+     *
+     * @param roleId 角色标识
+     * @return 进化结果
+     */
+    public Map<String, Object> evolveRolePrompt(String roleId) {
+        Map<String, Object> result = new HashMap<>();
+        try {
+            String currentPrompt = rolePromptLibrary.getPrompt(roleId);
+            if (currentPrompt == null) {
+                result.put("success", false);
+                result.put("message", "角色不存在");
+                return result;
+            }
+
+            String name = rolePromptLibrary.getRoleName(roleId);
+            Map<String, Object> evoMeta = rolePromptLibrary.getEvolutionMeta(roleId);
+            int currentVersion = evoMeta != null ? (int) evoMeta.getOrDefault("version", 0) : 0;
+
+            String aiPrompt = String.format("""
+                你是一个游戏开发团队管理专家。请优化以下角色的系统提示词。
+
+                角色标识：%s
+                角色名称：%s
+                当前版本：v%d
+
+                当前提示词：
+                ---
+                %s
+                ---
+
+                请从以下角度优化：
+                1. 补充缺失的协作协议（与哪些角色交互、何时交互）
+                2. 细化工作边界（具体的目录/文件权限）
+                3. 增加质量检查清单（具体可执行的检查项）
+                4. 完善错误处理和升级规则
+                5. 优化输出格式模板
+                6. 增加常见问题处理指南
+
+                要求：
+                - 保留原有结构和有效内容
+                - 新增内容用 "## 经验积累" 章节
+                - 直接输出完整 Markdown，不要有多余说明
+                """, roleId, name, currentVersion, currentPrompt);
+
+            // 调用 Claude CLI 进化
+            String evolved = callClaude(aiPrompt);
+            if (evolved == null || evolved.isEmpty()) {
+                result.put("success", false);
+                result.put("message", "AI 未返回结果");
+                return result;
+            }
+
+            // 保存进化后的版本
+            String notifyTargets = String.join(",", rolePromptLibrary.getNotifyTargets(roleId));
+            String reviewer = rolePromptLibrary.getReviewer(roleId);
+            rolePromptLibrary.saveToDatabase(roleId, evolved, name, notifyTargets, reviewer, "ai");
+
+            result.put("success", true);
+            result.put("message", String.format("角色 %s 已从 v%d 进化到 v%d", name, currentVersion, currentVersion + 1));
+            result.put("prompt", evolved);
+            result.put("oldVersion", currentVersion);
+            result.put("newVersion", currentVersion + 1);
+        } catch (Exception e) {
+            result.put("success", false);
+            result.put("message", "进化失败: " + e.getMessage());
+        }
+        return result;
+    }
+
+    /**
+     * 调用 Claude CLI 生成内容
+     *
+     * @param prompt 提示词
+     * @return 生成的内容
+     */
+    private String callClaude(String prompt) {
+        if (cliEngine == null) {
+            log.warn("Claude CLI 引擎未配置");
+            return null;
+        }
+        try {
+            String sessionId = "role-evolution-" + System.currentTimeMillis();
+            return cliEngine.sendMessage("system", sessionId, prompt, null, null, null, null);
+        } catch (Exception e) {
+            log.error("调用 Claude CLI 失败", e);
+            return null;
+        }
     }
 
     /**

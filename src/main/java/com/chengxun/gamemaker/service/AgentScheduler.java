@@ -3,7 +3,9 @@ package com.chengxun.gamemaker.service;
 import com.chengxun.gamemaker.agent.Agent;
 import com.chengxun.gamemaker.agent.BaseAgent;
 import com.chengxun.gamemaker.manager.AgentManager;
+import com.chengxun.gamemaker.manager.ProjectManager;
 import com.chengxun.gamemaker.model.AgentDefinition;
+import com.chengxun.gamemaker.model.GameProject;
 import com.chengxun.gamemaker.model.TaskAssignment;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -13,7 +15,11 @@ import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Agent调度服务
@@ -45,8 +51,33 @@ public class AgentScheduler {
     @Autowired(required = false)
     private AgentRollbackService rollbackService;
 
+    @Autowired(required = false)
+    private com.chengxun.gamemaker.web.service.AgentHealthService healthService;
+
+    @Autowired(required = false)
+    private GoalService goalService;
+
+    @Autowired(required = false)
+    private com.chengxun.gamemaker.manager.ProjectManager projectManager;
+
     /** Agent最后活动时间 */
     private final Map<String, Long> agentLastActivity = new ConcurrentHashMap<>();
+
+    /**
+     * 事件驱动的即时调度线程池
+     * 当 Agent 收到消息时，通过此线程池立即触发工作，不再等待定时周期
+     */
+    private final ExecutorService immediateExecutor = Executors.newFixedThreadPool(4, r -> {
+        Thread t = new Thread(r, "agent-immediate-dispatch");
+        t.setDaemon(true);
+        return t;
+    });
+
+    /**
+     * Agent 忙碌标记（防止同一 Agent 被重复调度）
+     * key: agentId, value: 是否正在被立即调度
+     */
+    private final Map<String, AtomicBoolean> immediateScheduling = new ConcurrentHashMap<>();
 
     /**
      * 分配任务给Agent
@@ -279,6 +310,43 @@ public class AgentScheduler {
             .toList();
     }
 
+    // ===== 事件驱动调度 =====
+
+    /**
+     * 消息到达时触发的即时调度
+     * 由 BaseAgent.receiveMessage() 通过回调触发
+     * 避免 Agent 收到消息后等待 5 分钟才处理
+     *
+     * @param agent 收到消息的 Agent
+     */
+    public void onMessageArrived(Agent agent) {
+        if (agent == null || !agent.isAlive()) return;
+
+        String agentId = agent.getId();
+        AtomicBoolean flag = immediateScheduling.computeIfAbsent(agentId, k -> new AtomicBoolean(false));
+
+        // 防止重复调度：如果该 Agent 已经在立即调度队列中，跳过
+        if (!flag.compareAndSet(false, true)) {
+            log.debug("Agent {} already queued for immediate dispatch, skipping", agentId);
+            return;
+        }
+
+        immediateExecutor.submit(() -> {
+            try {
+                // 短暂延迟（200ms），让消息批量到达后再一起处理
+                // 避免连续多条消息触发多次 AI 调用
+                Thread.sleep(200);
+
+                log.info("Event-driven dispatch: agent {} processing pending messages", agentId);
+                driveAgentWork(agent);
+            } catch (Exception e) {
+                log.error("Immediate dispatch failed for agent {}: {}", agentId, e.getMessage());
+            } finally {
+                flag.set(false);
+            }
+        });
+    }
+
     // ===== 调度配置和任务队列 =====
 
     /** 调度配置 */
@@ -294,23 +362,105 @@ public class AgentScheduler {
     }
 
     /**
-     * 获取任务队列（当前所有Agent的任务状态）
+     * 获取任务队列（真实的里程碑任务 + Agent 待处理消息）
+     *
+     * 数据来源：
+     * 1. GoalService 的里程碑任务（项目目标分解后的具体任务）
+     * 2. Agent 的待处理消息（其他 Agent 分配的协作任务）
      *
      * @return 任务队列列表
      */
     public List<Map<String, Object>> getTaskQueue() {
         List<Map<String, Object>> tasks = new java.util.ArrayList<>();
-        for (Agent agent : agentManager.getAllAgents()) {
-            Map<String, Object> task = new java.util.HashMap<>();
-            task.put("taskId", agent.getId() + "_current");
-            task.put("agentId", agent.getId());
-            task.put("title", agent.isBusy() ? "执行中" : "空闲");
-            task.put("priority", "NORMAL");
-            task.put("status", agent.isBusy() ? "RUNNING" : "IDLE");
-            task.put("createdAt", agentLastActivity.getOrDefault(agent.getId(), System.currentTimeMillis()));
-            tasks.add(task);
+
+        // 1. 从 GoalService 获取所有项目的里程碑任务
+        if (goalService != null) {
+            for (String projectId : agentManager.getRegisteredProjectIds()) {
+                try {
+                    GameProject project = projectManager != null
+                        ? projectManager.getProject(projectId) : null;
+                    if (project == null) continue;
+
+                    List<GameProject.GoalMilestone> milestones = goalService.getMilestones(projectId);
+                    for (GameProject.GoalMilestone milestone : milestones) {
+                        // 跳过已完成的里程碑
+                        if (milestone.getStatus() == GameProject.MilestoneStatus.COMPLETED) continue;
+
+                        // 里程碑本身作为一个任务条目
+                        Map<String, Object> task = new java.util.HashMap<>();
+                        task.put("taskId", milestone.getId());
+                        task.put("agentId", projectId + ":" + milestone.getAssignedAgentRole());
+                        task.put("agentName", milestone.getAssignedAgentRole());
+                        task.put("title", milestone.getTitle());
+                        task.put("description", milestone.getDescription());
+                        task.put("priority", milestone.getOrder() <= 1 ? "HIGH" : "NORMAL");
+                        task.put("status", mapMilestoneStatus(milestone.getStatus()));
+                        task.put("type", "MILESTONE");
+                        task.put("projectId", projectId);
+                        task.put("projectName", project.getName());
+                        task.put("createdAt", System.currentTimeMillis());
+                        tasks.add(task);
+
+                        // 里程碑下的子任务
+                        if (milestone.getTasks() != null) {
+                            for (GameProject.MilestoneTask mTask : milestone.getTasks()) {
+                                if (mTask.getStatus() == GameProject.MilestoneStatus.COMPLETED) continue;
+
+                                Map<String, Object> subTask = new java.util.HashMap<>();
+                                subTask.put("taskId", mTask.getId());
+                                subTask.put("agentId", projectId + ":" + milestone.getAssignedAgentRole());
+                                subTask.put("agentName", milestone.getAssignedAgentRole());
+                                subTask.put("title", mTask.getDescription());
+                                subTask.put("priority", "NORMAL");
+                                subTask.put("status", mapMilestoneStatus(mTask.getStatus()));
+                                subTask.put("type", "TASK");
+                                subTask.put("parentMilestone", milestone.getTitle());
+                                subTask.put("projectId", projectId);
+                                subTask.put("projectName", project.getName());
+                                subTask.put("createdAt", System.currentTimeMillis());
+                                tasks.add(subTask);
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    log.debug("Failed to load tasks for project {}: {}", projectId, e.getMessage());
+                }
+            }
         }
+
+        // 2. 补充 Agent 的待处理消息作为任务条目
+        for (Agent agent : agentManager.getAllAgents()) {
+            int pendingCount = agent.getPendingMessages().size();
+            if (pendingCount > 0 || agent.isBusy()) {
+                Map<String, Object> task = new java.util.HashMap<>();
+                task.put("taskId", agent.getId() + "_runtime");
+                task.put("agentId", agent.getId());
+                task.put("agentName", agent.getName());
+                task.put("title", agent.isBusy() ? "AI 调用执行中" : pendingCount + " 条待处理消息");
+                task.put("priority", "NORMAL");
+                task.put("status", agent.isBusy() ? "RUNNING" : "PENDING");
+                task.put("type", "AGENT_RUNTIME");
+                task.put("pendingMessages", pendingCount);
+                task.put("createdAt", agentLastActivity.getOrDefault(agent.getId(), System.currentTimeMillis()));
+                tasks.add(task);
+            }
+        }
+
         return tasks;
+    }
+
+    /**
+     * 里程碑状态映射为前端显示状态
+     */
+    private String mapMilestoneStatus(GameProject.MilestoneStatus status) {
+        if (status == null) return "PENDING";
+        return switch (status) {
+            case PENDING -> "PENDING";
+            case IN_PROGRESS -> "PROCESSING";
+            case COMPLETED -> "COMPLETED";
+            case BLOCKED -> "BLOCKED";
+            default -> "PENDING";
+        };
     }
 
     /**
@@ -347,9 +497,9 @@ public class AgentScheduler {
 
     /**
      * 取消任务
-     * 通过任务 ID 找到对应的 Agent 并停止其当前任务
+     * 支持多种任务类型：里程碑任务、子任务、Agent 运行时任务
      *
-     * @param taskId 任务 ID（格式：agentId_current）
+     * @param taskId 任务 ID
      * @return 是否取消成功
      */
     public boolean cancelTask(String taskId) {
@@ -357,29 +507,78 @@ public class AgentScheduler {
             return false;
         }
 
-        // 从任务 ID 中提取 Agent ID（格式：agentId_current）
-        String agentId = taskId;
-        if (taskId.endsWith("_current")) {
-            agentId = taskId.substring(0, taskId.length() - "_current".length());
+        log.info("尝试取消任务: {}", taskId);
+
+        // 1. 处理 Agent 运行时任务（格式：agentId_runtime）
+        if (taskId.endsWith("_runtime")) {
+            String agentId = taskId.replace("_runtime", "");
+            return cancelAgentTask(agentId);
         }
 
+        // 2. 处理 Agent 当前任务（格式：agentId_current）
+        if (taskId.endsWith("_current")) {
+            String agentId = taskId.replace("_current", "");
+            return cancelAgentTask(agentId);
+        }
+
+        // 3. 处理里程碑任务和子任务
+        if (goalService != null) {
+            for (String projectId : agentManager.getRegisteredProjectIds()) {
+                try {
+                    // 查找里程碑
+                    GameProject.GoalMilestone milestone = goalService.getMilestones(projectId).stream()
+                        .filter(m -> taskId.equals(m.getId()))
+                        .findFirst()
+                        .orElse(null);
+
+                    if (milestone != null) {
+                        return cancelMilestone(projectId, milestone);
+                    }
+
+                    // 查找子任务
+                    for (GameProject.GoalMilestone m : goalService.getMilestones(projectId)) {
+                        GameProject.MilestoneTask task = m.getTasks().stream()
+                            .filter(t -> taskId.equals(t.getId()))
+                            .findFirst()
+                            .orElse(null);
+
+                        if (task != null) {
+                            return cancelMilestoneTask(projectId, m, task);
+                        }
+                    }
+                } catch (Exception e) {
+                    log.debug("查找任务失败: projectId={}, error={}", projectId, e.getMessage());
+                }
+            }
+        }
+
+        log.warn("取消任务失败：任务不存在 {}", taskId);
+        return false;
+    }
+
+    /**
+     * 取消 Agent 当前任务
+     */
+    private boolean cancelAgentTask(String agentId) {
         Agent agent = agentManager.getAgent(agentId);
         if (agent == null) {
             log.warn("取消任务失败：Agent 不存在 {}", agentId);
             return false;
         }
 
-        if (!agent.isBusy()) {
-            log.warn("取消任务失败：Agent {} 当前没有执行任务", agentId);
-            return false;
-        }
-
-        // 停止 Agent 当前任务
         try {
+            // 停止 Agent
             agent.stop();
-            // 重新启动 Agent（保持可用状态）
+
+            // 清除待处理消息
+            if (agent instanceof com.chengxun.gamemaker.agent.BaseAgent baseAgent) {
+                baseAgent.clearPendingMessages();
+            }
+
+            // 重新启动 Agent
             agent.start();
-            log.info("已取消 Agent {} 的当前任务", agentId);
+
+            log.info("已取消 Agent {} 的当前任务，已清除消息队列", agentId);
             return true;
         } catch (Exception e) {
             log.error("取消任务失败：{}", e.getMessage());
@@ -387,11 +586,132 @@ public class AgentScheduler {
         }
     }
 
+    /**
+     * 取消里程碑
+     */
+    private boolean cancelMilestone(String projectId, GameProject.GoalMilestone milestone) {
+        try {
+            milestone.setStatus(GameProject.MilestoneStatus.BLOCKED);
+            milestone.setBlockedReason("手动取消");
+
+            if (milestone.getTasks() != null) {
+                for (GameProject.MilestoneTask task : milestone.getTasks()) {
+                    if (task.getStatus() != GameProject.MilestoneStatus.COMPLETED) {
+                        task.setStatus(GameProject.MilestoneStatus.PENDING);
+                        task.setResult("任务已取消");
+                    }
+                }
+            }
+
+            if (projectManager != null) {
+                GameProject project = projectManager.getProject(projectId);
+                if (project != null) {
+                    project.touch();
+                    projectManager.saveProjectConfig(project);
+                }
+            }
+
+            log.info("已取消里程碑: {} (项目: {})", milestone.getTitle(), projectId);
+            return true;
+        } catch (Exception e) {
+            log.error("取消里程碑失败: {}", e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * 取消子任务
+     */
+    private boolean cancelMilestoneTask(String projectId, GameProject.GoalMilestone milestone,
+                                         GameProject.MilestoneTask task) {
+        try {
+            task.setStatus(GameProject.MilestoneStatus.PENDING);
+            task.setResult("任务已取消");
+
+            if (goalService != null) {
+                goalService.recalculateMilestoneProgress(projectId, milestone.getId());
+            }
+
+            if (projectManager != null) {
+                GameProject project = projectManager.getProject(projectId);
+                if (project != null) {
+                    project.touch();
+                    projectManager.saveProjectConfig(project);
+                }
+            }
+
+            log.info("已取消任务: {} (里程碑: {})", task.getDescription(), milestone.getTitle());
+            return true;
+        } catch (Exception e) {
+            log.error("取消任务失败: {}", e.getMessage());
+            return false;
+        }
+    }
+
     // ===== 目标驱动调度 =====
 
     /**
-     * 定时驱动项目目标迭代
-     * 每 5 分钟检查一次所有项目的 ProducerAgent，驱动目标进度
+     * 制作人快速调度循环
+     * 制作人需要比工人更频繁地运行（60秒 vs 5分钟），以便：
+     * - 快速响应工人完成的任务
+     * - 及时鞭策空闲/慢速的 Agent
+     * - 实时监控项目进展和任务状态
+     */
+    @Scheduled(fixedRate = 60000, initialDelay = 30000)
+    public void driveProducerFastLoop() {
+        List<String> projectIds = agentManager.getRegisteredProjectIds();
+
+        for (String projectId : projectIds) {
+            try {
+                Agent producer = agentManager.getAgent(projectId, "producer");
+                if (producer == null || !producer.isAlive()) continue;
+
+                // 制作人不忙时才驱动（避免打断正在进行的 AI 调用）
+                if (!producer.isBusy()) {
+                    driveAgentWork(producer);
+                }
+            } catch (Exception e) {
+                log.error("Producer fast loop error for project {}: {}", projectId, e.getMessage());
+            }
+        }
+    }
+
+    /**
+     * 唤醒制作人
+     * 当工人 Agent 完成任务或发生重要事件时，通过事件驱动立即唤醒制作人
+     * 让制作人能够实时响应，而不是等待下一个调度周期
+     *
+     * @param projectId 项目 ID
+     * @param reason 唤醒原因
+     */
+    public void wakeProducer(String projectId, String reason) {
+        if (projectId == null) return;
+
+        Agent producer = agentManager.getAgent(projectId, "producer");
+        if (producer == null || !producer.isAlive()) return;
+
+        // 如果制作人正在忙碌，不打断
+        if (producer.isBusy()) {
+            log.debug("Producer is busy, skipping wake-up for: {}", reason);
+            return;
+        }
+
+        // 通过立即调度线程池唤醒制作人
+        immediateExecutor.submit(() -> {
+            try {
+                log.info("Waking up producer for project {}: {}", projectId, reason);
+                driveAgentWork(producer);
+            } catch (Exception e) {
+                log.error("Producer wake-up failed for project {}: {}", projectId, e.getMessage());
+            }
+        });
+    }
+
+    /**
+     * 定时驱动所有 Agent 工作
+     * 每 5 分钟检查一次所有项目的 Agent，驱动目标进度和任务执行
+     *
+     * 执行顺序：先 Producer（决策和任务分发），再其他 Agent（执行任务）
      */
     @Scheduled(fixedRate = 300000, initialDelay = 60000)
     public void driveGoalIterations() {
@@ -405,16 +725,20 @@ public class AgentScheduler {
             metricsService.setActiveAgentCount(aliveCount);
         }
 
+        // 第一轮：驱动 ProducerAgent（决策和任务分发）
+        // 注意：制作人已有独立的快速调度（60秒），这里仅处理积压消息
         for (String projectId : projectIds) {
             try {
                 Agent producer = agentManager.getAgent(projectId, "producer");
                 if (producer == null || !producer.isAlive()) continue;
 
-                producer.work();
-                processed++;
+                // 只有当制作人有积压消息时才在慢循环中驱动
+                if (producer.getPendingMessages().size() > 0) {
+                    driveAgentWork(producer);
+                    processed++;
+                }
             } catch (Exception e) {
-                log.error("Error driving goal iteration for project {}: {}", projectId, e.getMessage());
-                // 任务失败时尝试回滚
+                log.error("Error driving producer for project {}: {}", projectId, e.getMessage());
                 if (rollbackService != null) {
                     String agentId = projectId + ":producer";
                     if (rollbackService.hasSnapshot(agentId)) {
@@ -425,10 +749,50 @@ public class AgentScheduler {
             }
         }
 
+        // 第二轮：驱动所有非生产者 Agent（执行任务、处理消息）
+        for (Agent agent : agentManager.getAllAgents()) {
+            if ("producer".equals(agent.getRole())) continue;
+            if (!agent.isAlive()) continue;
+
+            try {
+                driveAgentWork(agent);
+                processed++;
+            } catch (Exception e) {
+                log.error("Error driving agent {}: {}", agent.getId(), e.getMessage());
+            }
+        }
+
         long duration = System.currentTimeMillis() - startTime;
         if (duration > 5000 || projectIds.size() > 20) {
-            log.warn("Goal iteration completed: {} projects processed in {}ms (total: {})",
+            log.warn("Goal iteration completed: {} agents processed in {}ms (total projects: {})",
                 processed, duration, projectIds.size());
+        }
+    }
+
+    /**
+     * 驱动单个 Agent 执行工作，并记录健康指标
+     *
+     * @param agent 目标 Agent
+     */
+    private void driveAgentWork(Agent agent) {
+        long workStart = System.currentTimeMillis();
+        boolean success = true;
+        String errorMessage = null;
+
+        try {
+            agent.work();
+        } catch (Exception e) {
+            success = false;
+            errorMessage = e.getMessage();
+            throw e;
+        } finally {
+            long responseTime = System.currentTimeMillis() - workStart;
+            agentLastActivity.put(agent.getId(), System.currentTimeMillis());
+
+            // 记录健康指标
+            if (healthService != null) {
+                healthService.recordRequest(agent.getId(), responseTime, success, errorMessage);
+            }
         }
     }
 }

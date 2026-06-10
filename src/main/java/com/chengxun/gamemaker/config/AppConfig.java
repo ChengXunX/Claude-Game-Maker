@@ -28,6 +28,7 @@ public class AppConfig {
     private SkillsConfig skills = new SkillsConfig();
     private ContextConfig context = new ContextConfig();
     private SecurityConfig security = new SecurityConfig();
+    private EmailConfig email = new EmailConfig();
 
     // Getters and Setters
     public String getDataDir() { return dataDir; }
@@ -77,6 +78,9 @@ public class AppConfig {
 
     public SecurityConfig getSecurity() { return security; }
     public void setSecurity(SecurityConfig security) { this.security = security; }
+
+    public EmailConfig getEmail() { return email; }
+    public void setEmail(EmailConfig email) { this.email = email; }
     
     // Convenience methods
     public String getApiKey() { return claude.getApiKey(); }
@@ -218,5 +222,51 @@ public class AppConfig {
 
         public boolean isDeviceTrustEnabled() { return deviceTrustEnabled; }
         public void setDeviceTrustEnabled(boolean deviceTrustEnabled) { this.deviceTrustEnabled = deviceTrustEnabled; }
+    }
+
+    /**
+     * 邮件配置
+     */
+    public static class EmailConfig {
+        /** 是否启用邮件 */
+        private boolean enabled = false;
+        /** SMTP 服务器地址 */
+        private String smtpHost = "";
+        /** SMTP 端口 */
+        private int smtpPort = 587;
+        /** SMTP 用户名 */
+        private String smtpUsername = "";
+        /** SMTP 密码 */
+        private String smtpPassword = "";
+        /** 发件人地址 */
+        private String emailFrom = "";
+        /** 发件人名字（显示在邮件发件人字段） */
+        private String senderName = "";
+        /** 代理邮箱（用于发送，可选） */
+        private String proxyEmail = "";
+
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean enabled) { this.enabled = enabled; }
+
+        public String getSmtpHost() { return smtpHost; }
+        public void setSmtpHost(String smtpHost) { this.smtpHost = smtpHost; }
+
+        public int getSmtpPort() { return smtpPort; }
+        public void setSmtpPort(int smtpPort) { this.smtpPort = smtpPort; }
+
+        public String getSmtpUsername() { return smtpUsername; }
+        public void setSmtpUsername(String smtpUsername) { this.smtpUsername = smtpUsername; }
+
+        public String getSmtpPassword() { return smtpPassword; }
+        public void setSmtpPassword(String smtpPassword) { this.smtpPassword = smtpPassword; }
+
+        public String getEmailFrom() { return emailFrom; }
+        public void setEmailFrom(String emailFrom) { this.emailFrom = emailFrom; }
+
+        public String getSenderName() { return senderName; }
+        public void setSenderName(String senderName) { this.senderName = senderName; }
+
+        public String getProxyEmail() { return proxyEmail; }
+        public void setProxyEmail(String proxyEmail) { this.proxyEmail = proxyEmail; }
     }
 }

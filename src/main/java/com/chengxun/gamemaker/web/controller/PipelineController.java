@@ -183,7 +183,8 @@ public class PipelineController {
             Authentication authentication) {
         Long userId = SecurityUtil.getCurrentUserId(userService);
         String username = authentication.getName();
-        boolean approved = (Boolean) request.getOrDefault("approved", true);
+        Object approvedObj = request.getOrDefault("approved", true);
+        boolean approved = approvedObj instanceof Boolean ? (Boolean) approvedObj : true;
         String comment = (String) request.getOrDefault("comment", "");
 
         Pipeline pipeline = pipelineService.approvePipeline(pipelineId, userId, username, approved, comment);

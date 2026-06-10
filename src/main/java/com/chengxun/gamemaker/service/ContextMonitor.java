@@ -6,6 +6,10 @@ import com.chengxun.gamemaker.config.SystemConstants;
 import com.chengxun.gamemaker.engine.ClaudeCliEngine;
 import com.chengxun.gamemaker.manager.AgentManager;
 import com.chengxun.gamemaker.manager.ContextManager;
+import com.chengxun.gamemaker.web.entity.Notification.NotificationType;
+import com.chengxun.gamemaker.web.entity.User;
+import com.chengxun.gamemaker.web.repository.UserRepository;
+import com.chengxun.gamemaker.web.service.NotificationService;
 import com.chengxun.gamemaker.web.service.SystemConfigService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -53,6 +57,8 @@ public class ContextMonitor {
     private final ClaudeCliEngine cliEngine;
     private final ContextManager contextManager;
     private final SystemConfigService configService;
+    private final NotificationService notificationService;
+    private final UserRepository userRepository;
 
     /**
      * Agent 健康状态缓存
@@ -76,11 +82,14 @@ public class ContextMonitor {
     private final ConcurrentHashMap<String, LocalDateTime> lastActivityTime = new ConcurrentHashMap<>();
 
     public ContextMonitor(AgentManager agentManager, ClaudeCliEngine cliEngine,
-                          ContextManager contextManager, SystemConfigService configService) {
+                          ContextManager contextManager, SystemConfigService configService,
+                          NotificationService notificationService, UserRepository userRepository) {
         this.agentManager = agentManager;
         this.cliEngine = cliEngine;
         this.contextManager = contextManager;
         this.configService = configService;
+        this.notificationService = notificationService;
+        this.userRepository = userRepository;
     }
 
     /**
@@ -202,12 +211,13 @@ public class ContextMonitor {
 
         // 1. 检查 CLI 进程（CLI是按需创建的，没有进程是正常的空闲状态）
         if (!checkCLIProcess(agent.getId())) {
-            // 检查是否有待处理的消息需要CLI处理
+            // 没有CLI进程时，如果有待处理消息，Agent 会在收到消息时自动创建 CLI 进程
+            // 这是正常的消息队列等待处理状态，不需要告警
             if (!agent.getPendingMessages().isEmpty()) {
-                status.markUnhealthy("CLI 进程不可用且有待处理消息", ContextHealthStatus.Severity.WARNING);
-                return status;
+                log.debug("Agent {} has {} pending messages, will create CLI process when needed",
+                    agent.getId(), agent.getPendingMessages().size());
             }
-            // 没有待处理消息，Agent处于空闲状态，这是正常的
+            // Agent 处于空闲或等待消息处理状态，标记为正常
             status.markHealthy();
             return status;
         }
@@ -359,9 +369,35 @@ public class ContextMonitor {
         // 重置恢复尝试次数
         recoveryAttempts.remove(agent.getId());
 
-        // TODO: 通知管理员（通过飞书、邮件等渠道）
+        // 通知所有管理员
         log.error("ADMIN ALERT: Agent {} stopped due to critical context failure: {}",
             agent.getId(), status.getIssue());
+        notifyAdmins(agent.getId(), status.getIssue());
+    }
+
+    /**
+     * 通知所有管理员（站内信）
+     *
+     * @param agentId 故障 Agent ID
+     * @param issue   故障原因
+     */
+    private void notifyAdmins(String agentId, String issue) {
+        try {
+            List<User> admins = userRepository.findByRoleName("ADMIN");
+            String title = "Agent 上下文故障告警";
+            String content = String.format("Agent **%s** 因上下文故障已被停止。\n\n故障原因：%s\n\n请及时处理。", agentId, issue);
+
+            for (User admin : admins) {
+                try {
+                    notificationService.sendSystemNotification(admin.getId(), title, content, NotificationType.SYSTEM);
+                } catch (Exception e) {
+                    log.warn("Failed to send notification to admin {}: {}", admin.getId(), e.getMessage());
+                }
+            }
+            log.info("Notified {} admins about agent {} critical failure", admins.size(), agentId);
+        } catch (Exception e) {
+            log.error("Failed to notify admins about agent {} failure", agentId, e);
+        }
     }
 
     // ===== 活动时间跟踪 =====

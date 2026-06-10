@@ -1,9 +1,11 @@
 package com.chengxun.gamemaker.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.stream.Collectors;
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class GameProject {
@@ -47,6 +49,15 @@ public class GameProject {
 
     /** 目录配置（目录路径 -> 目录配置），用于告诉 Agent 项目目录结构和用途 */
     private Map<String, DirectoryConfig> directoryConfigs = new HashMap<>();
+
+    /** 项目概况（由制作人统筹更新） */
+    private String projectOverview;
+
+    /** 项目运行状态（是否在运行中） */
+    private boolean running = false;
+
+    /** 项目运行和部署规则 */
+    private String deploymentRules;
 
     /**
      * 目标类型枚举
@@ -119,8 +130,14 @@ public class GameProject {
     }
 
     /**
-     * 里程碑
-     * 项目目标的分解单元，由 Producer 根据目标生成
+     * 里程碑（迭代周期）
+     * 项目目标的分解单元，代表一个完整的迭代周期
+     * 每个里程碑包含多个任务，分配给不同角色的 Agent 协作完成
+     *
+     * 设计理念：
+     * - 里程碑是一个迭代周期，不是单一角色的任务
+     * - 每个里程碑内有多个并行任务，分配给不同角色
+     * - 所有任务完成后，里程碑才完成，进入下一个迭代
      */
     public static class GoalMilestone {
         /** 里程碑 ID */
@@ -131,11 +148,11 @@ public class GameProject {
         private String description;
         /** 里程碑状态 */
         private MilestoneStatus status = MilestoneStatus.PENDING;
-        /** 分配给哪个角色的 Agent */
+        /** 主要负责角色（兼容旧数据，新逻辑使用 tasks 中的角色） */
         private String assignedAgentRole;
         /** 分配给哪个具体的 Agent 运行时 ID */
         private String assignedAgentId;
-        /** 具体任务列表 */
+        /** 具体任务列表（每个任务可分配给不同角色） */
         private List<MilestoneTask> tasks = new ArrayList<>();
         /** 进度（0-100） */
         private int progress = 0;
@@ -147,6 +164,21 @@ public class GameProject {
         /** 该里程碑可访问的目录列表（相对于项目根目录） */
         private List<String> accessibleDirs = new ArrayList<>();
 
+        /** 验证标准列表 - 必须全部满足才算完成 */
+        private List<String> verificationCriteria = new ArrayList<>();
+
+        /** 验证失败次数 */
+        private int verificationFailCount = 0;
+
+        /** 最后验证时间 */
+        private String lastVerificationTime;
+
+        /** 验证结果详情 */
+        private String verificationResult;
+
+        /** 阻塞原因（当状态为 BLOCKED 时记录原因） */
+        private String blockedReason;
+
         public GoalMilestone() {}
 
         public GoalMilestone(String id, String title, String assignedAgentRole, int order) {
@@ -154,6 +186,31 @@ public class GameProject {
             this.title = title;
             this.assignedAgentRole = assignedAgentRole;
             this.order = order;
+        }
+
+        /**
+         * 获取参与此里程碑的所有角色
+         */
+        public Set<String> getInvolvedRoles() {
+            Set<String> roles = new HashSet<>();
+            if (assignedAgentRole != null) {
+                roles.add(assignedAgentRole);
+            }
+            for (MilestoneTask task : tasks) {
+                if (task.getAssignedRole() != null) {
+                    roles.add(task.getAssignedRole());
+                }
+            }
+            return roles;
+        }
+
+        /**
+         * 获取指定角色的任务列表
+         */
+        public List<MilestoneTask> getTasksByRole(String role) {
+            return tasks.stream()
+                .filter(t -> role.equals(t.getAssignedRole()))
+                .toList();
         }
 
         // Getters and Setters
@@ -180,6 +237,23 @@ public class GameProject {
 
         public List<String> getAccessibleDirs() { return accessibleDirs; }
         public void setAccessibleDirs(List<String> accessibleDirs) { this.accessibleDirs = accessibleDirs != null ? accessibleDirs : new ArrayList<>(); }
+
+        public List<String> getVerificationCriteria() { return verificationCriteria; }
+        public void setVerificationCriteria(List<String> verificationCriteria) { this.verificationCriteria = verificationCriteria != null ? verificationCriteria : new ArrayList<>(); }
+
+        public int getVerificationFailCount() { return verificationFailCount; }
+        public void setVerificationFailCount(int count) { this.verificationFailCount = count; }
+
+        public String getLastVerificationTime() { return lastVerificationTime; }
+        public void setLastVerificationTime(String time) { this.lastVerificationTime = time; }
+
+        public String getVerificationResult() { return verificationResult; }
+        public void setVerificationResult(String result) { this.verificationResult = result; }
+
+        public String getBlockedReason() { return blockedReason; }
+        public void setBlockedReason(String blockedReason) { this.blockedReason = blockedReason; }
+
+        public void addVerificationCriteria(String criteria) { this.verificationCriteria.add(criteria); }
 
         public void addTask(MilestoneTask task) { this.tasks.add(task); }
 
@@ -249,32 +323,98 @@ public class GameProject {
      * 里程碑任务
      * 里程碑的具体执行单元
      */
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
     public static class MilestoneTask {
         /** 任务 ID */
         private String id;
+        /** 任务标题 */
+        private String title;
         /** 任务描述 */
         private String description;
+        /** 负责角色 */
+        private String assignedRole;
         /** 任务状态 */
         private MilestoneStatus status = MilestoneStatus.PENDING;
         /** 执行结果 */
         private String result;
+        /** 任务权重（1-5，默认1，用于加权进度计算） */
+        private int weight = 1;
+        /** 任务复杂度（LOW, MEDIUM, HIGH） */
+        private String complexity = "MEDIUM";
+        /** 优先级：HIGH, MEDIUM, LOW */
+        private String priority = "MEDIUM";
+        /** 预计耗时（分钟） */
+        private int estimatedMinutes = 0;
+        /** 预估工时（小时） */
+        private int estimatedHours = 0;
+        /** 输入要求 */
+        private String inputRequirements;
+        /** 输出产物 */
+        private String outputDeliverables;
+        /** 验收标准 */
+        private List<String> acceptanceCriteria = new ArrayList<>();
+        /** 实际开始时间 */
+        private LocalDateTime startedAt;
+        /** 实际完成时间 */
+        private LocalDateTime completedAt;
 
         public MilestoneTask() {}
 
         public MilestoneTask(String id, String description) {
             this.id = id;
+            this.title = description;
             this.description = description;
+        }
+
+        public MilestoneTask(String id, String description, int weight) {
+            this.id = id;
+            this.title = description;
+            this.description = description;
+            this.weight = weight;
         }
 
         // Getters and Setters
         public String getId() { return id; }
         public void setId(String id) { this.id = id; }
+        public String getTitle() { return title; }
+        public void setTitle(String title) { this.title = title; }
         public String getDescription() { return description; }
         public void setDescription(String description) { this.description = description; }
+        public String getAssignedRole() { return assignedRole; }
+        public void setAssignedRole(String assignedRole) { this.assignedRole = assignedRole; }
         public MilestoneStatus getStatus() { return status; }
         public void setStatus(MilestoneStatus status) { this.status = status; }
         public String getResult() { return result; }
         public void setResult(String result) { this.result = result; }
+        public int getWeight() { return weight; }
+        public void setWeight(int weight) { this.weight = Math.max(1, Math.min(5, weight)); }
+        public String getComplexity() { return complexity; }
+        public void setComplexity(String complexity) { this.complexity = complexity; }
+        public String getPriority() { return priority; }
+        public void setPriority(String priority) { this.priority = priority; }
+        public int getEstimatedMinutes() { return estimatedMinutes; }
+        public void setEstimatedMinutes(int minutes) { this.estimatedMinutes = minutes; }
+        public int getEstimatedHours() { return estimatedHours; }
+        public void setEstimatedHours(int hours) { this.estimatedHours = hours; }
+        public String getInputRequirements() { return inputRequirements; }
+        public void setInputRequirements(String inputRequirements) { this.inputRequirements = inputRequirements; }
+        public String getOutputDeliverables() { return outputDeliverables; }
+        public void setOutputDeliverables(String outputDeliverables) { this.outputDeliverables = outputDeliverables; }
+        public List<String> getAcceptanceCriteria() { return acceptanceCriteria; }
+        public void setAcceptanceCriteria(List<String> acceptanceCriteria) { this.acceptanceCriteria = acceptanceCriteria; }
+        public LocalDateTime getStartedAt() { return startedAt; }
+        public void setStartedAt(LocalDateTime startedAt) { this.startedAt = startedAt; }
+        public LocalDateTime getCompletedAt() { return completedAt; }
+        public void setCompletedAt(LocalDateTime completedAt) { this.completedAt = completedAt; }
+
+        /**
+         * 获取任务耗时（分钟）
+         */
+        public long getDurationMinutes() {
+            if (startedAt == null) return 0;
+            LocalDateTime end = completedAt != null ? completedAt : LocalDateTime.now();
+            return java.time.Duration.between(startedAt, end).toMinutes();
+        }
     }
 
     public GameProject() {
@@ -450,6 +590,17 @@ public class GameProject {
         return sb.toString();
     }
 
+    // ===== 项目概况相关 =====
+
+    public String getProjectOverview() { return projectOverview; }
+    public void setProjectOverview(String projectOverview) { this.projectOverview = projectOverview; }
+
+    public boolean isRunning() { return running; }
+    public void setRunning(boolean running) { this.running = running; }
+
+    public String getDeploymentRules() { return deploymentRules; }
+    public void setDeploymentRules(String deploymentRules) { this.deploymentRules = deploymentRules; }
+
     /**
      * 是否有目标
      */
@@ -473,12 +624,34 @@ public class GameProject {
 
     /**
      * 获取下一个待执行的里程碑（按顺序，依赖已满足）
+     * 优先返回 PENDING 状态，其次返回 IN_PROGRESS 状态（可能是卡住的）
      */
     public GoalMilestone getNextMilestone() {
-        return milestones.stream()
+        // 优先返回 PENDING 状态的里程碑
+        GoalMilestone pending = milestones.stream()
             .filter(m -> m.getStatus() == MilestoneStatus.PENDING && m.areDependenciesMet(milestones))
             .min((a, b) -> Integer.compare(a.getOrder(), b.getOrder()))
             .orElse(null);
+
+        if (pending != null) {
+            return pending;
+        }
+
+        // 如果没有 PENDING 的，返回 IN_PROGRESS 状态的里程碑（可能是卡住需要推进的）
+        return milestones.stream()
+            .filter(m -> m.getStatus() == MilestoneStatus.IN_PROGRESS)
+            .min((a, b) -> Integer.compare(a.getOrder(), b.getOrder()))
+            .orElse(null);
+    }
+
+    /**
+     * 获取所有进行中的里程碑
+     */
+    @JsonIgnore
+    public List<GoalMilestone> getInProgressMilestones() {
+        return milestones.stream()
+            .filter(m -> m.getStatus() == MilestoneStatus.IN_PROGRESS)
+            .collect(Collectors.toList());
     }
 
     /**
@@ -538,5 +711,17 @@ public class GameProject {
      */
     public int getVersionCount() {
         return versionHistory.size();
+    }
+
+    /**
+     * 增加版本计数
+     * 记录版本历史
+     */
+    public void incrementVersionCount() {
+        VersionHistory history = new VersionHistory();
+        history.setVersion(this.version);
+        history.setCreatedAt(LocalDateTime.now());
+        history.setDescription("版本迭代");
+        this.versionHistory.add(history);
     }
 }

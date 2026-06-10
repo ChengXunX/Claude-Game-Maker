@@ -80,6 +80,175 @@ public class XXXService {
 }
 ```
 
+### 游戏开发专用代码模式
+
+#### 1. 游戏循环模式
+```javascript
+class GameLoop {
+  constructor() {
+    this.lastTime = 0;
+    this.accumulator = 0;
+    this.fixedDeltaTime = 1 / 60; // 60 FPS
+  }
+  
+  start() {
+    requestAnimationFrame(this.loop.bind(this));
+  }
+  
+  loop(currentTime) {
+    const deltaTime = (currentTime - this.lastTime) / 1000;
+    this.lastTime = currentTime;
+    
+    // 固定时间步长更新（物理、逻辑）
+    this.accumulator += deltaTime;
+    while (this.accumulator >= this.fixedDeltaTime) {
+      this.update(this.fixedDeltaTime);
+      this.accumulator -= this.fixedDeltaTime;
+    }
+    
+    // 可变时间步长渲染
+    this.render(deltaTime);
+    
+    requestAnimationFrame(this.loop.bind(this));
+  }
+  
+  update(deltaTime) {
+    // 更新游戏逻辑
+  }
+  
+  render(deltaTime) {
+    // 渲染画面
+  }
+}
+```
+
+#### 2. 对象池模式（游戏核心）
+```javascript
+class ObjectPool {
+  constructor(createFn, resetFn, initialSize = 50) {
+    this.createFn = createFn;
+    this.resetFn = resetFn;
+    this.pool = [];
+    this.active = [];
+    
+    // 预创建对象
+    for (let i = 0; i < initialSize; i++) {
+      this.pool.push(createFn());
+    }
+  }
+  
+  get() {
+    let obj = this.pool.pop();
+    if (!obj) {
+      obj = this.createFn();
+    }
+    this.active.push(obj);
+    return obj;
+  }
+  
+  release(obj) {
+    const index = this.active.indexOf(obj);
+    if (index !== -1) {
+      this.active.splice(index, 1);
+      this.resetFn(obj);
+      this.pool.push(obj);
+    }
+  }
+  
+  releaseAll() {
+    while (this.active.length > 0) {
+      this.release(this.active[0]);
+    }
+  }
+}
+```
+
+#### 3. 状态机模式（角色状态）
+```javascript
+class StateMachine {
+  constructor() {
+    this.states = {};
+    this.currentState = null;
+    this.previousState = null;
+  }
+  
+  addState(name, state) {
+    this.states[name] = state;
+  }
+  
+  changeState(name) {
+    if (this.currentState) {
+      this.currentState.exit?.();
+      this.previousState = this.currentState;
+    }
+    
+    this.currentState = this.states[name];
+    this.currentState.enter?.();
+  }
+  
+  update(deltaTime) {
+    this.currentState?.update?.(deltaTime);
+  }
+  
+  revertState() {
+    if (this.previousState) {
+      this.changeState(this.previousState.name);
+    }
+  }
+}
+
+// 使用示例
+const playerStates = {
+  idle: {
+    enter: () => console.log('进入空闲状态'),
+    update: (dt) => { /* 检查输入 */ },
+    exit: () => console.log('离开空闲状态')
+  },
+  running: {
+    enter: () => console.log('进入奔跑状态'),
+    update: (dt) => { /* 更新位置 */ },
+    exit: () => console.log('离开奔跑状态')
+  }
+};
+```
+
+#### 4. 事件系统（游戏消息）
+```javascript
+class EventBus {
+  constructor() {
+    this.listeners = {};
+  }
+  
+  on(event, callback) {
+    if (!this.listeners[event]) {
+      this.listeners[event] = [];
+    }
+    this.listeners[event].push(callback);
+  }
+  
+  off(event, callback) {
+    if (this.listeners[event]) {
+      this.listeners[event] = this.listeners[event].filter(cb => cb !== callback);
+    }
+  }
+  
+  emit(event, data) {
+    if (this.listeners[event]) {
+      for (const callback of this.listeners[event]) {
+        callback(data);
+      }
+    }
+  }
+}
+
+// 使用示例
+const events = new EventBus();
+events.on('enemy_killed', (data) => {
+  score += data.points;
+  showScorePopup(data.x, data.y, data.points);
+});
+```
+
 ### 编码规范
 
 #### 命名规范
@@ -113,3 +282,6 @@ public class XXXService {
 - [ ] 性能是否可接受
 - [ ] 是否易于测试
 - [ ] 是否遵循项目规范
+- [ ] 是否使用对象池（游戏对象）
+- [ ] 是否有内存泄漏风险
+- [ ] 是否处理了边界条件

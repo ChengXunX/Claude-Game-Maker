@@ -3,10 +3,12 @@ package com.chengxun.gamemaker.web.repository;
 import com.chengxun.gamemaker.web.entity.Role;
 import com.chengxun.gamemaker.web.entity.User;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -47,4 +49,14 @@ public interface UserRepository extends JpaRepository<User, Long> {
      */
     @Query("SELECT u FROM User u WHERE u.role.name = 'ADMIN' AND u.status = 'APPROVED' ORDER BY u.createdAt ASC")
     User findFirstAdmin();
+
+    /**
+     * 直接更新用户邮箱（避免懒加载问题）
+     *
+     * @param userId 用户ID
+     * @param email 新邮箱地址
+     */
+    @Modifying
+    @Query("UPDATE User u SET u.email = :email, u.updatedAt = :now WHERE u.id = :userId")
+    void updateEmailById(@Param("userId") Long userId, @Param("email") String email, @Param("now") LocalDateTime now);
 }

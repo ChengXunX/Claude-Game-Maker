@@ -11,6 +11,7 @@ import org.springframework.stereotype.Repository;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * 能力调用日志仓库
@@ -77,6 +78,11 @@ public interface CapabilityInvocationLogRepository extends JpaRepository<Capabil
      */
     @Query("SELECT l FROM CapabilityInvocationLog l WHERE l.status = 'PENDING_APPROVAL' AND l.createdAt < :timeout")
     List<CapabilityInvocationLog> findExpiredPendingApprovals(@Param("timeout") LocalDateTime timeout);
+
+    /**
+     * 按审批请求 ID 查找调用日志
+     */
+    Optional<CapabilityInvocationLog> findByApprovalRequestId(Long approvalRequestId);
 
     /**
      * 查找最近的调用记录（用于冷却时间检查）

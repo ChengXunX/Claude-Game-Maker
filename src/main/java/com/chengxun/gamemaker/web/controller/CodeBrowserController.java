@@ -35,11 +35,20 @@ public class CodeBrowserController {
 
     /** 允许预览的文件扩展名 */
     private static final Set<String> TEXT_EXTENSIONS = Set.of(
-        "java", "py", "js", "ts", "jsx", "tsx", "html", "htm", "css", "scss", "less",
-        "xml", "json", "yaml", "yml", "toml", "ini", "properties", "conf",
-        "md", "txt", "log", "csv", "sql", "sh", "bash", "bat", "cmd",
+        "java", "py", "js", "ts", "jsx", "tsx", "html", "htm", "css", "scss", "less", "sass",
+        "xml", "json", "yaml", "yml", "toml", "ini", "properties", "conf", "cfg", "cnf",
+        "md", "txt", "log", "csv", "sql", "sh", "bash", "bat", "cmd", "ps1",
         "c", "cpp", "h", "hpp", "cs", "go", "rs", "rb", "php", "swift", "kt",
-        "vue", "svelte", "astro", "dart", "lua", "r", "m", "mm"
+        "vue", "svelte", "astro", "dart", "lua", "r", "m", "mm",
+        "env", "gitignore", "dockerignore", "editorconfig", "prettierrc", "eslintrc",
+        "dockerfile", "makefile", "cmake", "gradle", "sbt",
+        "svg", "graphql", "gql", "proto", "thrift",
+        "lock", "sum", "mod",
+        "tf", "hcl", "nomad", "service", "nginx",
+        "rst", "asciidoc", "adoc", "tex", "bib",
+        "wasm", "wat",
+        "sol", "vyper",
+        "zig", "nim", "v", "ex", "exs", "erl", "hrl", "clj", "cljs", "hs", "elm"
     );
 
     /** 需要排除的目录 */
@@ -146,16 +155,26 @@ public class CodeBrowserController {
                 ));
             }
 
-            // 检查是否是文本文件
+            // 读取文件内容（未知扩展名也尝试按文本读取）
             String extension = getExtension(path);
-            if (!isTextFile(extension)) {
+            String content;
+            try {
+                content = Files.readString(filePath);
+            } catch (Exception e) {
                 return ResponseEntity.badRequest().body(Map.of(
                     "success", false,
-                    "message", "不支持预览此类型的文件"
+                    "message", "无法按文本读取此文件（可能是二进制文件）"
                 ));
             }
 
-            String content = Files.readString(filePath);
+            // 检测是否为二进制文件（包含大量空字符）
+            long nullCount = content.chars().filter(c -> c == 0).limit(1000).count();
+            if (nullCount > 10) {
+                return ResponseEntity.badRequest().body(Map.of(
+                    "success", false,
+                    "message", "此文件为二进制文件，无法按文本预览"
+                ));
+            }
             return ResponseEntity.ok(Map.of(
                 "success", true,
                 "content", content,

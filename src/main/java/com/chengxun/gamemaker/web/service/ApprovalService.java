@@ -2,19 +2,27 @@ package com.chengxun.gamemaker.web.service;
 
 import com.chengxun.gamemaker.agent.Agent;
 import com.chengxun.gamemaker.agent.ProducerAgent;
+import com.chengxun.gamemaker.config.AppConfig;
 import com.chengxun.gamemaker.manager.AgentManager;
+import com.chengxun.gamemaker.model.AgentDefinition;
 import com.chengxun.gamemaker.service.ApprovalCallbackService;
 import com.chengxun.gamemaker.web.entity.ApprovalRequest;
+import com.chengxun.gamemaker.web.entity.User;
 import com.chengxun.gamemaker.web.repository.ApprovalRequestRepository;
+import com.chengxun.gamemaker.web.repository.UserRepository;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.cache.CacheManager;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 审批服务
@@ -32,17 +40,31 @@ public class ApprovalService {
     private final ApprovalRequestRepository approvalRepository;
     private final AgentManager agentManager;
     private final NotificationService notificationService;
+    private final AppConfig appConfig;
+    private final ObjectMapper objectMapper;
     private BusinessMetricsService metricsService;
 
     @Autowired(required = false)
     private ApprovalCallbackService approvalCallbackService;
 
+    @Autowired(required = false)
+    private UserService userService;
+
+    @Autowired(required = false)
+    private UserRepository userRepository;
+
+    @Autowired(required = false)
+    private CacheManager cacheManager;
+
     public ApprovalService(ApprovalRequestRepository approvalRepository,
                           AgentManager agentManager,
-                          NotificationService notificationService) {
+                          NotificationService notificationService,
+                          AppConfig appConfig, ObjectMapper objectMapper) {
         this.approvalRepository = approvalRepository;
         this.agentManager = agentManager;
         this.notificationService = notificationService;
+        this.appConfig = appConfig;
+        this.objectMapper = objectMapper;
     }
 
     @org.springframework.beans.factory.annotation.Autowired(required = false)
@@ -70,6 +92,10 @@ public class ApprovalService {
         request.setDescription(description);
         request.setStatus(ApprovalRequest.ApprovalStatus.PENDING);
 
+        // 设置发起者名称
+        String requesterName = resolveRequesterName(requesterId);
+        request.setRequesterName(requesterName);
+
         // 设置优先级（根据请求类型）
         request.setPriority(getPriorityByType(requestType));
 
@@ -78,10 +104,46 @@ public class ApprovalService {
         // 通知管理员有新的审批请求
         notifyAdmins(saved);
 
-        log.info("Approval request created: {} for project {} by {}",
-            requestType, projectId, requesterId);
+        log.info("Approval request created: {} for project {} by {} ({})",
+            requestType, projectId, requesterId, requesterName);
 
         return saved;
+    }
+
+    /**
+     * 解析发起者名称
+     * 根据requesterId判断是用户还是Agent，返回对应的名称
+     */
+    private String resolveRequesterName(String requesterId) {
+        if (requesterId == null || requesterId.isEmpty()) {
+            return "未知";
+        }
+
+        // 如果是Agent ID（格式：projectId:role）
+        if (requesterId.contains(":")) {
+            try {
+                Agent agent = agentManager.getAgent(requesterId);
+                if (agent != null) {
+                    return agent.getName() != null ? agent.getName() : requesterId;
+                }
+            } catch (Exception e) {
+                log.warn("获取Agent名称失败: {}", e.getMessage());
+            }
+            return requesterId;
+        }
+
+        // 如果是用户ID（数字）
+        try {
+            Long userId = Long.parseLong(requesterId);
+            User user = userRepository.findById(userId).orElse(null);
+            if (user != null) {
+                return user.getNickname() != null ? user.getNickname() : user.getUsername();
+            }
+        } catch (NumberFormatException e) {
+            // 不是数字ID，可能是用户名
+        }
+
+        return requesterId;
     }
 
     /**
@@ -122,6 +184,20 @@ public class ApprovalService {
             request.setStatus(ApprovalRequest.ApprovalStatus.REJECTED);
         }
 
+        // 通知 Producer 审批结果（通过 ApprovalCallbackService）
+        if (approvalCallbackService != null) {
+            try {
+                String requestData = request.getRequestData();
+                String approvalType = "CREATE_AGENT".equals(request.getRequestType()) ? "CREATE_AGENT" : request.getRequestType();
+                approvalCallbackService.registerApprovalRequest(
+                    request.getId().toString(), request.getRequesterId(), approvalType,
+                    requestData != null ? requestData : "");
+                approvalCallbackService.onApprovalCompleted(request.getId().toString(), approved, comment);
+            } catch (Exception e) {
+                log.warn("审批回调通知失败: {}", e.getMessage());
+            }
+        }
+
         ApprovalRequest saved = approvalRepository.save(request);
 
         // 通知请求者审批结果
@@ -137,6 +213,24 @@ public class ApprovalService {
     }
 
     /**
+     * 获取指定项目的待审批请求
+     *
+     * @param projectId 项目ID
+     * @return 待审批请求列表
+     */
+    public List<ApprovalRequest> getPendingRequestsByProject(String projectId) {
+        return approvalRepository.findByProjectIdAndStatusOrderByPriorityAscCreatedAtAsc(
+            projectId, ApprovalRequest.ApprovalStatus.PENDING);
+    }
+
+    /**
+     * 获取项目的所有审批请求（不限状态）
+     */
+    public List<ApprovalRequest> getRequestsByProject(String projectId) {
+        return approvalRepository.findByProjectIdOrderByCreatedAtDesc(projectId);
+    }
+
+    /**
      * 执行审批通过的操作
      */
     private void executeApprovedRequest(ApprovalRequest request) {
@@ -149,6 +243,7 @@ public class ApprovalService {
                 case "ASSIGN_API" -> executeAssignApi(request);
                 case "DELETE_AGENT", "DISMISS_AGENT" -> executeDeleteAgent(request);
                 case "CHANGE_CONFIG" -> executeChangeConfig(request);
+                case "EMAIL_CHANGE" -> executeEmailChange(request);
                 default -> log.warn("Unknown request type: {}", type);
             }
         } catch (Exception e) {
@@ -159,12 +254,43 @@ public class ApprovalService {
 
     /**
      * 执行创建 Agent 操作
+     * 解析审批请求中的 JSON 数据，创建 Agent 实例
      */
+    @SuppressWarnings("unchecked")
     private void executeCreateAgent(ApprovalRequest request) {
-        // 解析请求数据并创建 Agent
-        // 这里需要根据实际的数据格式来解析
-        log.info("Executing create agent for request: {}", request.getId());
-        // TODO: 实际实现
+        try {
+            Map<String, String> data = objectMapper.readValue(
+                request.getRequestData(), new TypeReference<Map<String, String>>() {});
+
+            String role = data.getOrDefault("role", "system-planner");
+            String name = data.getOrDefault("name", role);
+            String workDir = data.getOrDefault("workDir", "");
+            String projectId = request.getProjectId();
+
+            if (workDir.isEmpty() || projectId == null) {
+                log.warn("创建Agent缺少必要参数: workDir={}, projectId={}", workDir, projectId);
+                return;
+            }
+
+            AgentDefinition.Builder builder = AgentDefinition.builder()
+                .id(role)
+                .name(name)
+                .role(role)
+                .description("由制作人招聘，经管理员审批通过")
+                .workDir(workDir)
+                .projectId(projectId);
+            // 不预设 API Key，让 AgentManager.autoAssignToken() 自动分配 Token
+            // 如果没有可用 Token，ClaudeCliEngine 会 fallback 到全局配置
+
+            if ("producer".equals(role)) {
+                builder.parent(true);
+            }
+
+            agentManager.createAgent(builder.build());
+            log.info("审批通过，Agent 已创建: {} ({}) for project: {}", name, role, projectId);
+        } catch (Exception e) {
+            log.error("创建 Agent 失败: {}", e.getMessage(), e);
+        }
     }
 
     /**
@@ -172,15 +298,24 @@ public class ApprovalService {
      */
     private void executeAssignApi(ApprovalRequest request) {
         log.info("Executing assign API for request: {}", request.getId());
-        // TODO: 实际实现
     }
 
     /**
      * 执行删除 Agent 操作
      */
+    @SuppressWarnings("unchecked")
     private void executeDeleteAgent(ApprovalRequest request) {
-        log.info("Executing delete agent for request: {}", request.getId());
-        // TODO: 实际实现
+        try {
+            Map<String, String> data = objectMapper.readValue(
+                request.getRequestData(), new TypeReference<Map<String, String>>() {});
+            String agentId = data.get("agentId");
+            if (agentId != null) {
+                agentManager.removeAgent(agentId);
+                log.info("审批通过，Agent 已移除: {}", agentId);
+            }
+        } catch (Exception e) {
+            log.error("删除 Agent 失败: {}", e.getMessage(), e);
+        }
     }
 
     /**
@@ -188,7 +323,44 @@ public class ApprovalService {
      */
     private void executeChangeConfig(ApprovalRequest request) {
         log.info("Executing change config for request: {}", request.getId());
-        // TODO: 实际实现
+    }
+
+    /**
+     * 执行邮箱变更操作
+     * 审批通过后自动更新用户邮箱
+     */
+    @SuppressWarnings("unchecked")
+    private void executeEmailChange(ApprovalRequest request) {
+        try {
+            Map<String, String> data = objectMapper.readValue(
+                request.getRequestData(), new TypeReference<Map<String, String>>() {});
+
+            String userIdStr = data.get("userId");
+            String newEmail = data.get("newEmail");
+
+            if (userIdStr == null || newEmail == null) {
+                log.warn("邮箱变更缺少必要参数: userId={}, newEmail={}", userIdStr, newEmail);
+                return;
+            }
+
+            Long userId = Long.parseLong(userIdStr);
+
+            // 使用直接更新避免懒加载问题
+            userRepository.updateEmailById(userId, newEmail, LocalDateTime.now());
+
+            // 清除用户缓存，确保下次查询返回最新数据
+            if (cacheManager != null) {
+                org.springframework.cache.Cache usersCache = cacheManager.getCache("users");
+                if (usersCache != null) {
+                    usersCache.clear();
+                }
+            }
+
+            log.info("审批通过，邮箱已更新: userId={}, newEmail={}", userId, newEmail);
+
+        } catch (Exception e) {
+            log.error("邮箱变更执行失败: {}", e.getMessage(), e);
+        }
     }
 
     /**
@@ -205,6 +377,13 @@ public class ApprovalService {
     public List<ApprovalRequest> getAllPendingRequests() {
         return approvalRepository.findByStatusOrderByPriorityAscCreatedAtAsc(
             ApprovalRequest.ApprovalStatus.PENDING);
+    }
+
+    /**
+     * 获取所有审批请求（含已处理的）
+     */
+    public List<ApprovalRequest> getAllRequests() {
+        return approvalRepository.findAllByOrderByCreatedAtDesc();
     }
 
     /**
@@ -236,22 +415,68 @@ public class ApprovalService {
             case "DELETE_AGENT", "DISMISS_AGENT" -> 1;  // 最高优先级
             case "ASSIGN_API" -> 3;
             case "CREATE_AGENT" -> 5;
+            case "EMAIL_CHANGE" -> 6;
             case "CHANGE_CONFIG" -> 7;
             default -> 10;
         };
     }
 
     /**
+     * 获取审批类型的中文描述
+     */
+    private String getRequestTypeDesc(String requestType) {
+        if (requestType == null) return "未知";
+        return switch (requestType) {
+            case "CREATE_AGENT" -> "招聘 Agent";
+            case "DELETE_AGENT" -> "删除 Agent";
+            case "DISMISS_AGENT" -> "解雇 Agent";
+            case "ASSIGN_API" -> "分配 API Token";
+            case "CHANGE_CONFIG" -> "修改配置";
+            case "EMAIL_CHANGE" -> "邮箱变更";
+            default -> requestType;
+        };
+    }
+
+    /**
      * 通知管理员有新的审批请求
+     * 使用模板系统发送多渠道通知
      */
     private void notifyAdmins(ApprovalRequest request) {
         try {
-            String title = "新的审批请求";
-            String content = String.format("类型: %s\n项目: %s\n描述: %s",
-                request.getRequestType(), request.getProjectId(), request.getDescription());
-            // 发送给所有管理员（使用系统通知）
-            // 这里需要遍历管理员用户并发送通知
-            log.info("Admin notification: {} - {}", title, content);
+            String requesterName = request.getRequesterId();
+            // 尝试获取请求者名称
+            if (userService != null) {
+                try {
+                    Long userId = Long.parseLong(request.getRequesterId());
+                    var user = userService.getUserById(userId);
+                    if (user != null) {
+                        requesterName = user.getNickname() != null ? user.getNickname() : user.getUsername();
+                    }
+                } catch (NumberFormatException e) {
+                    // Agent 请求，使用 Agent ID
+                    Agent agent = agentManager.getAgent(request.getRequesterId());
+                    if (agent != null) {
+                        requesterName = agent.getName();
+                    }
+                }
+            }
+
+            java.util.Map<String, String> variables = java.util.Map.of(
+                "requestType", request.getRequestType() != null ? request.getRequestType() : "",
+                "requestTypeDesc", getRequestTypeDesc(request.getRequestType()),
+                "requesterName", requesterName != null ? requesterName : request.getRequesterId(),
+                "description", request.getDescription() != null ? request.getDescription() : "",
+                "projectName", request.getProjectId() != null ? request.getProjectId() : "",
+                "title", "新的审批请求"
+            );
+
+            // 使用模板通知所有管理员
+            if (notificationService != null) {
+                notificationService.notifyAdmins("approval", "APPROVAL_NEW",
+                    variables, com.chengxun.gamemaker.web.entity.Notification.NotificationType.TASK);
+            }
+
+            log.info("Admin notification sent for approval: {} - {}", request.getRequestType(), request.getDescription());
         } catch (Exception e) {
             log.warn("Failed to notify admins: {}", e.getMessage());
         }
@@ -259,11 +484,41 @@ public class ApprovalService {
 
     /**
      * 通知请求者审批结果
-     * 通过 ApprovalCallbackService 回调 Producer
+     * 通过 ApprovalCallbackService 回调 Producer，并发送模板通知
      */
     private void notifyRequester(ApprovalRequest request) {
         try {
-            // 使用 ApprovalCallbackService 回调
+            // 1. 发送模板通知给请求者
+            if (notificationService != null) {
+                String templateCode = request.isApproved() ? "APPROVAL_APPROVED" : "APPROVAL_REJECTED";
+                String approverName = request.getApproverName() != null ? request.getApproverName() : "系统";
+
+                java.util.Map<String, String> variables = java.util.Map.of(
+                    "requestType", request.getRequestType() != null ? request.getRequestType() : "",
+                    "requestTypeDesc", getRequestTypeDesc(request.getRequestType()),
+                    "description", request.getDescription() != null ? request.getDescription() : "",
+                    "approverName", approverName,
+                    "approvalComment", request.getApprovalComment() != null ? request.getApprovalComment() : "无",
+                    "title", request.isApproved() ? "审批通过" : "审批拒绝"
+                );
+
+                com.chengxun.gamemaker.web.entity.Notification.NotificationType type =
+                    request.isApproved()
+                        ? com.chengxun.gamemaker.web.entity.Notification.NotificationType.SUCCESS
+                        : com.chengxun.gamemaker.web.entity.Notification.NotificationType.WARNING;
+
+                // 尝试发送给用户（如果 requesterId 是数字）
+                try {
+                    Long userId = Long.parseLong(request.getRequesterId());
+                    String link = "/approvals";
+                    notificationService.notifyUser(userId, "approval", templateCode, variables, type, link);
+                } catch (NumberFormatException e) {
+                    // requesterId 是 Agent ID，通过管理员通知
+                    log.debug("Requester is Agent {}, skipping user notification", request.getRequesterId());
+                }
+            }
+
+            // 2. 使用 ApprovalCallbackService 回调 Agent
             if (approvalCallbackService != null) {
                 String approvalId = request.getRequestType() + "-" + request.getId();
                 approvalCallbackService.onApprovalCompleted(
@@ -275,7 +530,7 @@ public class ApprovalService {
                 return;
             }
 
-            // 回退：直接通知 Agent
+            // 3. 回退：直接通知 Agent
             Agent requester = agentManager.getAgent(request.getRequesterId());
             if (requester != null) {
                 String approvalId = request.getRequestType() + "-" + request.getId();

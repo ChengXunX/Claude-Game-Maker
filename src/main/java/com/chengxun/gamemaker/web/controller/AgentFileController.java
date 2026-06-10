@@ -52,7 +52,7 @@ public class AgentFileController {
     @PreAuthorize("hasAnyAuthority('PERM_agents:manage', 'PERM_agents:task', 'PERM_admin:manage')")
     public ResponseEntity<?> uploadFile(@RequestParam("file") MultipartFile file,
                                          @RequestParam String agentId,
-                                         @RequestParam String projectId,
+                                         @RequestParam(required = false) String projectId,
                                          @RequestParam(required = false) String remark,
                                          Authentication authentication) {
         try {
@@ -114,7 +114,25 @@ public class AgentFileController {
     }
 
     /**
-     * 搜索文件
+     * 获取所有文件列表（分页）
+     */
+    @GetMapping("/all")
+    public ResponseEntity<Page<AgentFile>> getAllFiles(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        return ResponseEntity.ok(fileService.getAllFiles(PageRequest.of(page, size)));
+    }
+
+    /**
+     * 获取所有 Agent ID 列表（用于筛选下拉框）
+     */
+    @GetMapping("/agents")
+    public ResponseEntity<List<String>> getAgentIds() {
+        return ResponseEntity.ok(fileService.getAgentIds());
+    }
+
+    /**
+     * 搜索文件（指定 Agent）
      */
     @GetMapping("/search/{agentId}")
     public ResponseEntity<Page<AgentFile>> searchFiles(
@@ -123,6 +141,17 @@ public class AgentFileController {
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
         return ResponseEntity.ok(fileService.searchFiles(agentId, keyword, PageRequest.of(page, size)));
+    }
+
+    /**
+     * 全局搜索文件（不限 Agent）
+     */
+    @GetMapping("/search")
+    public ResponseEntity<Page<AgentFile>> searchFilesGlobal(
+            @RequestParam String keyword,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        return ResponseEntity.ok(fileService.searchFilesGlobal(keyword, PageRequest.of(page, size)));
     }
 
     /**

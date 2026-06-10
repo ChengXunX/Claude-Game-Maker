@@ -1,227 +1,189 @@
 ---
-name: game-template-idle-tycoon
-description: 数值养成经营游戏模板 - 店铺经营、员工培养、数值成长、自动收益
-category: game-template
-triggerPattern: idle, 放置, tycoon, 经营, 养成, 数值, 店铺, 商业, 经理, manager
+name: 经营养成游戏开发模板
+description: 经营养成游戏开发模板，适用于店铺经营、商业模拟、养成类游戏
+trigger: idle, 放置, tycoon, 经营, 养成, 数值, 店铺, 商业, 经理, manager
+examples: 开罗游戏|模拟城市|大富翁|商业大亨|Idle Miner
 ---
 
-# 数值养成经营游戏模板
+# 经营养成游戏开发模板
 
-## 概述
+## 游戏设计核心原则
 
-完整的数值养成经营游戏模板，包含：
-- **店铺系统**：多种店铺类型、升级扩张
-- **员工系统**：招聘、培养、技能提升
-- **数值成长**：收入、声望、等级递增
-- **离线收益**：退出游戏后自动积累
-- **任务系统**：主线/支线任务
-- **成就系统**：达成目标获得奖励
+### 核心循环（每 5-15 分钟一轮）
+```
+经营店铺 → 赚取金币 → 升级店铺 → 解锁新店铺 → 扩大规模
+```
+- **成长感**：从一个小摊位到商业帝国
+- **策略感**：选择升级哪个店铺、雇佣哪个员工
+- **自动化**：后期可以挂机自动赚钱
 
-## 核心代码
+### 玩家心理学
+- **"从零到一"的成就感**：看着自己的商业帝国成长
+- **"优化策略"的乐趣**：找到最优的升级路径
+- **"解锁新内容"的期待**：新店铺、新员工、新功能
+- **"数值增长"的快感**：收入从 100 到 100 万
 
-### 1. 游戏配置 (config.js)
+### 经济系统设计
+```
+收入 = 店铺基础收入 × 等级倍数 × 员工加成 × 全局加成
+升级费用 = 基础费用 × 1.12^当前等级
+员工费用 = 基础费用 × 1.2^当前等级
 
-```javascript
-export const GAME_CONFIG = {
-  tickInterval: 1000,          // 游戏循环间隔（毫秒）
-  offlineMultiplier: 0.5,      // 离线收益倍率
-  maxOfflineHours: 24,         // 最大离线时间
-  baseIncome: 10,              // 基础收入
-  prestigeMultiplier: 1.5,     // 转生倍率
-  maxLevel: 100,               // 最大等级
-  autoSaveInterval: 30000      // 自动保存间隔
-}
+关键：让玩家每 5-15 分钟就能做一次有意义的升级
 ```
 
-### 2. 店铺系统 (Shop.js)
+## 核心系统设计
 
+### 1. 店铺系统
 ```javascript
-export class Shop {
+class Shop {
   constructor(config) {
-    this.id = config.id
-    this.name = config.name
-    this.level = 1
-    this.baseIncome = config.baseIncome
-    this.baseCost = config.baseCost
-    this.incomeMultiplier = 1
-    this.costMultiplier = 1
-    this.employees = []
-    this.lastCollectTime = Date.now()
+    this.id = config.id;
+    this.name = config.name;
+    this.baseIncome = config.baseIncome;
+    this.level = 1;
+    this.baseCost = config.baseCost;
+    this.employees = [];
+    this.lastCollectTime = Date.now();
   }
-
+  
   getIncome() {
-    const base = this.baseIncome * Math.pow(1.1, this.level - 1)
-    const employeeBonus = this.employees.reduce((sum, e) => sum + e.getBonus(), 0)
-    return Math.floor(base * this.incomeMultiplier + employeeBonus)
+    let income = this.baseIncome * this.level;
+    
+    // 员工加成
+    for (const employee of this.employees) {
+      income *= employee.getBonus();
+    }
+    
+    return income;
   }
-
+  
   getUpgradeCost() {
-    return Math.floor(this.baseCost * Math.pow(1.15, this.level - 1) * this.costMultiplier)
+    return Math.floor(this.baseCost * Math.pow(1.12, this.level));
   }
-
+  
   upgrade() {
-    this.level++
-    return this.level
+    const cost = this.getUpgradeCost();
+    if (this.currency >= cost) {
+      this.currency -= cost;
+      this.level++;
+      return true;
+    }
+    return false;
   }
-
-  hireEmployee(employee) {
-    this.employees.push(employee)
-  }
-
-  getOfflineEarnings(offlineMs) {
-    const hours = Math.min(offlineMs / 3600000, GAME_CONFIG.maxOfflineHours)
-    return Math.floor(this.getIncome() * (hours * 3600) * GAME_CONFIG.offlineMultiplier)
+  
+  collectEarnings() {
+    const now = Date.now();
+    const elapsed = (now - this.lastCollectTime) / 1000;
+    const earnings = this.getIncome() * elapsed;
+    this.lastCollectTime = now;
+    return Math.floor(earnings);
   }
 }
+
+const SHOPS = [
+  { id: 'lemonade', name: '柠檬水摊', baseIncome: 1, baseCost: 10 },
+  { id: 'bakery', name: '面包店', baseIncome: 5, baseCost: 100 },
+  { id: 'restaurant', name: '餐厅', baseIncome: 25, baseCost: 1000 },
+  { id: 'hotel', name: '酒店', baseIncome: 100, baseCost: 10000 },
+  { id: 'mall', name: '购物中心', baseIncome: 500, baseCost: 100000 }
+];
 ```
 
-### 3. 员工系统 (Employee.js)
-
+### 2. 员工系统
 ```javascript
-export class Employee {
+class Employee {
   constructor(config) {
-    this.id = config.id
-    this.name = config.name
-    this.role = config.role
-    this.level = 1
-    this.exp = 0
-    this.skills = config.skills || []
-    this.salary = config.salary || 100
+    this.id = config.id;
+    this.name = config.name;
+    this.role = config.role;
+    this.level = 1;
+    this.baseBonus = config.baseBonus;
+    this.salary = config.salary;
   }
-
+  
   getBonus() {
-    const levelBonus = this.level * 5
-    const skillBonus = this.skills.reduce((sum, s) => sum + s.value, 0)
-    return levelBonus + skillBonus
+    return 1 + (this.baseBonus * this.level / 100);
   }
-
-  addExp(amount) {
-    this.exp += amount
-    const required = this.getRequiredExp()
-    if (this.exp >= required) {
-      this.levelUp()
-      return true
-    }
-    return false
-  }
-
-  levelUp() {
-    this.level++
-    this.exp -= this.getRequiredExp()
-    this.salary = Math.floor(this.salary * 1.1)
-  }
-
-  getRequiredExp() {
-    return Math.floor(100 * Math.pow(1.5, this.level - 1))
+  
+  upgrade() {
+    this.level++;
+    this.salary = Math.floor(this.salary * 1.1);
   }
 }
+
+const EMPLOYEES = [
+  { id: 'cashier', name: '收银员', role: 'income', baseBonus: 10, salary: 5 },
+  { id: 'manager', name: '经理', role: 'speed', baseBonus: 20, salary: 20 },
+  { id: 'accountant', name: '会计', role: 'cost', baseBonus: 15, salary: 15 }
+];
 ```
 
-### 4. 数值管理器 (NumericalManager.js)
-
+### 3. 离线收益系统
 ```javascript
-export class NumericalManager {
-  constructor() {
-    this.level = 1
-    this.exp = 0
-    this.gold = 100
-    this.gems = 0
-    this.prestigeCount = 0
-    this.prestigeMultiplier = 1
-  }
-
-  addExp(amount) {
-    this.exp += amount * this.prestigeMultiplier
-    while (this.exp >= this.getRequiredExp() && this.level < GAME_CONFIG.maxLevel) {
-      this.levelUp()
+class OfflineEarnings {
+  calculate(shops, lastOnlineTime) {
+    const now = Date.now();
+    const offlineHours = (now - lastOnlineTime) / (1000 * 60 * 60);
+    const maxHours = 24;
+    const effectiveHours = Math.min(offlineHours, maxHours);
+    
+    let totalEarnings = 0;
+    for (const shop of shops) {
+      totalEarnings += shop.getIncome() * effectiveHours * 3600 * 0.5;
     }
-  }
-
-  levelUp() {
-    this.level++
-    this.exp -= this.getRequiredExp()
-    this.gold += this.level * 50
-  }
-
-  getRequiredExp() {
-    return Math.floor(100 * Math.pow(1.2, this.level - 1))
-  }
-
-  canPrestige() {
-    return this.level >= 50
-  }
-
-  prestige() {
-    if (!this.canPrestige()) return false
-    this.prestigeCount++
-    this.prestigeMultiplier = 1 + (this.prestigeCount * 0.1)
-    this.level = 1
-    this.exp = 0
-    return true
-  }
-
-  addGold(amount) {
-    this.gold += Math.floor(amount * this.prestigeMultiplier)
-  }
-
-  addGems(amount) {
-    this.gems += amount
+    
+    return Math.floor(totalEarnings);
   }
 }
 ```
 
-### 5. 任务系统 (QuestSystem.js)
-
+### 4. 成就系统
 ```javascript
-export class QuestSystem {
-  constructor() {
-    this.activeQuests = []
-    this.completedQuests = []
-    this.achievements = []
-  }
-
-  getAvailableQuests(playerLevel) {
-    return QUESTS.filter(q =>
-      q.requiredLevel <= playerLevel &&
-      !this.completedQuests.includes(q.id)
-    ).slice(0, 3)
-  }
-
-  checkProgress(questId, condition) {
-    const quest = this.activeQuests.find(q => q.id === questId)
-    if (!quest) return
-
-    quest.progress++
-    if (quest.progress >= quest.target) {
-      this.completeQuest(questId)
-    }
-  }
-
-  completeQuest(questId) {
-    const quest = this.activeQuests.find(q => q.id === questId)
-    if (!quest) return null
-
-    this.activeQuests = this.activeQuests.filter(q => q.id !== questId)
-    this.completedQuests.push(questId)
-
-    return quest.rewards
-  }
-}
+const ACHIEVEMENTS = [
+  { id: 'first_shop', name: '第一桶金', condition: (state) => state.totalEarnings >= 100 },
+  { id: 'shop_5', name: '连锁经营', condition: (state) => state.shopCount >= 5 },
+  { id: 'millionaire', name: '百万富翁', condition: (state) => state.totalEarnings >= 1000000 },
+  { id: 'employees_10', name: '团队领袖', condition: (state) => state.employeeCount >= 10 }
+];
 ```
 
-## 游戏玩法
+## 迭代策略
 
-1. **经营店铺**：升级店铺提升收入
-2. **招聘员工**：雇佣员工提升效率
-3. **数值成长**：通过经营获得经验值升级
-4. **离线收益**：退出游戏后回来领取离线收益
-5. **转生系统**：达到一定等级后重置获得永久加成
-6. **完成任务**：完成任务获得额外奖励
+### 第一版：基础经营
+- 1 种店铺
+- 升级系统
+- 手动收集收益
+- 基础 UI
 
-## 扩展点
+### 第二版：多店铺
+- 5 种店铺
+- 店铺解锁
+- 自动收集
+- 成就系统
 
-- 添加新店铺类型：在 `ShopConfig` 中定义
-- 添加新员工类型：在 `EmployeeConfig` 中定义
-- 添加新任务：在 `QuestConfig` 中定义
-- 添加成就系统：创建 `AchievementManager`
-- 添加排行榜：创建 `LeaderboardManager`
+### 第三版：员工系统
+- 员工招聘
+- 员工升级
+- 员工技能
+- 离线收益
+
+### 第四版：深度玩法
+- 20 种店铺
+- 特殊事件
+- 每日任务
+- 排行榜
+
+### 第五版：变现
+- 看广告获得加速
+- 内购系统
+- 社交分享
+- 推送通知
+
+## 常见错误
+
+1. **升级太慢**：玩家要能频繁做有意义的决策
+2. **店铺没有差异**：每种店铺要有独特特点
+3. **离线收益太少**：玩家回来时要有惊喜
+4. **没有自动化**：后期要能挂机，否则太累
+5. **数值不平衡**：某些升级太强或太弱

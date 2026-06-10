@@ -13,6 +13,18 @@ import java.util.UUID;
 
 public class SystemPlannerAgent extends BaseAgent {
 
+    /** 上次协调时间，避免每轮都调用 Claude CLI */
+    private LocalDateTime lastCoordinationTime;
+
+    /** 上次更新设计文档时间 */
+    private LocalDateTime lastDesignUpdateTime;
+
+    /** 协调冷却时间（分钟）：至少间隔这么久才再次协调 */
+    private static final int COORDINATION_COOLDOWN_MINUTES = 30;
+
+    /** 设计文档更新冷却时间（分钟） */
+    private static final int DESIGN_UPDATE_COOLDOWN_MINUTES = 60;
+
     private static final Logger log = LoggerFactory.getLogger(SystemPlannerAgent.class);
 
     public SystemPlannerAgent(AgentDefinition definition,
@@ -32,11 +44,52 @@ public class SystemPlannerAgent extends BaseAgent {
         // 检查待处理的设计任务
         processPendingTasks();
 
-        // 协调与其他 Agent 的工作
-        coordinateWithAgents();
+        // 如果有工作流分配的待处理/进行中任务，跳过协调和文档更新，专注完成任务
+        boolean hasActiveTask = tasks.stream()
+            .anyMatch(t -> t.getStatus() == TaskAssignment.TaskStatus.PENDING
+                || t.getStatus() == TaskAssignment.TaskStatus.IN_PROGRESS);
+        if (hasActiveTask) {
+            log.debug("有活跃任务，跳过协调和文档更新");
+            return;
+        }
 
-        // 更新设计文档
-        updateDesignDocuments();
+        // 协调与其他 Agent 的工作（带冷却时间，避免每轮都调用 Claude CLI）
+        if (shouldCoordinate()) {
+            coordinateWithAgents();
+            lastCoordinationTime = LocalDateTime.now();
+        }
+
+        // 更新设计文档（带冷却时间）
+        if (shouldUpdateDesign()) {
+            updateDesignDocuments();
+            lastDesignUpdateTime = LocalDateTime.now();
+        }
+    }
+
+    /**
+     * 判断是否需要协调：有未处理的协调消息 或 超过冷却时间
+     */
+    private boolean shouldCoordinate() {
+        // 有来自其他 Agent 的未处理消息时，需要协调
+        boolean hasUnprocessedMessages = !getPendingMessages().isEmpty();
+        if (hasUnprocessedMessages) {
+            return true;
+        }
+        // 超过冷却时间后才允许再次协调
+        if (lastCoordinationTime == null) {
+            return true;
+        }
+        return LocalDateTime.now().isAfter(lastCoordinationTime.plusMinutes(COORDINATION_COOLDOWN_MINUTES));
+    }
+
+    /**
+     * 判断是否需要更新设计文档：有新的设计输入 或 超过冷却时间
+     */
+    private boolean shouldUpdateDesign() {
+        if (lastDesignUpdateTime == null) {
+            return true;
+        }
+        return LocalDateTime.now().isAfter(lastDesignUpdateTime.plusMinutes(DESIGN_UPDATE_COOLDOWN_MINUTES));
     }
 
     @Override
@@ -60,6 +113,11 @@ public class SystemPlannerAgent extends BaseAgent {
             .sorted((a, b) -> b.getPriority().compareTo(a.getPriority()))
             .toList();
 
+        log.info("SystemPlanner pending tasks: {}, total tasks: {}", pendingTasks.size(), tasks.size());
+        for (TaskAssignment t : tasks) {
+            log.debug("  Task: {} status={}", t.getTitle(), t.getStatus());
+        }
+
         if (!pendingTasks.isEmpty()) {
             TaskAssignment task = pendingTasks.get(0);
             workOnTask(task);
@@ -70,30 +128,40 @@ public class SystemPlannerAgent extends BaseAgent {
      * 执行设计任务
      */
     private void workOnTask(TaskAssignment task) {
-        log.info("Working on design task: {}", task.getTitle());
+        log.info("Working on design task: {} (taskId={})", task.getTitle(), task.getId());
 
         task.setStatus(TaskAssignment.TaskStatus.IN_PROGRESS);
         task.setUpdatedAt(LocalDateTime.now());
         agentContext.setCurrentTaskId(task.getId());
 
-        String prompt = buildDesignPrompt(task);
-        String result = sendMessage(prompt);
+        try {
+            String prompt = buildDesignPrompt(task);
+            log.info("Sending design prompt to Claude CLI (length={})", prompt.length());
+            String result = sendMessage(prompt);
+            log.info("Received design result from Claude CLI (length={})", result != null ? result.length() : 0);
 
-        task.setResult(result);
-        task.setStatus(TaskAssignment.TaskStatus.COMPLETED);
-        task.setCompletedAt(LocalDateTime.now());
-        agentContext.setCurrentTaskId(null);
+            task.setResult(result);
+            task.setStatus(TaskAssignment.TaskStatus.COMPLETED);
+            task.setCompletedAt(LocalDateTime.now());
+            agentContext.setCurrentTaskId(null);
 
-        // 保存设计经验
-        saveDesignExperience(task, result);
+            // 保存设计经验
+            saveDesignExperience(task, result);
 
-        // 尝试学习设计技能
-        tryLearnSkill(task.getTitle() + "\n" + task.getDescription(), result);
+            // 尝试学习设计技能
+            tryLearnSkill(task.getTitle() + "\n" + task.getDescription(), result);
 
-        // 通知相关 Agent
-        notifyRelatedAgents(task, result);
+            // 通知相关 Agent
+            notifyRelatedAgents(task, result);
 
-        reportProgress(task.getId(), "设计完成: " + result.substring(0, Math.min(100, result.length())));
+            reportProgress(task.getId(), "设计完成: " + result.substring(0, Math.min(100, result.length())));
+        } catch (Exception e) {
+            log.error("Design task failed: {} (taskId={})", task.getTitle(), task.getId(), e);
+            task.setStatus(TaskAssignment.TaskStatus.FAILED);
+            task.setError(e.getMessage());
+            task.setCompletedAt(LocalDateTime.now());
+            agentContext.setCurrentTaskId(null);
+        }
     }
 
     /**
@@ -218,22 +286,20 @@ public class SystemPlannerAgent extends BaseAgent {
 
     /**
      * 构建协调提示词
+     * 只有当存在实际待协调事项时才返回内容，否则返回空字符串避免无意义的 Claude CLI 调用
      */
     private String buildCoordinationPrompt() {
-        StringBuilder sb = new StringBuilder();
-
-        sb.append("## 团队协调任务\n\n");
-        sb.append("请检查以下协调事项：\n\n");
-        sb.append("1. 与数值策划的协调：确认数值需求是否满足\n");
-        sb.append("2. 与开发团队的协调：确认技术可行性\n");
-        sb.append("3. 与 Git 提交专员的协调：确认实现符合设计\n\n");
-
         // 加载待协调事项
         String pendingCoordination = loadKnowledge("pending_coordination");
-        if (pendingCoordination != null) {
-            sb.append("## 待协调事项\n\n").append(pendingCoordination).append("\n\n");
+
+        // 如果没有待协调事项，不生成协调提示
+        if (pendingCoordination == null || pendingCoordination.trim().isEmpty()) {
+            return "";
         }
 
+        StringBuilder sb = new StringBuilder();
+        sb.append("## 团队协调任务\n\n");
+        sb.append("## 待协调事项\n\n").append(pendingCoordination).append("\n\n");
         sb.append("请输出协调建议和行动项。");
 
         return sb.toString();

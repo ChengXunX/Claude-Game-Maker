@@ -205,10 +205,19 @@ public class ResourceUsageService {
         return agentStats.stream()
             .map(row -> {
                 Map<String, Object> agent = new HashMap<>();
-                agent.put("agentId", row[0]);
-                agent.put("agentName", row[1]);
-                agent.put("tokens", row[2]);
-                agent.put("cost", row[3]);
+                String agentId = row[0] != null ? row[0].toString() : "";
+                agent.put("agentId", agentId);
+                agent.put("agentName", row[1] != null ? row[1].toString() : agentId);
+                agent.put("tokens", row[2] != null ? ((Number) row[2]).longValue() : 0L);
+                agent.put("cost", row[3] != null ? ((Number) row[3]).doubleValue() : 0.0);
+
+                // 从agentId中提取角色（格式：projectId:role）
+                String agentRole = "";
+                if (agentId.contains(":")) {
+                    agentRole = agentId.substring(agentId.lastIndexOf(":") + 1);
+                }
+                agent.put("agentRole", agentRole);
+
                 return agent;
             })
             .collect(Collectors.toList());

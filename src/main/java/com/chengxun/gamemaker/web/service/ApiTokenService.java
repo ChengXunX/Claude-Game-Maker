@@ -38,6 +38,13 @@ public class ApiTokenService {
         return tokenRepository.findAll();
     }
 
+    /**
+     * 保存 Token（创建或更新）
+     */
+    public ApiToken saveToken(ApiToken token) {
+        return tokenRepository.save(token);
+    }
+
     public ApiToken getTokenById(Long id) {
         return tokenRepository.findById(id).orElse(null);
     }
@@ -51,24 +58,26 @@ public class ApiTokenService {
     }
 
     public ApiToken createToken(String name, String apiKey, String apiUrl, String model,
-                                Integer maxTokens, String description, String createdBy) {
+                                Integer maxTokens, Integer contextWindow, String description, String createdBy) {
         ApiToken token = new ApiToken();
+        token.setToken("token-" + java.util.UUID.randomUUID().toString().replace("-", ""));
         token.setName(name);
         token.setApiKey(apiKey);
         token.setApiUrl(apiUrl);
         token.setModel(model);
         token.setMaxTokens(maxTokens);
+        token.setContextWindow(contextWindow != null ? contextWindow : 200000);
         token.setDescription(description);
         token.setCreatedBy(createdBy);
         token.setStatus(ApiToken.TokenStatus.ACTIVE);
 
         ApiToken saved = tokenRepository.save(token);
-        log.info("API token created: {} by {}", name, createdBy);
+        log.info("API token created: {} by {} (contextWindow={})", name, createdBy, token.getContextWindow());
         return saved;
     }
 
     public ApiToken updateToken(Long id, String name, String apiKey, String apiUrl,
-                                String model, Integer maxTokens, String description) {
+                                String model, Integer maxTokens, Integer contextWindow, String description) {
         ApiToken token = tokenRepository.findById(id)
             .orElseThrow(() -> new RuntimeException("Token not found"));
 
@@ -79,10 +88,13 @@ public class ApiTokenService {
         token.setApiUrl(apiUrl);
         token.setModel(model);
         token.setMaxTokens(maxTokens);
+        if (contextWindow != null) {
+            token.setContextWindow(contextWindow);
+        }
         token.setDescription(description);
 
         ApiToken saved = tokenRepository.save(token);
-        log.info("API token updated: {}", id);
+        log.info("API token updated: {} (contextWindow={})", id, token.getContextWindow());
         return saved;
     }
 
@@ -124,9 +136,20 @@ public class ApiTokenService {
 
         ApiToken saved = tokenRepository.save(token);
 
+        // 更新 Agent 的上下文窗口大小
+        if (agent != null && token.getContextWindow() != null) {
+            agent.getDefinition().setMaxContextSize(token.getContextWindow());
+            log.info("Updated agent {} contextWindow to {}", agentId, token.getContextWindow());
+        }
+
         // 如果是 ProducerAgent，调用分配 API 配置
         if (agent instanceof ProducerAgent producer) {
             producer.assignApiConfig(agentId, token.getApiKey(), token.getApiUrl(), token.getModel());
+            // 重启 Agent 的 CLI 进程，使新的 API 配置生效
+            if ("immediate".equals(activation)) {
+                restartAgentProcess(agentId);
+            }
+            log.info("Token {} assigned to ProducerAgent {} ({} activation)", tokenId, agentId, activation);
         } else if (agent != null) {
             if ("pending".equals(activation)) {
                 // 等待任务完成：设置待生效配置

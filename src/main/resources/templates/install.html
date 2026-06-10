@@ -129,6 +129,11 @@
                         <input type="text" class="form-control bg-dark text-light border-secondary" id="sysName" value="ChengXun Game Maker">
                     </div>
                     <div class="mb-3">
+                        <label class="form-label text-light">联系管理员链接</label>
+                        <input type="text" class="form-control bg-dark text-light border-secondary" id="contactLink" placeholder="https://example.com/contact 或 邮箱地址">
+                        <small class="text-muted">登录页面"联系管理员"按钮跳转的链接，支持网址或邮箱</small>
+                    </div>
+                    <div class="mb-3">
                         <label class="form-label text-light">JWT 密钥 <span class="text-danger">*</span></label>
                         <div class="input-group">
                             <input type="text" class="form-control bg-dark text-light border-secondary" id="jwtSecret" placeholder="至少32位随机字符串">
@@ -201,6 +206,11 @@
                             </label>
                         </div>
                     </div>
+                    <div class="mb-3">
+                        <label class="form-label text-light">最大 Token</label>
+                        <input type="number" class="form-control bg-dark text-light border-secondary" id="maxTokens" value="4096" min="100" max="200000" step="1024">
+                        <small class="text-muted">建议值：4096（默认）、8192、16384、32768、65536</small>
+                    </div>
                     <div id="claudeResult" class="test-result" style="display:none"></div>
                     <div class="d-flex justify-content-between mt-3">
                         <button class="btn btn-outline-secondary" onclick="goStep(3)"><i class="bi bi-arrow-left"></i> 上一步</button>
@@ -217,29 +227,52 @@
                 <div class="card-header"><h5 class="mb-0"><i class="bi bi-envelope"></i> 邮件配置 <span class="badge bg-secondary">可选</span></h5></div>
                 <div class="card-body">
                     <p class="text-muted mb-3">配置 SMTP 邮件服务，用于通知和注册验证。</p>
-                    <div class="row mb-3">
-                        <div class="col-8">
-                            <label class="form-label text-light">SMTP 服务器</label>
-                            <input type="text" class="form-control bg-dark text-light border-secondary" id="emailHost" placeholder="smtp.example.com">
-                        </div>
-                        <div class="col-4">
-                            <label class="form-label text-light">端口</label>
-                            <input type="number" class="form-control bg-dark text-light border-secondary" id="emailPort" value="587">
-                        </div>
-                    </div>
-                    <div class="row mb-3">
-                        <div class="col-6">
-                            <label class="form-label text-light">用户名</label>
-                            <input type="text" class="form-control bg-dark text-light border-secondary" id="emailUser">
-                        </div>
-                        <div class="col-6">
-                            <label class="form-label text-light">密码</label>
-                            <input type="password" class="form-control bg-dark text-light border-secondary" id="emailPass" autocomplete="new-password">
-                        </div>
-                    </div>
                     <div class="mb-3">
-                        <label class="form-label text-light">发件人地址</label>
-                        <input type="email" class="form-control bg-dark text-light border-secondary" id="emailFrom" placeholder="noreply@example.com">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="emailEnabled" checked onchange="toggleEmailConfig()">
+                            <label class="form-check-label text-light" for="emailEnabled">启用邮件</label>
+                        </div>
+                        <small class="text-muted">开启后系统可通过邮件发送通知和验证码</small>
+                    </div>
+                    <div id="emailConfigFields">
+                        <div class="row mb-3">
+                            <div class="col-8">
+                                <label class="form-label text-light">SMTP 服务器</label>
+                                <input type="text" class="form-control bg-dark text-light border-secondary" id="emailHost" placeholder="smtp.example.com">
+                            </div>
+                            <div class="col-4">
+                                <label class="form-label text-light">端口</label>
+                                <input type="number" class="form-control bg-dark text-light border-secondary" id="emailPort" value="587">
+                                <small class="text-muted">常用：587（TLS）、465（SSL）、25（不加密）</small>
+                            </div>
+                        </div>
+                        <div class="row mb-3">
+                            <div class="col-6">
+                                <label class="form-label text-light">用户名</label>
+                                <input type="text" class="form-control bg-dark text-light border-secondary" id="emailUser" placeholder="your-email@qq.com">
+                                <small class="text-muted">用于 SMTP 认证的邮箱地址</small>
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label text-light">密码/授权码</label>
+                                <input type="password" class="form-control bg-dark text-light border-secondary" id="emailPass" autocomplete="new-password">
+                                <small class="text-muted">QQ邮箱请使用授权码，不是登录密码</small>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label text-light">发件人地址</label>
+                            <input type="email" class="form-control bg-dark text-light border-secondary" id="emailFrom" placeholder="noreply@example.com">
+                            <small class="text-muted">收件人看到的发件人邮箱，留空则使用登录账号</small>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label text-light">发件人名称</label>
+                            <input type="text" class="form-control bg-dark text-light border-secondary" id="emailSenderName" placeholder="如：系统管理员、ChengXun Game Maker">
+                            <small class="text-muted">收件人看到的发件人名称</small>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label text-light">代理邮箱（回复地址）</label>
+                            <input type="email" class="form-control bg-dark text-light border-secondary" id="emailReplyTo" placeholder="admin@example.com（可选）">
+                            <small class="text-muted">收件人点击"回复"时使用的邮箱地址，留空则使用发件人地址</small>
+                        </div>
                     </div>
                     <div id="emailResult" class="test-result" style="display:none"></div>
                     <div class="d-flex justify-content-between mt-3">
@@ -510,6 +543,12 @@
         function toggleDbType() {
             const dbType = document.getElementById('dbType').value;
             document.getElementById('mysqlConfig').style.display = dbType === 'mysql' ? 'block' : 'none';
+        }
+
+        // 切换邮件配置显示
+        function toggleEmailConfig() {
+            const enabled = document.getElementById('emailEnabled').checked;
+            document.getElementById('emailConfigFields').style.display = enabled ? 'block' : 'none';
         }
 
         // Step 1: 测试数据库
@@ -862,7 +901,8 @@
             }
             await api('/api/install/save-system', {
                 systemName: document.getElementById('sysName').value,
-                jwtSecret: secret
+                jwtSecret: secret,
+                contactLink: document.getElementById('contactLink').value
             });
             goStep(4);
         }
@@ -893,7 +933,8 @@
             const data = await api('/api/install/save-claude', {
                 apiKey: key,
                 apiUrl: document.getElementById('claudeUrl').value,
-                model: model
+                model: model,
+                maxTokens: document.getElementById('maxTokens').value
             });
             if (data.success === false) {
                 showResult('claudeResult', data);
@@ -914,18 +955,22 @@
         }
 
         async function saveEmail() {
+            const enabled = document.getElementById('emailEnabled').checked;
             const host = document.getElementById('emailHost').value;
             const user = document.getElementById('emailUser').value;
-            if (!host || !user) {
+            if (enabled && (!host || !user)) {
                 alert('请填写 SMTP 服务器和用户名');
                 return;
             }
             await api('/api/install/save-email', {
+                emailEnabled: enabled,
                 host: host,
                 port: parseInt(document.getElementById('emailPort').value),
                 username: user,
                 password: document.getElementById('emailPass').value,
-                from: document.getElementById('emailFrom').value
+                from: document.getElementById('emailFrom').value,
+                senderName: document.getElementById('emailSenderName').value,
+                proxyEmail: document.getElementById('emailReplyTo').value
             });
             goStep(6);
         }

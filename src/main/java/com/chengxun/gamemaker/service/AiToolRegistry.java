@@ -505,6 +505,397 @@ public class AiToolRegistry {
             Map.of(),
             "PERM_system:monitor"
         ));
+
+        // ===== 文件管理 =====
+
+        // 49. 搜索文件
+        Map<String, ParameterDef> searchFilesParams = new HashMap<>();
+        searchFilesParams.put("keyword", new ParameterDef("string", "搜索关键词（文件名）", true));
+        searchFilesParams.put("agentId", new ParameterDef("string", "限定Agent（可选）", false));
+        registerTool(new AiTool(
+            "search_files",
+            "搜索Agent文件（按文件名关键词）",
+            searchFilesParams,
+            "PERM_agents:view"
+        ));
+
+        // 50. 列出文件
+        Map<String, ParameterDef> listFilesParams = new HashMap<>();
+        listFilesParams.put("agentId", new ParameterDef("string", "Agent ID（可选，不填返回全部）", false));
+        registerTool(new AiTool(
+            "list_files",
+            "列出Agent文件列表",
+            listFilesParams,
+            "PERM_agents:view"
+        ));
+
+        // 51. 获取文件存储用量
+        Map<String, ParameterDef> fileUsageParams = new HashMap<>();
+        fileUsageParams.put("agentId", new ParameterDef("string", "Agent ID", true));
+        registerTool(new AiTool(
+            "get_file_usage",
+            "获取Agent的文件存储使用情况",
+            fileUsageParams,
+            "PERM_agents:view"
+        ));
+
+        // ===== Agent 招聘 =====
+
+        // 52. 招聘Agent
+        Map<String, ParameterDef> recruitParams = new HashMap<>();
+        recruitParams.put("producerId", new ParameterDef("string", "制作人Agent ID", true));
+        recruitParams.put("role", new ParameterDef("string", "Agent角色（如 server-dev, tester）", true));
+        recruitParams.put("name", new ParameterDef("string", "Agent名称", false));
+        registerTool(new AiTool(
+            "recruit_agent",
+            "招聘新的Agent到项目（需要指定制作人）",
+            recruitParams,
+            "PERM_agents:manage"
+        ));
+
+        // 53. 列出已招聘的Agent
+        registerTool(new AiTool(
+            "list_recruited_agents",
+            "获取已招聘的Agent列表（含角色、状态、能力）",
+            Map.of(),
+            "PERM_agents:view"
+        ));
+
+        // 54. 删除Agent（非核心）
+        Map<String, ParameterDef> deleteAgentParams = new HashMap<>();
+        deleteAgentParams.put("agentId", new ParameterDef("string", "要删除的Agent ID", true));
+        registerTool(new AiTool(
+            "delete_agent",
+            "删除非核心Agent（制作人不可删除）",
+            deleteAgentParams,
+            "PERM_agents:manage"
+        ));
+
+        // ===== 项目详情 =====
+
+        // 55. 获取项目详情
+        Map<String, ParameterDef> projectDetailParams = new HashMap<>();
+        projectDetailParams.put("projectId", new ParameterDef("string", "项目ID", true));
+        registerTool(new AiTool(
+            "get_project_detail",
+            "获取项目详细信息（工作目录、目标、Agent列表、状态）",
+            projectDetailParams,
+            "PERM_projects:view"
+        ));
+
+        // 56. 设置项目目标
+        Map<String, ParameterDef> setGoalParams = new HashMap<>();
+        setGoalParams.put("projectId", new ParameterDef("string", "项目ID", true));
+        setGoalParams.put("goal", new ParameterDef("string", "项目目标描述", true));
+        setGoalParams.put("goalType", new ParameterDef("string", "目标类型(GAME_DEVELOPMENT/FEATURE/BUG_FIX/REFACTOR/CUSTOM)", false));
+        registerTool(new AiTool(
+            "set_project_goal",
+            "设置项目目标（会触发制作人分解任务）",
+            setGoalParams,
+            "PERM_projects:manage"
+        ));
+
+        // 57. 获取项目里程碑
+        Map<String, ParameterDef> milestoneParams = new HashMap<>();
+        milestoneParams.put("projectId", new ParameterDef("string", "项目ID", true));
+        registerTool(new AiTool(
+            "get_project_milestones",
+            "获取项目的里程碑列表和进度",
+            milestoneParams,
+            "PERM_projects:view"
+        ));
+
+        // ===== 调度器 =====
+
+        // 58. 获取调度器状态
+        registerTool(new AiTool(
+            "get_scheduler_status",
+            "获取Agent调度器状态（运行中/暂停、任务队列）",
+            Map.of(),
+            "PERM_system:monitor"
+        ));
+
+        // 59. 触发调度
+        registerTool(new AiTool(
+            "trigger_schedule",
+            "手动触发一次Agent调度（检查所有Agent是否有待处理任务）",
+            Map.of(),
+            "PERM_agents:manage"
+        ));
+
+        // ===== 诊断 =====
+
+        // 60. 运行系统诊断
+        registerTool(new AiTool(
+            "run_diagnostic",
+            "运行完整系统诊断（检查Agent健康、磁盘空间、数据库连接等）",
+            Map.of(),
+            "PERM_system:monitor"
+        ));
+
+        // 61. 快速自检
+        registerTool(new AiTool(
+            "quick_health_check",
+            "快速自检（轻量级，检查核心服务是否正常）",
+            Map.of(),
+            null
+        ));
+
+        // ===== 代码浏览 =====
+
+        // 62. 浏览项目代码
+        Map<String, ParameterDef> browseCodeParams = new HashMap<>();
+        browseCodeParams.put("projectId", new ParameterDef("string", "项目ID", true));
+        browseCodeParams.put("path", new ParameterDef("string", "目录路径（默认根目录）", false));
+        registerTool(new AiTool(
+            "browse_code",
+            "浏览项目的代码目录结构",
+            browseCodeParams,
+            "PERM_projects:view"
+        ));
+
+        // 63. 读取代码文件
+        Map<String, ParameterDef> readCodeParams = new HashMap<>();
+        readCodeParams.put("projectId", new ParameterDef("string", "项目ID", true));
+        readCodeParams.put("path", new ParameterDef("string", "文件路径", true));
+        registerTool(new AiTool(
+            "read_code_file",
+            "读取项目中的代码文件内容",
+            readCodeParams,
+            "PERM_projects:view"
+        ));
+
+        // ===== 通知模板 =====
+
+        // 64. 列出通知模板
+        registerTool(new AiTool(
+            "list_notification_templates",
+            "获取所有通知模板（邮件、飞书、钉钉等渠道）",
+            Map.of(),
+            "PERM_notification:view"
+        ));
+
+        // ===== 自定义Agent模板 =====
+
+        // 65. 列出自定义Agent模板
+        registerTool(new AiTool(
+            "list_custom_agent_templates",
+            "获取用户自定义的Agent模板（可复用的Agent配置）",
+            Map.of(),
+            "PERM_agents:view"
+        ));
+
+        // 66. 创建自定义Agent模板
+        Map<String, ParameterDef> createCustomTplParams = new HashMap<>();
+        createCustomTplParams.put("role", new ParameterDef("string", "角色标识（英文）", true));
+        createCustomTplParams.put("name", new ParameterDef("string", "模板名称", true));
+        createCustomTplParams.put("description", new ParameterDef("string", "模板描述", false));
+        createCustomTplParams.put("systemPrompt", new ParameterDef("string", "系统提示词", false));
+        registerTool(new AiTool(
+            "create_custom_agent_template",
+            "创建自定义Agent模板（用于批量招聘同类Agent）",
+            createCustomTplParams,
+            "PERM_agents:manage"
+        ));
+
+        // ===== MCP 管理 =====
+
+        // 67. 查询MCP服务器详情
+        Map<String, ParameterDef> getMcpServerParams = new HashMap<>();
+        getMcpServerParams.put("serverId", new ParameterDef("number", "MCP服务器ID", true));
+        registerTool(new AiTool(
+            "get_mcp_server",
+            "获取MCP服务器详情（配置、工具列表、连接状态）",
+            getMcpServerParams,
+            "PERM_agents:view"
+        ));
+
+        // 68. 切换MCP服务器启用状态
+        Map<String, ParameterDef> toggleMcpParams = new HashMap<>();
+        toggleMcpParams.put("serverId", new ParameterDef("number", "MCP服务器ID", true));
+        registerTool(new AiTool(
+            "toggle_mcp_server",
+            "启用或禁用MCP服务器",
+            toggleMcpParams,
+            "PERM_agents:manage"
+        ));
+
+        // 69. 删除MCP服务器
+        Map<String, ParameterDef> deleteMcpParams = new HashMap<>();
+        deleteMcpParams.put("serverId", new ParameterDef("number", "MCP服务器ID", true));
+        registerTool(new AiTool(
+            "delete_mcp_server",
+            "删除MCP服务器及其所有工具",
+            deleteMcpParams,
+            "PERM_agents:manage"
+        ));
+
+        // 70. 查询MCP工具列表
+        Map<String, ParameterDef> listMcpToolsParams = new HashMap<>();
+        listMcpToolsParams.put("serverId", new ParameterDef("number", "MCP服务器ID", true));
+        registerTool(new AiTool(
+            "list_mcp_tools",
+            "获取MCP服务器的工具列表",
+            listMcpToolsParams,
+            "PERM_agents:view"
+        ));
+
+        // 71. 绑定MCP工具给Agent
+        Map<String, ParameterDef> bindMcpParams = new HashMap<>();
+        bindMcpParams.put("agentRole", new ParameterDef("string", "Agent角色", true));
+        bindMcpParams.put("projectId", new ParameterDef("string", "项目ID", true));
+        bindMcpParams.put("serverId", new ParameterDef("number", "MCP服务器ID", true));
+        registerTool(new AiTool(
+            "bind_mcp_to_agent",
+            "将MCP服务器绑定到Agent（Agent可使用该服务器的所有工具）",
+            bindMcpParams,
+            "PERM_agents:manage"
+        ));
+
+        // 72. 从模板安装MCP服务器
+        Map<String, ParameterDef> installMcpParams = new HashMap<>();
+        installMcpParams.put("templateKey", new ParameterDef("string", "模板标识（如 unity-mcp, godot-mcp, redis-mcp）", true));
+        installMcpParams.put("projectId", new ParameterDef("string", "关联项目ID", false));
+        registerTool(new AiTool(
+            "install_mcp_from_template",
+            "从预置模板安装MCP服务器（支持Unity、Godot、Redis、Steam、PlayFab、Firebase、Jira等）",
+            installMcpParams,
+            "PERM_agents:manage"
+        ));
+
+        // ===== 知识库 =====
+
+        // 73. 查询知识库统计
+        registerTool(new AiTool(
+            "get_knowledge_stats",
+            "获取知识库统计信息（解决方案数、最佳实践数等）",
+            Map.of(),
+            "PERM_agents:view"
+        ));
+
+        // 68. 查询问题解决方案
+        Map<String, ParameterDef> solutionParams = new HashMap<>();
+        solutionParams.put("problemType", new ParameterDef("string", "问题类型（如 compilation_error, runtime_error, logic_bug）", true));
+        registerTool(new AiTool(
+            "get_solutions",
+            "查询特定类型问题的历史解决方案",
+            solutionParams,
+            "PERM_agents:view"
+        ));
+
+        // ===== 版本迭代 =====
+
+        // 74. 发起版本迭代
+        Map<String, ParameterDef> versionIterationParams = new HashMap<>();
+        versionIterationParams.put("projectId", new ParameterDef("string", "项目ID", true));
+        versionIterationParams.put("requirements", new ParameterDef("string", "迭代需求描述", true));
+        versionIterationParams.put("version", new ParameterDef("string", "目标版本号", false));
+        versionIterationParams.put("priority", new ParameterDef("string", "优先级（HIGH/MEDIUM/LOW）", false));
+        versionIterationParams.put("deadline", new ParameterDef("string", "截止时间", false));
+        registerTool(new AiTool(
+            "start_version_iteration",
+            "对已完成项目发起版本迭代，制作人会分析需求并启动新的开发流程",
+            versionIterationParams,
+            "PERM_version:manage"
+        ));
+
+        // ===== 项目Agent配置 =====
+
+        // 75. 获取项目Agent配置列表
+        Map<String, ParameterDef> listAgentConfigsParams = new HashMap<>();
+        listAgentConfigsParams.put("projectId", new ParameterDef("string", "项目ID", true));
+        registerTool(new AiTool(
+            "list_project_agent_configs",
+            "获取项目中所有Agent的自定义配置",
+            listAgentConfigsParams,
+            "PERM_agent:view"
+        ));
+
+        // 76. 获取Agent配置
+        Map<String, ParameterDef> getAgentConfigParams = new HashMap<>();
+        getAgentConfigParams.put("projectId", new ParameterDef("string", "项目ID", true));
+        getAgentConfigParams.put("agentRole", new ParameterDef("string", "Agent角色", true));
+        registerTool(new AiTool(
+            "get_agent_config",
+            "获取项目中指定角色Agent的配置",
+            getAgentConfigParams,
+            "PERM_agent:view"
+        ));
+
+        // 77. 保存Agent配置
+        Map<String, ParameterDef> saveAgentConfigParams = new HashMap<>();
+        saveAgentConfigParams.put("projectId", new ParameterDef("string", "项目ID", true));
+        saveAgentConfigParams.put("agentRole", new ParameterDef("string", "Agent角色", true));
+        saveAgentConfigParams.put("customSystemPrompt", new ParameterDef("string", "自定义系统提示词", false));
+        saveAgentConfigParams.put("customCapabilityPrompt", new ParameterDef("string", "自定义能力提示词", false));
+        saveAgentConfigParams.put("projectContext", new ParameterDef("string", "项目特定上下文", false));
+        registerTool(new AiTool(
+            "save_agent_config",
+            "保存或更新项目中指定角色Agent的配置",
+            saveAgentConfigParams,
+            "PERM_agent:config"
+        ));
+
+        // 78. AI优化Agent提示词
+        Map<String, ParameterDef> optimizeAgentParams = new HashMap<>();
+        optimizeAgentParams.put("projectId", new ParameterDef("string", "项目ID", true));
+        optimizeAgentParams.put("agentRole", new ParameterDef("string", "Agent角色", true));
+        registerTool(new AiTool(
+            "optimize_agent_prompt",
+            "使用AI分析项目需求，优化Agent的提示词配置",
+            optimizeAgentParams,
+            "PERM_agent:optimize"
+        ));
+
+        // 79. 获取Agent职责权重
+        Map<String, ParameterDef> getAgentWeightsParams = new HashMap<>();
+        getAgentWeightsParams.put("projectId", new ParameterDef("string", "项目ID", true));
+        getAgentWeightsParams.put("agentRole", new ParameterDef("string", "Agent角色", true));
+        registerTool(new AiTool(
+            "get_agent_weights",
+            "获取项目中指定角色Agent的职责权重",
+            getAgentWeightsParams,
+            "PERM_agent:view"
+        ));
+
+        // ===== 能力管理 =====
+
+        // 80. 获取能力列表
+        Map<String, ParameterDef> listCapabilitiesParams = new HashMap<>();
+        listCapabilitiesParams.put("agentRole", new ParameterDef("string", "Agent角色（可选）", false));
+        listCapabilitiesParams.put("category", new ParameterDef("string", "能力分类（可选）", false));
+        registerTool(new AiTool(
+            "list_capabilities",
+            "获取能力列表，可按角色或分类筛选",
+            listCapabilitiesParams,
+            "PERM_agents:view"
+        ));
+
+        // 81. 创建能力
+        Map<String, ParameterDef> createCapabilityParams = new HashMap<>();
+        createCapabilityParams.put("agentRole", new ParameterDef("string", "Agent角色", true));
+        createCapabilityParams.put("capabilityName", new ParameterDef("string", "能力名称", true));
+        createCapabilityParams.put("displayName", new ParameterDef("string", "显示名称", true));
+        createCapabilityParams.put("description", new ParameterDef("string", "能力描述", true));
+        createCapabilityParams.put("category", new ParameterDef("string", "能力分类", false));
+        createCapabilityParams.put("executionType", new ParameterDef("string", "执行方式（java/prompt/message）", false));
+        createCapabilityParams.put("paramSchema", new ParameterDef("string", "参数Schema（JSON格式）", false));
+        registerTool(new AiTool(
+            "create_capability",
+            "创建新的Agent能力",
+            createCapabilityParams,
+            "PERM_agents:manage"
+        ));
+
+        // 82. 切换能力启用状态
+        Map<String, ParameterDef> toggleCapabilityParams = new HashMap<>();
+        toggleCapabilityParams.put("capabilityId", new ParameterDef("number", "能力ID", true));
+        registerTool(new AiTool(
+            "toggle_capability",
+            "启用或禁用Agent能力",
+            toggleCapabilityParams,
+            "PERM_agents:manage"
+        ));
     }
 
     /**
@@ -594,6 +985,42 @@ public class AiToolRegistry {
 
         sb.append("### 代码审查 & CI/CD\n");
         appendToolByNames(sb, userPermissions, "list_reviews", "list_pipelines", "trigger_pipeline", "list_git_repos");
+
+        sb.append("### 文件管理\n");
+        appendToolByNames(sb, userPermissions, "search_files", "list_files", "get_file_usage");
+
+        sb.append("### Agent 招聘\n");
+        appendToolByNames(sb, userPermissions, "recruit_agent", "list_recruited_agents", "delete_agent");
+
+        sb.append("### 项目详情\n");
+        appendToolByNames(sb, userPermissions, "get_project_detail", "set_project_goal", "get_project_milestones");
+
+        sb.append("### 调度器\n");
+        appendToolByNames(sb, userPermissions, "get_scheduler_status", "trigger_schedule");
+
+        sb.append("### 系统诊断\n");
+        appendToolByNames(sb, userPermissions, "run_diagnostic", "quick_health_check");
+
+        sb.append("### 代码浏览\n");
+        appendToolByNames(sb, userPermissions, "browse_code", "read_code_file");
+
+        sb.append("### 通知模板 & 自定义模板\n");
+        appendToolByNames(sb, userPermissions, "list_notification_templates", "list_custom_agent_templates", "create_custom_agent_template");
+
+        sb.append("### MCP 管理（外部工具集成）\n");
+        sb.append("- 查询 MCP 服务器：`curl -s http://127.0.0.1:19922/api/mcp/servers`\n");
+        sb.append("- 添加 MCP 服务器：`curl -X POST http://127.0.0.1:19922/api/mcp/servers -H 'Content-Type: application/json' -d '{...}'`\n");
+        sb.append("- 测试 MCP 服务器：`curl -X POST http://127.0.0.1:19922/api/mcp/servers/{id}/test`\n");
+        sb.append("- 从模板安装 MCP：`curl -X POST http://127.0.0.1:19922/api/mcp/servers/install -H 'Content-Type: application/json' -d '{\"templateKey\":\"unity-mcp\",\"projectId\":\"...\"}'`\n");
+        sb.append("- 绑定 MCP 到 Agent：`curl -X POST http://127.0.0.1:19922/api/mcp/bindings -H 'Content-Type: application/json' -d '{...}'`\n\n");
+        sb.append("可用 MCP 模板：unity-mcp（Unity编辑器）、godot-mcp（Godot引擎）、redis-mcp（Redis缓存）、");
+        sb.append("steam-mcp（Steam平台）、playfab-mcp（PlayFab后端）、firebase-mcp（Firebase服务）、jira-mcp（Jira项目管理）\n\n");
+        appendToolByNames(sb, userPermissions, "list_mcp_servers", "get_mcp_server", "add_mcp_server",
+            "test_mcp_server", "toggle_mcp_server", "delete_mcp_server", "list_mcp_tools",
+            "bind_mcp_to_agent", "install_mcp_from_template");
+
+        sb.append("### 知识库\n");
+        appendToolByNames(sb, userPermissions, "get_knowledge_stats", "get_solutions");
 
         return sb.toString();
     }

@@ -2,8 +2,10 @@ package com.chengxun.gamemaker.web.controller;
 
 import com.chengxun.gamemaker.web.dto.LoginRequest;
 import com.chengxun.gamemaker.web.dto.ChangePasswordRequest;
+import com.chengxun.gamemaker.web.entity.ApprovalRequest;
 import com.chengxun.gamemaker.web.entity.DeviceTrust;
 import com.chengxun.gamemaker.web.entity.User;
+import com.chengxun.gamemaker.web.service.ApprovalService;
 import com.chengxun.gamemaker.web.service.CaptchaService;
 import com.chengxun.gamemaker.web.service.DeviceTrustService;
 import com.chengxun.gamemaker.web.service.EmailService;
@@ -50,6 +52,9 @@ public class AuthApiController {
     private final DeviceTrustService deviceTrustService;
     private final CaptchaService captchaService;
     private final EmailService emailService;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private ApprovalService approvalService;
 
     public AuthApiController(AuthenticationManager authenticationManager, UserService userService,
                             JwtUtils jwtUtils, DeviceTrustService deviceTrustService,
@@ -555,6 +560,397 @@ public class AuthApiController {
             log.error("修改密码失败: {}", e.getMessage());
             response.put("success", false);
             response.put("message", "修改密码失败: " + e.getMessage());
+            return ResponseEntity.status(500).body(response);
+        }
+    }
+
+    /**
+     * 更新个人资料（不含邮箱）
+     * 邮箱变更需要通过审批流程
+     *
+     * @param request 更新请求（nickname, avatar）
+     * @param authentication 认证信息
+     * @return 更新结果
+     */
+    @PutMapping("/profile")
+    @Operation(summary = "更新个人资料", description = "更新昵称和头像，邮箱变更需走审批")
+    public ResponseEntity<Map<String, Object>> updateProfile(@RequestBody Map<String, String> request,
+                                                              Authentication authentication) {
+        Map<String, Object> response = new HashMap<>();
+
+        if (authentication == null || !authentication.isAuthenticated()) {
+            response.put("success", false);
+            response.put("message", "未登录");
+            return ResponseEntity.status(401).body(response);
+        }
+
+        try {
+            User user = userService.getUserByUsername(authentication.getName());
+            if (user == null) {
+                response.put("success", false);
+                response.put("message", "用户不存在");
+                return ResponseEntity.status(404).body(response);
+            }
+
+            String nickname = request.get("nickname");
+            String avatar = request.get("avatar");
+
+            // 只更新昵称和头像，不更新邮箱
+            userService.updateProfile(user.getId(), nickname, null, avatar);
+
+            response.put("success", true);
+            response.put("message", "资料更新成功");
+
+            log.info("用户资料更新: {}", authentication.getName());
+            return ResponseEntity.ok(response);
+
+        } catch (Exception e) {
+            log.error("更新资料失败: {}", e.getMessage());
+            response.put("success", false);
+            response.put("message", "更新失败: " + e.getMessage());
+            return ResponseEntity.status(500).body(response);
+        }
+    }
+
+    /**
+     * 发起邮箱变更审批
+     * 邮箱变更必须经过管理员审批
+     *
+     * @param request 包含 newEmail 和 reason
+     * @param authentication 认证信息
+     * @return 审批请求结果
+     */
+    @PostMapping("/request-email-change")
+    @Operation(summary = "邮箱变更审批", description = "发起邮箱变更审批请求")
+    public ResponseEntity<Map<String, Object>> requestEmailChange(@RequestBody Map<String, String> request,
+                                                                    Authentication authentication) {
+        Map<String, Object> response = new HashMap<>();
+
+        if (authentication == null || !authentication.isAuthenticated()) {
+            response.put("success", false);
+            response.put("message", "未登录");
+            return ResponseEntity.status(401).body(response);
+        }
+
+        try {
+            User user = userService.getUserByUsername(authentication.getName());
+            if (user == null) {
+                response.put("success", false);
+                response.put("message", "用户不存在");
+                return ResponseEntity.status(404).body(response);
+            }
+
+            String newEmail = request.get("newEmail");
+            String reason = request.get("reason");
+
+            if (newEmail == null || newEmail.isEmpty()) {
+                response.put("success", false);
+                response.put("message", "新邮箱不能为空");
+                return ResponseEntity.badRequest().body(response);
+            }
+
+            // 检查是否已有待审批的邮箱变更请求
+            if (approvalService != null) {
+                java.util.List<ApprovalRequest> pendingRequests = approvalService.getRequestsByRequester(user.getId().toString());
+                boolean hasPendingEmailChange = pendingRequests.stream()
+                    .anyMatch(r -> "EMAIL_CHANGE".equals(r.getRequestType()) && r.isPending());
+                if (hasPendingEmailChange) {
+                    response.put("success", false);
+                    response.put("message", "已有待审批的邮箱变更申请，请等待审批完成");
+                    return ResponseEntity.badRequest().body(response);
+                }
+
+                // 创建审批请求
+                String requestData = String.format("{\"userId\":\"%s\",\"oldEmail\":\"%s\",\"newEmail\":\"%s\"}",
+                    user.getId(), user.getEmail() != null ? user.getEmail() : "", newEmail);
+                String description = String.format("用户 %s 请求变更邮箱: %s → %s，原因: %s",
+                    user.getUsername(), user.getEmail() != null ? user.getEmail() : "无", newEmail,
+                    reason != null ? reason : "未说明");
+
+                approvalService.createRequest(
+                    "system",  // 系统级审批
+                    user.getId().toString(),
+                    "EMAIL_CHANGE",
+                    requestData,
+                    description
+                );
+
+                response.put("success", true);
+                response.put("message", "邮箱变更审批已提交，等待管理员审批");
+
+                log.info("用户 {} 发起邮箱变更审批: {} -> {}", user.getUsername(), user.getEmail(), newEmail);
+                return ResponseEntity.ok(response);
+            } else {
+                response.put("success", false);
+                response.put("message", "审批服务不可用");
+                return ResponseEntity.status(500).body(response);
+            }
+
+        } catch (Exception e) {
+            log.error("邮箱变更审批失败: {}", e.getMessage());
+            response.put("success", false);
+            response.put("message", "提交失败: " + e.getMessage());
+            return ResponseEntity.status(500).body(response);
+        }
+    }
+
+    /**
+     * 发送当前邮箱验证码
+     * 用于邮箱换绑流程的第一步：验证当前邮箱所有权
+     *
+     * @param authentication 认证信息
+     * @return 发送结果
+     */
+    @PostMapping("/send-current-email-code")
+    @Operation(summary = "发送当前邮箱验证码", description = "向当前绑定邮箱发送验证码，用于邮箱换绑流程")
+    public ResponseEntity<Map<String, Object>> sendCurrentEmailCode(Authentication authentication) {
+        Map<String, Object> response = new HashMap<>();
+
+        if (authentication == null || !authentication.isAuthenticated()) {
+            response.put("success", false);
+            response.put("message", "未登录");
+            return ResponseEntity.status(401).body(response);
+        }
+
+        try {
+            User user = userService.getUserByUsername(authentication.getName());
+            if (user == null) {
+                response.put("success", false);
+                response.put("message", "用户不存在");
+                return ResponseEntity.status(404).body(response);
+            }
+
+            // 检查当前邮箱是否有效
+            if (user.getEmail() == null || user.getEmail().isEmpty()) {
+                response.put("success", false);
+                response.put("message", "当前未绑定邮箱，无法发送验证码");
+                return ResponseEntity.badRequest().body(response);
+            }
+
+            // 检查邮件服务是否可用
+            if (!emailService.isEmailEnabled()) {
+                response.put("success", false);
+                response.put("message", "邮件服务未启用，请联系管理员");
+                return ResponseEntity.badRequest().body(response);
+            }
+
+            // 生成并发送验证码
+            String code = emailService.generateVerificationCode(user.getEmail());
+            emailService.sendVerificationEmail(user.getEmail(), code);
+
+            response.put("success", true);
+            response.put("message", "验证码已发送到当前邮箱");
+
+            log.info("用户 {} 请求发送当前邮箱验证码", authentication.getName());
+            return ResponseEntity.ok(response);
+
+        } catch (Exception e) {
+            log.error("发送当前邮箱验证码失败: {}", e.getMessage());
+            response.put("success", false);
+            response.put("message", "发送失败: " + e.getMessage());
+            return ResponseEntity.status(500).body(response);
+        }
+    }
+
+    /**
+     * 发送新邮箱验证码
+     * 用于邮箱换绑流程的第二步：验证新邮箱所有权
+     *
+     * @param request 包含 newEmail 的请求
+     * @param authentication 认证信息
+     * @return 发送结果
+     */
+    @PostMapping("/send-new-email-code")
+    @Operation(summary = "发送新邮箱验证码", description = "向新邮箱发送验证码，用于邮箱换绑流程")
+    public ResponseEntity<Map<String, Object>> sendNewEmailCode(@RequestBody Map<String, String> request,
+                                                                  Authentication authentication) {
+        Map<String, Object> response = new HashMap<>();
+
+        if (authentication == null || !authentication.isAuthenticated()) {
+            response.put("success", false);
+            response.put("message", "未登录");
+            return ResponseEntity.status(401).body(response);
+        }
+
+        try {
+            User user = userService.getUserByUsername(authentication.getName());
+            if (user == null) {
+                response.put("success", false);
+                response.put("message", "用户不存在");
+                return ResponseEntity.status(404).body(response);
+            }
+
+            String newEmail = request.get("newEmail");
+            if (newEmail == null || newEmail.isEmpty() || !newEmail.contains("@")) {
+                response.put("success", false);
+                response.put("message", "请输入有效的邮箱地址");
+                return ResponseEntity.badRequest().body(response);
+            }
+
+            // 检查新邮箱是否与当前邮箱相同
+            if (newEmail.equalsIgnoreCase(user.getEmail())) {
+                response.put("success", false);
+                response.put("message", "新邮箱与当前邮箱相同");
+                return ResponseEntity.badRequest().body(response);
+            }
+
+            // 检查邮件服务是否可用
+            if (!emailService.isEmailEnabled()) {
+                response.put("success", false);
+                response.put("message", "邮件服务未启用，请联系管理员");
+                return ResponseEntity.badRequest().body(response);
+            }
+
+            // 生成并发送验证码
+            String code = emailService.generateVerificationCode(newEmail);
+            emailService.sendVerificationEmail(newEmail, code);
+
+            response.put("success", true);
+            response.put("message", "验证码已发送到新邮箱");
+
+            log.info("用户 {} 请求发送新邮箱验证码: {}", authentication.getName(), newEmail);
+            return ResponseEntity.ok(response);
+
+        } catch (Exception e) {
+            log.error("发送新邮箱验证码失败: {}", e.getMessage());
+            response.put("success", false);
+            response.put("message", "发送失败: " + e.getMessage());
+            return ResponseEntity.status(500).body(response);
+        }
+    }
+
+    /**
+     * 验证并更换邮箱
+     * 邮箱换绑的最后一步：验证两个验证码后直接更新邮箱
+     *
+     * @param request 包含 newEmail, currentEmailCode, newEmailCode 的请求
+     * @param authentication 认证信息
+     * @return 操作结果
+     */
+    @PostMapping("/change-email")
+    @Operation(summary = "验证并更换邮箱", description = "通过双验证码验证后直接更换邮箱")
+    public ResponseEntity<Map<String, Object>> changeEmail(@RequestBody Map<String, String> request,
+                                                             Authentication authentication) {
+        Map<String, Object> response = new HashMap<>();
+
+        if (authentication == null || !authentication.isAuthenticated()) {
+            response.put("success", false);
+            response.put("message", "未登录");
+            return ResponseEntity.status(401).body(response);
+        }
+
+        try {
+            User user = userService.getUserByUsername(authentication.getName());
+            if (user == null) {
+                response.put("success", false);
+                response.put("message", "用户不存在");
+                return ResponseEntity.status(404).body(response);
+            }
+
+            String newEmail = request.get("newEmail");
+            String currentEmailCode = request.get("currentEmailCode");
+            String newEmailCode = request.get("newEmailCode");
+
+            // 参数校验
+            if (newEmail == null || newEmail.isEmpty()) {
+                response.put("success", false);
+                response.put("message", "新邮箱不能为空");
+                return ResponseEntity.badRequest().body(response);
+            }
+
+            if (currentEmailCode == null || currentEmailCode.isEmpty()) {
+                response.put("success", false);
+                response.put("message", "请输入当前邮箱验证码");
+                return ResponseEntity.badRequest().body(response);
+            }
+
+            if (newEmailCode == null || newEmailCode.isEmpty()) {
+                response.put("success", false);
+                response.put("message", "请输入新邮箱验证码");
+                return ResponseEntity.badRequest().body(response);
+            }
+
+            // 检查当前邮箱是否有效
+            if (user.getEmail() == null || user.getEmail().isEmpty()) {
+                response.put("success", false);
+                response.put("message", "当前未绑定邮箱，无法进行验证换绑");
+                return ResponseEntity.badRequest().body(response);
+            }
+
+            // 验证当前邮箱验证码
+            if (!emailService.verifyCode(user.getEmail(), currentEmailCode)) {
+                response.put("success", false);
+                response.put("message", "当前邮箱验证码错误或已过期");
+                return ResponseEntity.badRequest().body(response);
+            }
+
+            // 验证新邮箱验证码
+            if (!emailService.verifyCode(newEmail, newEmailCode)) {
+                response.put("success", false);
+                response.put("message", "新邮箱验证码错误或已过期");
+                return ResponseEntity.badRequest().body(response);
+            }
+
+            // 双重验证通过，更新邮箱
+            userService.updateProfile(user.getId(), user.getNickname(), newEmail, user.getAvatar());
+
+            response.put("success", true);
+            response.put("message", "邮箱更换成功");
+
+            log.info("用户 {} 成功更换邮箱: {} -> {}", authentication.getName(), user.getEmail(), newEmail);
+            return ResponseEntity.ok(response);
+
+        } catch (Exception e) {
+            log.error("邮箱更换失败: {}", e.getMessage());
+            response.put("success", false);
+            response.put("message", "邮箱更换失败: " + e.getMessage());
+            return ResponseEntity.status(500).body(response);
+        }
+    }
+
+    /**
+     * 检查邮箱换绑条件
+     * 判断当前用户应该走验证码换绑还是审批流程
+     *
+     * @param authentication 认证信息
+     * @return 检查结果
+     */
+    @GetMapping("/email-change-check")
+    @Operation(summary = "检查邮箱换绑条件", description = "判断用户应走验证码换绑还是审批流程")
+    public ResponseEntity<Map<String, Object>> checkEmailChangeCondition(Authentication authentication) {
+        Map<String, Object> response = new HashMap<>();
+
+        if (authentication == null || !authentication.isAuthenticated()) {
+            response.put("success", false);
+            response.put("message", "未登录");
+            return ResponseEntity.status(401).body(response);
+        }
+
+        try {
+            User user = userService.getUserByUsername(authentication.getName());
+            if (user == null) {
+                response.put("success", false);
+                response.put("message", "用户不存在");
+                return ResponseEntity.status(404).body(response);
+            }
+
+            // 判断是否可以走验证码换绑流程
+            // 条件：邮件服务已启用 且 用户当前有绑定邮箱
+            boolean canUseVerification = emailService.isEmailEnabled()
+                && user.getEmail() != null
+                && !user.getEmail().isEmpty();
+
+            response.put("success", true);
+            response.put("canUseVerification", canUseVerification);
+            response.put("currentEmail", user.getEmail() != null ? user.getEmail() : "");
+            response.put("emailServiceEnabled", emailService.isEmailEnabled());
+
+            return ResponseEntity.ok(response);
+
+        } catch (Exception e) {
+            log.error("检查邮箱换绑条件失败: {}", e.getMessage());
+            response.put("success", false);
+            response.put("message", "检查失败: " + e.getMessage());
             return ResponseEntity.status(500).body(response);
         }
     }

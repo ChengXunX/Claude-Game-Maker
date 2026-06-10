@@ -1,320 +1,243 @@
 ---
-name: game-template-roguelike
-description: 肉鸽游戏模板 - 随机地图、永久死亡、道具组合、技能构建
-category: game-template
-triggerPattern: roguelike, 肉鸽, roguelite, 随机, 地牢, dungeon, 永久死亡, permadeath
+name: 肉鸽游戏开发模板
+description: 肉鸽游戏开发模板，适用于Roguelike、Roguelite、地牢探索类游戏
+trigger: roguelike, 肉鸽, roguelite, 随机, 地牢, dungeon, 永久死亡, permadeath, Slay the Spire
+examples: Slay the Spire|Hades|Dead Cells|Enter the Gungeon|The Binding of Isaac
 ---
 
-# 肉鸽游戏模板
+# 肉鸽游戏开发模板
 
-## 概述
+## 游戏设计核心原则
 
-完整的肉鸽（Roguelike）游戏模板，包含：
-- **随机地图**：程序生成的地牢关卡
-- **永久死亡**：死亡后重新开始
-- **道具系统**：随机掉落、效果叠加
-- **技能构建**：多种技能组合
-- **进度系统**：永久解锁内容
-- **Boss 系统**：每层 Boss 战
+### 核心循环（每局 20-60 分钟）
+```
+进入地牢 → 探索房间 → 战斗 → 获得奖励 → 下一层 → 死亡 → 永久解锁 → 再来一局
+```
+- **随机性**：每局都不一样，地图、敌人、道具都是随机的
+- **永久死亡**：死亡后重新开始，但保留永久解锁内容
+- **Build 构建**：通过道具组合创造独特玩法
 
-## 核心代码
+### 玩家心理学
+- **"这次运气好"**：随机道具让玩家觉得"这局很强"
+- **"差一点就过"**：死亡后觉得"下次能行"
+- **"发现了新组合"**：道具组合产生意外效果的惊喜感
+- **"永久成长"**：死亡不是白费，解锁了新内容
 
-### 1. 地图生成器 (MapGenerator.js)
+### 随机性设计要点
+```
+随机性要"可控的随机"：
+1. 敌人随机，但难度曲线固定
+2. 道具随机，但保证每局都有足够的道具
+3. 地图随机，但保证路径可达
+4. BOSS 固定，但技能组合随机
+```
 
+## 核心系统设计
+
+### 1. 随机地图生成
 ```javascript
-export class MapGenerator {
-  constructor(width, height) {
-    this.width = width
-    this.height = height
-    this.grid = []
-    this.rooms = []
-    this.corridors = []
+class DungeonGenerator {
+  constructor(width, height, numRooms) {
+    this.width = width;
+    this.height = height;
+    this.numRooms = numRooms;
+    this.rooms = [];
+    this.corridors = [];
   }
-
+  
   generate() {
-    // 初始化网格
-    this.initGrid()
-
-    // 生成房间
-    this.generateRooms()
-
-    // 连接房间
-    this.connectRooms()
-
-    // 放置道具和敌人
-    this.populate()
-
-    return {
-      grid: this.grid,
-      rooms: this.rooms,
-      spawn: this.getSpawnPoint(),
-      exit: this.getExitPoint()
-    }
-  }
-
-  initGrid() {
-    for (let y = 0; y < this.height; y++) {
-      this.grid[y] = []
-      for (let x = 0; x < this.width; x++) {
-        this.grid[y][x] = { type: 'wall', x, y }
+    // 1. 随机生成房间
+    for (let i = 0; i < this.numRooms; i++) {
+      const room = this.createRandomRoom();
+      if (!this.overlapsExisting(room)) {
+        this.rooms.push(room);
       }
     }
+    
+    // 2. 连接房间（最小生成树）
+    this.connectRooms();
+    
+    // 3. 放置特殊房间
+    this.placeSpecialRooms();
+    
+    // 4. 生成地图数据
+    return this.buildMap();
   }
-
-  generateRooms() {
-    const roomCount = 5 + Math.floor(Math.random() * 5)
-    for (let i = 0; i < roomCount; i++) {
-      const room = this.createRoom()
-      if (room) this.rooms.push(room)
-    }
+  
+  createRandomRoom() {
+    const width = Phaser.Math.Between(4, 8);
+    const height = Phaser.Math.Between(4, 8);
+    const x = Phaser.Math.Between(1, this.width - width - 1);
+    const y = Phaser.Math.Between(1, this.height - height - 1);
+    return { x, y, width, height, center: { x: x + width/2, y: y + height/2 } };
   }
-
-  createRoom() {
-    const width = 4 + Math.floor(Math.random() * 6)
-    const height = 4 + Math.floor(Math.random() * 6)
-    const x = 1 + Math.floor(Math.random() * (this.width - width - 2))
-    const y = 1 + Math.floor(Math.random() * (this.height - height - 2))
-
-    const room = { x, y, width, height }
-
-    // 检查重叠
-    for (const existing of this.rooms) {
-      if (this.overlaps(room, existing)) return null
-    }
-
-    // 挖空房间
-    for (let ry = y; ry < y + height; ry++) {
-      for (let rx = x; rx < x + width; rx++) {
-        this.grid[ry][rx].type = 'floor'
-      }
-    }
-
-    return room
-  }
-
+  
   connectRooms() {
-    for (let i = 1; i < this.rooms.length; i++) {
-      const from = this.getCenter(this.rooms[i - 1])
-      const to = this.getCenter(this.rooms[i])
-      this.createCorridor(from, to)
-    }
-  }
-
-  createCorridor(from, to) {
-    let x = from.x
-    let y = from.y
-
-    while (x !== to.x || y !== to.y) {
-      if (x < to.x) x++
-      else if (x > to.x) x--
-      else if (y < to.y) y++
-      else if (y > to.y) y--
-
-      this.grid[y][x].type = 'floor'
-    }
-  }
-
-  populate() {
-    // 放置宝箱
-    this.rooms.forEach((room, i) => {
-      if (i > 0 && Math.random() < 0.6) {
-        const pos = this.getRandomFloor(room)
-        this.grid[pos.y][pos.x].type = 'chest'
+    // 使用最小生成树连接所有房间
+    const edges = [];
+    for (let i = 0; i < this.rooms.length; i++) {
+      for (let j = i + 1; j < this.rooms.length; j++) {
+        const dist = Phaser.Math.Distance.BetweenPoints(
+          this.rooms[i].center, this.rooms[j].center
+        );
+        edges.push({ from: i, to: j, weight: dist });
       }
-    })
-
-    // 放置敌人
-    this.rooms.forEach((room, i) => {
-      if (i > 0) {
-        const count = 1 + Math.floor(Math.random() * 3)
-        for (let j = 0; j < count; j++) {
-          const pos = this.getRandomFloor(room)
-          this.grid[pos.y][pos.x].type = 'enemy'
-        }
-      }
-    })
-  }
-
-  getSpawnPoint() {
-    return this.getCenter(this.rooms[0])
-  }
-
-  getExitPoint() {
-    const lastRoom = this.rooms[this.rooms.length - 1]
-    return this.getCenter(lastRoom)
-  }
-
-  getCenter(room) {
-    return {
-      x: Math.floor(room.x + room.width / 2),
-      y: Math.floor(room.y + room.height / 2)
     }
+    edges.sort((a, b) => a.weight - b.weight);
+    
+    // Kruskal 算法
+    const parent = this.rooms.map((_, i) => i);
+    for (const edge of edges) {
+      if (this.find(parent, edge.from) !== this.find(parent, edge.to)) {
+        this.union(parent, edge.from, edge.to);
+        this.corridors.push(edge);
+      }
+    }
+  }
+  
+  placeSpecialRooms() {
+    // 起始房间
+    this.rooms[0].type = 'start';
+    // BOSS 房间（最远的房间）
+    const farthest = this.findFarthestRoom(0);
+    this.rooms[farthest].type = 'boss';
+    // 商店（随机位置）
+    const shop = Phaser.Math.Between(1, this.rooms.length - 2);
+    this.rooms[shop].type = 'shop';
+    // 宝箱房
+    const treasure = Phaser.Math.Between(1, this.rooms.length - 2);
+    this.rooms[treasure].type = 'treasure';
   }
 }
 ```
 
-### 2. 道具系统 (ItemSystem.js)
-
+### 2. 道具系统（核心乐趣）
 ```javascript
-export const ITEM_RARITIES = [
-  { id: 'common', name: '普通', color: '#AAAAAA', dropRate: 0.5 },
-  { id: 'uncommon', name: '优秀', color: '#55FF55', dropRate: 0.3 },
-  { id: 'rare', name: '稀有', color: '#5555FF', dropRate: 0.15 },
-  { id: 'epic', name: '史诗', color: '#AA55AA', dropRate: 0.04 },
-  { id: 'legendary', name: '传说', color: '#FFAA00', dropRate: 0.01 }
-]
-
-export const ITEM_TYPES = {
-  weapon: {
-    sword: { name: '剑', baseDamage: 10 },
-    staff: { name: '法杖', baseDamage: 8, magicBonus: 5 },
-    bow: { name: '弓', baseDamage: 12, range: 5 }
-  },
-  armor: {
-    light: { name: '轻甲', defense: 5, speed: 0 },
-    medium: { name: '中甲', defense: 10, speed: -5 },
-    heavy: { name: '重甲', defense: 15, speed: -10 }
-  },
-  potion: {
-    health: { name: '生命药水', effect: 'heal', value: 50 },
-    mana: { name: '魔力药水', effect: 'mana', value: 30 },
-    strength: { name: '力量药水', effect: 'buff', stat: 'attack', value: 10, duration: 60 }
+const ITEMS = {
+  // 攻击类
+  fireSword: { name: '烈焰剑', type: 'attack', damage: 1.5, effect: 'burn' },
+  iceStaff: { name: '冰霜法杖', type: 'attack', damage: 1.2, effect: 'slow' },
+  
+  // 防御类
+  ironShield: { name: '铁盾', type: 'defense', armor: 20, effect: 'block' },
+  healingPotion: { name: '治疗药水', type: 'defense', heal: 50 },
+  
+  // 辅助类
+  speedBoots: { name: '疾风靴', type: 'utility', speed: 1.3 },
+  magnetGloves: { name: '磁力手套', type: 'utility', pickupRange: 2 },
+  
+  // 组合类（需要特定道具组合）
+  fireShield: { 
+    name: '烈焰盾', 
+    type: 'combo', 
+    requires: ['ironShield', 'fireSword'],
+    effect: 'burnEnemiesOnBlock' 
   }
-}
+};
 
-export class Item {
-  constructor(type, subtype, rarity) {
-    this.id = Date.now() + Math.random()
-    this.type = type
-    this.subtype = subtype
-    this.rarity = rarity
-    this.name = `${rarity.name} ${ITEM_TYPES[type][subtype].name}`
-    this.stats = this.calculateStats()
-  }
-
-  calculateStats() {
-    const base = ITEM_TYPES[this.type][this.subtype]
-    const multiplier = this.getRarityMultiplier()
-    const stats = {}
-
-    Object.entries(base).forEach(([key, value]) => {
-      if (typeof value === 'number') {
-        stats[key] = Math.floor(value * multiplier)
-      }
-    })
-
-    return stats
-  }
-
-  getRarityMultiplier() {
-    const multipliers = { common: 1, uncommon: 1.2, rare: 1.5, epic: 2, legendary: 3 }
-    return multipliers[this.rarity.id] || 1
-  }
-}
-
-export function generateRandomItem() {
-  const rarity = weightedRandom(ITEM_RARITIES)
-  const types = Object.keys(ITEM_TYPES)
-  const type = types[Math.floor(Math.random() * types.length)]
-  const subtypes = Object.keys(ITEM_TYPES[type])
-  const subtype = subtypes[Math.floor(Math.random() * subtypes.length)]
-
-  return new Item(type, subtype, rarity)
-}
-```
-
-### 3. 进度系统 (ProgressionSystem.js)
-
-```javascript
-export class ProgressionSystem {
+class ItemSystem {
   constructor() {
-    this.meta = {
-      totalRuns: 0,
-      bestFloor: 0,
-      totalKills: 0,
-      totalGold: 0,
-      unlockedCharacters: ['warrior'],
-      unlockedItems: [],
-      upgrades: {
-        healthBonus: 0,
-        damageBonus: 0,
-        defenseBonus: 0,
-        goldBonus: 0,
-        luckBonus: 0
+    this.items = [];
+    this.comboEffects = [];
+  }
+  
+  addItem(item) {
+    this.items.push(item);
+    this.checkCombos();
+  }
+  
+  checkCombos() {
+    for (const combo of Object.values(ITEMS)) {
+      if (combo.requires && this.hasAllItems(combo.requires)) {
+        this.activateCombo(combo);
       }
     }
   }
-
-  endRun(stats) {
-    this.meta.totalRuns++
-    this.meta.bestFloor = Math.max(this.meta.bestFloor, stats.floor)
-    this.meta.totalKills += stats.kills
-    this.meta.totalGold += stats.gold
-
-    // 计算永久货币
-    const permanentCurrency = Math.floor(stats.floor * 10 + stats.kills * 2)
-    this.meta.permanentCurrency = (this.meta.permanentCurrency || 0) + permanentCurrency
-
-    // 检查解锁
-    this.checkUnlocks(stats)
-
-    return permanentCurrency
-  }
-
-  checkUnlocks(stats) {
-    // 解锁新角色
-    if (stats.floor >= 5 && !this.meta.unlockedCharacters.includes('mage')) {
-      this.meta.unlockedCharacters.push('mage')
-    }
-    if (stats.floor >= 10 && !this.meta.unlockedCharacters.includes('rogue')) {
-      this.meta.unlockedCharacters.push('rogue')
-    }
-
-    // 解锁新道具
-    if (stats.kills >= 100 && !this.meta.unlockedItems.includes('legendary_sword')) {
-      this.meta.unlockedItems.push('legendary_sword')
-    }
-  }
-
-  upgrade(upgradeId) {
-    const cost = this.getUpgradeCost(upgradeId)
-    if (this.meta.permanentCurrency < cost) return false
-
-    this.meta.permanentCurrency -= cost
-    this.meta.upgrades[upgradeId]++
-    return true
-  }
-
-  getUpgradeCost(upgradeId) {
-    const level = this.meta.upgrades[upgradeId] || 0
-    return Math.floor(100 * Math.pow(1.5, level))
-  }
-
-  getPlayerBonuses() {
-    return {
-      maxHealth: this.meta.upgrades.healthBonus * 10,
-      attack: this.meta.upgrades.damageBonus * 2,
-      defense: this.meta.upgrades.defenseBonus * 2,
-      goldMultiplier: 1 + (this.meta.upgrades.goldBonus * 0.1),
-      luck: this.meta.upgrades.luckBonus * 5
-    }
+  
+  getDamageMultiplier() {
+    return this.items.reduce((mult, item) => {
+      return mult * (item.damage || 1);
+    }, 1);
   }
 }
 ```
 
-## 游戏玩法
+### 3. 永久死亡与永久解锁
+```javascript
+class ProgressionSystem {
+  constructor() {
+    this.unlockedCharacters = ['warrior'];
+    this.unlockedItems = [];
+    this.achievements = [];
+    this.totalRuns = 0;
+    this.bestFloor = 0;
+  }
+  
+  onDeath(floor, score) {
+    this.totalRuns++;
+    this.bestFloor = Math.max(this.bestFloor, floor);
+    
+    // 检查解锁条件
+    if (floor >= 5 && !this.unlockedCharacters.includes('mage')) {
+      this.unlockCharacter('mage');
+    }
+    if (score >= 1000 && !this.unlockedItems.includes('fireSword')) {
+      this.unlockItem('fireSword');
+    }
+    
+    // 保存进度
+    this.save();
+  }
+  
+  unlockCharacter(name) {
+    this.unlockedCharacters.push(name);
+    this.showUnlockNotification(`解锁新角色: ${name}`);
+  }
+  
+  unlockItem(name) {
+    this.unlockedItems.push(name);
+    this.showUnlockNotification(`解锁新道具: ${ITEMS[name].name}`);
+  }
+}
+```
 
-1. **探索地牢**：在随机生成的地牢中探索
-2. **战斗敌人**：击败怪物获得经验和战利品
-3. **收集道具**：拾取武器、防具、药水
-4. **永久死亡**：死亡后本轮结束，但保留永久进度
-5. **永久升级**：用获得的货币永久提升属性
-6. **挑战 Boss**：每层末尾的 Boss 战
+## 迭代策略
 
-## 扩展点
+### 第一版：核心循环
+- 随机地图生成
+- 玩家移动和攻击
+- 1 种敌人
+- 1 层地牢
+- 永久死亡
 
-- 添加新角色：在 `CharacterConfig` 中定义
-- 添加新敌人：在 `EnemyConfig` 中定义
-- 添加新道具：在 `ItemType` 中定义
-- 添加新地图风格：在 `MapGenerator` 中扩展
-- 添加成就系统：创建 `AchievementManager`
+### 第二版：战斗系统
+- 添加 3 种武器
+- 添加 3 种敌人
+- 添加 BOSS
+- 添加 5 层地牢
+
+### 第三版：道具系统
+- 添加 20 种道具
+- 道具效果叠加
+- 道具组合系统
+- 商店系统
+
+### 第四版：永久成长
+- 永久解锁系统
+- 多角色系统
+- 成就系统
+- 统计系统
+
+### 第五版：打磨
+- 平衡道具效果
+- 优化地图生成
+- 添加音效和音乐
+- 添加剧情
+
+## 常见错误
+
+1. **随机性太强**：完全随机会让玩家觉得不公平，需要"可控的随机"
+2. **死亡太惩罚**：永久死亡要有"下次能更好"的感觉，不能白费
+3. **道具没有差异**：每个道具必须有独特效果，不能只是数值差异
+4. **地图太单调**：随机地图要有变化，不能都是同样的房间
+5. **BOSS 太难**：BOSS 是高潮，但不能难到让人放弃

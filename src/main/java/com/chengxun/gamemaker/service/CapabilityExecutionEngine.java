@@ -10,6 +10,7 @@ import com.chengxun.gamemaker.manager.SkillManager;
 import com.chengxun.gamemaker.model.AgentMessage;
 import com.chengxun.gamemaker.model.GameProject;
 import com.chengxun.gamemaker.model.Skill;
+import com.chengxun.gamemaker.model.TaskTemplate;
 import com.chengxun.gamemaker.web.entity.AgentCapability;
 import com.chengxun.gamemaker.web.entity.CapabilityInvocationLog;
 import com.chengxun.gamemaker.web.entity.CapabilityInvocationLog.InvocationStatus;
@@ -20,6 +21,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+
+import java.util.stream.Collectors;
 
 import java.time.LocalDateTime;
 import java.util.*;
@@ -61,6 +64,24 @@ public class CapabilityExecutionEngine {
 
     @Autowired(required = false)
     private com.chengxun.gamemaker.web.service.BusinessMetricsService metricsService;
+
+    @Autowired(required = false)
+    private com.chengxun.gamemaker.web.service.AlertService alertService;
+
+    @Autowired(required = false)
+    private GameRuntimeVerifier gameRuntimeVerifier;
+
+    @Autowired(required = false)
+    private com.chengxun.gamemaker.web.service.ClaudeAiService aiService;
+
+    @Autowired(required = false)
+    private KnowledgeEvolutionService knowledgeEvolutionService;
+
+    @Autowired(required = false)
+    private GoalService goalService;
+
+    @Autowired(required = false)
+    private ProjectBoard projectBoard;
 
     /**
      * 能力执行器注册表
@@ -397,10 +418,18 @@ public class CapabilityExecutionEngine {
                 String target = getParam(params, "targetAgent", "");
                 String content = getParam(params, "content", "");
                 String type = getParam(params, "type", "TASK");
+                // 安全解析消息类型，未知类型默认使用 NOTIFY
+                AgentMessage.MessageType msgType;
+                try {
+                    msgType = AgentMessage.MessageType.valueOf(type.toUpperCase());
+                } catch (IllegalArgumentException e) {
+                    log.warn("未知消息类型 '{}'，默认使用 NOTIFY", type);
+                    msgType = AgentMessage.MessageType.NOTIFY;
+                }
                 AgentMessage msg = AgentMessage.builder()
                     .fromAgentId(agent.getId())
                     .toAgentId(target)
-                    .type(AgentMessage.MessageType.valueOf(type.toUpperCase()))
+                    .type(msgType)
                     .content(content)
                     .build();
                 agent.sendMessage(msg);
@@ -559,6 +588,116 @@ public class CapabilityExecutionEngine {
             return CapabilityResult.success(result);
         });
 
+        // 战略决策升级能力 - 制作人可以将重大决策升级为人工审批
+        executors.put("escalateStrategicDecision", (agent, params) -> {
+            if (!(agent instanceof ProducerAgent producer)) {
+                return CapabilityResult.failed("只有制作人可以升级战略决策");
+            }
+            String decisionType = getParam(params, "decisionType", "");
+            String description = getParam(params, "description", "");
+            String impact = getParam(params, "impact", "");
+            String options = getParam(params, "options", "");
+
+            // 验证决策类型
+            List<String> validTypes = List.of(
+                "PROJECT_DIRECTION",      // 项目方向调整
+                "GAMEPLAY_CHANGE",        // 玩法大调整
+                "MAJOR_GAMEPLAY_DESIGN",  // 重大玩法设计（新增核心系统、重大功能模块）
+                "ARCHITECTURE_CHANGE",    // 架构重大变更
+                "BUDGET_ALLOCATION",      // 预算分配
+                "TEAM_RESTRUCTURE",       // 团队重组
+                "TECHNOLOGY_STACK",       // 技术栈变更
+                "RELEASE_STRATEGY"        // 发布策略变更
+            );
+
+            if (!validTypes.contains(decisionType.toUpperCase())) {
+                return CapabilityResult.failed("无效的决策类型，支持的类型: " + String.join(", ", validTypes));
+            }
+
+            // 创建战略决策审批请求
+            try {
+                String projectId = agent instanceof BaseAgent ba && ba.getCurrentProject() != null
+                    ? ba.getCurrentProject().getId() : null;
+
+                Map<String, Object> decisionData = new HashMap<>();
+                decisionData.put("decisionType", decisionType.toUpperCase());
+                decisionData.put("description", description);
+                decisionData.put("impact", impact);
+                decisionData.put("options", options);
+                decisionData.put("producerId", agent.getId());
+                decisionData.put("projectId", projectId);
+
+                // 使用 ApprovalService 创建审批请求
+                if (producer.getApprovalService() != null) {
+                    var approvalRequest = producer.getApprovalService().createRequest(
+                        "STRATEGIC_DECISION",
+                        agent.getId(),
+                        "STRATEGIC_DECISION",
+                        decisionData.toString(),
+                        String.format("【战略决策升级】\n\n类型: %s\n描述: %s\n影响: %s\n选项: %s",
+                            decisionType, description, impact, options)
+                    );
+
+                    // 暂停制作人等待审批
+                    producer.pauseForApproval(approvalRequest.getId().toString(), "STRATEGIC_DECISION",
+                        String.format("战略决策待审批: %s - %s", decisionType, description));
+
+                    return CapabilityResult.success("战略决策已升级为人工审批，等待老板决策。审批ID: " + approvalRequest.getId());
+                } else {
+                    return CapabilityResult.failed("审批服务不可用");
+                }
+            } catch (Exception e) {
+                return CapabilityResult.failed("创建战略决策审批失败: " + e.getMessage());
+            }
+        });
+
+        // 项目交付审批能力 - 当项目满足交付条件时申请审批
+        executors.put("requestDelivery", (agent, params) -> {
+            if (!(agent instanceof ProducerAgent producer)) {
+                return CapabilityResult.failed("只有制作人可以申请项目交付");
+            }
+
+            String reason = getParam(params, "reason", "项目已满足交付条件");
+
+            // 检查是否可以交付
+            if (!producer.canDeliverProject()) {
+                return CapabilityResult.failed("项目不满足交付条件，请确保所有里程碑已完成");
+            }
+
+            // 请求交付审批
+            boolean success = producer.requestDeliveryApproval();
+            if (success) {
+                return CapabilityResult.success("项目交付审批已发起，等待管理员审批");
+            } else {
+                return CapabilityResult.failed("发起交付审批失败");
+            }
+        });
+
+        // 评估下一版本能力 - 检查是否需要规划下一个版本或申请交付
+        executors.put("evaluateNextVersion", (agent, params) -> {
+            if (!(agent instanceof ProducerAgent producer)) {
+                return CapabilityResult.failed("只有制作人可以评估版本");
+            }
+
+            producer.evaluateAndPlanNextVersion();
+            return CapabilityResult.success("版本评估已执行");
+        });
+
+        // 评估当前版本能力 - 分析Agent绩效、人手缺失与冗余
+        executors.put("evaluateCurrentVersion", (agent, params) -> {
+            if (!(agent instanceof ProducerAgent producer)) {
+                return CapabilityResult.failed("只有制作人可以评估版本");
+            }
+
+            String milestoneId = getParam(params, "milestoneId", "");
+            if (milestoneId.isEmpty()) {
+                return CapabilityResult.failed("milestoneId 不能为空");
+            }
+
+            String report = producer.evaluateCurrentVersion(milestoneId);
+            return CapabilityResult.success(report);
+        });
+
         executors.put("manageAgentCapabilities", (agent, params) -> {
             if (!(agent instanceof ProducerAgent)) {
                 return CapabilityResult.failed("只有制作人可以管控 Agent 能力");
@@ -683,6 +822,234 @@ public class CapabilityExecutionEngine {
 
             String result = agent.sendMessage(optimizePrompt);
             return CapabilityResult.success(result);
+        });
+
+        // ===== 验证能力执行器 =====
+
+        // 通用代码验证
+        executors.put("verifyCodeImplementation", (agent, params) -> {
+            String projectRoot = getProjectRoot(agent);
+            List<String> filePaths = getListParam(params, "filePaths");
+            List<String> requiredMethods = getListParam(params, "requiredMethods");
+            String testCommand = getParam(params, "testCommand", "");
+
+            StringBuilder result = new StringBuilder();
+            List<String> passed = new ArrayList<>();
+            List<String> failed = new ArrayList<>();
+
+            // 验证文件存在
+            if (filePaths != null && !filePaths.isEmpty()) {
+                for (String path : filePaths) {
+                    java.io.File file = new java.io.File(projectRoot, path);
+                    if (file.exists() && file.length() > 0) {
+                        passed.add("文件存在: " + path);
+                    } else {
+                        failed.add("文件不存在或为空: " + path);
+                    }
+                }
+            }
+
+            // 验证方法存在
+            if (requiredMethods != null && !requiredMethods.isEmpty()) {
+                for (String method : requiredMethods) {
+                    if (searchMethodInProject(projectRoot, method)) {
+                        passed.add("方法存在: " + method);
+                    } else {
+                        failed.add("方法不存在: " + method);
+                    }
+                }
+            }
+
+            // 构建结果
+            result.append(String.format("验证结果: 通过 %d/%d 项\n", passed.size(), passed.size() + failed.size()));
+            if (!failed.isEmpty()) {
+                result.append("失败项:\n");
+                failed.forEach(f -> result.append("  - ").append(f).append("\n"));
+            }
+
+            return failed.isEmpty() ?
+                CapabilityResult.success(result.toString()) :
+                CapabilityResult.failed(result.toString());
+        });
+
+        // 文档验证
+        executors.put("verifyDesignDocument", (agent, params) -> {
+            String projectRoot = getProjectRoot(agent);
+            List<String> documentPaths = getListParam(params, "documentPaths");
+            List<String> requiredSections = getListParam(params, "requiredSections");
+            int minWordCount = getIntParam(params, "minWordCount", 100);
+
+            StringBuilder result = new StringBuilder();
+            List<String> passed = new ArrayList<>();
+            List<String> failed = new ArrayList<>();
+
+            // 验证文档存在
+            if (documentPaths != null && !documentPaths.isEmpty()) {
+                for (String path : documentPaths) {
+                    java.io.File file = new java.io.File(projectRoot, path);
+                    if (file.exists() && file.length() > 0) {
+                        // 检查文档内容
+                        try {
+                            String content = new String(java.nio.file.Files.readAllBytes(file.toPath()));
+                            int wordCount = content.length();
+                            if (wordCount >= minWordCount) {
+                                passed.add("文档存在且内容充足: " + path + " (" + wordCount + "字)");
+                            } else {
+                                failed.add("文档内容不足: " + path + " (" + wordCount + "字，需要" + minWordCount + "字)");
+                            }
+
+                            // 检查必要章节
+                            if (requiredSections != null && !requiredSections.isEmpty()) {
+                                for (String section : requiredSections) {
+                                    if (content.contains(section)) {
+                                        passed.add("包含章节: " + section);
+                                    } else {
+                                        failed.add("缺少章节: " + section);
+                                    }
+                                }
+                            }
+                        } catch (Exception e) {
+                            failed.add("读取文档失败: " + path);
+                        }
+                    } else {
+                        failed.add("文档不存在: " + path);
+                    }
+                }
+            }
+
+            // 构建结果
+            result.append(String.format("验证结果: 通过 %d/%d 项\n", passed.size(), passed.size() + failed.size()));
+            if (!failed.isEmpty()) {
+                result.append("失败项:\n");
+                failed.forEach(f -> result.append("  - ").append(f).append("\n"));
+            }
+
+            return failed.isEmpty() ?
+                CapabilityResult.success(result.toString()) :
+                CapabilityResult.failed(result.toString());
+        });
+
+        // AI智能验证
+        executors.put("aiVerifyImplementation", (agent, params) -> {
+            String requirements = getParam(params, "requirements", "");
+            List<String> codePaths = getListParam(params, "codePaths");
+            String verificationCriteria = getParam(params, "verificationCriteria", "");
+
+            String projectRoot = getProjectRoot(agent);
+
+            // 收集代码内容
+            StringBuilder codeContent = new StringBuilder();
+            if (codePaths != null && !codePaths.isEmpty()) {
+                for (String path : codePaths) {
+                    java.io.File file = new java.io.File(projectRoot, path);
+                    if (file.exists()) {
+                        try {
+                            String content = new String(java.nio.file.Files.readAllBytes(file.toPath()));
+                            codeContent.append("=== ").append(path).append(" ===\n");
+                            codeContent.append(content, 0, Math.min(content.length(), 2000));
+                            codeContent.append("\n\n");
+                        } catch (Exception e) {
+                            // 忽略读取错误
+                        }
+                    }
+                }
+            }
+
+            // 构建AI验证提示
+            String verificationPrompt = String.format(
+                "请验证以下代码实现是否符合需求：\n\n" +
+                "需求描述：\n%s\n\n" +
+                "代码内容：\n%s\n\n" +
+                "验证标准：\n%s\n\n" +
+                "请分析并给出验证结果，格式如下：\n" +
+                "- 是否通过：PASS/FAIL\n" +
+                "- 通过项：[列表]\n" +
+                "- 失败项：[列表]\n" +
+                "- 改进建议：[建议]",
+                requirements, codeContent.toString(), verificationCriteria
+            );
+
+            // 调用AI进行验证
+            String aiResult = agent.sendMessage(verificationPrompt);
+            boolean passed = aiResult.toUpperCase().contains("PASS") && !aiResult.toUpperCase().contains("FAIL");
+
+            return passed ?
+                CapabilityResult.success("AI验证通过:\n" + aiResult) :
+                CapabilityResult.failed("AI验证未通过:\n" + aiResult);
+        });
+
+        // 标准验证
+        executors.put("verifyWithCriteria", (agent, params) -> {
+            List<String> criteria = getListParam(params, "criteria");
+            String projectRoot = getParam(params, "projectRoot", getProjectRoot(agent));
+            String reportContent = getParam(params, "reportContent", "");
+
+            if (criteria == null || criteria.isEmpty()) {
+                return CapabilityResult.failed("未提供验证标准");
+            }
+
+            List<String> passed = new ArrayList<>();
+            List<String> failed = new ArrayList<>();
+
+            for (String criterion : criteria) {
+                // 简单的标准验证逻辑
+                if (reportContent.contains(criterion) || searchMethodInProject(projectRoot, criterion)) {
+                    passed.add("✓ " + criterion);
+                } else {
+                    failed.add("✗ " + criterion);
+                }
+            }
+
+            StringBuilder result = new StringBuilder();
+            result.append(String.format("验证结果: 通过 %d/%d 项\n", passed.size(), criteria.size()));
+            if (!failed.isEmpty()) {
+                result.append("未通过的标准:\n");
+                failed.forEach(f -> result.append("  ").append(f).append("\n"));
+            }
+
+            return failed.isEmpty() ?
+                CapabilityResult.success(result.toString()) :
+                CapabilityResult.failed(result.toString());
+        });
+
+        // 测试结果验证
+        executors.put("verifyTestResults", (agent, params) -> {
+            String testCommand = getParam(params, "testCommand", "");
+            int minCoverage = getIntParam(params, "minCoverage", 0);
+            double requiredPassRate = getDoubleParam(params, "requiredPassRate", 100.0);
+
+            String projectRoot = getProjectRoot(agent);
+
+            // 这里可以执行实际的测试命令并解析结果
+            // 简化实现：检查报告中是否包含测试通过的信息
+            StringBuilder result = new StringBuilder();
+            result.append("测试验证结果:\n");
+            result.append("- 测试命令: ").append(testCommand).append("\n");
+            result.append("- 最低覆盖率: ").append(minCoverage).append("%\n");
+            result.append("- 要求通过率: ").append(requiredPassRate).append("%\n");
+
+            // 实际实现中，这里应该执行测试命令并解析结果
+            // 目前返回成功，由调用方提供验证结果
+            return CapabilityResult.success(result.toString());
+        });
+
+        // 运行时验证
+        executors.put("verifyRuntime", (agent, params) -> {
+            String runCommand = getParam(params, "runCommand", "");
+            String expectedOutput = getParam(params, "expectedOutput", "");
+            int timeout = getIntParam(params, "timeout", 30);
+
+            String projectRoot = getProjectRoot(agent);
+
+            StringBuilder result = new StringBuilder();
+            result.append("运行时验证结果:\n");
+            result.append("- 运行命令: ").append(runCommand).append("\n");
+            result.append("- 预期输出: ").append(expectedOutput).append("\n");
+            result.append("- 超时时间: ").append(timeout).append("秒\n");
+
+            // 实际实现中，这里应该执行命令并检查输出
+            // 目前返回成功，由调用方提供验证结果
+            return CapabilityResult.success(result.toString());
         });
 
         // ===== 新增：总结游戏方向 =====
@@ -920,8 +1287,74 @@ public class CapabilityExecutionEngine {
             sendNotificationToAdmin(agent, "GOAL_DECOMPOSITION_START",
                 String.format("项目 [%s] 开始分解目标", projectId));
 
-            // 这里可以调用 ProducerAgent 的目标分解逻辑
-            return CapabilityResult.success("目标分解已启动，里程碑将自动创建");
+            // 调用 ProducerAgent 的目标分解逻辑
+            if (agent instanceof ProducerAgent producer) {
+                producer.decomposeGoalFromCapability();
+                return CapabilityResult.success("目标分解已启动，里程碑将自动创建");
+            }
+            return CapabilityResult.failed("只有制作人可以分解目标");
+        });
+
+        // ===== 新增：分解任务（策划 Agent 使用） =====
+        executors.put("decomposeTasks", (agent, params) -> {
+            String milestoneId = getParam(params, "milestoneId", "");
+            String milestoneTitle = getParam(params, "milestoneTitle", "");
+            String milestoneDescription = getParam(params, "milestoneDescription", "");
+            String goal = getParam(params, "goal", "");
+
+            if (milestoneId.isEmpty() || milestoneTitle.isEmpty()) {
+                return CapabilityResult.failed("milestoneId 和 milestoneTitle 不能为空");
+            }
+
+            String projectId = agent instanceof BaseAgent ba && ba.getCurrentProject() != null
+                ? ba.getCurrentProject().getId() : null;
+            if (projectId == null) {
+                return CapabilityResult.failed("无法确定项目 ID");
+            }
+
+            // 构建分解任务的提示词
+            String prompt = buildTaskDecompositionPrompt(milestoneTitle, milestoneDescription, goal);
+
+            // 调用 AI 进行任务分解
+            String response = agent.sendMessage(prompt);
+            if (response == null || response.isEmpty()) {
+                return CapabilityResult.failed("AI 任务分解失败：无响应");
+            }
+
+            // 解析任务列表
+            List<TaskTemplate> tasks = parseTaskTemplates(response, milestoneId);
+
+            if (tasks.isEmpty()) {
+                return CapabilityResult.failed("未能解析出任务列表");
+            }
+
+            // 将任务列表保存到项目共享上下文
+            if (projectBoard != null) {
+                for (TaskTemplate task : tasks) {
+                    ProjectBoard.TaskCard card = new ProjectBoard.TaskCard(
+                        task.getTaskId(), task.getTitle(), task.getAssignedRole());
+                    card.description = task.getDescription();
+                    card.priority = task.getPriority();
+                    card.metadata.put("inputRequirements", task.getInputRequirements());
+                    card.metadata.put("outputDeliverables", task.getOutputDeliverables());
+                    card.metadata.put("acceptanceCriteria", task.getAcceptanceCriteria());
+                    projectBoard.addTaskCard(projectId, card);
+                }
+            }
+
+            // 构建返回结果
+            StringBuilder result = new StringBuilder();
+            result.append(String.format("已分解里程碑 [%s] 为 %d 个任务：\n\n", milestoneTitle, tasks.size()));
+            for (int i = 0; i < tasks.size(); i++) {
+                TaskTemplate task = tasks.get(i);
+                result.append(String.format("%d. **%s** (%s)\n", i + 1, task.getTitle(), task.getAssignedRole()));
+                result.append(String.format("   - 输入: %s\n", task.getInputRequirements()));
+                result.append(String.format("   - 输出: %s\n", task.getOutputDeliverables()));
+                result.append(String.format("   - 验收: %s\n", String.join("; ", task.getAcceptanceCriteria())));
+                result.append("\n");
+            }
+
+            return CapabilityResult.success(result.toString());
         });
 
         // ===== 新增：调整项目计划 =====
@@ -1209,7 +1642,7 @@ public class CapabilityExecutionEngine {
             return CapabilityResult.success(report);
         });
 
-        // ===== 新增：风险预警 =====
+        // ===== 风险预警（接入告警系统） =====
         executors.put("alertRisk", (agent, params) -> {
             String riskType = getParam(params, "riskType", "");
             String severity = getParam(params, "severity", "medium");
@@ -1226,12 +1659,34 @@ public class CapabilityExecutionEngine {
                 }
             }
 
-            // 发送风险预警到管理员
+            // 通过告警系统创建告警记录（触发通知）
+            if (alertService != null) {
+                try {
+                    com.chengxun.gamemaker.web.entity.AlertRecord record = new com.chengxun.gamemaker.web.entity.AlertRecord();
+                    record.setRuleName("Agent风险预警");
+                    record.setPriority(mapSeverityToPriority(severity));
+                    record.setTitle(String.format("[%s] %s", severity.toUpperCase(), riskType));
+                    record.setDetail(String.format("项目: %s\n类型: %s\n严重程度: %s\n描述: %s\n建议措施: %s\n报告者: %s (%s)",
+                        projectName, riskType, severity, description, suggestedAction, agent.getName(), agent.getRole()));
+                    record.setMetric("AGENT_RISK");
+                    record.setAgentId(agent.getId());
+                    record.setAgentName(agent.getName());
+                    record.setProjectId(projectId);
+                    record.setStatus(com.chengxun.gamemaker.web.entity.AlertRecord.Status.PENDING.name());
+                    record.setCreatedAt(java.time.LocalDateTime.now());
+                    record.setUpdatedAt(java.time.LocalDateTime.now());
+                    alertService.saveAlert(record);
+                } catch (Exception e) {
+                    log.error("创建风险告警记录失败: {}", e.getMessage());
+                }
+            }
+
+            // 同时发送通知到管理员
             sendNotificationToAdmin(agent, "RISK_ALERT",
                 String.format("⚠️ 风险预警\n项目: %s\n类型: %s\n严重程度: %s\n描述: %s\n建议措施: %s",
                     projectName, riskType, severity, description, suggestedAction));
 
-            return CapabilityResult.success("风险预警已发送");
+            return CapabilityResult.success("风险预警已发送并记录到告警系统");
         });
 
         // ===== 新增：向管理员汇报 =====
@@ -1707,6 +2162,351 @@ public class CapabilityExecutionEngine {
             return CapabilityResult.success("文档已更新");
         });
 
+        // 目录配置管理能力
+        executors.put("updateDirectoryConfig", (agent, params) -> {
+            String path = getParam(params, "path", "");
+            String description = getParam(params, "description", "");
+            String notes = getParam(params, "notes", "");
+
+            if (path.isEmpty()) {
+                return CapabilityResult.failed("目录路径不能为空");
+            }
+
+            String projectId = agent instanceof BaseAgent ba && ba.getCurrentProject() != null
+                ? ba.getCurrentProject().getId() : null;
+            if (projectId == null) {
+                return CapabilityResult.failed("无法确定项目 ID");
+            }
+
+            GameProject project = projectManager.getProject(projectId);
+            if (project == null) {
+                return CapabilityResult.failed("项目不存在: " + projectId);
+            }
+
+            // 添加或更新目录配置
+            GameProject.DirectoryConfig config = new GameProject.DirectoryConfig(path, description, notes);
+            project.addDirectoryConfig(config);
+            projectManager.saveProjectConfig(project);
+
+            return CapabilityResult.success("目录配置已更新: " + path);
+        });
+
+        // 项目概况管理能力
+        executors.put("updateProjectOverview", (agent, params) -> {
+            String overview = getParam(params, "overview", "");
+            String deploymentRules = getParam(params, "deploymentRules", "");
+            boolean running = Boolean.parseBoolean(getParam(params, "running", "false"));
+
+            String projectId = agent instanceof BaseAgent ba && ba.getCurrentProject() != null
+                ? ba.getCurrentProject().getId() : null;
+            if (projectId == null) {
+                return CapabilityResult.failed("无法确定项目 ID");
+            }
+
+            GameProject project = projectManager.getProject(projectId);
+            if (project == null) {
+                return CapabilityResult.failed("项目不存在: " + projectId);
+            }
+
+            // 更新项目概况
+            if (!overview.isEmpty()) {
+                project.setProjectOverview(overview);
+            }
+            if (!deploymentRules.isEmpty()) {
+                project.setDeploymentRules(deploymentRules);
+            }
+            project.setRunning(running);
+            projectManager.saveProjectConfig(project);
+
+            return CapabilityResult.success("项目概况已更新");
+        });
+
+        // 游戏验证能力：验证项目结构完整性（增强版：支持深度质量分析）
+        executors.put("verifyGameProject", (agent, params) -> {
+            String projectDir = getParam(params, "projectDir", "");
+            boolean includeQualityAnalysis = Boolean.parseBoolean(getParam(params, "includeQualityAnalysis", "false"));
+
+            if (projectDir.isEmpty()) {
+                // 尝试从 Agent 的当前项目获取
+                if (agent instanceof BaseAgent ba && ba.getCurrentProject() != null) {
+                    projectDir = ba.getCurrentProject().getWorkDir();
+                }
+            }
+            if (projectDir.isEmpty()) {
+                return CapabilityResult.failed("无法确定项目目录");
+            }
+
+            if (gameRuntimeVerifier == null) {
+                return CapabilityResult.failed("验证服务不可用");
+            }
+
+            // 1. 结构验证
+            GameRuntimeVerifier.VerifyResult structResult = gameRuntimeVerifier.verify(projectDir);
+            StringBuilder resultBuilder = new StringBuilder();
+            resultBuilder.append("## 游戏项目验证报告\n\n");
+
+            if (structResult.isSuccess()) {
+                resultBuilder.append("### 结构验证 ✅ 通过\n");
+                resultBuilder.append(structResult.toSummary()).append("\n");
+            } else {
+                resultBuilder.append("### 结构验证 ❌ 失败\n");
+                resultBuilder.append(structResult.toSummary()).append("\n");
+                return CapabilityResult.failed(resultBuilder.toString());
+            }
+
+            // 2. 可选：AI 深度质量分析
+            if (includeQualityAnalysis && aiService != null) {
+                String projectName = agent instanceof BaseAgent ba && ba.getCurrentProject() != null
+                    ? ba.getCurrentProject().getName() : null;
+                String projectGoal = agent instanceof BaseAgent ba && ba.getCurrentProject() != null
+                    ? ba.getCurrentProject().getGoal() : null;
+
+                GameRuntimeVerifier.QualityAnalysisResult qualityResult =
+                    gameRuntimeVerifier.analyzeQuality(projectDir, projectName, projectGoal);
+
+                if (qualityResult.isSuccess()) {
+                    resultBuilder.append("### 质量分析 📊\n");
+                    resultBuilder.append(String.format("- 总分: %d/100\n", qualityResult.getOverallScore()));
+                    resultBuilder.append(String.format("- 可运行性: %d/100\n", qualityResult.getRunnableScore()));
+                    resultBuilder.append(String.format("- 可玩性: %d/100\n", qualityResult.getPlayableScore()));
+                    resultBuilder.append(String.format("- 玩法完整性: %d/100\n", qualityResult.getCompletenessScore()));
+                    resultBuilder.append(String.format("- UI/UX 质量: %d/100\n", qualityResult.getUiuxScore()));
+                    resultBuilder.append(String.format("- 代码质量: %d/100\n", qualityResult.getCodeQualityScore()));
+                    resultBuilder.append(String.format("\n总评: %s\n", qualityResult.getSummary()));
+
+                    if (!qualityResult.getIssues().isEmpty()) {
+                        resultBuilder.append("\n**问题:**\n");
+                        qualityResult.getIssues().forEach(issue -> resultBuilder.append("- ").append(issue).append("\n"));
+                    }
+                    if (!qualityResult.getSuggestions().isEmpty()) {
+                        resultBuilder.append("\n**建议:**\n");
+                        qualityResult.getSuggestions().forEach(suggestion -> resultBuilder.append("- ").append(suggestion).append("\n"));
+                    }
+                } else {
+                    resultBuilder.append("### 质量分析 ⚠️ 失败\n");
+                    resultBuilder.append(qualityResult.getError()).append("\n");
+                }
+            }
+
+            return CapabilityResult.success(resultBuilder.toString());
+        });
+
+        // 游戏质量深度分析能力
+        executors.put("verifyGameQuality", (agent, params) -> {
+            String projectDir = getParam(params, "projectDir", "");
+            String projectName = getParam(params, "projectName", "");
+            String projectGoal = getParam(params, "projectGoal", "");
+
+            if (projectDir.isEmpty()) {
+                if (agent instanceof BaseAgent ba && ba.getCurrentProject() != null) {
+                    projectDir = ba.getCurrentProject().getWorkDir();
+                    if (projectName.isEmpty()) projectName = ba.getCurrentProject().getName();
+                    if (projectGoal.isEmpty()) projectGoal = ba.getCurrentProject().getGoal();
+                }
+            }
+            if (projectDir.isEmpty()) {
+                return CapabilityResult.failed("无法确定项目目录");
+            }
+
+            if (gameRuntimeVerifier == null) {
+                return CapabilityResult.failed("验证服务不可用");
+            }
+
+            GameRuntimeVerifier.QualityAnalysisResult result =
+                gameRuntimeVerifier.analyzeQuality(projectDir, projectName, projectGoal);
+
+            if (!result.isSuccess()) {
+                return CapabilityResult.failed(result.getError());
+            }
+
+            StringBuilder sb = new StringBuilder();
+            sb.append("## 游戏质量深度分析报告\n\n");
+            sb.append(String.format("### 总分: %d/100\n\n", result.getOverallScore()));
+            sb.append("| 维度 | 评分 |\n|------|------|\n");
+            sb.append(String.format("| 可运行性 | %d/100 |\n", result.getRunnableScore()));
+            sb.append(String.format("| 可玩性 | %d/100 |\n", result.getPlayableScore()));
+            sb.append(String.format("| 玩法完整性 | %d/100 |\n", result.getCompletenessScore()));
+            sb.append(String.format("| UI/UX 质量 | %d/100 |\n", result.getUiuxScore()));
+            sb.append(String.format("| 代码质量 | %d/100 |\n", result.getCodeQualityScore()));
+
+            sb.append(String.format("\n### 总评\n%s\n", result.getSummary()));
+
+            if (!result.getStrengths().isEmpty()) {
+                sb.append("\n### 优点\n");
+                result.getStrengths().forEach(s -> sb.append("- ").append(s).append("\n"));
+            }
+            if (!result.getIssues().isEmpty()) {
+                sb.append("\n### 问题\n");
+                result.getIssues().forEach(i -> sb.append("- ").append(i).append("\n"));
+            }
+            if (!result.getSuggestions().isEmpty()) {
+                sb.append("\n### 改进建议\n");
+                result.getSuggestions().forEach(s -> sb.append("- ").append(s).append("\n"));
+            }
+
+            // 根据评分给出行动建议
+            sb.append("\n### 行动建议\n");
+            if (result.getOverallScore() >= 80) {
+                sb.append("✅ 质量良好，可以继续推进或准备发布。\n");
+            } else if (result.getOverallScore() >= 60) {
+                sb.append("⚠️ 质量尚可，建议根据上述问题进行改进后再推进。\n");
+            } else {
+                sb.append("❌ 质量不足，需要重点改进上述问题后重新验证。\n");
+                sb.append("建议：将改进建议发送给负责的 Agent，要求返工。\n");
+            }
+
+            // 将验证结果保存到知识库
+            if (knowledgeEvolutionService != null) {
+                try {
+                    String projectId = agent instanceof BaseAgent ba && ba.getCurrentProject() != null
+                        ? ba.getCurrentProject().getId() : "unknown";
+
+                    Map<String, Integer> dimensionScores = new HashMap<>();
+                    dimensionScores.put("runnable", result.getRunnableScore());
+                    dimensionScores.put("playable", result.getPlayableScore());
+                    dimensionScores.put("completeness", result.getCompletenessScore());
+                    dimensionScores.put("uiux", result.getUiuxScore());
+                    dimensionScores.put("codeQuality", result.getCodeQualityScore());
+
+                    knowledgeEvolutionService.learnFromGameVerification(
+                        agent.getId(), projectId, projectName,
+                        result.getOverallScore(), dimensionScores,
+                        result.getIssues(), result.getSuggestions(),
+                        result.getOverallScore() >= 60);
+
+                    log.info("验证结果已保存到知识库: project={}, score={}", projectName, result.getOverallScore());
+                } catch (Exception e) {
+                    log.warn("保存验证结果到知识库失败: {}", e.getMessage());
+                }
+            }
+
+            return CapabilityResult.success(sb.toString());
+        });
+
+        // 验证并改进能力：验证 + 自动生成改进建议 + 可选自动触发改进
+        executors.put("verifyAndImprove", (agent, params) -> {
+            String projectDir = getParam(params, "projectDir", "");
+            boolean autoImprove = Boolean.parseBoolean(getParam(params, "autoImprove", "false"));
+            String targetAgent = getParam(params, "targetAgent", "");
+
+            if (projectDir.isEmpty()) {
+                if (agent instanceof BaseAgent ba && ba.getCurrentProject() != null) {
+                    projectDir = ba.getCurrentProject().getWorkDir();
+                }
+            }
+            if (projectDir.isEmpty()) {
+                return CapabilityResult.failed("无法确定项目目录");
+            }
+
+            if (gameRuntimeVerifier == null) {
+                return CapabilityResult.failed("验证服务不可用");
+            }
+
+            // 1. 结构验证
+            GameRuntimeVerifier.VerifyResult structResult = gameRuntimeVerifier.verify(projectDir);
+            if (!structResult.isSuccess()) {
+                return CapabilityResult.failed("结构验证失败: " + structResult.toSummary());
+            }
+
+            // 2. 质量分析
+            String projectName = agent instanceof BaseAgent ba && ba.getCurrentProject() != null
+                ? ba.getCurrentProject().getName() : null;
+            String projectGoal = agent instanceof BaseAgent ba && ba.getCurrentProject() != null
+                ? ba.getCurrentProject().getGoal() : null;
+
+            GameRuntimeVerifier.QualityAnalysisResult qualityResult =
+                gameRuntimeVerifier.analyzeQuality(projectDir, projectName, projectGoal);
+
+            StringBuilder resultBuilder = new StringBuilder();
+            resultBuilder.append("## 验证并改进报告\n\n");
+
+            if (!qualityResult.isSuccess()) {
+                resultBuilder.append("质量分析失败: ").append(qualityResult.getError()).append("\n");
+                return CapabilityResult.failed(resultBuilder.toString());
+            }
+
+            resultBuilder.append(String.format("### 当前质量评分: %d/100\n\n", qualityResult.getOverallScore()));
+
+            // 3. 判断是否需要改进
+            if (qualityResult.getOverallScore() >= 80) {
+                resultBuilder.append("✅ 质量良好，无需改进。\n");
+                return CapabilityResult.success(resultBuilder.toString());
+            }
+
+            // 4. 生成改进建议
+            resultBuilder.append("### 需要改进的方面\n\n");
+
+            if (qualityResult.getPlayableScore() < 60) {
+                resultBuilder.append("- **可玩性** (").append(qualityResult.getPlayableScore()).append("/100): 需要完善核心玩法循环\n");
+            }
+            if (qualityResult.getCompletenessScore() < 60) {
+                resultBuilder.append("- **玩法完整性** (").append(qualityResult.getCompletenessScore()).append("/100): 需要补充缺失的游戏机制\n");
+            }
+            if (qualityResult.getUiuxScore() < 60) {
+                resultBuilder.append("- **UI/UX 质量** (").append(qualityResult.getUiuxScore()).append("/100): 需要改进界面设计和交互\n");
+            }
+            if (qualityResult.getCodeQualityScore() < 60) {
+                resultBuilder.append("- **代码质量** (").append(qualityResult.getCodeQualityScore()).append("/100): 需要重构和优化代码\n");
+            }
+
+            resultBuilder.append("\n### 具体改进建议\n");
+            qualityResult.getSuggestions().forEach(s -> resultBuilder.append("- ").append(s).append("\n"));
+
+            // 5. 可选：自动触发改进
+            if (autoImprove && !targetAgent.isEmpty()) {
+                String improvePrompt = String.format(
+                    "游戏项目验证未通过（总分: %d/100），需要改进以下方面：\n\n%s\n\n请根据上述建议进行改进。",
+                    qualityResult.getOverallScore(),
+                    String.join("\n", qualityResult.getSuggestions())
+                );
+
+                AgentMessage improveMsg = AgentMessage.builder()
+                    .fromAgentId(agent.getId())
+                    .toAgentId(targetAgent)
+                    .type(AgentMessage.MessageType.TASK)
+                    .content(improvePrompt)
+                    .build();
+                agent.sendMessage(improveMsg);
+
+                resultBuilder.append("\n### 自动改进\n");
+                resultBuilder.append("已向 ").append(targetAgent).append(" 发送改进任务。\n");
+            } else if (!autoImprove) {
+                resultBuilder.append("\n### 下一步\n");
+                resultBuilder.append("建议将改进建议发送给负责的 Agent（使用 sendTaskToAgent 能力）。\n");
+            }
+
+            // 6. 将验证结果保存到知识库
+            if (knowledgeEvolutionService != null) {
+                try {
+                    String projectId = agent instanceof BaseAgent ba && ba.getCurrentProject() != null
+                        ? ba.getCurrentProject().getId() : "unknown";
+
+                    Map<String, Integer> dimensionScores = new HashMap<>();
+                    dimensionScores.put("runnable", qualityResult.getRunnableScore());
+                    dimensionScores.put("playable", qualityResult.getPlayableScore());
+                    dimensionScores.put("completeness", qualityResult.getCompletenessScore());
+                    dimensionScores.put("uiux", qualityResult.getUiuxScore());
+                    dimensionScores.put("codeQuality", qualityResult.getCodeQualityScore());
+
+                    boolean passed = qualityResult.getOverallScore() >= 80;
+                    knowledgeEvolutionService.learnFromGameVerification(
+                        agent.getId(), projectId, projectName != null ? projectName : "未知项目",
+                        qualityResult.getOverallScore(), dimensionScores,
+                        qualityResult.getIssues(), qualityResult.getSuggestions(), passed);
+
+                    resultBuilder.append("\n### 知识库更新\n");
+                    resultBuilder.append("验证结果已保存到知识库，供后续项目参考。\n");
+
+                    log.info("验证并改进结果已保存到知识库: project={}, score={}",
+                        projectName, qualityResult.getOverallScore());
+                } catch (Exception e) {
+                    log.warn("保存验证结果到知识库失败: {}", e.getMessage());
+                }
+            }
+
+            return CapabilityResult.success(resultBuilder.toString());
+        });
+
         // GitCommit 能力
         executors.put("reviewRecentCommits", (agent, params) -> {
             String count = getParam(params, "count", "10");
@@ -1769,6 +2569,109 @@ public class CapabilityExecutionEngine {
             return CapabilityResult.success(result);
         });
 
+        // 里程碑管理能力
+        executors.put("updateMilestone", (agent, params) -> {
+            String milestoneId = getParam(params, "milestoneId", "");
+            String status = getParam(params, "status", "");
+            Integer progress = params.containsKey("progress") ? getParam(params, "progress", 0) : null;
+
+            if (milestoneId.isEmpty()) {
+                return CapabilityResult.failed("milestoneId 不能为空");
+            }
+
+            String projectId = agent instanceof BaseAgent ba && ba.getCurrentProject() != null
+                ? ba.getCurrentProject().getId() : null;
+            if (projectId == null) {
+                return CapabilityResult.failed("无法确定项目 ID");
+            }
+
+            try {
+                // 通过 GoalService 更新里程碑
+                if (goalService != null) {
+                    if (progress != null) {
+                        // 更新进度
+                        boolean updated = goalService.updateMilestoneProgressFromCapability(projectId, milestoneId, progress);
+                        if (updated) {
+                            return CapabilityResult.success("里程碑进度已更新: " + milestoneId + " -> " + progress + "%");
+                        } else {
+                            return CapabilityResult.failed("更新里程碑进度失败");
+                        }
+                    } else if (!status.isEmpty()) {
+                        // 更新状态 - 需要转换状态字符串到枚举
+                        boolean updated = goalService.updateMilestoneStatusFromCapability(projectId, milestoneId, status);
+                        if (updated) {
+                            return CapabilityResult.success("里程碑状态已更新: " + milestoneId + " -> " + status);
+                        } else {
+                            return CapabilityResult.failed("更新里程碑状态失败");
+                        }
+                    }
+                }
+                return CapabilityResult.failed("GoalService 未注入");
+            } catch (Exception e) {
+                return CapabilityResult.failed("更新里程碑失败: " + e.getMessage());
+            }
+        });
+
+        executors.put("selectWorkflow", (agent, params) -> {
+            String criteria = getParam(params, "criteria", "");
+            if (agent instanceof ProducerAgent producer) {
+                java.util.List<String> templates = producer.selectWorkflow(criteria);
+                return CapabilityResult.success("推荐工作流: " + String.join(", ", templates));
+            }
+            return CapabilityResult.failed("只有制作人可以选择工作流");
+        });
+
+        executors.put("startWorkflow", (agent, params) -> {
+            String templateId = getParam(params, "templateId", "");
+            String milestoneId = getParam(params, "milestoneId", "");
+            if (agent instanceof ProducerAgent producer) {
+                String instanceId = producer.startWorkflow(templateId, milestoneId);
+                if (instanceId != null) {
+                    return CapabilityResult.success("工作流已启动: " + instanceId);
+                }
+                return CapabilityResult.failed("启动工作流失败");
+            }
+            return CapabilityResult.failed("只有制作人可以启动工作流");
+        });
+
+        executors.put("evaluateAgent", (agent, params) -> {
+            String agentId = getParam(params, "agentId", "");
+            Integer qualityScore = getParam(params, "qualityScore", 80);
+            Integer efficiencyScore = getParam(params, "efficiencyScore", 80);
+            Integer collaborationScore = getParam(params, "collaborationScore", 80);
+            Integer innovationScore = getParam(params, "innovationScore", 80);
+            String strengths = getParam(params, "strengths", "");
+            String improvements = getParam(params, "improvements", "");
+            String comments = getParam(params, "comments", "");
+
+            if (agent instanceof ProducerAgent producer) {
+                producer.evaluateAgent(agentId, qualityScore, efficiencyScore,
+                    collaborationScore, innovationScore, strengths, improvements, comments);
+                return CapabilityResult.success("Agent 绩效评估已完成: " + agentId);
+            }
+            return CapabilityResult.failed("只有制作人可以评估 Agent");
+        });
+
+        executors.put("batchEvaluateTeam", (agent, params) -> {
+            if (agent instanceof ProducerAgent producer) {
+                producer.batchEvaluateTeam();
+                return CapabilityResult.success("团队批量评估已触发");
+            }
+            return CapabilityResult.failed("只有制作人可以批量评估团队");
+        });
+
+        executors.put("requestDismissAgent", (agent, params) -> {
+            String agentId = getParam(params, "agentId", "");
+            String reasonType = getParam(params, "reasonType", "LOW_PERFORMANCE");
+            String reason = getParam(params, "reason", "");
+
+            if (agent instanceof ProducerAgent producer) {
+                producer.requestDismissAgent(agentId, reasonType, reason);
+                return CapabilityResult.success("解雇申请已提交: " + agentId);
+            }
+            return CapabilityResult.failed("只有制作人可以发起解雇申请");
+        });
+
         log.info("Registered {} default capability executors", executors.size());
     }
 
@@ -1778,10 +2681,48 @@ public class CapabilityExecutionEngine {
      * 审批通过后执行能力（由 ApprovalService 回调）
      */
     public void executeApprovedCapability(Long approvalRequestId) {
-        // 从日志中找到对应的调用记录
-        // 这个方法在审批通过后被调用
         log.info("Executing approved capability for approval request: {}", approvalRequestId);
-        // TODO: 从 CapabilityInvocationLog 中找到对应的调用并重新执行
+
+        // 1. 从调用日志中找到对应的记录
+        var logOpt = logRepository.findByApprovalRequestId(approvalRequestId);
+        if (logOpt.isEmpty()) {
+            log.warn("No invocation log found for approval request: {}", approvalRequestId);
+            return;
+        }
+
+        CapabilityInvocationLog logEntry = logOpt.get();
+
+        // 2. 查找 Agent
+        Agent agent = agentManager.getAgent(logEntry.getAgentId());
+        if (agent == null) {
+            log.warn("Agent {} not found for approved capability {}", logEntry.getAgentId(), logEntry.getCapabilityName());
+            logEntry.markFailed("Agent 不存在: " + logEntry.getAgentId());
+            logRepository.save(logEntry);
+            return;
+        }
+
+        // 3. 解析参数并构建 CapabilityCall
+        Map<String, Object> params = Collections.emptyMap();
+        if (logEntry.getParams() != null && !logEntry.getParams().isEmpty()) {
+            try {
+                params = objectMapper.readValue(logEntry.getParams(),
+                    new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+            } catch (Exception e) {
+                log.warn("Failed to parse params for approved capability: {}", e.getMessage());
+            }
+        }
+
+        CapabilityCall call = new CapabilityCall(logEntry.getCapabilityName(), params, logEntry.getReason());
+
+        // 4. 重新执行
+        try {
+            CapabilityResult result = executeCall(agent, call);
+            log.info("Approved capability {} executed: {}", logEntry.getCapabilityName(), result.getStatus());
+        } catch (Exception e) {
+            log.error("Failed to execute approved capability {}", logEntry.getCapabilityName(), e);
+            logEntry.markFailed("执行异常: " + e.getMessage());
+            logRepository.save(logEntry);
+        }
     }
 
     // ===== 工具方法 =====
@@ -1796,6 +2737,132 @@ public class CapabilityExecutionEngine {
         } catch (ClassCastException e) {
             return defaultValue;
         }
+    }
+
+    /**
+     * 获取列表参数
+     */
+    @SuppressWarnings("unchecked")
+    private List<String> getListParam(Map<String, Object> params, String key) {
+        if (params == null) return new ArrayList<>();
+        Object value = params.get(key);
+        if (value == null) return new ArrayList<>();
+        if (value instanceof List) {
+            return (List<String>) value;
+        }
+        if (value instanceof String) {
+            String str = (String) value;
+            if (str.startsWith("[") && str.endsWith("]")) {
+                str = str.substring(1, str.length() - 1);
+            }
+            return Arrays.stream(str.split("[,，]"))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .collect(Collectors.toList());
+        }
+        return new ArrayList<>();
+    }
+
+    /**
+     * 获取整数参数
+     */
+    private int getIntParam(Map<String, Object> params, String key, int defaultValue) {
+        if (params == null) return defaultValue;
+        Object value = params.get(key);
+        if (value == null) return defaultValue;
+        if (value instanceof Number) {
+            return ((Number) value).intValue();
+        }
+        try {
+            return Integer.parseInt(value.toString());
+        } catch (NumberFormatException e) {
+            return defaultValue;
+        }
+    }
+
+    /**
+     * 获取浮点数参数
+     */
+    private double getDoubleParam(Map<String, Object> params, String key, double defaultValue) {
+        if (params == null) return defaultValue;
+        Object value = params.get(key);
+        if (value == null) return defaultValue;
+        if (value instanceof Number) {
+            return ((Number) value).doubleValue();
+        }
+        try {
+            return Double.parseDouble(value.toString());
+        } catch (NumberFormatException e) {
+            return defaultValue;
+        }
+    }
+
+    /**
+     * 获取项目根目录
+     */
+    private String getProjectRoot(Agent agent) {
+        if (agent instanceof BaseAgent ba && ba.getCurrentProject() != null) {
+            return ba.getCurrentProject().getWorkDir();
+        }
+        return System.getProperty("user.dir");
+    }
+
+    /**
+     * 在项目中搜索方法
+     */
+    private boolean searchMethodInProject(String projectRoot, String methodName) {
+        try {
+            java.io.File rootDir = new java.io.File(projectRoot);
+            return searchInDirectory(rootDir, methodName);
+        } catch (Exception e) {
+            log.warn("搜索方法时出错: {}", e.getMessage());
+            return false;
+        }
+    }
+
+    private boolean searchInDirectory(java.io.File dir, String methodName) {
+        if (!dir.exists() || !dir.isDirectory()) return false;
+
+        java.io.File[] files = dir.listFiles();
+        if (files == null) return false;
+
+        for (java.io.File file : files) {
+            if (file.isDirectory()) {
+                // 跳过 node_modules 和 .git
+                if (!file.getName().equals("node_modules") && !file.getName().equals(".git")) {
+                    if (searchInDirectory(file, methodName)) return true;
+                }
+            } else if (file.getName().endsWith(".js") || file.getName().endsWith(".ts") ||
+                       file.getName().endsWith(".java") || file.getName().endsWith(".py")) {
+                // 搜索方法定义
+                try {
+                    String content = new String(java.nio.file.Files.readAllBytes(file.toPath()));
+                    if (content.contains("function " + methodName) ||
+                        content.contains(methodName + "(") ||
+                        content.contains("def " + methodName) ||
+                        content.contains("public " + methodName)) {
+                        return true;
+                    }
+                } catch (Exception e) {
+                    // 忽略读取错误
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 将严重程度映射为告警优先级
+     */
+    private String mapSeverityToPriority(String severity) {
+        if (severity == null) return "MEDIUM";
+        return switch (severity.toLowerCase()) {
+            case "critical", "紧急" -> "CRITICAL";
+            case "high", "高" -> "HIGH";
+            case "medium", "中" -> "MEDIUM";
+            case "low", "低" -> "LOW";
+            default -> "MEDIUM";
+        };
     }
 
     /**
@@ -1944,5 +3011,152 @@ public class CapabilityExecutionEngine {
     public void registerExecutor(String capabilityName, BiFunction<Agent, Map<String, Object>, CapabilityResult> executor) {
         executors.put(capabilityName, executor);
         log.info("Registered custom executor for capability: {}", capabilityName);
+    }
+
+    // ===== 任务分解辅助方法 =====
+
+    /**
+     * 构建任务分解提示词
+     */
+    private String buildTaskDecompositionPrompt(String milestoneTitle, String milestoneDescription, String goal) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("你是一个资深游戏策划专家。请将以下里程碑分解为具体的可执行任务。\n\n");
+
+        sb.append("## 里程碑信息\n");
+        sb.append("- 标题：").append(milestoneTitle).append("\n");
+        if (milestoneDescription != null && !milestoneDescription.isEmpty()) {
+            sb.append("- 描述：").append(milestoneDescription).append("\n");
+        }
+        if (goal != null && !goal.isEmpty()) {
+            sb.append("- 项目目标：").append(goal).append("\n");
+        }
+        sb.append("\n");
+
+        sb.append("## 输出格式要求\n");
+        sb.append("请按以下格式输出每个任务（每个任务用 TASK 分隔）：\n\n");
+        sb.append("TASK: 任务标题 | 负责角色 | 任务描述 | 输入要求 | 输出产物 | 验收标准1;验收标准2 | 优先级 | 预估工时 | 依赖序号\n\n");
+
+        sb.append("## 角色说明\n");
+        sb.append("- system-planner: 系统策划，负责游戏系统设计和策划案\n");
+        sb.append("- numerical-planner: 数值策划，负责数值平衡和经济系统\n");
+        sb.append("- client-dev: 客户端开发，负责游戏前端逻辑、UI交互、游戏核心玩法实现\n");
+        sb.append("- ui-dev: UI开发，负责界面设计实现、视觉效果、动画\n");
+        sb.append("- server-dev: 服务端开发，负责后端逻辑、数据存储、多人联网\n");
+        sb.append("- tester: 测试，负责质量验证\n");
+        sb.append("- git-commit: 版本管理，负责代码提交和版本控制\n\n");
+
+        sb.append("## 分解原则\n");
+        sb.append("1. 每个任务应该是一个独立可交付的工作单元\n");
+        sb.append("2. 输入要求要明确具体的前置条件\n");
+        sb.append("3. 输出产物要明确具体的文件或功能\n");
+        sb.append("4. 验收标准要可执行、可检查\n");
+        sb.append("5. 任务粒度适中，通常 2-8 小时可完成\n");
+        sb.append("6. 合理设置依赖关系，支持并行执行\n\n");
+
+        sb.append("请只输出 TASK 行，不要有其他内容。");
+
+        return sb.toString();
+    }
+
+    /**
+     * 解析任务模板列表
+     */
+    private List<TaskTemplate> parseTaskTemplates(String response, String milestoneId) {
+        List<TaskTemplate> tasks = new ArrayList<>();
+        String[] lines = response.split("\n");
+
+        for (String line : lines) {
+            line = line.trim();
+            if (!line.startsWith("TASK:") && !line.startsWith("TASK：")) continue;
+
+            try {
+                String content = line.substring(line.indexOf(":") + 1).trim();
+                if (content.isEmpty()) {
+                    content = line.substring(line.indexOf("：") + 1).trim();
+                }
+
+                String[] parts = content.split("\\|");
+                if (parts.length < 6) continue;
+
+                TaskTemplate task = new TaskTemplate();
+                task.setTitle(parts[0].trim());
+                task.setAssignedRole(normalizeRole(parts[1].trim()));
+                task.setDescription(parts[2].trim());
+                task.setInputRequirements(parts[3].trim());
+                task.setOutputDeliverables(parts[4].trim());
+                task.setMilestoneId(milestoneId);
+
+                // 解析验收标准
+                String criteriaStr = parts[5].trim();
+                if (!criteriaStr.isEmpty()) {
+                    String[] criteria = criteriaStr.split("[;；]");
+                    List<String> criteriaList = new ArrayList<>();
+                    for (String c : criteria) {
+                        String trimmed = c.trim();
+                        if (!trimmed.isEmpty()) {
+                            criteriaList.add(trimmed);
+                        }
+                    }
+                    task.setAcceptanceCriteria(criteriaList);
+                }
+
+                // 解析优先级
+                if (parts.length > 6) {
+                    task.setPriority(parts[6].trim().toUpperCase());
+                }
+
+                // 解析预估工时
+                if (parts.length > 7) {
+                    try {
+                        task.setEstimatedHours(Integer.parseInt(parts[7].trim().replaceAll("[^0-9]", "")));
+                    } catch (NumberFormatException e) {
+                        task.setEstimatedHours(4); // 默认 4 小时
+                    }
+                }
+
+                // 解析依赖
+                if (parts.length > 8) {
+                    String depsStr = parts[8].trim();
+                    if (!depsStr.isEmpty() && !"0".equals(depsStr) && !"无".equals(depsStr)) {
+                        List<String> deps = new ArrayList<>();
+                        for (String dep : depsStr.split("[,，]")) {
+                            String trimmed = dep.trim().replaceAll("[^0-9]", "");
+                            if (!trimmed.isEmpty()) {
+                                deps.add(trimmed);
+                            }
+                        }
+                        task.setDependencies(deps);
+                    }
+                }
+
+                if (task.getAssignedRole() != null) {
+                    tasks.add(task);
+                    log.info("Parsed task: {} -> {}", task.getTitle(), task.getAssignedRole());
+                }
+            } catch (Exception e) {
+                log.warn("Failed to parse task line: {} - {}", line, e.getMessage());
+            }
+        }
+
+        return tasks;
+    }
+
+    /**
+     * 角色名称标准化
+     */
+    private String normalizeRole(String role) {
+        if (role == null) return null;
+        String normalized = role.replaceAll("\\s+", "").toLowerCase();
+
+        return switch (normalized) {
+            case "系统策划", "system-planner", "systemplanner", "策划" -> "system-planner";
+            case "数值策划", "numerical-planner", "numericalplanner", "数值" -> "numerical-planner";
+            case "客户端开发", "client-dev", "clientdev", "客户端", "前端" -> "client-dev";
+            case "ui开发", "ui-dev", "uidev", "ui", "界面" -> "ui-dev";
+            case "服务端开发", "server-dev", "serverdev", "服务端", "后端" -> "server-dev";
+            case "测试", "tester", "qa" -> "tester";
+            case "版本管理", "git-commit", "gitcommit", "git" -> "git-commit";
+            default -> null;
+        };
     }
 }

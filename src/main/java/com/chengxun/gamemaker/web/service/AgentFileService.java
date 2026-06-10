@@ -197,9 +197,24 @@ public class AgentFileService {
         return fileRepository.findByProjectIdAndDeletedFalseOrderByCreatedAtDesc(projectId, pageable);
     }
 
-    /** 搜索文件 */
+    /** 获取所有文件（分页） */
+    public Page<AgentFile> getAllFiles(Pageable pageable) {
+        return fileRepository.findByDeletedFalseOrderByCreatedAtDesc(pageable);
+    }
+
+    /** 获取所有 Agent ID 列表（去重） */
+    public List<String> getAgentIds() {
+        return fileRepository.findDistinctAgentIds();
+    }
+
+    /** 搜索文件（指定 Agent） */
     public Page<AgentFile> searchFiles(String agentId, String keyword, Pageable pageable) {
         return fileRepository.searchByFileName(agentId, keyword, pageable);
+    }
+
+    /** 全局搜索文件（不限 Agent） */
+    public Page<AgentFile> searchFilesGlobal(String keyword, Pageable pageable) {
+        return fileRepository.searchByFileNameGlobal(keyword, pageable);
     }
 
     /** 获取文件版本历史 */

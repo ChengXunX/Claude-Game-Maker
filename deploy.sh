@@ -24,6 +24,15 @@ APP_NAME="game-maker"
 APP_LOG="$PROJECT_DIR/app.log"
 APP_PID_FILE="$PROJECT_DIR/app.pid"
 
+# sudo 包装函数：支持 SUDO_PASS 环境变量
+_sudo() {
+    if [ -n "$SUDO_PASS" ]; then
+        echo "$SUDO_PASS" | sudo -S "$@"
+    else
+        sudo "$@"
+    fi
+}
+
 echo -e "${YELLOW}部署配置:${NC}"
 echo "  前端端口: $FRONTEND_PORT"
 echo "  后端端口: $BACKEND_PORT"
@@ -63,9 +72,9 @@ echo ""
 
 # 步骤 2: 部署前端文件
 echo -e "${GREEN}[2/6] 部署前端文件...${NC}"
-sudo mkdir -p "$DEPLOY_DIR"
-sudo cp -r "$PROJECT_DIR/frontend/dist/"* "$DEPLOY_DIR/"
-sudo chown -R www-data:www-data "$DEPLOY_DIR"
+_sudo mkdir -p "$DEPLOY_DIR"
+_sudo cp -r "$PROJECT_DIR/frontend/dist/"* "$DEPLOY_DIR/"
+_sudo chown -R www-data:www-data "$DEPLOY_DIR"
 echo "前端文件已部署到 $DEPLOY_DIR"
 echo ""
 
@@ -78,7 +87,7 @@ echo ""
 
 # 步骤 4: 配置 Nginx
 echo -e "${GREEN}[4/6] 配置 Nginx...${NC}"
-sudo tee /etc/nginx/sites-available/game-maker > /dev/null << 'NGINX_EOF'
+cat > /tmp/game-maker-nginx.conf << 'NGINX_EOF'
 # ChengXun Game Maker Nginx 配置
 # 使用非常用端口避免被扫描封禁
 
@@ -226,15 +235,17 @@ server {
     }
 }
 NGINX_EOF
+_sudo cp /tmp/game-maker-nginx.conf /etc/nginx/sites-available/game-maker
+rm -f /tmp/game-maker-nginx.conf
 
 # 启用站点
-sudo ln -sf /etc/nginx/sites-available/game-maker /etc/nginx/sites-enabled/
+_sudo ln -sf /etc/nginx/sites-available/game-maker /etc/nginx/sites-enabled/
 
 # 测试配置
-sudo nginx -t
+_sudo nginx -t
 
 # 重新加载
-sudo systemctl reload nginx
+_sudo systemctl reload nginx
 echo "Nginx 配置完成"
 echo ""
 
@@ -243,16 +254,30 @@ echo -e "${GREEN}[5/6] 启动后端服务...${NC}"
 stop_backend
 
 cd "$PROJECT_DIR"
-# 加载环境变量
-set -a
-source .env
-set +a
 
-nohup java -jar -Xms256m -Xmx512m target/game-maker-1.0-SNAPSHOT.jar \
-    --spring.profiles.active=prod \
-    --server.port=$BACKEND_PORT \
-    --server.address=127.0.0.1 \
-    > "$APP_LOG" 2>&1 &
+# 以真实用户运行后端（Claude CLI 禁止 root 使用 --dangerously-skip-permissions）
+if [ "$(id -u)" -eq 0 ]; then
+    # $SUDO_USER = 执行 sudo 的真实用户；无 sudo 时用当前用户
+    DEPLOY_USER="${SUDO_USER:-$(id -un)}"
+    nohup su -s /bin/bash "$DEPLOY_USER" -c "
+        cd '$PROJECT_DIR' && \
+        set -a && source .env && set +a && \
+        java -jar -Xms256m -Xmx512m target/game-maker-1.0-SNAPSHOT.jar \
+            --spring.profiles.active=prod \
+            --server.port=$BACKEND_PORT \
+            --server.address=127.0.0.1 \
+            > '$APP_LOG' 2>&1
+    " &
+else
+    set -a
+    source .env
+    set +a
+    nohup java -jar -Xms256m -Xmx512m target/game-maker-1.0-SNAPSHOT.jar \
+        --spring.profiles.active=prod \
+        --server.port=$BACKEND_PORT \
+        --server.address=127.0.0.1 \
+        > "$APP_LOG" 2>&1 &
+fi
 
 echo $! > "$APP_PID_FILE"
 NEW_PID=$(cat "$APP_PID_FILE")

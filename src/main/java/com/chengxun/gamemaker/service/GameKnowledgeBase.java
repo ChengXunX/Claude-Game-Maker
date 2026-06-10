@@ -42,6 +42,7 @@ public class GameKnowledgeBase {
     /**
      * 初始化知识库
      */
+    @jakarta.annotation.PostConstruct
     public void init() {
         try {
             Files.createDirectories(Path.of(KB_DIR));

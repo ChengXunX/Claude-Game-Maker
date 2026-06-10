@@ -1,182 +1,231 @@
 package com.chengxun.gamemaker.web.controller;
 
+import com.chengxun.gamemaker.agent.Agent;
+import com.chengxun.gamemaker.manager.AgentManager;
 import com.chengxun.gamemaker.web.entity.ApiToken;
 import com.chengxun.gamemaker.web.entity.User;
 import com.chengxun.gamemaker.web.service.ApiTokenService;
+import com.chengxun.gamemaker.web.service.OperationLogService;
 import com.chengxun.gamemaker.web.service.UserService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.*;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 /**
- * Token管理 REST API 控制器
- * 提供API Token的CRUD和管理接口
- *
- * 权限要求：
- * - 查看Token：tokens:view
- * - 管理Token：tokens:manage
+ * Token 管理 REST API 控制器
+ * 为 Vue 前端提供 JSON 接口
  *
  * @author chengxun
  * @since 1.0.0
  */
+@Tag(name = "Token管理", description = "API Token 管理接口")
 @RestController
 @RequestMapping("/api/tokens")
-@Tag(name = "Token管理", description = "API Token管理API")
 public class TokenApiController {
 
     private static final Logger log = LoggerFactory.getLogger(TokenApiController.class);
 
-    @Autowired
-    private ApiTokenService tokenService;
+    private final ApiTokenService tokenService;
+    private final AgentManager agentManager;
+    private final UserService userService;
+    private final OperationLogService logService;
 
-    @Autowired
-    private UserService userService;
+    public TokenApiController(ApiTokenService tokenService, AgentManager agentManager,
+                              UserService userService, OperationLogService logService) {
+        this.tokenService = tokenService;
+        this.agentManager = agentManager;
+        this.userService = userService;
+        this.logService = logService;
+    }
 
-    /**
-     * 获取所有Token
-     */
     @GetMapping
-    @PreAuthorize("hasAuthority('PERM_tokens:view')")
-    @Operation(summary = "获取所有Token")
-    public ResponseEntity<List<ApiToken>> getAllTokens() {
+    @Operation(summary = "获取Token列表")
+    @PreAuthorize("hasAnyAuthority('PERM_agents:manage', 'PERM_agents:task')")
+    public ResponseEntity<List<ApiToken>> getAll() {
         return ResponseEntity.ok(tokenService.getAllTokens());
     }
 
-    /**
-     * 获取Token详情
-     */
     @GetMapping("/{id}")
-    @PreAuthorize("hasAuthority('PERM_tokens:view')")
     @Operation(summary = "获取Token详情")
-    public ResponseEntity<?> getToken(@PathVariable Long id) {
+    @PreAuthorize("hasAnyAuthority('PERM_agents:manage', 'PERM_agents:task')")
+    public ResponseEntity<?> getById(@PathVariable Long id) {
         ApiToken token = tokenService.getTokenById(id);
-        if (token == null) {
-            return ResponseEntity.notFound().build();
-        }
+        if (token == null) return ResponseEntity.notFound().build();
         return ResponseEntity.ok(token);
     }
 
-    /**
-     * 创建Token
-     */
     @PostMapping
-    @PreAuthorize("hasAuthority('PERM_tokens:manage')")
     @Operation(summary = "创建Token")
-    public ResponseEntity<?> createToken(@RequestBody Map<String, Object> request, Authentication authentication) {
-        try {
-            String tokenName = (String) request.get("tokenName");
-            String apiKey = (String) request.get("apiKey");
-            String apiUrl = (String) request.get("apiUrl");
-            String model = (String) request.get("model");
-            Integer maxTokens = request.get("maxTokens") != null ? ((Number) request.get("maxTokens")).intValue() : null;
-            String description = (String) request.get("description");
-            String createdBy = authentication.getName();
+    @PreAuthorize("hasAuthority('PERM_agents:manage')")
+    public ResponseEntity<?> create(@RequestBody Map<String, Object> request, Authentication authentication) {
+        String name = (String) request.get("name");
+        String apiKey = (String) request.get("apiKey");
+        String apiUrl = (String) request.get("apiUrl");
+        String model = (String) request.get("model");
+        Integer maxTokens = request.get("maxTokens") != null ?
+            Integer.parseInt(String.valueOf(request.get("maxTokens"))) : 4096;
+        Integer contextWindow = request.get("contextWindow") != null ?
+            Integer.parseInt(String.valueOf(request.get("contextWindow"))) : 200000;
+        String description = (String) request.get("description");
+        String agentTags = (String) request.get("agentTags");
+        Integer priority = request.get("priority") != null ?
+            Integer.parseInt(String.valueOf(request.get("priority"))) : 10;
 
-            ApiToken created = tokenService.createToken(tokenName, apiKey, apiUrl, model, maxTokens, description, createdBy);
-            log.info("Token创建成功: {} - {}", created.getId(), tokenName);
-            return ResponseEntity.ok(Map.of("success", true, "token", created));
+        if (name == null || name.isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "Token 名称不能为空"));
+        }
+        if (apiKey == null || apiKey.isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "API Key 不能为空"));
+        }
+
+        try {
+            String username = authentication.getName();
+            Long userId = getUserId(authentication);
+            ApiToken token = tokenService.createToken(name, apiKey, apiUrl, model, maxTokens, contextWindow, description, username);
+            token.setUserId(userId);
+            token.setAgentTags(agentTags);
+            token.setPriority(priority);
+            tokenService.saveToken(token);
+
+            logService.log(userId, username, "CREATE_TOKEN", name, "Created API token (contextWindow=" + contextWindow + ")", null);
+            return ResponseEntity.ok(Map.of("success", true, "message", "Token 创建成功", "token", token));
         } catch (Exception e) {
-            log.error("创建Token失败", e);
-            return ResponseEntity.badRequest().body(Map.of("success", false, "message", e.getMessage()));
+            log.error("Failed to create token", e);
+            return ResponseEntity.internalServerError().body(Map.of("success", false, "message", "创建失败: " + e.getMessage()));
         }
     }
 
-    /**
-     * 更新Token
-     */
     @PutMapping("/{id}")
-    @PreAuthorize("hasAuthority('PERM_tokens:manage')")
     @Operation(summary = "更新Token")
-    public ResponseEntity<?> updateToken(@PathVariable Long id, @RequestBody Map<String, Object> request) {
+    @PreAuthorize("hasAuthority('PERM_agents:manage')")
+    public ResponseEntity<?> update(@PathVariable Long id, @RequestBody Map<String, Object> request,
+                                    Authentication authentication) {
         try {
-            String tokenName = (String) request.get("tokenName");
+            ApiToken token = tokenService.getTokenById(id);
+            if (token == null) return ResponseEntity.notFound().build();
+
+            String name = (String) request.getOrDefault("name", token.getName());
             String apiKey = (String) request.get("apiKey");
-            String apiUrl = (String) request.get("apiUrl");
-            String model = (String) request.get("model");
-            Integer maxTokens = request.get("maxTokens") != null ? ((Number) request.get("maxTokens")).intValue() : null;
-            String description = (String) request.get("description");
+            String apiUrl = (String) request.getOrDefault("apiUrl", token.getApiUrl());
+            String model = (String) request.getOrDefault("model", token.getModel());
+            Integer maxTokens = request.get("maxTokens") != null ?
+                Integer.parseInt(String.valueOf(request.get("maxTokens"))) : token.getMaxTokens();
+            Integer contextWindow = request.get("contextWindow") != null ?
+                Integer.parseInt(String.valueOf(request.get("contextWindow"))) : token.getContextWindow();
+            String description = (String) request.getOrDefault("description", token.getDescription());
+            String agentTags = (String) request.get("agentTags");
+            Integer priority = request.get("priority") != null ?
+                Integer.parseInt(String.valueOf(request.get("priority"))) : token.getPriority();
+            String status = (String) request.get("status");
 
-            ApiToken updated = tokenService.updateToken(id, tokenName, apiKey, apiUrl, model, maxTokens, description);
-            log.info("Token更新成功: {}", id);
-            return ResponseEntity.ok(Map.of("success", true, "token", updated));
+            tokenService.updateToken(id, name, apiKey, apiUrl, model, maxTokens, contextWindow, description);
+            ApiToken updated = tokenService.getTokenById(id);
+            if (agentTags != null) updated.setAgentTags(agentTags);
+            if (priority != null) updated.setPriority(priority);
+            if (status != null) {
+                try { updated.setStatus(ApiToken.TokenStatus.valueOf(status)); } catch (IllegalArgumentException ignored) {}
+            }
+            tokenService.saveToken(updated);
+
+            logService.log(getUserId(authentication), authentication.getName(), "UPDATE_TOKEN", name, "Updated API token (contextWindow=" + contextWindow + ")", null);
+            return ResponseEntity.ok(Map.of("success", true, "message", "Token 已更新", "token", updated));
         } catch (Exception e) {
-            log.error("更新Token失败", e);
-            return ResponseEntity.badRequest().body(Map.of("success", false, "message", e.getMessage()));
+            log.error("Failed to update token {}", id, e);
+            return ResponseEntity.internalServerError().body(Map.of("success", false, "message", "更新失败: " + e.getMessage()));
         }
     }
 
-    /**
-     * 删除Token
-     */
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasAuthority('PERM_tokens:manage')")
     @Operation(summary = "删除Token")
-    public ResponseEntity<?> deleteToken(@PathVariable Long id) {
+    @PreAuthorize("hasAuthority('PERM_agents:manage')")
+    public ResponseEntity<?> delete(@PathVariable Long id, Authentication authentication) {
         try {
+            ApiToken token = tokenService.getTokenById(id);
+            String tokenName = token != null ? token.getName() : "Unknown";
             tokenService.deleteToken(id);
-            log.info("Token删除成功: {}", id);
-            return ResponseEntity.ok(Map.of("success", true, "message", "Token已删除"));
+            logService.log(getUserId(authentication), authentication.getName(), "DELETE_TOKEN", tokenName, "Deleted API token", null);
+            return ResponseEntity.ok(Map.of("success", true, "message", "Token 已删除"));
         } catch (Exception e) {
-            log.error("删除Token失败", e);
-            return ResponseEntity.badRequest().body(Map.of("success", false, "message", e.getMessage()));
+            return ResponseEntity.internalServerError().body(Map.of("success", false, "message", "删除失败: " + e.getMessage()));
         }
     }
 
-    /**
-     * 分配Token给Agent
-     */
     @PostMapping("/{id}/assign")
-    @PreAuthorize("hasAuthority('PERM_tokens:manage')")
     @Operation(summary = "分配Token给Agent")
-    public ResponseEntity<?> assignToken(@PathVariable Long id, @RequestBody Map<String, String> request) {
+    @PreAuthorize("hasAuthority('PERM_agents:manage')")
+    public ResponseEntity<?> assign(@PathVariable Long id, @RequestBody Map<String, String> request,
+                                    Authentication authentication) {
+        String agentId = request.get("agentId");
+        String activation = request.getOrDefault("activation", "immediate");
+
+        if (agentId == null || agentId.isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "Agent ID 不能为空"));
+        }
+
         try {
-            String agentId = request.get("agentId");
-            tokenService.assignToken(id, agentId);
-            log.info("Token分配成功: {} -> {}", id, agentId);
-            return ResponseEntity.ok(Map.of("success", true, "message", "Token已分配"));
+            ApiToken token = tokenService.assignToken(id, agentId, activation);
+            String activationLabel = "pending".equals(activation) ? "等待任务完成" : "立即";
+            logService.log(getUserId(authentication), authentication.getName(), "ASSIGN_TOKEN",
+                token.getName(), "Assigned to agent: " + agentId + " (" + activationLabel + ")", null);
+            return ResponseEntity.ok(Map.of("success", true, "message", "Token 已分配（" + activationLabel + "生效）"));
         } catch (Exception e) {
-            log.error("分配Token失败", e);
-            return ResponseEntity.badRequest().body(Map.of("success", false, "message", e.getMessage()));
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "分配失败: " + e.getMessage()));
         }
     }
 
-    /**
-     * 取消Token分配
-     */
     @PostMapping("/{id}/unassign")
-    @PreAuthorize("hasAuthority('PERM_tokens:manage')")
     @Operation(summary = "取消Token分配")
-    public ResponseEntity<?> unassignToken(@PathVariable Long id) {
+    @PreAuthorize("hasAuthority('PERM_agents:manage')")
+    public ResponseEntity<?> unassign(@PathVariable Long id, Authentication authentication) {
         try {
-            tokenService.unassignToken(id);
-            log.info("Token取消分配成功: {}", id);
-            return ResponseEntity.ok(Map.of("success", true, "message", "Token已取消分配"));
+            ApiToken token = tokenService.unassignToken(id);
+            logService.log(getUserId(authentication), authentication.getName(), "UNASSIGN_TOKEN",
+                token.getName(), "Unassigned from agent", null);
+            return ResponseEntity.ok(Map.of("success", true, "message", "Token 已取消分配"));
         } catch (Exception e) {
-            log.error("取消分配Token失败", e);
-            return ResponseEntity.badRequest().body(Map.of("success", false, "message", e.getMessage()));
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "操作失败: " + e.getMessage()));
         }
     }
 
-    /**
-     * 获取Token统计
-     */
     @GetMapping("/stats")
-    @PreAuthorize("hasAuthority('PERM_tokens:view')")
     @Operation(summary = "获取Token统计")
-    public ResponseEntity<Map<String, Object>> getTokenStats() {
+    @PreAuthorize("hasAnyAuthority('PERM_agents:manage', 'PERM_agents:task')")
+    public ResponseEntity<Map<String, Object>> getStats() {
         Map<String, Object> stats = new HashMap<>();
-        List<ApiToken> tokens = tokenService.getAllTokens();
-        stats.put("total", tokens.size());
-        stats.put("active", tokens.stream().filter(t -> "ACTIVE".equals(t.getStatus())).count());
-        stats.put("assigned", tokens.stream().filter(t -> t.getAssignedAgentId() != null).count());
+        stats.put("total", tokenService.getAllTokens().size());
+        stats.put("active", tokenService.getActiveTokenCount());
+        stats.put("assigned", tokenService.getAssignedTokenCount());
         return ResponseEntity.ok(stats);
+    }
+
+    @GetMapping("/agents")
+    @Operation(summary = "获取可分配的Agent列表")
+    @PreAuthorize("hasAnyAuthority('PERM_agents:manage', 'PERM_agents:task')")
+    public ResponseEntity<List<Map<String, String>>> getAvailableAgents() {
+        List<Map<String, String>> agents = agentManager.getAllAgents().stream()
+            .map(agent -> {
+                Map<String, String> info = new HashMap<>();
+                info.put("id", agent.getId());
+                info.put("name", agent.getName());
+                info.put("role", agent.getDefinition().getRole());
+                info.put("project", agent.getDefinition().getProjectId());
+                return info;
+            })
+            .toList();
+        return ResponseEntity.ok(agents);
+    }
+
+    private Long getUserId(Authentication authentication) {
+        User user = userService.getUserByUsername(authentication.getName());
+        return user != null ? user.getId() : null;
     }
 }

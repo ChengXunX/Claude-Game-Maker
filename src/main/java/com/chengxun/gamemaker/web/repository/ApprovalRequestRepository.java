@@ -63,4 +63,14 @@ public interface ApprovalRequestRepository extends JpaRepository<ApprovalRequest
      * 统计所有待审批请求数量
      */
     long countByStatus(ApprovalRequest.ApprovalStatus status);
+
+    /**
+     * 按时间倒序获取所有审批请求
+     */
+    List<ApprovalRequest> findAllByOrderByCreatedAtDesc();
+
+    /**
+     * 查找项目的所有审批请求（不限状态）
+     */
+    List<ApprovalRequest> findByProjectIdOrderByCreatedAtDesc(String projectId);
 }

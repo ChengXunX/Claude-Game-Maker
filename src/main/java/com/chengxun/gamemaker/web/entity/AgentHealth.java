@@ -231,6 +231,7 @@ public class AgentHealth {
 
     /**
      * 获取健康分数（0-100）
+     * 综合评估：错误率、响应时间、连续错误、活跃度
      */
     public int getHealthScore() {
         int score = 100;
@@ -242,7 +243,8 @@ public class AgentHealth {
 
         // 响应时间扣分
         if (avgResponseTimeMs != null) {
-            if (avgResponseTimeMs > 5000) score -= 30;
+            if (avgResponseTimeMs > 10000) score -= 40;
+            else if (avgResponseTimeMs > 5000) score -= 30;
             else if (avgResponseTimeMs > 3000) score -= 20;
             else if (avgResponseTimeMs > 1000) score -= 10;
         }
@@ -251,6 +253,14 @@ public class AgentHealth {
         if (consecutiveErrors >= 10) score -= 30;
         else if (consecutiveErrors >= 5) score -= 20;
         else if (consecutiveErrors >= 3) score -= 10;
+
+        // 活跃度扣分：最后活动时间距今过久
+        if (lastActivityTime != null) {
+            long idleMinutes = java.time.Duration.between(lastActivityTime, java.time.LocalDateTime.now()).toMinutes();
+            if (idleMinutes > 120) score -= 25;      // 超过2小时无活动
+            else if (idleMinutes > 60) score -= 15;  // 超过1小时
+            else if (idleMinutes > 30) score -= 5;   // 超过30分钟
+        }
 
         return Math.max(0, score);
     }

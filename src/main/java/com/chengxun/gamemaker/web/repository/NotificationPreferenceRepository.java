@@ -3,8 +3,10 @@ package com.chengxun.gamemaker.web.repository;
 import com.chengxun.gamemaker.web.entity.NotificationPreference;
 import com.chengxun.gamemaker.web.entity.NotificationPreference.Channel;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
@@ -42,5 +44,7 @@ public interface NotificationPreferenceRepository extends JpaRepository<Notifica
     List<NotificationPreference> findEnabledByUserId(@Param("userId") Long userId);
 
     /** 删除用户的所有偏好 */
+    @Modifying
+    @Transactional
     void deleteByUserId(Long userId);
 }

@@ -15,6 +15,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Agent日志服务
@@ -85,6 +86,21 @@ public class AgentLogService {
         logAsync(agentId, agentName, "AI_CALL", "INFO", summary, null, null, null, null, durationMs);
     }
 
+    /**
+     * 记录 AI 调用日志（含输入输出详情）
+     *
+     * @param agentId    Agent ID
+     * @param agentName  Agent 名称
+     * @param summary    摘要
+     * @param input      AI 输入内容（存入 detail）
+     * @param output     AI 输出内容（存入 decision）
+     * @param durationMs 耗时
+     */
+    public void aiCall(String agentId, String agentName, String summary,
+                       String input, String output, long durationMs) {
+        logAsync(agentId, agentName, "AI_CALL", "INFO", summary, input, null, null, output, durationMs);
+    }
+
     // 查询方法
     public Page<AgentLog> searchLogs(String agentId, String action, String level,
                                      String keyword, LocalDateTime startTime, LocalDateTime endTime,
@@ -142,5 +158,67 @@ public class AgentLogService {
         }
 
         return operationLogRepository.findAll(spec, org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC, "createdAt"));
+    }
+
+    /**
+     * 获取指定 Agent 在指定时间后的任务完成数
+     */
+    public long getCompletedTaskCount(String agentId, LocalDateTime since) {
+        return logRepository.countCompletedTasksByAgentSince(since).stream()
+            .filter(row -> agentId.equals(row[0]))
+            .mapToLong(row -> (Long) row[1])
+            .findFirst().orElse(0);
+    }
+
+    /**
+     * 获取指定 Agent 在指定时间后的任务失败数
+     */
+    public long getFailedTaskCount(String agentId, LocalDateTime since) {
+        return logRepository.countFailedTasksByAgentSince(since).stream()
+            .filter(row -> agentId.equals(row[0]))
+            .mapToLong(row -> (Long) row[1])
+            .findFirst().orElse(0);
+    }
+
+    /**
+     * 获取指定 Agent 在指定时间后的 AI 调用数
+     */
+    public long getAiCallCount(String agentId, LocalDateTime since) {
+        return logRepository.countAiCallsByAgentSince(since).stream()
+            .filter(row -> agentId.equals(row[0]))
+            .mapToLong(row -> (Long) row[1])
+            .findFirst().orElse(0);
+    }
+
+    /**
+     * 获取指定 Agent 在指定时间后的错误数
+     */
+    public long getErrorCount(String agentId, LocalDateTime since) {
+        return logRepository.countErrorsByAgentSince(since).stream()
+            .filter(row -> agentId.equals(row[0]))
+            .mapToLong(row -> (Long) row[1])
+            .findFirst().orElse(0);
+    }
+
+    /**
+     * 获取所有 Agent 的任务完成统计（最近N天）
+     */
+    public Map<String, Long> getCompletedTaskCounts(LocalDateTime since) {
+        return logRepository.countCompletedTasksByAgentSince(since).stream()
+            .collect(java.util.stream.Collectors.toMap(
+                row -> (String) row[0],
+                row -> (Long) row[1]
+            ));
+    }
+
+    /**
+     * 获取所有 Agent 的 AI 调用统计（最近N天）
+     */
+    public Map<String, Long> getAiCallCounts(LocalDateTime since) {
+        return logRepository.countAiCallsByAgentSince(since).stream()
+            .collect(java.util.stream.Collectors.toMap(
+                row -> (String) row[0],
+                row -> (Long) row[1]
+            ));
     }
 }

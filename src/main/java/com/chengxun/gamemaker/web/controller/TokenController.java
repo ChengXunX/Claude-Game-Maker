@@ -61,13 +61,16 @@ public class TokenController {
                              @RequestParam(required = false) String apiUrl,
                              @RequestParam(required = false) String model,
                              @RequestParam(required = false) Integer maxTokens,
+                             @RequestParam(required = false) Integer contextWindow,
                              @RequestParam(required = false) String description,
                              @RequestParam(required = false) String assignAgentId,
                              Authentication authentication,
                              RedirectAttributes redirectAttributes) {
         try {
             ApiToken token = tokenService.createToken(name, apiKey, apiUrl, model,
-                maxTokens != null ? maxTokens : 4096, description, authentication.getName());
+                maxTokens != null ? maxTokens : 4096,
+                contextWindow != null ? contextWindow : 200000,
+                description, authentication.getName());
 
             // 如果指定了 agent，立即分配
             if (assignAgentId != null && !assignAgentId.isEmpty()) {
@@ -105,12 +108,15 @@ public class TokenController {
                              @RequestParam(required = false) String apiUrl,
                              @RequestParam(required = false) String model,
                              @RequestParam(required = false) Integer maxTokens,
+                             @RequestParam(required = false) Integer contextWindow,
                              @RequestParam(required = false) String description,
                              Authentication authentication,
                              RedirectAttributes redirectAttributes) {
         try {
             tokenService.updateToken(id, name, apiKey, apiUrl, model,
-                maxTokens != null ? maxTokens : 4096, description);
+                maxTokens != null ? maxTokens : 4096,
+                contextWindow != null ? contextWindow : 200000,
+                description);
             logService.log(getUserId(authentication), "UPDATE_TOKEN", name, "Updated API token", null);
             redirectAttributes.addFlashAttribute("success", "Token 已更新");
             return "redirect:/tokens";

@@ -536,33 +536,41 @@ public class InstallService {
     /**
      * 保存系统基础配置
      */
-    public void saveSystemSettings(String systemName, String jwtSecret) {
+    public void saveSystemSettings(String systemName, String jwtSecret, String contactLink) {
         if (systemName != null && !systemName.isEmpty()) {
             saveConfig("system.name", systemName, "系统名称", "system");
         }
         if (jwtSecret != null && !jwtSecret.isEmpty()) {
             saveConfig("security.jwt.secret", jwtSecret, "JWT 密钥", "security");
         }
+        if (contactLink != null) {
+            saveConfig("system.contact.link", contactLink, "联系管理员链接", "system");
+        }
     }
 
     /**
      * 保存 Claude API 配置
      */
-    public void saveClaudeConfig(String apiKey, String apiUrl, String model) {
+    public void saveClaudeConfig(String apiKey, String apiUrl, String model, String maxTokens) {
         if (apiKey != null) saveConfig("claude.api.key", apiKey, "Claude API Key", "agent");
         if (apiUrl != null) saveConfig("claude.api.url", apiUrl, "Claude API URL", "agent");
         if (model != null) saveConfig("claude.model", model, "Claude 模型", "agent");
+        if (maxTokens != null && !maxTokens.isEmpty()) saveConfig("claude.max.tokens", maxTokens, "Claude 最大 Token", "agent");
     }
 
     /**
      * 保存邮件配置
      */
-    public void saveEmailConfig(String host, int port, String username, String password, String from) {
+    public void saveEmailConfig(boolean enabled, String host, int port, String username,
+                                String password, String from, String senderName, String proxyEmail) {
+        saveConfig("email.enabled", String.valueOf(enabled), "邮件通知开关", "email");
         saveConfig("email.smtp.host", host, "SMTP 服务器", "email");
         saveConfig("email.smtp.port", String.valueOf(port), "SMTP 端口", "email");
         saveConfig("email.smtp.username", username, "SMTP 用户名", "email");
         saveConfig("email.smtp.password", password, "SMTP 密码", "email");
         if (from != null) saveConfig("email.from", from, "发件人地址", "email");
+        if (senderName != null) saveConfig("email.sender.name", senderName, "发件人名称", "email");
+        if (proxyEmail != null) saveConfig("email.proxy.email", proxyEmail, "代理邮箱", "email");
     }
 
     /**

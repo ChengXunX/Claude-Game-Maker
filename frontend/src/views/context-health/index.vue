@@ -540,7 +540,7 @@ const handleCommand = async (command, row) => {
       break
     case 'logs':
       // 跳转到 Agent 日志页面
-      window.open(`/agent-logs?agentId=${row.agentId}`, '_blank')
+      window.open(`/admin/agent-logs?agentId=${row.agentId}`, '_blank')
       break
     case 'reset':
       await resetRecoveryCount(row)
@@ -735,6 +735,7 @@ onUnmounted(() => {
   background: var(--el-fill-color-light);
   padding: 2px 6px;
   border-radius: 4px;
+  color: var(--el-text-color-primary);
 }
 
 .issue-text {

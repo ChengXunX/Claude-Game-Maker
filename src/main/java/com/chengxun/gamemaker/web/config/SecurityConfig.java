@@ -74,7 +74,7 @@ public class SecurityConfig {
                     "/tokens/**", "/reviews/**", "/git/**", "/agents/**", "/health/**",
                     "/interventions/**", "/recruitment/**", "/notifications/**",
                     "/notification-templates/**", "/notification-preferences/**",
-                    "/game-templates/**", "/capabilities/**",
+                    "/game-templates/**", "/game-verify/**", "/capabilities/**",
                     "/knowledge/**", "/knowledge-base/**", "/knowledge-evolution/**",
                     "/skills/**", "/alerts/**", "/configs/**", "/agent-scheduler/**",
                     "/diagnostic/**", "/workflow/**", "/pipelines/**", "/monitor/**",

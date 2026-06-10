@@ -34,4 +34,10 @@ public interface AlertRuleRepository extends JpaRepository<AlertRule, Long> {
      * 根据规则类型和启用状态查找
      */
     List<AlertRule> findByRuleTypeAndEnabled(String ruleType, boolean enabled);
+
+    /**
+     * 根据监控指标和启用状态查找
+     * 用于 checkAndTrigger 匹配正确的告警规则
+     */
+    List<AlertRule> findByMetricAndEnabled(String metric, boolean enabled);
 }

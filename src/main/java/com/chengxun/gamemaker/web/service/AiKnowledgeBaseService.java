@@ -1,6 +1,7 @@
 package com.chengxun.gamemaker.web.service;
 
 import com.chengxun.gamemaker.web.entity.KnowledgeBase;
+import com.chengxun.gamemaker.web.entity.ProjectMember;
 import com.chengxun.gamemaker.web.entity.User;
 import com.chengxun.gamemaker.web.repository.KnowledgeBaseRepository;
 import org.slf4j.Logger;
@@ -26,11 +27,14 @@ public class AiKnowledgeBaseService {
 
     private final KnowledgeBaseRepository knowledgeRepository;
     private final PromptSecurityService promptSecurityService;
+    private final ProjectPermissionService permissionService;
 
     public AiKnowledgeBaseService(KnowledgeBaseRepository knowledgeRepository,
-                                  PromptSecurityService promptSecurityService) {
+                                  PromptSecurityService promptSecurityService,
+                                  ProjectPermissionService permissionService) {
         this.knowledgeRepository = knowledgeRepository;
         this.promptSecurityService = promptSecurityService;
+        this.permissionService = permissionService;
     }
 
     /**
@@ -237,8 +241,16 @@ public class AiKnowledgeBaseService {
         if (user.isAdmin()) {
             return "所有权限";
         }
-        // TODO: 从 ProjectPermissionService 获取实际权限
-        return "查看、编辑";
+        ProjectMember.ProjectRole role = permissionService.getUserProjectRole(user, projectId);
+        if (role == null) {
+            return "无权限";
+        }
+        return switch (role) {
+            case OWNER -> "所有权限";
+            case MANAGER -> "查看、编辑、管理成员";
+            case DEVELOPER -> "查看、编辑";
+            case VIEWER -> "只读";
+        };
     }
 
     /**

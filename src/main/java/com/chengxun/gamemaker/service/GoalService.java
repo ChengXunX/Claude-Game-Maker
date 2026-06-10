@@ -1,10 +1,12 @@
 package com.chengxun.gamemaker.service;
 
+import com.chengxun.gamemaker.manager.AgentManager;
 import com.chengxun.gamemaker.manager.ProjectManager;
 import com.chengxun.gamemaker.model.GameProject;
 import com.chengxun.gamemaker.model.GameProject.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
@@ -26,9 +28,11 @@ public class GoalService {
     private static final Logger log = LoggerFactory.getLogger(GoalService.class);
 
     private final ProjectManager projectManager;
+    private final AgentManager agentManager;
 
-    public GoalService(ProjectManager projectManager) {
+    public GoalService(ProjectManager projectManager, @Lazy AgentManager agentManager) {
         this.projectManager = projectManager;
+        this.agentManager = agentManager;
     }
 
     /**
@@ -120,6 +124,9 @@ public class GoalService {
 
     /**
      * 更新里程碑进度
+     *
+     * 【重要】当进度为100%时，必须验证里程碑是否真正完成
+     * 不能仅仅因为Agent报告"完成"就标记为完成
      */
     public void updateMilestoneProgress(String projectId, String milestoneId, int progress) {
         GameProject project = projectManager.getProject(projectId);
@@ -131,6 +138,21 @@ public class GoalService {
             .orElse(null);
 
         if (milestone == null) return;
+
+        // 【重要】当进度为100%时，检查是否有验证结果
+        if (progress >= 100) {
+            // 如果没有验证结果，不允许直接设置为100%
+            if (milestone.getVerificationResult() == null || milestone.getVerificationResult().isEmpty()) {
+                log.warn("里程碑 [{}] 尝试设置为100%但没有验证结果，拒绝操作", milestone.getTitle());
+                return;
+            }
+
+            // 检查验证结果是否包含"通过"关键词
+            if (!milestone.getVerificationResult().contains("通过") && !milestone.getVerificationResult().contains("success")) {
+                log.warn("里程碑 [{}] 尝试设置为100%但验证结果不是通过状态，拒绝操作", milestone.getTitle());
+                return;
+            }
+        }
 
         milestone.setProgress(Math.max(0, Math.min(100, progress)));
 
@@ -159,6 +181,154 @@ public class GoalService {
     }
 
     /**
+     * 从能力系统调用的里程碑进度更新方法
+     * 不检查验证结果，允许能力系统直接更新进度
+     *
+     * @param projectId 项目 ID
+     * @param milestoneId 里程碑 ID
+     * @param progress 进度 (0-100)
+     * @return 是否更新成功
+     */
+    public boolean updateMilestoneProgressFromCapability(String projectId, String milestoneIdOrTitle, int progress) {
+        GameProject project = projectManager.getProject(projectId);
+        if (project == null) {
+            log.warn("updateMilestoneProgressFromCapability: 项目不存在 {}", projectId);
+            return false;
+        }
+
+        // 先按 ID 查找，再按标题查找
+        GoalMilestone milestone = project.getMilestones().stream()
+            .filter(m -> milestoneIdOrTitle.equals(m.getId()))
+            .findFirst()
+            .orElse(null);
+
+        if (milestone == null) {
+            milestone = project.getMilestones().stream()
+                .filter(m -> m.getTitle() != null && m.getTitle().contains(milestoneIdOrTitle))
+                .findFirst()
+                .orElse(null);
+        }
+
+        if (milestone == null) {
+            milestone = project.getMilestones().stream()
+                .filter(m -> milestoneIdOrTitle.equals(m.getTitle()))
+                .findFirst()
+                .orElse(null);
+        }
+
+        if (milestone == null) {
+            log.warn("updateMilestoneProgressFromCapability: 里程碑不存在 '{}', 项目: {}",
+                milestoneIdOrTitle, projectId);
+            return false;
+        }
+
+        milestone.setProgress(Math.max(0, Math.min(100, progress)));
+
+        // 自动更新里程碑状态
+        if (progress >= 100) {
+            milestone.setStatus(MilestoneStatus.COMPLETED);
+            // 设置验证结果
+            if (milestone.getVerificationResult() == null || milestone.getVerificationResult().isEmpty()) {
+                milestone.setVerificationResult("能力系统更新进度至100%");
+                milestone.setLastVerificationTime(java.time.LocalDateTime.now().toString());
+            }
+        } else if (progress > 0) {
+            milestone.setStatus(MilestoneStatus.IN_PROGRESS);
+        }
+
+        // 重新计算项目目标总进度
+        project.recalculateGoalProgress();
+
+        // 检查目标是否完成
+        if (project.isGoalCompleted()) {
+            project.setGoalStatus(GoalStatus.COMPLETED);
+            project.setStatus(GameProject.ProjectStatus.COMPLETED);
+            log.info("Goal completed for project {}!", projectId);
+        } else if (project.getGoalStatus() == GoalStatus.NOT_STARTED) {
+            project.setGoalStatus(GoalStatus.IN_PROGRESS);
+        }
+
+        project.touch();
+        projectManager.saveProjectConfig(project);
+        log.info("里程碑进度已更新: {} (ID: {}) -> {}%", milestone.getTitle(), milestone.getId(), progress);
+        return true;
+    }
+
+    /**
+     * 从能力系统调用的里程碑状态更新方法
+     *
+     * @param projectId 项目 ID
+     * @param milestoneId 里程碑 ID
+     * @param status 状态字符串
+     * @return 是否更新成功
+     */
+    public boolean updateMilestoneStatusFromCapability(String projectId, String milestoneIdOrTitle, String status) {
+        GameProject project = projectManager.getProject(projectId);
+        if (project == null) {
+            log.warn("updateMilestoneStatusFromCapability: 项目不存在 {}", projectId);
+            return false;
+        }
+
+        // 先按 ID 查找，再按标题查找（支持制作人使用标题或ID）
+        GoalMilestone milestone = project.getMilestones().stream()
+            .filter(m -> milestoneIdOrTitle.equals(m.getId()))
+            .findFirst()
+            .orElse(null);
+
+        if (milestone == null) {
+            // 按标题查找（模糊匹配）
+            milestone = project.getMilestones().stream()
+                .filter(m -> m.getTitle() != null && m.getTitle().contains(milestoneIdOrTitle))
+                .findFirst()
+                .orElse(null);
+        }
+
+        if (milestone == null) {
+            // 按标题精确匹配
+            milestone = project.getMilestones().stream()
+                .filter(m -> milestoneIdOrTitle.equals(m.getTitle()))
+                .findFirst()
+                .orElse(null);
+        }
+
+        if (milestone == null) {
+            log.warn("updateMilestoneStatusFromCapability: 里程碑不存在 '{}', 项目: {}, 可用里程碑: {}",
+                milestoneIdOrTitle, projectId,
+                project.getMilestones().stream().map(GameProject.GoalMilestone::getTitle).toList());
+            return false;
+        }
+
+        try {
+            MilestoneStatus newStatus = MilestoneStatus.valueOf(status.toUpperCase());
+            MilestoneStatus oldStatus = milestone.getStatus();
+            milestone.setStatus(newStatus);
+
+            // 根据状态更新进度
+            if (newStatus == MilestoneStatus.COMPLETED) {
+                milestone.setProgress(100);
+                // 设置验证结果（绕过验证检查）
+                if (milestone.getVerificationResult() == null || milestone.getVerificationResult().isEmpty()) {
+                    milestone.setVerificationResult("能力系统更新状态为已完成");
+                    milestone.setLastVerificationTime(java.time.LocalDateTime.now().toString());
+                }
+            } else if (newStatus == MilestoneStatus.IN_PROGRESS && milestone.getProgress() == 0) {
+                milestone.setProgress(10);
+            }
+
+            // 重新计算项目目标总进度
+            project.recalculateGoalProgress();
+
+            project.touch();
+            projectManager.saveProjectConfig(project);
+            log.info("里程碑状态已更新: {} (ID: {}) {} -> {}", milestone.getTitle(), milestone.getId(), oldStatus, newStatus);
+            return true;
+        } catch (IllegalArgumentException e) {
+            log.warn("无效的里程碑状态: {}", status);
+            return false;
+        }
+    }
+
+    /**
      * 更新任务状态
      */
     public void updateTaskStatus(String projectId, String milestoneId, String taskId,
@@ -180,21 +350,114 @@ public class GoalService {
 
         if (task == null) return;
 
+        // 记录时间戳
+        if (status == MilestoneStatus.IN_PROGRESS && task.getStartedAt() == null) {
+            task.setStartedAt(LocalDateTime.now());
+        } else if (status == MilestoneStatus.COMPLETED) {
+            task.setCompletedAt(LocalDateTime.now());
+        }
+
         task.setStatus(status);
         if (result != null) task.setResult(result);
 
-        // 重新计算里程碑进度
-        if (!milestone.getTasks().isEmpty()) {
-            long completed = milestone.getTasks().stream()
-                .filter(t -> t.getStatus() == MilestoneStatus.COMPLETED)
-                .count();
-            int progress = (int) (completed * 100 / milestone.getTasks().size());
-            milestone.setProgress(progress);
-        }
+        // 使用加权进度计算
+        recalculateMilestoneProgress(milestone);
 
         project.recalculateGoalProgress();
         project.touch();
         projectManager.saveProjectConfig(project);
+    }
+
+    /**
+     * 重新计算里程碑进度（公共方法）
+     * 供 AgentScheduler 等外部服务调用
+     *
+     * @param projectId 项目 ID
+     * @param milestoneId 里程碑 ID
+     */
+    public void recalculateMilestoneProgress(String projectId, String milestoneId) {
+        GameProject project = projectManager.getProject(projectId);
+        if (project == null) return;
+
+        GoalMilestone milestone = project.getMilestones().stream()
+            .filter(m -> m.getId().equals(milestoneId))
+            .findFirst()
+            .orElse(null);
+
+        if (milestone == null) return;
+
+        recalculateMilestoneProgress(milestone);
+        project.recalculateGoalProgress();
+        project.touch();
+        projectManager.saveProjectConfig(project);
+    }
+
+    /**
+     * 重新计算里程碑进度（智能加权平均）
+     *
+     * 优化点：
+     * 1. 考虑任务持续时间 - 长时间进行中的任务给予更低的进度
+     * 2. 考虑任务优先级 - 高优先级任务权重更高
+     * 3. 进度平滑 - 避免进度剧烈波动
+     */
+    private void recalculateMilestoneProgress(GameProject.GoalMilestone milestone) {
+        if (milestone.getTasks().isEmpty()) {
+            milestone.setProgress(0);
+            return;
+        }
+
+        int totalWeight = 0;
+        int weightedProgress = 0;
+        int completedCount = 0;
+        int inProgressCount = 0;
+
+        for (GameProject.MilestoneTask task : milestone.getTasks()) {
+            int weight = task.getWeight();
+            totalWeight += weight;
+
+            if (task.getStatus() == GameProject.MilestoneStatus.COMPLETED) {
+                weightedProgress += weight * 100;
+                completedCount++;
+            } else if (task.getStatus() == GameProject.MilestoneStatus.IN_PROGRESS) {
+                inProgressCount++;
+
+                // 根据任务持续时间调整进度
+                int taskProgress = 50; // 默认进行中=50%
+                if (task.getStartedAt() != null) {
+                    long minutesElapsed = java.time.Duration.between(task.getStartedAt(), java.time.LocalDateTime.now()).toMinutes();
+
+                    // 超过30分钟的进行中任务，进度递减
+                    if (minutesElapsed > 30) {
+                        taskProgress = Math.max(20, 50 - (int)((minutesElapsed - 30) / 10));
+                    }
+                }
+
+                weightedProgress += weight * taskProgress;
+            }
+            // PENDING 任务贡献 0 进度
+        }
+
+        int progress = totalWeight > 0 ? weightedProgress / totalWeight : 0;
+
+        // 进度平滑：避免进度下降（除非任务被重置）
+        if (progress < milestone.getProgress() && milestone.getProgress() > 0) {
+            // 检查是否有任务被重置
+            boolean hasResetTask = milestone.getTasks().stream()
+                .anyMatch(t -> t.getStatus() == GameProject.MilestoneStatus.PENDING && t.getStartedAt() != null);
+
+            if (!hasResetTask) {
+                // 没有任务被重置，保持当前进度
+                progress = milestone.getProgress();
+            }
+        }
+
+        milestone.setProgress(Math.min(100, progress));
+
+        // 如果所有任务都完成，自动标记里程碑完成
+        if (completedCount == milestone.getTasks().size() && completedCount > 0) {
+            milestone.setStatus(GameProject.MilestoneStatus.COMPLETED);
+            log.info("里程碑 [{}] 所有任务完成，自动标记为 COMPLETED", milestone.getTitle());
+        }
     }
 
     /**
@@ -223,6 +486,42 @@ public class GoalService {
             projectManager.saveProjectConfig(project);
             log.info("Goal resumed for project: {}", projectId);
         }
+    }
+
+    /**
+     * 确认目标完成，执行结束逻辑
+     * 包含：停止所有 Agent、归档项目、记录完成时间
+     *
+     * @param projectId 项目 ID
+     * @return 操作是否成功
+     */
+    public boolean completeGoal(String projectId) {
+        GameProject project = projectManager.getProject(projectId);
+        if (project == null || !project.hasGoal()) return false;
+
+        if (project.getGoalStatus() != GoalStatus.REVIEW) {
+            log.warn("Cannot complete goal: current status is {}", project.getGoalStatus());
+            return false;
+        }
+
+        // 1. 更新目标状态为已完成
+        project.setGoalStatus(GoalStatus.COMPLETED);
+        project.setGoalProgress(100);
+        project.setStatus(GameProject.ProjectStatus.COMPLETED);
+        project.touch();
+        projectManager.saveProjectConfig(project);
+
+        // 2. 停止项目的所有 Agent，不再消耗 Token
+        try {
+            agentManager.removeProjectAgents(projectId);
+            log.info("All agents stopped for completed project: {}", projectId);
+        } catch (Exception e) {
+            log.warn("Failed to stop agents for project {}: {}", projectId, e.getMessage());
+        }
+
+        log.info("Goal completed for project {} ({}): agents stopped, project archived",
+            project.getName(), projectId);
+        return true;
     }
 
     /**
@@ -262,6 +561,199 @@ public class GoalService {
         GameProject project = projectManager.getProject(projectId);
         if (project == null || !project.hasGoal()) return false;
         return project.isGoalCompleted() && project.getGoalStatus() != GoalStatus.COMPLETED;
+    }
+
+    /**
+     * 人工验证里程碑
+     * 允许项目管理手动验证里程碑的完成情况
+     *
+     * @param projectId 项目 ID
+     * @param milestoneId 里程碑 ID
+     * @param passed 验证是否通过
+     * @param comment 验证备注
+     * @param verifiedBy 验证人
+     * @return 操作是否成功
+     */
+    public boolean verifyMilestoneManually(String projectId, String milestoneId, boolean passed,
+                                            String comment, String verifiedBy) {
+        GameProject project = projectManager.getProject(projectId);
+        if (project == null) return false;
+
+        GoalMilestone milestone = project.getMilestones().stream()
+            .filter(m -> m.getId().equals(milestoneId))
+            .findFirst()
+            .orElse(null);
+
+        if (milestone == null) {
+            log.warn("verifyMilestoneManually: 里程碑不存在 {}", milestoneId);
+            return false;
+        }
+
+        // 允许验证的状态：IN_PROGRESS, PENDING, BLOCKED
+        // COMPLETED 不需要再验证
+        if (milestone.getStatus() == MilestoneStatus.COMPLETED) {
+            log.warn("里程碑 [{}] 已完成，无需重复验证", milestone.getTitle());
+            return false;
+        }
+
+        // 构建验证结果
+        String verificationResult = String.format("人工验证 %s: %s (验证人: %s)",
+            passed ? "通过" : "未通过",
+            comment != null ? comment : "无备注",
+            verifiedBy);
+
+        milestone.setVerificationResult(verificationResult);
+        milestone.setLastVerificationTime(LocalDateTime.now().toString());
+
+        if (passed) {
+            // 验证通过，标记为完成
+            milestone.setStatus(MilestoneStatus.COMPLETED);
+            milestone.setProgress(100);
+
+            // 同时完成所有未完成的子任务
+            if (milestone.getTasks() != null) {
+                for (MilestoneTask task : milestone.getTasks()) {
+                    if (task.getStatus() != MilestoneStatus.COMPLETED) {
+                        task.setStatus(MilestoneStatus.COMPLETED);
+                        task.setResult("人工验证通过，自动完成");
+                        if (task.getCompletedAt() == null) {
+                            task.setCompletedAt(LocalDateTime.now());
+                        }
+                    }
+                }
+            }
+
+            log.info("里程碑 [{}] 人工验证通过，已标记为完成", milestone.getTitle());
+        } else {
+            // 验证未通过，记录失败次数
+            milestone.setVerificationFailCount(milestone.getVerificationFailCount() + 1);
+            log.info("里程碑 [{}] 人工验证未通过，失败次数: {}", milestone.getTitle(), milestone.getVerificationFailCount());
+        }
+
+        // 重新计算项目目标总进度
+        project.recalculateGoalProgress();
+
+        // 检查目标是否完成
+        if (project.isGoalCompleted()) {
+            project.setGoalStatus(GoalStatus.REVIEW);
+            log.info("项目 [{}] 所有里程碑已完成，进入审查状态", project.getName());
+        }
+
+        project.touch();
+        projectManager.saveProjectConfig(project);
+
+        return true;
+    }
+
+    /**
+     * 跳过里程碑（干预专用）
+     * 允许管理员通过干预命令强制完成卡住的里程碑，无需验证结果
+     *
+     * @param projectId 项目 ID
+     * @param milestoneId 里程碑 ID
+     * @param reason 跳过原因
+     * @return 操作是否成功
+     */
+    public boolean skipMilestone(String projectId, String milestoneId, String reason) {
+        GameProject project = projectManager.getProject(projectId);
+        if (project == null) return false;
+
+        GoalMilestone milestone = project.getMilestones().stream()
+            .filter(m -> m.getId().equals(milestoneId))
+            .findFirst()
+            .orElse(null);
+
+        if (milestone == null) return false;
+
+        // 已完成的里程碑无需跳过
+        if (milestone.getStatus() == MilestoneStatus.COMPLETED) {
+            log.warn("里程碑 [{}] 已完成，无需跳过", milestone.getTitle());
+            return false;
+        }
+
+        // 设置验证结果（绕过验证检查）
+        milestone.setVerificationResult("干预跳过: " + (reason != null ? reason : "管理员手动跳过"));
+        milestone.setLastVerificationTime(LocalDateTime.now().toString());
+
+        // 强制标记为完成
+        milestone.setStatus(MilestoneStatus.COMPLETED);
+        milestone.setProgress(100);
+
+        // 同时完成所有未完成的子任务
+        for (GameProject.MilestoneTask task : milestone.getTasks()) {
+            if (task.getStatus() != MilestoneStatus.COMPLETED) {
+                task.setStatus(MilestoneStatus.COMPLETED);
+                task.setResult("干预跳过");
+                if (task.getCompletedAt() == null) {
+                    task.setCompletedAt(LocalDateTime.now());
+                }
+            }
+        }
+
+        // 重新计算项目目标总进度
+        project.recalculateGoalProgress();
+
+        // 检查目标是否完成
+        if (project.isGoalCompleted()) {
+            project.setGoalStatus(GoalStatus.REVIEW);
+            log.info("项目 [{}] 所有里程碑完成，进入评审阶段", projectId);
+        } else if (project.getGoalStatus() == GoalStatus.NOT_STARTED) {
+            project.setGoalStatus(GoalStatus.IN_PROGRESS);
+        }
+
+        project.touch();
+        projectManager.saveProjectConfig(project);
+
+        log.info("里程碑 [{}] 已被干预跳过，原因: {}", milestone.getTitle(), reason);
+        return true;
+    }
+
+    /**
+     * 强制推进里程碑进度（干预专用）
+     * 允许管理员通过干预命令强制推进卡住的里程碑进度
+     *
+     * @param projectId 项目 ID
+     * @param milestoneId 里程碑 ID
+     * @param targetProgress 目标进度 (0-100)
+     * @param reason 推进原因
+     * @return 操作是否成功
+     */
+    public boolean forceMilestoneProgress(String projectId, String milestoneId, int targetProgress, String reason) {
+        GameProject project = projectManager.getProject(projectId);
+        if (project == null) return false;
+
+        GoalMilestone milestone = project.getMilestones().stream()
+            .filter(m -> m.getId().equals(milestoneId))
+            .findFirst()
+            .orElse(null);
+
+        if (milestone == null) return false;
+
+        // 已完成的里程碑无需推进
+        if (milestone.getStatus() == MilestoneStatus.COMPLETED) {
+            log.warn("里程碑 [{}] 已完成，无需推进", milestone.getTitle());
+            return false;
+        }
+
+        int newProgress = Math.max(0, Math.min(100, targetProgress));
+        milestone.setProgress(newProgress);
+
+        // 更新状态
+        if (newProgress >= 100) {
+            milestone.setVerificationResult("干预强制完成: " + (reason != null ? reason : ""));
+            milestone.setLastVerificationTime(LocalDateTime.now().toString());
+            milestone.setStatus(MilestoneStatus.COMPLETED);
+        } else if (newProgress > 0) {
+            milestone.setStatus(MilestoneStatus.IN_PROGRESS);
+        }
+
+        // 重新计算项目目标总进度
+        project.recalculateGoalProgress();
+        project.touch();
+        projectManager.saveProjectConfig(project);
+
+        log.info("里程碑 [{}] 进度被干预推进至 {}%，原因: {}", milestone.getTitle(), newProgress, reason);
+        return true;
     }
 
     /**

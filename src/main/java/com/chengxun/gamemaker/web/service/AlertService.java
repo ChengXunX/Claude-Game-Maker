@@ -112,6 +112,20 @@ public class AlertService {
     // ===== 告警触发 =====
 
     /**
+     * 直接保存告警记录
+     * 用于 Agent 风险预警等不需要规则匹配的场景
+     *
+     * @param record 告警记录
+     * @return 保存后的记录
+     */
+    public AlertRecord saveAlert(AlertRecord record) {
+        AlertRecord saved = alertRecordRepository.save(record);
+        log.warn("Alert saved: {} (Priority: {}, Agent: {})",
+            record.getTitle(), record.getPriority(), record.getAgentId());
+        return saved;
+    }
+
+    /**
      * 检查指标并触发告警
      * @param metric 指标名称
      * @param value 当前值
@@ -120,7 +134,7 @@ public class AlertService {
      * @param projectId 相关项目ID（可选）
      */
     public void checkAndTrigger(String metric, double value, String agentId, String agentName, String projectId) {
-        List<AlertRule> rules = alertRuleRepository.findByRuleTypeAndEnabled(metric, true);
+        List<AlertRule> rules = alertRuleRepository.findByMetricAndEnabled(metric, true);
 
         for (AlertRule rule : rules) {
             if (shouldTrigger(rule, value)) {

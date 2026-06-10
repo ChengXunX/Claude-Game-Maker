@@ -33,11 +33,20 @@ public class NotificationPreferenceController {
 
     private final NotificationPreferenceService preferenceService;
     private final UserService userService;
+    private final com.chengxun.gamemaker.web.service.EmailService emailService;
+    private final com.chengxun.gamemaker.feishu.FeishuBotService feishuService;
+    private final com.chengxun.gamemaker.dingtalk.DingTalkService dingTalkService;
 
     public NotificationPreferenceController(NotificationPreferenceService preferenceService,
-                                             UserService userService) {
+                                             UserService userService,
+                                             com.chengxun.gamemaker.web.service.EmailService emailService,
+                                             com.chengxun.gamemaker.feishu.FeishuBotService feishuService,
+                                             com.chengxun.gamemaker.dingtalk.DingTalkService dingTalkService) {
         this.preferenceService = preferenceService;
         this.userService = userService;
+        this.emailService = emailService;
+        this.feishuService = feishuService;
+        this.dingTalkService = dingTalkService;
     }
 
     // ===== 页面 =====
@@ -112,9 +121,12 @@ public class NotificationPreferenceController {
             Map<String, Object> result = new HashMap<>();
             result.put("preferences", userPrefs);
             result.put("visibleTypes", visibleTypes);
-            result.put("emailConfigured", false);
-            result.put("feishuConfigured", false);
-            result.put("dingtalkConfigured", false);
+            result.put("emailConfigured", emailService.isEmailEnabled());
+            result.put("feishuConfigured", feishuService.isEnabled());
+            result.put("dingtalkConfigured", dingTalkService.isEnabled());
+            result.put("dndEnabled", false);
+            result.put("dndStart", null);
+            result.put("dndEnd", null);
 
             return ResponseEntity.ok(result);
         } catch (Exception e) {

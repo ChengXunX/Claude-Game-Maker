@@ -79,6 +79,34 @@ public class AgentPreset {
     @Column(name = "api_provider", length = 50)
     private String apiProvider = "anthropic";
 
+    /** 角色系统提示词（完整的角色定义，含职责、工作流、协作协议等） */
+    @Column(name = "prompt", columnDefinition = "TEXT")
+    private String prompt;
+
+    /** 完成任务后的通知目标角色（逗号分隔） */
+    @Column(name = "notify_targets", length = 500)
+    private String notifyTargets;
+
+    /** 审查者角色 */
+    @Column(name = "reviewer", length = 50)
+    private String reviewer;
+
+    /** 角色中文名称 */
+    @Column(name = "role_name", length = 100)
+    private String roleName;
+
+    /** 提示词版本号（每次进化/编辑 +1） */
+    @Column(name = "prompt_version")
+    private int promptVersion = 0;
+
+    /** 上次进化来源：manual(人工) / ai(自动) / evolution(知识进化) */
+    @Column(name = "last_evolution_source", length = 50)
+    private String lastEvolutionSource;
+
+    /** 上次进化时间 */
+    @Column(name = "last_evolution_at")
+    private LocalDateTime lastEvolutionAt;
+
     /** 是否系统内置（内置预设不可删除） */
     @Column(name = "is_system")
     private boolean system = false;
@@ -144,6 +172,27 @@ public class AgentPreset {
 
     public String getApiProvider() { return apiProvider; }
     public void setApiProvider(String apiProvider) { this.apiProvider = apiProvider; }
+
+    public String getPrompt() { return prompt; }
+    public void setPrompt(String prompt) { this.prompt = prompt; }
+
+    public String getNotifyTargets() { return notifyTargets; }
+    public void setNotifyTargets(String notifyTargets) { this.notifyTargets = notifyTargets; }
+
+    public String getReviewer() { return reviewer; }
+    public void setReviewer(String reviewer) { this.reviewer = reviewer; }
+
+    public String getRoleName() { return roleName; }
+    public void setRoleName(String roleName) { this.roleName = roleName; }
+
+    public int getPromptVersion() { return promptVersion; }
+    public void setPromptVersion(int promptVersion) { this.promptVersion = promptVersion; }
+
+    public String getLastEvolutionSource() { return lastEvolutionSource; }
+    public void setLastEvolutionSource(String lastEvolutionSource) { this.lastEvolutionSource = lastEvolutionSource; }
+
+    public LocalDateTime getLastEvolutionAt() { return lastEvolutionAt; }
+    public void setLastEvolutionAt(LocalDateTime lastEvolutionAt) { this.lastEvolutionAt = lastEvolutionAt; }
 
     public boolean isSystem() { return system; }
     public void setSystem(boolean system) { this.system = system; }

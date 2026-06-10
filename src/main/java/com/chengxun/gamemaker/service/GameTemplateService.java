@@ -218,6 +218,40 @@ public class GameTemplateService {
             "game-template-design-studio"
         ));
 
+        // ===== AI 驱动游戏模板 =====
+
+        registerTemplate(new GameTemplate(
+            "ai-npc",
+            "AI NPC 对话冒险",
+            "AI驱动NPC对话、动态剧情、角色扮演，每个NPC有独立性格和记忆",
+            Arrays.asList("AI", "NPC", "对话", "冒险", "角色扮演", "剧情", "AI对话", "dynamic", "dialogue", "RPG", "人工智能"),
+            "game-template-ai-npc"
+        ));
+
+        registerTemplate(new GameTemplate(
+            "ai-world",
+            "AI 程序化世界",
+            "AI生成地图、动态生态、探索冒险，程序化生成的独特世界",
+            Arrays.asList("AI", "程序化", "世界", "探索", "procedural", "world", "generation", "生态", "生成", "地图"),
+            "game-template-ai-world"
+        ));
+
+        registerTemplate(new GameTemplate(
+            "ai-chess",
+            "AI 对弈棋局",
+            "AI对手、多种棋类、难度自适应、复盘分析",
+            Arrays.asList("AI", "对弈", "棋类", "chess", "围棋", "象棋", "五子棋", "AI对手", "对战", "策略"),
+            "game-template-ai-chess"
+        ));
+
+        registerTemplate(new GameTemplate(
+            "ai-creative",
+            "AI 创意工坊",
+            "AI绘画、AI音乐、AI故事生成，释放创造力",
+            Arrays.asList("AI", "创作", "绘画", "音乐", "故事", "creative", "art", "music", "story", "生成", "创意"),
+            "game-template-ai-creative"
+        ));
+
         // 加载模板内容
         loadTemplateContents();
 

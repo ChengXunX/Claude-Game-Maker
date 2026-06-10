@@ -23,7 +23,8 @@ import java.time.LocalDateTime;
     @Index(name = "idx_audit_action", columnList = "action"),
     @Index(name = "idx_audit_target", columnList = "targetType"),
     @Index(name = "idx_audit_created", columnList = "createdAt"),
-    @Index(name = "idx_audit_level", columnList = "level")
+    @Index(name = "idx_audit_level", columnList = "level"),
+    @Index(name = "idx_audit_username", columnList = "username")
 })
 public class OperationLog {
 
@@ -45,7 +46,7 @@ public class OperationLog {
 
     /** 操作类型 */
     @NotBlank(message = "action 不能为空")
-    @Column(length = 50, nullable = false)
+    @Column(name = "operation", length = 50, nullable = false)
     private String action;
 
     /** 目标类型 */

@@ -83,4 +83,9 @@ public interface PerformanceReviewRepository extends JpaRepository<PerformanceRe
      */
     @Query("SELECT r.projectId, r.projectName, AVG(r.overallScore) FROM PerformanceReview r GROUP BY r.projectId, r.projectName")
     List<Object[]> getAverageScoresByProject();
+
+    /**
+     * 获取所有评审记录（按创建时间倒序）
+     */
+    List<PerformanceReview> findAllByOrderByCreatedAtDesc();
 }

@@ -63,7 +63,7 @@ public class AlertRule {
     private Integer durationSeconds = 0;
 
     /** 通知方式 */
-    @Transient
+    @Column(name = "notify_method", length = 20)
     private String notifyMethod = "SYSTEM";
 
     /** 通知目标（邮箱、Webhook等） */

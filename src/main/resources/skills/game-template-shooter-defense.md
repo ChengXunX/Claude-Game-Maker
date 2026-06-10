@@ -1,301 +1,448 @@
 ---
-name: game-template-shooter-defense
-description: 射击防御游戏模板 - 射击+塔防混合、怪物波次、武器升级、防御工事
-category: game-template
-triggerPattern: shooter, defense, 射击, 防御, zombie, 僵尸, monster, 怪物, wave, 波次
+name: 射击防御游戏开发模板
+description: 射击防御游戏开发模板，适用于射击+塔防混合类游戏
+trigger: shooter, defense, 射击, 防御, zombie, 僵尸, monster, 怪物, wave, 波次
+examples: 僵尸防御|怪物猎人|射击塔防|Bloons TD|Plants vs Zombies
 ---
 
-# 射击防御游戏模板
+# 射击防御游戏开发模板
 
-## 概述
+## 游戏设计核心原则
 
-射击+塔防混合游戏模板，包含：
-- **射击系统**：多种武器、手动瞄准射击
-- **波次系统**：递增难度的怪物波次
-- **防御工事**：建造墙壁、炮塔
-- **武器升级**：升级武器伤害、射速
-- **技能系统**：主动/被动技能
-- **Boss 战**：每 10 波 Boss 出现
+### 核心循环（每波 1-3 分钟）
+```
+准备阶段 → 战斗阶段 → 升级阶段 → 下一波
+```
+- **射击快感**：手动瞄准射击
+- **防御策略**：建造防御工事
+- **波次挑战**：越来越强的敌人
 
-## 核心代码
+### 玩家心理学
+- **"射击爽感"**：击杀敌人的满足感
+- -"建造防御"的策略感**：布置防御工事
+- **"波次挑战"的紧张感**：越来越强的敌人
+- **"升级成长"的期待感**：武器越来越强
 
-### 1. 武器系统 (WeaponSystem.js)
-
-```javascript
-export const WEAPONS = {
-  pistol: {
-    name: '手枪',
-    damage: 10,
-    fireRate: 300,
-    spread: 0.05,
-    ammo: Infinity,
-    reloadTime: 1000,
-    upgrades: { damage: [12, 15, 20], fireRate: [280, 250, 200] }
-  },
-  shotgun: {
-    name: '霰弹枪',
-    damage: 8,
-    fireRate: 800,
-    spread: 0.3,
-    pellets: 5,
-    ammo: 30,
-    reloadTime: 2000,
-    upgrades: { damage: [10, 12, 15], pellets: [6, 7, 8] }
-  },
-  rifle: {
-    name: '步枪',
-    damage: 15,
-    fireRate: 100,
-    spread: 0.02,
-    ammo: 120,
-    reloadTime: 1500,
-    upgrades: { damage: [18, 22, 28], fireRate: [90, 80, 60] }
-  },
-  laser: {
-    name: '激光枪',
-    damage: 25,
-    fireRate: 500,
-    spread: 0,
-    ammo: 50,
-    reloadTime: 3000,
-    upgrades: { damage: [30, 38, 50] }
-  }
-}
-
-export class Weapon {
-  constructor(type) {
-    this.type = type
-    this.config = { ...WEAPONS[type] }
-    this.level = 1
-    this.currentAmmo = this.config.ammo
-    this.lastFired = 0
-    this.isReloading = false
-  }
-
-  fire(angle) {
-    if (this.isReloading) return null
-    if (this.currentAmmo <= 0) {
-      this.reload()
-      return null
-    }
-
-    const now = Date.now()
-    if (now - this.lastFired < this.config.fireRate) return null
-
-    this.lastFired = now
-    if (this.config.ammo !== Infinity) this.currentAmmo--
-
-    return this.createProjectile(angle)
-  }
-
-  createProjectile(angle) {
-    const spread = (Math.random() - 0.5) * this.config.spread
-    return {
-      angle: angle + spread,
-      damage: this.config.damage,
-      speed: 500,
-      type: this.type
-    }
-  }
-
-  reload() {
-    this.isReloading = true
-    setTimeout(() => {
-      this.currentAmmo = this.config.ammo
-      this.isReloading = false
-    }, this.config.reloadTime)
-  }
-
-  upgrade() {
-    this.level++
-    const upgrades = this.config.upgrades
-    if (upgrades.damage && upgrades.damage[this.level - 2]) {
-      this.config.damage = upgrades.damage[this.level - 2]
-    }
-  }
-}
+### 射击防御设计要点
+```
+射击防御核心：
+1. 射击手感：射击要爽快
+2. 防御策略：建造防御工事
+3. 波次系统：敌人越来越强
+4. 升级系统：武器越来越强
 ```
 
-### 2. 怪物系统 (MonsterSystem.js)
+## 核心系统设计
 
+### 1. 射击系统
 ```javascript
-export const MONSTER_TYPES = {
-  basic: {
-    name: '普通怪物',
-    health: 50,
-    damage: 10,
-    speed: 100,
-    reward: 10,
-    color: '#FF0000'
-  },
-  fast: {
-    name: '快速怪物',
-    health: 30,
-    damage: 5,
-    speed: 200,
-    reward: 15,
-    color: '#FFFF00'
-  },
-  tank: {
-    name: '坦克怪物',
-    health: 200,
-    damage: 20,
-    speed: 50,
-    reward: 30,
-    color: '#0000FF'
-  },
-  boss: {
-    name: 'Boss怪物',
-    health: 1000,
-    damage: 50,
-    speed: 30,
-    reward: 100,
-    color: '#FF00FF'
-  }
-}
-
-export class WaveGenerator {
+class ShootingSystem {
   constructor() {
-    this.waveNumber = 0
+    this.weapons = [];
+    this.selectedWeapon = 0;
+    this.ammo = {};
   }
-
-  generateWave() {
-    this.waveNumber++
-    const monsters = []
-
-    if (this.waveNumber % 10 === 0) {
-      // Boss 波次
-      monsters.push(this.createMonster('boss', 1 + this.waveNumber / 10))
-    } else {
-      // 普通波次
-      const count = 5 + this.waveNumber * 2
-      for (let i = 0; i < count; i++) {
-        const type = this.getRandomType()
-        monsters.push(this.createMonster(type, this.waveNumber))
-      }
+  
+  addWeapon(config) {
+    this.weapons.push({
+      id: config.id,
+      name: config.name,
+      damage: config.damage,
+      fireRate: config.fireRate,
+      bulletSpeed: config.bulletSpeed,
+      spread: config.spread,
+      ammoType: config.ammoType
+    });
+    
+    this.ammo[config.id] = config.maxAmmo;
+  }
+  
+  shoot(direction) {
+    const weapon = this.weapons[this.selectedWeapon];
+    
+    if (!weapon) return null;
+    
+    if (this.ammo[weapon.id] <= 0) {
+      this.reload();
+      return null;
     }
-
-    return monsters
+    
+    this.ammo[weapon.id]--;
+    
+    const bullet = {
+      position: { ...this.player.position },
+      velocity: {
+        x: Math.cos(direction) * weapon.bulletSpeed,
+        y: Math.sin(direction) * weapon.bulletSpeed
+      },
+      damage: weapon.damage,
+      spread: weapon.spread
+    };
+    
+    return bullet;
   }
-
-  getRandomType() {
-    const rand = Math.random()
-    if (rand < 0.5) return 'basic'
-    if (rand < 0.8) return 'fast'
-    return 'tank'
+  
+  reload() {
+    const weapon = this.weapons[this.selectedWeapon];
+    this.ammo[weapon.id] = weapon.maxAmmo;
   }
-
-  createMonster(type, wave) {
-    const config = MONSTER_TYPES[type]
-    const scale = 1 + (wave - 1) * 0.1
-    return {
-      type,
-      health: Math.floor(config.health * scale),
-      maxHealth: Math.floor(config.health * scale),
-      damage: Math.floor(config.damage * scale),
-      speed: config.speed,
-      reward: Math.floor(config.reward * scale),
-      color: config.color
+  
+  switchWeapon(index) {
+    if (index >= 0 && index < this.weapons.length) {
+      this.selectedWeapon = index;
     }
   }
 }
+
+const WEAPONS = [
+  { id: 'pistol', name: '手枪', damage: 10, fireRate: 300, bulletSpeed: 500, spread: 0, maxAmmo: 12 },
+  { id: 'shotgun', name: '霰弹枪', damage: 8, fireRate: 800, bulletSpeed: 400, spread: 30, maxAmmo: 6 },
+  { id: 'rifle', name: '步枪', damage: 15, fireRate: 100, bulletSpeed: 600, spread: 5, maxAmmo: 30 },
+  { id: 'sniper', name: '狙击枪', damage: 50, fireRate: 1500, bulletSpeed: 800, spread: 0, maxAmmo: 5 }
+];
 ```
 
-### 3. 防御工事 (DefenseSystem.js)
-
+### 2. 波次系统
 ```javascript
-export const DEFENSE_TYPES = {
-  wall: {
-    name: '墙壁',
-    health: 500,
-    cost: 50,
-    size: { width: 40, height: 40 }
-  },
-  turret: {
-    name: '炮塔',
-    health: 200,
-    cost: 200,
-    damage: 10,
-    fireRate: 1000,
-    range: 200,
-    size: { width: 30, height: 30 }
-  },
-  mine: {
-    name: '地雷',
-    health: 50,
-    cost: 30,
-    damage: 100,
-    triggerRadius: 30,
-    size: { width: 20, height: 20 }
+class WaveSystem {
+  constructor() {
+    this.currentWave = 0;
+    this.enemiesAlive = 0;
+    this.waveTimer = 0;
+    this.betweenWaveTime = 10;
   }
-}
-
-export class Defense {
-  constructor(type, x, y) {
-    this.type = type
-    this.x = x
-    this.y = y
-    this.config = { ...DEFENSE_TYPES[type] }
-    this.health = this.config.health
-    this.lastFired = 0
+  
+  startNextWave() {
+    this.currentWave++;
+    const waveConfig = this.getWaveConfig(this.currentWave);
+    
+    this.spawnEnemies(waveConfig);
+    
+    return waveConfig;
   }
-
-  update(monsters) {
-    if (this.type === 'turret') {
-      this.fireAtNearest(monsters)
-    } else if (this.type === 'mine') {
-      this.checkTrigger(monsters)
+  
+  getWaveConfig(wave) {
+    const baseEnemies = 5;
+    const enemiesPerWave = Math.floor(baseEnemies + wave * 2);
+    
+    const types = ['basic', 'fast', 'tank', 'flying'];
+    const availableTypes = types.slice(0, Math.min(types.length, Math.floor(wave / 3) + 1));
+    
+    const enemies = [];
+    for (let i = 0; i < enemiesPerWave; i++) {
+      const type = availableTypes[Math.floor(Math.random() * availableTypes.length)];
+      enemies.push({
+        type,
+        hp: this.getEnemyHp(type, wave),
+        speed: this.getEnemySpeed(type, wave),
+        damage: this.getEnemyDamage(type, wave)
+      });
+    }
+    
+    return {
+      wave,
+      enemies,
+      reward: wave * 100
+    };
+  }
+  
+  getEnemyHp(type, wave) {
+    const baseHp = { basic: 50, fast: 30, tank: 150, flying: 40 };
+    return baseHp[type] * (1 + wave * 0.2);
+  }
+  
+  getEnemySpeed(type, wave) {
+    const baseSpeed = { basic: 1, fast: 2, tank: 0.5, flying: 1.5 };
+    return baseSpeed[type] * (1 + wave * 0.05);
+  }
+  
+  getEnemyDamage(type, wave) {
+    const baseDamage = { basic: 10, fast: 5, tank: 20, flying: 15 };
+    return baseDamage[type] * (1 + wave * 0.1);
+  }
+  
+  onEnemyKilled() {
+    this.enemiesAlive--;
+    
+    if (this.enemiesAlive <= 0) {
+      this.onWaveComplete();
     }
   }
-
-  fireAtNearest(monsters) {
-    const now = Date.now()
-    if (now - this.lastFired < this.config.fireRate) return
-
-    let nearest = null
-    let minDist = this.config.range
-
-    for (const monster of monsters) {
-      const dist = Math.hypot(monster.x - this.x, monster.y - this.y)
-      if (dist < minDist) {
-        minDist = dist
-        nearest = monster
-      }
-    }
-
-    if (nearest) {
-      this.lastFired = now
-      return { target: nearest, damage: this.config.damage }
-    }
-    return null
-  }
-
-  checkTrigger(monsters) {
-    for (const monster of monsters) {
-      const dist = Math.hypot(monster.x - this.x, monster.y - this.y)
-      if (dist < this.config.triggerRadius) {
-        monster.health -= this.config.damage
-        this.health = 0
-        return true
-      }
-    }
-    return false
+  
+  onWaveComplete() {
+    // 发放奖励
+    const reward = this.getWaveConfig(this.currentWave).reward;
+    this.player.addCurrency(reward);
+    
+    // 进入准备阶段
+    this.state = 'preparing';
+    this.waveTimer = this.betweenWaveTime;
   }
 }
 ```
 
-## 游戏玩法
+### 3. 防御工事系统
+```javascript
+class DefenseSystem {
+  constructor() {
+    this.structures = [];
+  }
+  
+  addStructure(config) {
+    this.structures.push({
+      id: config.id,
+      type: config.type, // wall, turret, mine, barricade
+      position: config.position,
+      hp: config.hp,
+      damage: config.damage,
+      range: config.range,
+      cost: config.cost
+    });
+  }
+  
+  buildStructure(type, position) {
+    const config = STRUCTURE_TYPES[type];
+    
+    if (!config) return null;
+    
+    if (this.player.currency < config.cost) {
+      return { success: false, error: '金币不足' };
+    }
+    
+    this.player.currency -= config.cost;
+    
+    const structure = {
+      id: this.generateId(),
+      type,
+      position,
+      hp: config.hp,
+      damage: config.damage,
+      range: config.range,
+      attackTimer: 0
+    };
+    
+    this.structures.push(structure);
+    
+    return { success: true, structure };
+  }
+  
+  update(delta) {
+    for (const structure of this.structures) {
+      if (structure.type === 'turret') {
+        this.updateTurret(structure, delta);
+      }
+    }
+  }
+  
+  updateTurret(turret, delta) {
+    turret.attackTimer += delta;
+    
+    const attackInterval = 1000 / turret.fireRate;
+    
+    if (turret.attackTimer >= attackInterval) {
+      const target = this.findNearestEnemy(turret.position, turret.range);
+      
+      if (target) {
+        this.turretAttack(turret, target);
+        turret.attackTimer = 0;
+      }
+    }
+  }
+  
+  turretAttack(turret, target) {
+    const bullet = {
+      position: { ...turret.position },
+      velocity: this.calculateVelocity(turret.position, target.position, 500),
+      damage: turret.damage
+    };
+    
+    this.bullets.push(bullet);
+  }
+}
 
-1. **手动射击**：鼠标瞄准，点击射击
-2. **建造防御**：花费金币建造墙壁、炮塔
-3. **抵御波次**：一波波怪物进攻
-4. **升级武器**：用金币升级武器属性
-5. **Boss 战**：每 10 波出现强力 Boss
+const STRUCTURE_TYPES = {
+  wall: { name: '墙壁', hp: 200, cost: 50, damage: 0, range: 0 },
+  turret: { name: '炮塔', hp: 100, cost: 200, damage: 20, range: 200, fireRate: 2 },
+  mine: { name: '地雷', hp: 50, cost: 100, damage: 100, range: 50, oneTime: true },
+  barricade: { name: '路障', hp: 150, cost: 75, damage: 0, range: 0, slow: 0.5 }
+};
+```
 
-## 扩展点
+### 4. 升级系统
+```javascript
+class UpgradeSystem {
+  constructor() {
+    this.upgrades = {};
+  }
+  
+  addUpgrade(config) {
+    this.upgrades[config.id] = {
+      id: config.id,
+      name: config.name,
+      description: config.description,
+      cost: config.cost,
+      maxLevel: config.maxLevel,
+      currentLevel: 0,
+      effect: config.effect
+    };
+  }
+  
+  purchaseUpgrade(upgradeId) {
+    const upgrade = this.upgrades[upgradeId];
+    
+    if (!upgrade) return { success: false, error: '升级不存在' };
+    
+    if (upgrade.currentLevel >= upgrade.maxLevel) {
+      return { success: false, error: '已达最大等级' };
+    }
+    
+    if (this.player.currency < upgrade.cost) {
+      return { success: false, error: '金币不足' };
+    }
+    
+    this.player.currency -= upgrade.cost;
+    upgrade.currentLevel++;
+    
+    this.applyUpgrade(upgrade);
+    
+    return { success: true, upgrade };
+  }
+  
+  applyUpgrade(upgrade) {
+    const effect = upgrade.effect;
+    
+    switch (effect.type) {
+      case 'damage':
+        this.player.damage *= effect.multiplier;
+        break;
+      case 'fireRate':
+        this.player.fireRate *= effect.multiplier;
+        break;
+      case 'hp':
+        this.player.maxHp += effect.amount;
+        this.player.hp += effect.amount;
+        break;
+      case 'speed':
+        this.player.speed *= effect.multiplier;
+        break;
+    }
+  }
+}
 
-- 添加新武器：在 `WEAPONS` 中定义
-- 添加新怪物：在 `MONSTER_TYPES` 中定义
-- 添加新防御工事：在 `DEFENSE_TYPES` 中定义
-- 添加技能系统：创建 `SkillManager`
-- 添加成就系统：创建 `AchievementManager`
+const UPGRADES = [
+  { id: 'damage', name: '伤害提升', description: '增加武器伤害', cost: 100, maxLevel: 5, effect: { type: 'damage', multiplier: 1.2 } },
+  { id: 'fireRate', name: '射速提升', description: '增加射击速度', cost: 150, maxLevel: 5, effect: { type: 'fireRate', multiplier: 1.15 } },
+  { id: 'hp', name: '生命提升', description: '增加最大生命值', cost: 200, maxLevel: 3, effect: { type: 'hp', amount: 50 } },
+  { id: 'speed', name: '移速提升', description: '增加移动速度', cost: 120, maxLevel: 3, effect: { type: 'speed', multiplier: 1.1 } }
+];
+```
+
+### 5. 敌人系统
+```javascript
+class EnemySystem {
+  constructor() {
+    this.enemies = [];
+  }
+  
+  spawnEnemy(config) {
+    this.enemies.push({
+      id: this.generateId(),
+      type: config.type,
+      hp: config.hp,
+      maxHp: config.hp,
+      speed: config.speed,
+      damage: config.damage,
+      position: { ...config.spawnPosition },
+      target: null,
+      state: 'moving'
+    });
+  }
+  
+  update(delta) {
+    for (const enemy of this.enemies) {
+      if (enemy.state === 'dead') continue;
+      
+      // 寻找目标
+      if (!enemy.target) {
+        enemy.target = this.findNearestTarget(enemy.position);
+      }
+      
+      // 移动到目标
+      if (enemy.target) {
+        const dist = this.getDistance(enemy.position, enemy.target.position);
+        
+        if (dist > 30) {
+          this.moveToward(enemy, enemy.target.position, delta);
+        } else {
+          this.attack(enemy, enemy.target);
+        }
+      }
+    }
+  }
+  
+  takeDamage(enemy, damage) {
+    enemy.hp -= damage;
+    
+    if (enemy.hp <= 0) {
+      this.killEnemy(enemy);
+    }
+  }
+  
+  killEnemy(enemy) {
+    enemy.state = 'dead';
+    
+    // 掉落奖励
+    this.dropLoot(enemy);
+    
+    // 通知波次系统
+    this.waveSystem.onEnemyKilled();
+  }
+}
+
+const ENEMY_TYPES = {
+  basic: { name: '基础敌人', hp: 50, speed: 1, damage: 10, reward: 20 },
+  fast: { name: '快速敌人', hp: 30, speed: 2, damage: 5, reward: 15 },
+  tank: { name: '坦克敌人', hp: 150, speed: 0.5, damage: 20, reward: 50 },
+  flying: { name: '飞行敌人', hp: 40, speed: 1.5, damage: 15, reward: 30 }
+};
+```
+
+## 迭代策略
+
+### 第一版：基础射击
+- 简单射击
+- 1 种敌人
+- 简单 UI
+- 基础物理
+
+### 第二版：波次系统
+- 波次系统
+- 多种敌人
+- 计分系统
+- 计时系统
+
+### 第三版：防御系统
+- 防御工事
+- 建造系统
+- 资源系统
+- 升级系统
+
+### 第四版：深度玩法
+- 10 波敌人
+- BOSS 战
+- 多种武器
+- 成就系统
+
+### 第五版：多人模式
+- 多人合作
+- 房间系统
+- 排行榜
+- 社区功能
+
+## 常见错误
+
+1. **射击不爽**：射击手感要好
+2. **敌人太弱**：要有挑战性
+3. **没有升级**：要有成长感
+4. **没有防御**：要有防御系统
+5. **波次太单调**：要有多种敌人

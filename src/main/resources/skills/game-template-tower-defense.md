@@ -1,351 +1,224 @@
 ---
-name: game-template-tower-defense
-description: 塔防游戏模板 - 提供完整的塔防游戏项目骨架
-category: game-template
-triggerPattern: tower defense, 塔防, defense, TD
+name: 塔防游戏开发模板
+description: 塔防游戏开发模板，适用于策略防御类游戏
+trigger: tower defense, 塔防, defense, TD, 策略防御
+examples: Kingdom Rush|Bloons TD|植物大战僵尸|Arknights|Random Dice
 ---
 
-# 塔防游戏模板
+# 塔防游戏开发模板
 
-## 概述
+## 游戏设计核心原则
 
-这是一个完整的塔防游戏模板，基于 Phaser 3 引擎。包含：
-- 波次系统（敌人波次生成）
-- 塔防系统（多种塔类型、升级）
-- 路径系统（敌人寻路）
-- 经济系统（金币、建造、升级）
-- UI 系统（生命值、金币、波次信息）
-
-## 项目结构
-
+### 核心循环（每波 30-60 秒）
 ```
-game-project/
-├── index.html
-├── package.json
-├── vite.config.js
-├── src/
-│   ├── main.js
-│   ├── config.js
-│   ├── scenes/
-│   │   ├── BootScene.js
-│   │   ├── MenuScene.js
-│   │   ├── GameScene.js
-│   │   └── GameOverScene.js
-│   ├── towers/
-│   │   ├── Tower.js          # 塔基类
-│   │   ├── ArrowTower.js     # 箭塔
-│   │   ├── MagicTower.js     # 魔法塔
-│   │   └── CannonTower.js    # 炮塔
-│   ├── enemies/
-│   │   ├── Enemy.js          # 敌人基类
-│   │   ├── BasicEnemy.js     # 基础敌人
-│   │   ├── FastEnemy.js      # 快速敌人
-│   │   └── BossEnemy.js      # Boss敌人
-│   ├── systems/
-│   │   ├── WaveManager.js    # 波次管理
-│   │   ├── PathManager.js    # 路径管理
-│   │   └── EconomyManager.js # 经济管理
-│   └── ui/
-│       ├── HUD.js
-│       └── TowerMenu.js
-└── assets/
-    ├── images/
-    ├── sounds/
-    └── levels/
+观察敌人路线 → 选择建塔位置 → 等待敌人 → 升级/调整 → 下一波
+```
+- 建塔必须有**即时反馈**（建塔动画 + 音效）
+- 敌人被消灭时要有**爽感**（爆炸效果 + 金币飞出）
+- 每波结束给玩家**喘息时间**（5-10 秒准备期）
+
+### 玩家心理学
+- **策略感**：玩家觉得"我的布局很聪明"
+- **成长感**：塔从 Lv1 升到 Lv5 的视觉变化
+- **紧张感**：敌人快到终点时的紧迫感
+- **成就感**：完美通关（不漏一个敌人）的满足感
+
+### 难度曲线设计
+```
+波次1-3:   教程波，只有普通敌人，教建塔和升级
+波次4-10:  入门波，引入新敌人类型，教针对性建塔
+波次11-20: 进阶波，敌人数量增加，需要优化布局
+波次21-30: 挑战波，精英敌人+BOSS，需要策略配合
+波次31+:   无尽模式，测试玩家极限
 ```
 
-## 目录配置
+## 核心系统设计
 
-| 目录路径 | 用途 | 可访问角色 | 说明 |
-|---------|------|-----------|------|
-| /src | 游戏源代码 | client-dev | 游戏主程序、场景 |
-| /src/scenes | 游戏场景 | client-dev | 各个游戏场景的实现 |
-| /src/towers | 塔防单位 | client-dev | 各种塔的实现 |
-| /src/enemies | 敌人单位 | client-dev | 各种敌人的实现 |
-| /src/systems | 游戏系统 | client-dev | 波次、路径、经济等系统 |
-| /src/ui | UI组件 | client-dev, ui-dev | HUD、塔菜单等UI |
-| /src/data | 数据配置 | client-dev, numerical-planner | 塔、敌人、关卡数据 |
-| /assets | 资源文件 | ui-dev | 图片、音频、关卡文件 |
-| /config | 配置文件 | | 游戏配置（所有角色可访问） |
-| /docs | 文档 | system-planner | 需求文档、设计文档 |
+### 1. 塔类型设计
+| 塔类型 | 攻击方式 | 优势 | 劣势 | 建造费用 |
+|--------|----------|------|------|----------|
+| 箭塔 | 单体远程 | 攻速快 | 伤害低 | 100 |
+| 炮塔 | 范围爆炸 | 伤害高 | 攻速慢 | 200 |
+| 冰塔 | 减速 | 控制 | 无伤害 | 150 |
+| 电塔 | 链式攻击 | 多目标 | 伤害递减 | 250 |
+| 毒塔 | 持续伤害 | DOT | 单体 | 180 |
 
-## 核心代码模板
+### 2. 敌人类型设计
+| 敌人类型 | 特点 | 弱点 | 出现波次 |
+|----------|------|------|----------|
+| 普通兵 | 速度慢，血量低 | 无 | 第1波 |
+| 快速兵 | 速度快，血量低 | 冰塔 | 第4波 |
+| 重甲兵 | 速度慢，血量高 | 炮塔 | 第8波 |
+| 飞行兵 | 无视地形 | 箭塔 | 第12波 |
+| BOSS | 血量极高，有技能 | 集火 | 每10波 |
 
-### 1. 塔基类 (Tower.js)
+### 3. 升级系统
+```
+塔 Lv1 → Lv2: 伤害+30%, 费用 50% 建造费
+塔 Lv2 → Lv3: 伤害+30%, 攻速+20%, 费用 75% 建造费
+塔 Lv3 → Lv4: 伤害+30%, 攻速+20%, 范围+20%, 费用 100% 建造费
+塔 Lv4 → Lv5: 解锁特殊技能, 费用 150% 建造费
+```
 
+### 4. 经济系统
+- 击杀敌人获得金币
+- 每波结束获得基础金币
+- 卖塔返还 70% 费用
+- 利息系统：每波结束时金币的 5% 作为利息（鼓励存钱）
+
+## 关键技术实现
+
+### 寻路系统（A* 算法）
 ```javascript
-export class Tower extends Phaser.GameObjects.Container {
-  constructor(scene, x, y, config) {
-    super(scene, x, y)
-
-    this.config = config
-    this.level = 1
-    this.range = config.range
-    this.damage = config.damage
-    this.fireRate = config.fireRate
-    this.lastFired = 0
-    this.target = null
-
-    // 塔的图像
-    this.image = scene.add.image(0, 0, config.texture)
-    this.add(this.image)
-
-    // 范围指示器
-    this.rangeCircle = scene.add.circle(0, 0, this.range, 0x00ff00, 0.1)
-    this.add(this.rangeCircle)
-    this.rangeCircle.setVisible(false)
-
-    scene.add.existing(this)
-  }
-
-  update(time) {
-    this.findTarget()
-    if (this.target && time > this.lastFired + this.fireRate) {
-      this.fire()
-      this.lastFired = time
-    }
-  }
-
-  findTarget() {
-    this.target = null
-    let closestDist = this.range
-
-    this.scene.enemies.children.iterate(enemy => {
-      if (!enemy || !enemy.active) return
-      const dist = Phaser.Math.Distance.Between(this.x, this.y, enemy.x, enemy.y)
-      if (dist < closestDist) {
-        closestDist = dist
-        this.target = enemy
+class Pathfinder {
+  findPath(start, end, grid) {
+    const openSet = [start];
+    const cameFrom = {};
+    const gScore = {};
+    const fScore = {};
+    
+    gScore[this.key(start)] = 0;
+    fScore[this.key(start)] = this.heuristic(start, end);
+    
+    while (openSet.length > 0) {
+      // 找 fScore 最小的节点
+      const current = openSet.reduce((a, b) => 
+        (fScore[this.key(a)] || Infinity) < (fScore[this.key(b)] || Infinity) ? a : b
+      );
+      
+      if (current.x === end.x && current.y === end.y) {
+        return this.reconstructPath(cameFrom, current);
       }
-    })
+      
+      openSet.splice(openSet.indexOf(current), 1);
+      
+      // 检查四个方向的邻居
+      for (const neighbor of this.getNeighbors(current, grid)) {
+        const tentativeG = gScore[this.key(current)] + 1;
+        
+        if (tentativeG < (gScore[this.key(neighbor)] || Infinity)) {
+          cameFrom[this.key(neighbor)] = current;
+          gScore[this.key(neighbor)] = tentativeG;
+          fScore[this.key(neighbor)] = tentativeG + this.heuristic(neighbor, end);
+          
+          if (!openSet.find(n => n.x === neighbor.x && n.y === neighbor.y)) {
+            openSet.push(neighbor);
+          }
+        }
+      }
+    }
+    
+    return null; // 无路径
   }
-
-  fire() {
-    if (!this.target) return
-
-    const projectile = this.scene.physics.add.image(this.x, this.y, this.config.projectileTexture)
-    this.scene.physics.moveTo(projectile, this.target.x, this.target.y, 300)
-
-    this.scene.physics.add.overlap(projectile, this.target, () => {
-      this.target.takeDamage(this.damage)
-      projectile.destroy()
-    })
-
-    // 5秒后自动销毁子弹
-    this.scene.time.delayedCall(5000, () => {
-      if (projectile.active) projectile.destroy()
-    })
-  }
-
-  upgrade() {
-    this.level++
-    this.damage *= 1.5
-    this.range *= 1.1
-    this.fireRate *= 0.9
-    this.rangeCircle.setRadius(this.range)
-  }
-
-  showRange() {
-    this.rangeCircle.setVisible(true)
-  }
-
-  hideRange() {
-    this.rangeCircle.setVisible(false)
+  
+  heuristic(a, b) {
+    return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
   }
 }
 ```
 
-### 2. 波次管理器 (WaveManager.js)
-
+### 波次系统
 ```javascript
-export class WaveManager {
-  constructor(scene) {
-    this.scene = scene
-    this.currentWave = 0
-    this.enemiesRemaining = 0
-    this.isWaveActive = false
-    this.waves = this.generateWaves()
-  }
-
-  generateWaves() {
-    const waves = []
-    for (let i = 1; i <= 20; i++) {
-      waves.push({
-        enemies: this.generateWaveEnemies(i),
-        reward: i * 50
-      })
-    }
-    return waves
-  }
-
-  generateWaveEnemies(waveNum) {
-    const enemies = []
-    const count = 5 + waveNum * 2
-
-    for (let i = 0; i < count; i++) {
-      const type = waveNum % 5 === 0 ? 'boss' : (waveNum > 10 && Math.random() < 0.3 ? 'fast' : 'basic')
-      enemies.push({
-        type,
-        delay: i * 1000
-      })
-    }
-
-    return enemies
-  }
-
-  startWave() {
-    if (this.isWaveActive) return
-
-    this.currentWave++
-    this.isWaveActive = true
-    const wave = this.waves[this.currentWave - 1]
-
-    this.enemiesRemaining = wave.enemies.length
-
-    wave.enemies.forEach(enemyConfig => {
-      this.scene.time.delayedCall(enemyConfig.delay, () => {
-        this.spawnEnemy(enemyConfig.type)
-      })
-    })
-
-    this.scene.events.emit('waveStart', this.currentWave)
-  }
-
-  spawnEnemy(type) {
-    const enemy = this.scene.createEnemy(type)
-    this.scene.enemies.add(enemy)
-  }
-
-  enemyDefeated() {
-    this.enemiesRemaining--
-    if (this.enemiesRemaining <= 0) {
-      this.isWaveActive = false
-      this.scene.events.emit('waveComplete', this.currentWave)
-    }
-  }
-}
-```
-
-### 3. 游戏场景 (GameScene.js)
-
-```javascript
-export class GameScene extends Phaser.Scene {
+class WaveManager {
   constructor() {
-    super('GameScene')
+    this.waves = [];
+    this.currentWave = 0;
+    this.enemiesAlive = 0;
   }
-
-  create() {
-    // 创建地图
-    this.createMap()
-
-    // 创建路径
-    this.pathManager = new PathManager(this)
-
-    // 创建波次管理器
-    this.waveManager = new WaveManager(this)
-
-    // 创建经济管理器
-    this.economyManager = new EconomyManager(this)
-
-    // 创建敌人组
-    this.enemies = this.physics.add.group()
-
-    // 创建塔组
-    this.towers = []
-
-    // 设置碰撞
-    this.setupCollisions()
-
-    // 创建UI
-    this.hud = new HUD(this)
-    this.towerMenu = new TowerMenu(this)
-
-    // 输入
-    this.input.on('pointerdown', this.handleClick, this)
+  
+  addWave(waveConfig) {
+    this.waves.push(waveConfig);
   }
-
-  update(time) {
-    // 更新塔
-    this.towers.forEach(tower => tower.update(time))
-
-    // 更新敌人
-    this.enemies.children.iterate(enemy => {
-      if (enemy && enemy.active) enemy.update()
-    })
+  
+  startNextWave() {
+    if (this.currentWave >= this.waves.length) {
+      this.onAllWavesComplete();
+      return;
+    }
+    
+    const wave = this.waves[this.currentWave];
+    this.spawnEnemies(wave);
+    this.currentWave++;
   }
-
-  createMap() {
-    // 绘制网格地图
-    this.grid = []
-    for (let y = 0; y < 10; y++) {
-      this.grid[y] = []
-      for (let x = 0; x < 15; x++) {
-        this.grid[y][x] = { type: 'empty', x: x * 64, y: y * 64 }
+  
+  spawnEnemies(wave) {
+    let delay = 0;
+    
+    for (const enemyGroup of wave.enemies) {
+      for (let i = 0; i < enemyGroup.count; i++) {
+        this.scene.time.delayedCall(delay, () => {
+          const enemy = this.createEnemy(enemyGroup.type);
+          this.scene.enemies.add(enemy);
+          this.enemiesAlive++;
+        });
+        delay += enemyGroup.interval;
       }
     }
-
-    // 设置路径
-    const path = [[0,4],[1,4],[2,4],[3,4],[4,4],[5,4],[5,3],[5,2],[6,2],[7,2],[8,2],[9,2],[9,3],[9,4],[10,4],[11,4],[12,4],[13,4],[14,4]]
-    path.forEach(([x, y]) => {
-      this.grid[y][x].type = 'path'
-    })
-
-    // 渲染地图
-    this.renderMap()
   }
-
-  handleClick(pointer) {
-    const gridX = Math.floor(pointer.x / 64)
-    const gridY = Math.floor(pointer.y / 64)
-
-    if (this.grid[gridY][gridX].type === 'empty') {
-      this.towerMenu.show(gridX, gridY)
+  
+  onEnemyKilled() {
+    this.enemiesAlive--;
+    if (this.enemiesAlive <= 0) {
+      this.onWaveComplete();
     }
-  }
-
-  placeTower(gridX, gridY, towerType) {
-    const x = gridX * 64 + 32
-    const y = gridY * 64 + 32
-
-    const config = TOWER_CONFIGS[towerType]
-    if (this.economyManager.gold < config.cost) {
-      ElMessage.error('金币不足')
-      return
-    }
-
-    this.economyManager.spend(config.cost)
-    const tower = new Tower(this, x, y, config)
-    this.towers.push(tower)
-    this.grid[gridY][gridX].type = 'tower'
-  }
-
-  createEnemy(type) {
-    const config = ENEMY_CONFIGS[type]
-    const startPoint = this.pathManager.getStartPoint()
-    return new Enemy(this, startPoint.x, startPoint.y, config)
-  }
-
-  setupCollisions() {
-    // 敌人到达终点
-    this.physics.add.overlap(this.enemies, this.endZone, (enemy) => {
-      this.economyManager.loseLife()
-      enemy.destroy()
-    })
   }
 }
 ```
 
-## 使用方法
+## 关卡设计
 
-1. 使用此模板创建新项目
-2. 替换 `assets/images/` 中的图片资源
-3. 修改 `config.js` 中的塔和敌人配置
-4. 在 `assets/levels/` 中添加地图数据
-5. 运行 `npm run dev` 预览游戏
+### 地图类型
+| 地图类型 | 特点 | 难度 |
+|----------|------|------|
+| 单路线 | 一条固定路线 | 简单 |
+| 双路线 | 两条路线分流 | 中等 |
+| 多路线 | 三条以上路线 | 困难 |
+| 开放地图 | 敌人自由寻路 | 极难 |
 
-## 扩展点
+### 星级评价
+| 星级 | 条件 |
+|------|------|
+| ★ | 通关 |
+| ★★ | 不漏超过 5 个敌人 |
+| ★★★ | 完美通关（不漏敌人） |
 
-- 添加新塔类型：继承 `Tower` 类
-- 添加新敌人类型：继承 `Enemy` 类
-- 添加特殊技能：在 `GameScene` 中实现
-- 添加成就系统：创建 `AchievementManager`
+## 迭代策略
+
+### 第一版：最小可玩版本
+- 1 种塔（箭塔）
+- 1 种敌人（普通兵）
+- 单路线地图
+- 3 波敌人
+- 基础建塔和攻击
+
+### 第二版：核心玩法
+- 添加 3 种塔（炮塔、冰塔、电塔）
+- 添加 3 种敌人（快速兵、重甲兵、飞行兵）
+- 添加升级系统
+- 添加 10 波敌人
+
+### 第三版：内容扩展
+- 添加 BOSS 系统
+- 添加 3 张地图
+- 添加星级评价
+- 添加道具系统
+
+### 第四版：深度玩法
+- 添加无尽模式
+- 添加成就系统
+- 添加排行榜
+- 添加每日挑战
+
+### 第五版：打磨
+- 优化平衡性
+- 添加特效和音效
+- 优化 UI 体验
+- 添加新手引导
+
+## 常见错误
+
+1. **寻路太简单**：敌人走直线没有策略感，用 A* 算法
+2. **塔没有视觉反馈**：攻击时必须有弹道/特效
+3. **经济太紧**：让玩家有钱建塔，否则会无聊
+4. **敌人太弱**：没有挑战感，玩家会睡着
+5. **没有 BOSS**：BOSS 是塔防游戏的高潮，必须有

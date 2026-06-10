@@ -503,7 +503,18 @@ const agentRoles = [
   { value: 'ui-dev', label: 'UI开发' },
   { value: 'tester', label: '测试' },
   { value: 'git-commit', label: 'Git专员' },
-  { value: 'producer', label: '制作人' }
+  { value: 'producer', label: '制作人' },
+  { value: 'security-expert', label: '安全工程师' },
+  { value: 'data-analyst', label: '数据分析师' },
+  { value: 'tech-artist', label: '技术美术' },
+  { value: 'product-manager', label: '产品经理' },
+  { value: 'localization', label: '本地化专员' },
+  { value: 'ai-engineer', label: 'AI工程师' },
+  { value: 'performance-engineer', label: '性能优化师' },
+  { value: 'audio-dev', label: '音频设计师' },
+  { value: 'narrative-planner', label: '剧情策划' },
+  { value: 'level-design', label: '关卡设计师' },
+  { value: 'devops', label: '运维工程师' }
 ]
 
 const roleLabelMap = {
@@ -514,7 +525,18 @@ const roleLabelMap = {
   'ui-dev': 'UI开发',
   'tester': '测试',
   'git-commit': 'Git',
-  'producer': '制作人'
+  'producer': '制作人',
+  'security-expert': '安全工程师',
+  'data-analyst': '数据分析师',
+  'tech-artist': '技术美术',
+  'product-manager': '产品经理',
+  'localization': '本地化',
+  'ai-engineer': 'AI工程师',
+  'performance-engineer': '性能优化',
+  'audio-dev': '音频设计',
+  'narrative-planner': '剧情策划',
+  'level-design': '关卡设计',
+  'devops': '运维工程师'
 }
 
 const getRoleLabel = (role) => roleLabelMap[role] || role
@@ -528,7 +550,18 @@ const getStepTagType = (role) => {
     'ui-dev': 'success',
     'tester': 'danger',
     'git-commit': 'info',
-    'producer': 'warning'
+    'producer': 'warning',
+    'security-expert': 'danger',
+    'data-analyst': 'success',
+    'tech-artist': 'warning',
+    'product-manager': '',
+    'localization': 'info',
+    'ai-engineer': '',
+    'performance-engineer': 'warning',
+    'audio-dev': 'success',
+    'narrative-planner': 'info',
+    'level-design': 'warning',
+    'devops': ''
   }
   return map[role] || 'info'
 }
@@ -682,8 +715,8 @@ const handleStartSubmit = async () => {
     startDialogVisible.value = false
     activeTab.value = 'instances'
     loadData()
-  } catch (error) {
-    ElMessage.error('启动失败')
+  } catch {
+    // 错误信息已由 API 拦截器统一处理
   } finally {
     submitting.value = false
   }

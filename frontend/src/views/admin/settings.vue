@@ -100,6 +100,52 @@
             </el-form-item>
           </el-form>
         </el-tab-pane>
+
+        <!-- 邮件配置 -->
+        <el-tab-pane label="邮件配置" name="email">
+          <el-form :model="emailForm" label-width="150px" style="max-width: 600px">
+            <el-form-item label="启用邮件">
+              <el-switch v-model="emailForm.emailEnabled" />
+              <div class="form-tip">开启后系统可通过邮件发送通知和验证码</div>
+            </el-form-item>
+            <template v-if="emailForm.emailEnabled">
+              <el-divider content-position="left">SMTP 服务器配置</el-divider>
+              <el-form-item label="SMTP 服务器">
+                <el-input v-model="emailForm.smtpHost" placeholder="smtp.qq.com" />
+              </el-form-item>
+              <el-form-item label="SMTP 端口">
+                <el-input-number v-model="emailForm.smtpPort" :min="1" :max="65535" />
+                <div class="form-tip">常用端口：587（TLS）、465（SSL）、25（不加密）</div>
+              </el-form-item>
+              <el-form-item label="SMTP 登录账号">
+                <el-input v-model="emailForm.smtpUsername" placeholder="your-email@qq.com" />
+                <div class="form-tip">用于 SMTP 认证的邮箱地址</div>
+              </el-form-item>
+              <el-form-item label="密码/授权码">
+                <el-input v-model="emailForm.smtpPassword" type="password" show-password placeholder="SMTP 密码或授权码" />
+                <div class="form-tip">QQ邮箱请使用授权码，不是登录密码</div>
+              </el-form-item>
+
+              <el-divider content-position="left">发件人配置</el-divider>
+              <el-form-item label="发件人地址">
+                <el-input v-model="emailForm.emailFrom" placeholder="your-email@qq.com" />
+                <div class="form-tip">收件人看到的发件人邮箱，留空则使用登录账号</div>
+              </el-form-item>
+              <el-form-item label="发件人名称">
+                <el-input v-model="emailForm.senderName" placeholder="如：系统管理员、ChengXun Game Maker" />
+                <div class="form-tip">收件人看到的发件人名称，如"系统管理员 &lt;noreply@example.com&gt;"</div>
+              </el-form-item>
+              <el-form-item label="代理邮箱（回复地址）">
+                <el-input v-model="emailForm.replyTo" placeholder="admin@example.com（可选）" />
+                <div class="form-tip">收件人点击"回复"时使用的邮箱地址，留空则使用发件人地址</div>
+              </el-form-item>
+            </template>
+            <el-form-item>
+              <el-button type="primary" @click="saveEmail" :loading="saving">保存</el-button>
+              <el-button v-if="emailForm.emailEnabled" type="success" @click="testEmail" :loading="testingEmail">测试连接并发送</el-button>
+            </el-form-item>
+          </el-form>
+        </el-tab-pane>
       </el-tabs>
     </el-card>
   </div>
@@ -114,14 +160,15 @@
  * 权限要求：系统管理员
  */
 import { ref, computed, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
-import { configApi } from '@/api'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { configApi, emailApi } from '@/api'
 
 const activeTab = ref('basic')
 const activePlatform = ref('')
 const longContext = ref(false)
 const saving = ref(false)
 const testing = ref(false)
+const testingEmail = ref(false)
 const apiKeySet = ref(false)
 
 /** 基本设置表单 */
@@ -142,6 +189,18 @@ const claudeForm = ref({
   apiUrl: 'https://api.anthropic.com',
   model: '',
   maxTokens: 4096
+})
+
+/** 邮件设置表单 */
+const emailForm = ref({
+  emailEnabled: false,
+  smtpHost: '',
+  smtpPort: 587,
+  smtpUsername: '',
+  smtpPassword: '',
+  emailFrom: '',
+  senderName: '',
+  replyTo: ''
 })
 
 /** 平台列表 */
@@ -365,6 +424,61 @@ const saveClaude = async () => {
   }
 }
 
+/** 保存邮件配置 */
+const saveEmail = async () => {
+  saving.value = true
+  try {
+    await emailApi.saveSettings(emailForm.value)
+    ElMessage.success('邮件配置已保存')
+  } catch (error) {
+    ElMessage.error('保存失败: ' + (error.message || '未知错误'))
+  } finally {
+    saving.value = false
+  }
+}
+
+/** 测试邮件连接 */
+const testEmail = async () => {
+  try {
+    // 先测试连接（使用当前填写的数据）
+    testingEmail.value = true
+    const connResult = await emailApi.testConnection(emailForm.value)
+    if (!connResult.success) {
+      ElMessage.warning(connResult.message || '连接测试失败')
+      return
+    }
+
+    // 连接成功后，询问是否发送测试邮件
+    const { value: toEmail } = await ElMessageBox.prompt(
+      '邮件连接测试成功！是否发送测试邮件到指定邮箱？',
+      '发送测试邮件',
+      {
+        confirmButtonText: '发送测试',
+        cancelButtonText: '跳过',
+        inputPlaceholder: '请输入收件邮箱地址',
+        inputPattern: /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/,
+        inputErrorMessage: '请输入有效的邮箱地址'
+      }
+    )
+
+    // 发送测试邮件（使用当前填写的配置）
+    testingEmail.value = false
+    testingEmail.value = true
+    const sendResult = await emailApi.sendTestEmail(toEmail, emailForm.value)
+    if (sendResult.success) {
+      ElMessage.success(sendResult.message || '测试邮件已发送')
+    } else {
+      ElMessage.warning(sendResult.message || '发送测试邮件失败')
+    }
+  } catch (error) {
+    if (error !== 'cancel') {
+      ElMessage.error('测试失败: ' + (error.message || '未知错误'))
+    }
+  } finally {
+    testingEmail.value = false
+  }
+}
+
 /** 测试 AI 模型连接 */
 const testConnection = async () => {
   testing.value = true
@@ -389,6 +503,22 @@ const testConnection = async () => {
 /** 加载设置 */
 const loadSettings = async () => {
   try {
+    // 加载邮件配置
+    try {
+      const emailSettings = await emailApi.getSettings()
+      if (emailSettings) {
+        emailForm.value.emailEnabled = emailSettings.emailEnabled ?? false
+        emailForm.value.smtpHost = emailSettings.smtpHost || ''
+        emailForm.value.smtpPort = emailSettings.smtpPort || 587
+        emailForm.value.smtpUsername = emailSettings.smtpUsername || ''
+        emailForm.value.emailFrom = emailSettings.emailFrom || ''
+        emailForm.value.senderName = emailSettings.senderName || ''
+        emailForm.value.replyTo = emailSettings.proxyEmail || ''
+      }
+    } catch (e) {
+      // 邮件配置加载失败不影响其他设置
+    }
+
     const configs = await configApi.getAll()
     if (configs && Array.isArray(configs)) {
       configs.forEach(config => {

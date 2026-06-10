@@ -11,25 +11,39 @@
       </template>
 
       <el-table :data="templates" v-loading="loading" stripe>
-        <el-table-column prop="templateCode" label="模板编码" width="150" show-overflow-tooltip />
+        <el-table-column prop="templateCode" label="模板编码" width="180" show-overflow-tooltip />
         <el-table-column prop="templateName" label="模板名称" width="150" />
-        <el-table-column prop="channel" label="通知渠道" width="100">
+        <el-table-column label="渠道" width="80">
           <template #default="{ row }">
-            <el-tag size="small">{{ row.channel || 'SYSTEM' }}</el-tag>
+            <el-tag size="small" :type="channelTagType(row.channel)">{{ channelLabel(row.channel) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="titleTemplate" label="标题模板" min-width="200" show-overflow-tooltip />
-        <el-table-column label="状态" width="80">
+        <el-table-column label="分类" width="80">
+          <template #default="{ row }">
+            <el-tag size="small" type="info">{{ categoryLabel(row.category) }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="subject" label="标题模板" min-width="200" show-overflow-tooltip />
+        <el-table-column label="状态" width="70" align="center">
           <template #default="{ row }">
             <el-tag :type="row.enabled ? 'success' : 'info'" size="small">
               {{ row.enabled ? '启用' : '禁用' }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="150" fixed="right">
+        <el-table-column label="内置" width="60" align="center">
+          <template #default="{ row }">
+            <el-tag v-if="row.systemBuiltin" size="small" type="warning">是</el-tag>
+            <span v-else class="text-muted">-</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="180" fixed="right">
           <template #default="{ row }">
             <el-button type="primary" size="small" text @click="handleEdit(row)">编辑</el-button>
-            <el-button type="danger" size="small" text @click="handleDelete(row)" v-permission="'notification:manage'">
+            <el-button type="success" size="small" text @click="handleTest(row)" :loading="row.testing">
+              测试
+            </el-button>
+            <el-button v-if="!row.systemBuiltin" type="danger" size="small" text @click="handleDelete(row)" v-permission="'notification:manage'">
               删除
             </el-button>
           </template>
@@ -42,24 +56,19 @@
 </template>
 
 <script setup>
-/**
- * 通知模板页面
- * 管理通知模板
- *
- * 操作维度：系统级
- * 权限要求：系统管理员
- */
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { templateApi } from '@/api'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 const router = useRouter()
-
 const loading = ref(false)
 const templates = ref([])
 
-/** 加载模板列表 */
+const channelLabel = (ch) => ({ EMAIL: '邮件', FEISHU: '飞书', DINGTALK: '钉钉', SYSTEM: '站内' }[ch] || ch)
+const channelTagType = (ch) => ({ EMAIL: '', FEISHU: 'success', DINGTALK: 'warning', SYSTEM: 'info' }[ch] || '')
+const categoryLabel = (cat) => ({ ALERT: '告警', TASK: '任务', AGENT: 'Agent', SYSTEM: '系统' }[cat] || cat)
+
 const loadTemplates = async () => {
   loading.value = true
   try {
@@ -72,48 +81,53 @@ const loadTemplates = async () => {
   }
 }
 
-/** 创建模板 */
-const handleCreate = () => {
-  router.push('/notification-templates/create')
-}
+const handleCreate = () => router.push('/notification-templates/create')
+const handleEdit = (t) => router.push(`/notification-templates/${t.id}`)
 
-/** 编辑模板 */
-const handleEdit = (template) => {
-  router.push(`/notification-templates/${template.id}`)
-}
-
-/** 删除模板 */
-const handleDelete = async (template) => {
+const handleDelete = async (t) => {
   try {
-    await ElMessageBox.confirm(
-      `确定要删除模板 "${template.templateName}" 吗？`,
-      '删除确认',
-      { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' }
-    )
-
-    await templateApi.delete(template.id)
+    await ElMessageBox.confirm(`确定要删除模板 "${t.templateName}" 吗？`, '删除确认', { type: 'warning' })
+    await templateApi.delete(t.id)
     ElMessage.success('模板已删除')
     loadTemplates()
   } catch (error) {
-    if (error !== 'cancel') {
-      ElMessage.error('删除失败')
-    }
+    if (error !== 'cancel') ElMessage.error('删除失败')
   }
 }
 
-onMounted(() => {
-  loadTemplates()
-})
+const handleTest = async (t) => {
+  try {
+    await ElMessageBox.confirm(
+      `确定要测试发送模板 "${t.templateName}" 吗？\n\n渠道: ${channelLabel(t.channel)}${t.channel === 'EMAIL' ? '\n将发送到您的邮箱' : ''}`,
+      '测试发送确认',
+      { type: 'info', confirmButtonText: '发送测试', cancelButtonText: '取消' }
+    )
+
+    // 设置测试中状态
+    t.testing = true
+
+    const result = await templateApi.testSend(t.id)
+
+    if (result.status === 'success') {
+      ElMessage.success(result.message || '测试通知已发送')
+    } else {
+      ElMessage.warning(result.message || '测试发送完成，请检查配置')
+    }
+  } catch (error) {
+    if (error !== 'cancel') {
+      const message = error.response?.data?.message || error.message || '测试发送失败'
+      ElMessage.error(message)
+    }
+  } finally {
+    t.testing = false
+  }
+}
+
+onMounted(() => loadTemplates())
 </script>
 
 <style scoped>
-.templates-page {
-  padding: 20px;
-}
-
-.card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
+.templates-page { padding: 20px; }
+.card-header { display: flex; justify-content: space-between; align-items: center; }
+.text-muted { color: #909399; font-size: 12px; }
 </style>

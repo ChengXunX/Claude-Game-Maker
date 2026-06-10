@@ -11,6 +11,8 @@ import com.chengxun.gamemaker.web.repository.AgentInterventionRepository;
 import com.chengxun.gamemaker.web.repository.AgentLogRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.data.domain.Page;
 import org.springframework.stereotype.Service;
@@ -45,14 +47,15 @@ public class AgentInterventionService {
 
     /**
      * 构造函数注入依赖
+     * 使用 @Lazy 注解打破循环依赖（AgentManager 也依赖此服务）
      *
      * @param interventionRepository 干预记录仓库
      * @param agentLogRepository Agent日志仓库
-     * @param agentManager Agent管理器
+     * @param agentManager Agent管理器（延迟注入）
      */
     public AgentInterventionService(AgentInterventionRepository interventionRepository,
                                      AgentLogRepository agentLogRepository,
-                                     AgentManager agentManager) {
+                                     @Lazy AgentManager agentManager) {
         this.interventionRepository = interventionRepository;
         this.agentLogRepository = agentLogRepository;
         this.agentManager = agentManager;
@@ -77,6 +80,28 @@ public class AgentInterventionService {
     public AgentIntervention sendIntervention(Long userId, String username, String userRole,
                                                String agentId, AgentIntervention.InterventionType interventionType,
                                                String instruction, String reason, String taskId) {
+        return sendIntervention(userId, username, userRole, agentId, interventionType, instruction, reason, taskId, null);
+    }
+
+    /**
+     * 发送干预（带额外数据）
+     *
+     * @param userId 干预人用户ID
+     * @param username 干预人用户名
+     * @param userRole 干预人角色
+     * @param agentId 目标Agent ID
+     * @param interventionType 干预类型
+     * @param instruction 指令内容
+     * @param reason 干预原因
+     * @param taskId 相关任务ID（可选）
+     * @param additionalData 额外数据（可选）
+     * @return 干预记录
+     */
+    @Transactional
+    public AgentIntervention sendIntervention(Long userId, String username, String userRole,
+                                               String agentId, AgentIntervention.InterventionType interventionType,
+                                               String instruction, String reason, String taskId,
+                                               Map<String, String> additionalData) {
         Agent agent = agentManager.getAgent(agentId);
         if (agent == null) {
             throw new RuntimeException("Agent不存在: " + agentId);
@@ -99,6 +124,11 @@ public class AgentInterventionService {
         intervention.setReason(reason);
         intervention.setTaskId(taskId);
         intervention.setStatus(AgentIntervention.Status.PENDING);
+
+        // 设置额外数据
+        if (additionalData != null && !additionalData.isEmpty()) {
+            intervention.setAdditionalData(additionalData);
+        }
 
         AgentIntervention saved = interventionRepository.save(intervention);
 
@@ -234,6 +264,59 @@ public class AgentInterventionService {
             AgentIntervention.InterventionType.URGENT_INSTRUCTION, instruction, reason, null);
     }
 
+    /**
+     * 发送版本迭代干预
+     * 对已完成的项目发起新版本迭代
+     *
+     * @param userId 发起人ID
+     * @param username 发起人用户名
+     * @param userRole 发起人角色
+     * @param projectId 项目ID
+     * @param requirements 迭代需求描述
+     * @param version 版本号
+     * @param priority 优先级
+     * @param deadline 截止时间
+     * @return 创建的干预记录
+     */
+    @Transactional
+    public AgentIntervention sendVersionIteration(Long userId, String username, String userRole,
+                                                   String projectId, String requirements,
+                                                   String version, String priority, String deadline) {
+        // 构建指令内容
+        StringBuilder instruction = new StringBuilder();
+        instruction.append("【版本迭代请求】\n\n");
+        instruction.append("项目ID: ").append(projectId).append("\n");
+        if (version != null && !version.isEmpty()) {
+            instruction.append("目标版本: ").append(version).append("\n");
+        }
+        if (priority != null && !priority.isEmpty()) {
+            instruction.append("优先级: ").append(priority).append("\n");
+        }
+        if (deadline != null && !deadline.isEmpty()) {
+            instruction.append("截止时间: ").append(deadline).append("\n");
+        }
+        instruction.append("\n迭代需求:\n").append(requirements);
+
+        // 构建原因
+        String reason = String.format("管理员发起版本迭代，项目: %s，需求: %s",
+                projectId, requirements.length() > 100 ? requirements.substring(0, 100) + "..." : requirements);
+
+        // 构建额外数据
+        Map<String, String> additionalData = new HashMap<>();
+        additionalData.put("projectId", projectId);
+        additionalData.put("requirements", requirements);
+        if (version != null) additionalData.put("version", version);
+        if (priority != null) additionalData.put("priority", priority);
+        if (deadline != null) additionalData.put("deadline", deadline);
+
+        // 发送给项目的制作人Agent
+        String producerAgentId = projectId + ":producer";
+
+        return sendIntervention(userId, username, userRole, producerAgentId,
+            AgentIntervention.InterventionType.VERSION_ITERATION,
+            instruction.toString(), reason, null, additionalData);
+    }
+
     // ===== Agent处理干预 =====
 
     /**
@@ -281,6 +364,38 @@ public class AgentInterventionService {
             throw new RuntimeException("该干预正在被其他用户处理，请刷新后重试", e);
         } catch (IllegalStateException e) {
             log.warn("干预 {} 状态转换失败: {}", interventionId, e.getMessage());
+            throw new RuntimeException("干预状态不允许此操作: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 根据干预编号执行干预
+     * 状态转换：PENDING/ACKNOWLEDGED -> EXECUTING -> COMPLETED
+     *
+     * @param interventionNo 干预编号（如 INT-20260608-XXXXXX）
+     * @param result 执行结果描述
+     * @return 执行后的干预记录
+     */
+    @Transactional
+    public AgentIntervention executeInterventionByNo(String interventionNo, String result) {
+        try {
+            AgentIntervention intervention = interventionRepository.findByInterventionNo(interventionNo)
+                .orElseThrow(() -> new RuntimeException("干预记录不存在: " + interventionNo));
+
+            intervention.startExecution();
+            // flush中间状态，使EXECUTING状态持久化
+            interventionRepository.flush();
+            intervention.complete(result);
+            AgentIntervention saved = interventionRepository.save(intervention);
+
+            log.info("Intervention {} executed by agent {}", intervention.getInterventionNo(), intervention.getAgentId());
+
+            return saved;
+        } catch (OptimisticLockingFailureException e) {
+            log.warn("并发冲突：干预 {} 正在被其他用户处理", interventionNo);
+            throw new RuntimeException("该干预正在被其他用户处理，请刷新后重试", e);
+        } catch (IllegalStateException e) {
+            log.warn("干预 {} 状态转换失败: {}", interventionNo, e.getMessage());
             throw new RuntimeException("干预状态不允许此操作: " + e.getMessage(), e);
         }
     }
@@ -343,6 +458,17 @@ public class AgentInterventionService {
     @Transactional(readOnly = true)
     public AgentIntervention getIntervention(Long interventionId) {
         return interventionRepository.findById(interventionId).orElse(null);
+    }
+
+    /**
+     * 根据干预编号获取干预记录
+     *
+     * @param interventionNo 干预编号（如 INT-20260608-XXXXXX）
+     * @return 干预记录，未找到返回 null
+     */
+    @Transactional(readOnly = true)
+    public AgentIntervention getInterventionsByNo(String interventionNo) {
+        return interventionRepository.findByInterventionNo(interventionNo).orElse(null);
     }
 
     /**

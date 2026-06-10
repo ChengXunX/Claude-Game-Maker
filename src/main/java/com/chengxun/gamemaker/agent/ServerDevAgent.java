@@ -15,6 +15,9 @@ public class ServerDevAgent extends BaseAgent {
 
     private static final Logger log = LoggerFactory.getLogger(ServerDevAgent.class);
 
+    /** 游戏运行时验证服务（延迟注入） */
+    private com.chengxun.gamemaker.service.GameRuntimeVerifier gameRuntimeVerifier;
+
     public ServerDevAgent(AgentDefinition definition,
                          ClaudeCliEngine cliEngine,
                          MessageBus messageBus,
@@ -23,6 +26,13 @@ public class ServerDevAgent extends BaseAgent {
                          SkillManager skillManager,
                          ProjectManager projectManager) {
         super(definition, cliEngine, messageBus, contextManager, memoryManager, skillManager, projectManager);
+    }
+
+    /**
+     * 设置游戏运行时验证服务
+     */
+    public void setGameRuntimeVerifier(com.chengxun.gamemaker.service.GameRuntimeVerifier gameRuntimeVerifier) {
+        this.gameRuntimeVerifier = gameRuntimeVerifier;
     }
 
     @Override
@@ -64,7 +74,44 @@ public class ServerDevAgent extends BaseAgent {
         agentContext.setCurrentTaskId(task.getId());
 
         String prompt = buildTaskPrompt(task);
-        String result = sendMessage(prompt);
+
+        // 迭代修复循环：生成 → 验证 → 修复 → 再验证
+        int maxFixAttempts = 3;
+        String result = null;
+
+        for (int attempt = 0; attempt <= maxFixAttempts; attempt++) {
+            result = sendMessage(prompt);
+
+            // 运行时验证（仅对游戏开发类角色）
+            if (gameRuntimeVerifier != null && currentProject != null && isGameDevRole()) {
+                String projectDir = currentProject.getWorkDir();
+                if (projectDir != null) {
+                    log.info("任务 [{}] 运行时验证 (第{}次尝试)", task.getTitle(), attempt + 1);
+                    com.chengxun.gamemaker.service.GameRuntimeVerifier.VerifyResult verifyResult =
+                        gameRuntimeVerifier.verify(projectDir);
+
+                    if (verifyResult.isSuccess()) {
+                        log.info("任务 [{}] 运行时验证通过: {}", task.getTitle(), verifyResult.getMessage());
+                        if (attempt > 0) {
+                            logInfo("FIX_SUCCESS", String.format("任务 [%s] 经过%d次修复后验证通过", task.getTitle(), attempt));
+                        }
+                        break;
+                    }
+
+                    if (attempt < maxFixAttempts) {
+                        log.warn("任务 [{}] 运行时验证失败 (第{}次): {}", task.getTitle(), attempt + 1, verifyResult.getError());
+                        prompt = buildFixPrompt(task, result, verifyResult);
+                        continue;
+                    } else {
+                        log.warn("任务 [{}] 经过{}次修复仍未通过验证: {}", task.getTitle(), maxFixAttempts, verifyResult.getError());
+                        logWarn("FIX_EXHAUSTED", String.format("任务 [%s] 经过%d次修复仍未通过验证: %s",
+                            task.getTitle(), maxFixAttempts, verifyResult.getError()), null);
+                    }
+                }
+            } else {
+                break;
+            }
+        }
 
         task.setResult(result);
         task.setStatus(TaskAssignment.TaskStatus.COMPLETED);
@@ -74,7 +121,51 @@ public class ServerDevAgent extends BaseAgent {
         saveTaskExperience(task, result);
         tryLearnSkill(task.getTitle() + "\n" + task.getDescription(), result);
 
-        reportProgress(task.getId(), "Completed: " + result.substring(0, Math.min(100, result.length())));
+        String summary = result != null ? result.substring(0, Math.min(100, result.length())) : "";
+        reportProgress(task.getId(), "Completed: " + summary);
+    }
+
+    /**
+     * 判断是否为游戏开发类角色（需要运行时验证）
+     */
+    private boolean isGameDevRole() {
+        String role = getRole();
+        return "client-dev".equals(role) || "ui-dev".equals(role);
+    }
+
+    /**
+     * 构建修复 prompt
+     * 当运行时验证失败时，将失败信息反馈给 AI 要求修复
+     */
+    private String buildFixPrompt(TaskAssignment task, String lastResult,
+                                   com.chengxun.gamemaker.service.GameRuntimeVerifier.VerifyResult verifyResult) {
+        StringBuilder sb = new StringBuilder();
+
+        sb.append("## 紧急修复任务\n\n");
+        sb.append("你之前完成的任务【").append(task.getTitle()).append("】在运行时验证中失败，需要修复。\n\n");
+
+        sb.append("### 验证失败信息\n");
+        sb.append(verifyResult.toSummary()).append("\n");
+
+        if (currentProject != null) {
+            sb.append("### 项目信息\n");
+            sb.append("- 工作目录: ").append(currentProject.getWorkDir()).append("\n");
+            sb.append("- 目标: ").append(currentProject.getGoal()).append("\n\n");
+        }
+
+        sb.append("### 原始任务描述\n");
+        sb.append(task.getDescription()).append("\n\n");
+
+        sb.append("### 修复要求\n");
+        sb.append("1. 仔细分析验证失败的原因\n");
+        sb.append("2. 修复所有导致验证失败的问题\n");
+        sb.append("3. 确保代码语法正确、文件引用正确\n");
+        sb.append("4. 确保入口文件结构完整\n");
+        sb.append("5. 所有引用的资源文件必须存在\n\n");
+
+        sb.append("请立即修复以上问题。");
+
+        return sb.toString();
     }
 
     private String buildTaskPrompt(TaskAssignment task) {

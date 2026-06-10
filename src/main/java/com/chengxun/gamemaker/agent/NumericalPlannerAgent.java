@@ -13,6 +13,18 @@ import java.util.UUID;
 
 public class NumericalPlannerAgent extends BaseAgent {
 
+    /** 上次平衡分析时间 */
+    private LocalDateTime lastBalanceAnalysisTime;
+
+    /** 上次更新数值文档时间 */
+    private LocalDateTime lastNumericalUpdateTime;
+
+    /** 平衡分析冷却时间（分钟） */
+    private static final int BALANCE_ANALYSIS_COOLDOWN_MINUTES = 60;
+
+    /** 数值文档更新冷却时间（分钟） */
+    private static final int NUMERICAL_UPDATE_COOLDOWN_MINUTES = 60;
+
     private static final Logger log = LoggerFactory.getLogger(NumericalPlannerAgent.class);
 
     public NumericalPlannerAgent(AgentDefinition definition,
@@ -32,11 +44,46 @@ public class NumericalPlannerAgent extends BaseAgent {
         // 检查待处理的数值设计任务
         processPendingTasks();
 
-        // 分析数值平衡性
-        analyzeBalance();
+        // 如果有工作流分配的待处理/进行中任务，跳过分析和文档更新
+        boolean hasActiveTask = tasks.stream()
+            .anyMatch(t -> t.getStatus() == TaskAssignment.TaskStatus.PENDING
+                || t.getStatus() == TaskAssignment.TaskStatus.IN_PROGRESS);
+        if (hasActiveTask) {
+            log.debug("有活跃任务，跳过平衡分析和文档更新");
+            return;
+        }
 
-        // 更新数值文档
-        updateNumericalDocuments();
+        // 分析数值平衡性（带冷却时间）
+        if (shouldAnalyzeBalance()) {
+            analyzeBalance();
+            lastBalanceAnalysisTime = LocalDateTime.now();
+        }
+
+        // 更新数值文档（带冷却时间）
+        if (shouldUpdateNumerical()) {
+            updateNumericalDocuments();
+            lastNumericalUpdateTime = LocalDateTime.now();
+        }
+    }
+
+    /**
+     * 判断是否需要进行平衡分析
+     */
+    private boolean shouldAnalyzeBalance() {
+        if (lastBalanceAnalysisTime == null) {
+            return true;
+        }
+        return LocalDateTime.now().isAfter(lastBalanceAnalysisTime.plusMinutes(BALANCE_ANALYSIS_COOLDOWN_MINUTES));
+    }
+
+    /**
+     * 判断是否需要更新数值文档
+     */
+    private boolean shouldUpdateNumerical() {
+        if (lastNumericalUpdateTime == null) {
+            return true;
+        }
+        return LocalDateTime.now().isAfter(lastNumericalUpdateTime.plusMinutes(NUMERICAL_UPDATE_COOLDOWN_MINUTES));
     }
 
     @Override

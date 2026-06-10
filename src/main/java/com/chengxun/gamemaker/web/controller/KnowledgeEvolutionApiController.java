@@ -14,6 +14,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -174,5 +175,35 @@ public class KnowledgeEvolutionApiController {
             log.error("自进化失败", e);
             return ResponseEntity.internalServerError().body(com.chengxun.gamemaker.web.dto.ErrorResponse.internal("进化失败: " + e.getMessage()));
         }
+    }
+
+    /**
+     * 获取知识进化统计信息
+     */
+    @GetMapping("/stats")
+    @Operation(summary = "获取知识进化统计")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<Map<String, Object>> getStats() {
+        return ResponseEntity.ok(evolutionService.getEvolutionStats());
+    }
+
+    /**
+     * 获取已学习的模式列表
+     */
+    @GetMapping("/learned-patterns")
+    @Operation(summary = "获取已学习的模式")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<List<Map<String, Object>>> getLearnedPatterns() {
+        return ResponseEntity.ok(evolutionService.getLearnedPatternsList());
+    }
+
+    /**
+     * 获取已学习的技能列表
+     */
+    @GetMapping("/learned-skills")
+    @Operation(summary = "获取已学习的技能")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<List<Map<String, Object>>> getLearnedSkills() {
+        return ResponseEntity.ok(evolutionService.getLearnedSkillsList());
     }
 }

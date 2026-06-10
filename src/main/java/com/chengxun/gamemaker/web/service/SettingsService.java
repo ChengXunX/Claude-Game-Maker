@@ -1,8 +1,10 @@
 package com.chengxun.gamemaker.web.service;
 
 import com.chengxun.gamemaker.config.AppConfig;
+import com.chengxun.gamemaker.config.MailConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -20,10 +22,15 @@ public class SettingsService {
 
     private final AppConfig appConfig;
     private final SystemConfigService configService;
+    private final JavaMailSender mailSender;
+    private final MailConfig mailConfig;
 
-    public SettingsService(AppConfig appConfig, SystemConfigService configService) {
+    public SettingsService(AppConfig appConfig, SystemConfigService configService,
+                           JavaMailSender mailSender, MailConfig mailConfig) {
         this.appConfig = appConfig;
         this.configService = configService;
+        this.mailSender = mailSender;
+        this.mailConfig = mailConfig;
         loadSettings();
     }
 
@@ -105,15 +112,42 @@ public class SettingsService {
                 appConfig.getDingtalk().setSecret(props.getProperty("dingtalk.secret"));
             }
 
+            // Email
+            if (props.containsKey("app.email.enabled")) {
+                appConfig.getEmail().setEnabled(Boolean.parseBoolean(props.getProperty("app.email.enabled")));
+            }
+            if (props.containsKey("spring.mail.host")) {
+                appConfig.getEmail().setSmtpHost(props.getProperty("spring.mail.host"));
+            }
+            if (props.containsKey("spring.mail.port")) {
+                try {
+                    appConfig.getEmail().setSmtpPort(Integer.parseInt(props.getProperty("spring.mail.port")));
+                } catch (NumberFormatException e) {
+                    log.warn("Invalid spring.mail.port value: {}", props.getProperty("spring.mail.port"));
+                }
+            }
+            if (props.containsKey("spring.mail.username")) {
+                appConfig.getEmail().setSmtpUsername(props.getProperty("spring.mail.username"));
+            }
+            if (props.containsKey("spring.mail.password")) {
+                appConfig.getEmail().setSmtpPassword(props.getProperty("spring.mail.password"));
+            }
+            if (props.containsKey("spring.mail.from")) {
+                appConfig.getEmail().setEmailFrom(props.getProperty("spring.mail.from"));
+            }
+
             log.info("Settings loaded from: {}", SETTINGS_FILE);
         } catch (IOException e) {
             log.error("Failed to load settings", e);
         }
+
+        // 配置加载完成后刷新邮件发送器
+        mailConfig.refreshMailSender(mailSender);
     }
 
     /**
      * 从数据库加载配置
-     * 安装向导将配置保存到 system_configs 表
+     * 安装向导和系统设置将配置保存到 system_configs 表
      */
     private void loadFromDatabase() {
         try {
@@ -133,6 +167,58 @@ public class SettingsService {
             if (model != null && !model.isEmpty()) {
                 appConfig.getClaude().setModel(model);
                 log.info("Loaded Claude model from database: {}", model);
+            }
+
+            // 邮件配置
+            String emailEnabled = configService.getString("email.enabled", null);
+            if (emailEnabled != null) {
+                appConfig.getEmail().setEnabled(Boolean.parseBoolean(emailEnabled));
+                log.info("Loaded email enabled from database: {}", emailEnabled);
+            }
+
+            String smtpHost = configService.getString("email.smtp.host", null);
+            if (smtpHost != null && !smtpHost.isEmpty()) {
+                appConfig.getEmail().setSmtpHost(smtpHost);
+                log.info("Loaded email smtp host from database: {}", smtpHost);
+            }
+
+            String smtpPort = configService.getString("email.smtp.port", null);
+            if (smtpPort != null && !smtpPort.isEmpty()) {
+                try {
+                    appConfig.getEmail().setSmtpPort(Integer.parseInt(smtpPort));
+                } catch (NumberFormatException e) {
+                    log.warn("Invalid email smtp port value in database: {}", smtpPort);
+                }
+            }
+
+            String smtpUsername = configService.getString("email.smtp.username", null);
+            if (smtpUsername != null && !smtpUsername.isEmpty()) {
+                appConfig.getEmail().setSmtpUsername(smtpUsername);
+                log.info("Loaded email smtp username from database");
+            }
+
+            String smtpPassword = configService.getString("email.smtp.password", null);
+            if (smtpPassword != null && !smtpPassword.isEmpty()) {
+                appConfig.getEmail().setSmtpPassword(smtpPassword);
+                log.info("Loaded email smtp password from database");
+            }
+
+            String emailFrom = configService.getString("email.from", null);
+            if (emailFrom != null && !emailFrom.isEmpty()) {
+                appConfig.getEmail().setEmailFrom(emailFrom);
+                log.info("Loaded email from address from database: {}", emailFrom);
+            }
+
+            String senderName = configService.getString("email.sender.name", null);
+            if (senderName != null && !senderName.isEmpty()) {
+                appConfig.getEmail().setSenderName(senderName);
+                log.info("Loaded email sender name from database: {}", senderName);
+            }
+
+            String proxyEmail = configService.getString("email.proxy.email", null);
+            if (proxyEmail != null && !proxyEmail.isEmpty()) {
+                appConfig.getEmail().setProxyEmail(proxyEmail);
+                log.info("Loaded email proxy email from database: {}", proxyEmail);
             }
 
             log.info("Settings loaded from database");
@@ -215,30 +301,51 @@ public class SettingsService {
 
     /**
      * 保存邮件配置
+     * 使用 SystemConfigService 保存到数据库，确保重启后配置不丢失
      */
     public void saveEmailSettings(boolean enabled, String smtpHost, int smtpPort,
-                                   String smtpUsername, String smtpPassword, String emailFrom) {
-        Properties props = loadProperties();
-
-        props.setProperty("app.email.enabled", String.valueOf(enabled));
+                                   String smtpUsername, String smtpPassword, String emailFrom,
+                                   String senderName, String proxyEmail) {
+        // 保存到数据库（SystemConfigService）
+        configService.setConfig("email.enabled", String.valueOf(enabled));
+        appConfig.getEmail().setEnabled(enabled);
 
         if (smtpHost != null && !smtpHost.isBlank()) {
-            props.setProperty("spring.mail.host", smtpHost);
+            configService.setConfig("email.smtp.host", smtpHost);
+            appConfig.getEmail().setSmtpHost(smtpHost);
         }
-        props.setProperty("spring.mail.port", String.valueOf(smtpPort));
+        configService.setConfig("email.smtp.port", String.valueOf(smtpPort));
+        appConfig.getEmail().setSmtpPort(smtpPort);
 
         if (smtpUsername != null && !smtpUsername.isBlank()) {
-            props.setProperty("spring.mail.username", smtpUsername);
+            configService.setConfig("email.smtp.username", smtpUsername);
+            appConfig.getEmail().setSmtpUsername(smtpUsername);
         }
         if (smtpPassword != null && !smtpPassword.isBlank()) {
-            props.setProperty("spring.mail.password", smtpPassword);
+            configService.setConfig("email.smtp.password", smtpPassword);
+            appConfig.getEmail().setSmtpPassword(smtpPassword);
         }
         if (emailFrom != null && !emailFrom.isBlank()) {
-            props.setProperty("spring.mail.from", emailFrom);
+            configService.setConfig("email.from", emailFrom);
+            appConfig.getEmail().setEmailFrom(emailFrom);
         }
 
-        saveProperties(props);
-        log.info("Email settings saved: enabled={}, host={}", enabled, smtpHost);
+        // 保存发件人名字
+        if (senderName != null) {
+            configService.setConfig("email.sender.name", senderName);
+            appConfig.getEmail().setSenderName(senderName);
+        }
+
+        // 保存代理邮箱
+        if (proxyEmail != null) {
+            configService.setConfig("email.proxy.email", proxyEmail);
+            appConfig.getEmail().setProxyEmail(proxyEmail);
+        }
+
+        // 刷新 JavaMailSender 配置，使新设置立即生效
+        mailConfig.refreshMailSender(mailSender);
+
+        log.info("Email settings saved to database: enabled={}, host={}, senderName={}", enabled, smtpHost, senderName);
     }
 
     public void saveDingTalkSettings(String webhookUrl, String secret, boolean enabled) {

@@ -1,12 +1,14 @@
 package com.chengxun.gamemaker.web.service;
 
 import com.chengxun.gamemaker.config.AppConfig;
+import com.chengxun.gamemaker.config.MailConfig;
 import com.chengxun.gamemaker.web.entity.SystemConfig;
 import com.chengxun.gamemaker.web.repository.SystemConfigRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
+import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -29,10 +31,15 @@ public class SystemConfigService {
 
     private final SystemConfigRepository configRepository;
     private final AppConfig appConfig;
+    private final MailConfig mailConfig;
+    private final JavaMailSender javaMailSender;
 
-    public SystemConfigService(SystemConfigRepository configRepository, AppConfig appConfig) {
+    public SystemConfigService(SystemConfigRepository configRepository, AppConfig appConfig,
+                               MailConfig mailConfig, JavaMailSender javaMailSender) {
         this.configRepository = configRepository;
         this.appConfig = appConfig;
+        this.mailConfig = mailConfig;
+        this.javaMailSender = javaMailSender;
     }
 
     /**
@@ -71,6 +78,9 @@ public class SystemConfigService {
         // 安全配置 - 设备信任
         initConfig("security.device.trust.enabled", "false", "是否启用设备信任（陌生设备二次验证）", SystemConfig.GROUP_SECURITY, "boolean", true);
         initConfig("security.device.trust.days", "7", "设备信任有效期（天）", SystemConfig.GROUP_SECURITY, "number", true);
+
+        // 工作流审批配置
+        initConfig("workflow.approval.importance-threshold", "MEDIUM", "审批重要程度阈值（LOW/MEDIUM/HIGH/CRITICAL），低于此级别的步骤免审批", SystemConfig.GROUP_SYSTEM, "string", true);
 
         // 加载所有配置到缓存
         loadAllToCache();
@@ -161,6 +171,63 @@ public class SystemConfigService {
                 log.warn("Invalid device trust days value in DB: {}", deviceTrustDays);
             }
         }
+
+        // 同步邮件配置
+        String emailEnabled = getString("email.enabled", null);
+        if (emailEnabled != null) {
+            appConfig.getEmail().setEnabled(Boolean.parseBoolean(emailEnabled));
+            log.info("启动同步: email.enabled = {}", emailEnabled);
+        }
+
+        String smtpHost = getString("email.smtp.host", null);
+        if (smtpHost != null && !smtpHost.isEmpty()) {
+            appConfig.getEmail().setSmtpHost(smtpHost);
+            log.info("启动同步: email.smtp.host = {}", smtpHost);
+        }
+
+        String smtpPort = getString("email.smtp.port", null);
+        if (smtpPort != null && !smtpPort.isEmpty()) {
+            try {
+                appConfig.getEmail().setSmtpPort(Integer.parseInt(smtpPort));
+                log.info("启动同步: email.smtp.port = {}", smtpPort);
+            } catch (NumberFormatException e) {
+                log.warn("Invalid email smtp port value in DB: {}", smtpPort);
+            }
+        }
+
+        String smtpUsername = getString("email.smtp.username", null);
+        if (smtpUsername != null && !smtpUsername.isEmpty()) {
+            appConfig.getEmail().setSmtpUsername(smtpUsername);
+            log.info("启动同步: email.smtp.username 已加载");
+        }
+
+        String smtpPassword = getString("email.smtp.password", null);
+        if (smtpPassword != null && !smtpPassword.isEmpty()) {
+            appConfig.getEmail().setSmtpPassword(smtpPassword);
+            log.info("启动同步: email.smtp.password 已加载");
+        }
+
+        String emailFrom = getString("email.from", null);
+        if (emailFrom != null && !emailFrom.isEmpty()) {
+            appConfig.getEmail().setEmailFrom(emailFrom);
+            log.info("启动同步: email.from = {}", emailFrom);
+        }
+
+        String senderName = getString("email.sender.name", null);
+        if (senderName != null && !senderName.isEmpty()) {
+            appConfig.getEmail().setSenderName(senderName);
+            log.info("启动同步: email.sender.name = {}", senderName);
+        }
+
+        String proxyEmail = getString("email.proxy.email", null);
+        if (proxyEmail != null && !proxyEmail.isEmpty()) {
+            appConfig.getEmail().setProxyEmail(proxyEmail);
+            log.info("启动同步: email.proxy.email = {}", proxyEmail);
+        }
+
+        // 刷新 JavaMailSender，使数据库配置生效
+        mailConfig.refreshMailSender(javaMailSender);
+        log.info("JavaMailSender 已刷新，使用数据库配置");
     }
 
     /**

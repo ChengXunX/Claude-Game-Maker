@@ -406,14 +406,24 @@ public class PerformanceMonitorService {
 
     /**
      * 清理过期的性能指标数据
-     * 保留最近30天的数据
+     * 保留最近30天的数据，每批删除5000条避免长事务
      * 每天凌晨3点执行
      */
     @Scheduled(cron = "0 0 3 * * ?")
     @Transactional
     public void cleanupOldMetrics() {
         LocalDateTime thirtyDaysAgo = LocalDateTime.now().minusDays(30);
-        // 注意：这里简化处理，实际应该批量删除
-        log.info("Performance metric cleanup task executed");
+        int totalDeleted = 0;
+        int batchSize = 5000;
+
+        while (true) {
+            int deleted = metricRepository.deleteByCreatedAtBefore(thirtyDaysAgo, batchSize);
+            totalDeleted += deleted;
+            if (deleted < batchSize) break;
+        }
+
+        if (totalDeleted > 0) {
+            log.info("Cleaned up {} performance metrics older than {}", totalDeleted, thirtyDaysAgo);
+        }
     }
 }

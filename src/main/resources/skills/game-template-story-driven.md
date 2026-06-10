@@ -1,477 +1,351 @@
 ---
-name: game-template-story-driven
-description: 剧情推进游戏模板 - 分支剧情、伏笔系统、角色关系、多结局
-category: game-template
-triggerPattern: story, 剧情, narrative, 叙事, branch, 分支, ending, 结局, foreshadow, 伏笔, visual novel, 视觉小说
+name: 剧情推进游戏开发模板
+description: 剧情推进游戏开发模板，适用于视觉小说、文字冒险、剧情向游戏
+trigger: story, 剧情, narrative, 叙事, branch, 分支, ending, 结局, visual novel, 视觉小说
+examples: 极乐迪斯科|底特律变人|生命奇异|428|逆转裁判|Steins;Gate
 ---
 
-# 剧情推进游戏模板
+# 剧情推进游戏开发模板
 
-## 概述
+## 游戏设计核心原则
 
-完整的剧情推进游戏模板，着重设计剧情推进与伏笔系统，包含：
-- **剧情引擎**：分支剧情、条件触发、剧情树
-- **伏笔系统**：埋设伏笔、自动回收、伏笔揭示
-- **角色系统**：好感度、信任值、关系网
-- **选择系统**：关键选择、影响追踪、蝴蝶效应
-- **多结局**：根据选择和伏笔触发不同结局
-- **存档系统**：剧情回溯、分支存档
+### 核心循环（每章 30-60 分钟）
+```
+阅读剧情 → 做出选择 → 看到后果 → 解锁新剧情 → 做出更多选择
+```
+- **代入感**：玩家觉得自己就是主角
+- **选择感**：每个选择都有意义
+- **探索欲**：想看所有结局
 
-## 核心代码
+### 玩家心理学
+- **"蝴蝶效应"的震撼**：小选择导致大后果
+- **"多结局"的探索欲**：想看所有可能的结局
+- **"角色代入"的情感**：对角色产生感情
+- **"剧情反转"的惊喜**：出乎意料的剧情发展
 
-### 1. 剧情引擎 (StoryEngine.js)
+### 剧情设计要点
+```
+剧情核心：
+1. 选择有意义：每个选择都会影响剧情
+2. 角色立体：角色有性格、有成长
+3. 伏笔回收：前面埋的伏笔后面要回收
+4. 多条线路：不同的选择走不同的路
+```
 
+## 核心系统设计
+
+### 1. 剧情引擎
 ```javascript
-export class StoryEngine {
+class StoryEngine {
   constructor() {
-    this.currentScene = null
-    this.storyFlags = new Map()      // 剧情标记
-    this.foreshadows = new Map()     // 伏笔记录
-    this.choices = []                // 选择历史
-    this.variables = new Map()       // 剧情变量
+    this.currentScene = null;
+    this.flags = {};
+    this.relationships = {};
+    this.history = [];
   }
-
-  // 加载剧情场景
+  
   loadScene(sceneId) {
-    const scene = STORY_SCENES[sceneId]
-    if (!scene) return null
-
-    // 检查前置条件
-    if (scene.conditions && !this.checkConditions(scene.conditions)) {
-      return this.getAlternativeScene(scene)
+    const scene = SCENES[sceneId];
+    if (!scene) return false;
+    
+    this.currentScene = scene;
+    this.history.push(sceneId);
+    
+    // 检查条件
+    if (scene.condition && !scene.condition(this.flags)) {
+      return this.loadScene(scene.alternative);
     }
-
-    // 处理伏笔
-    if (scene.foreshadow) {
-      this埋设伏笔(scene.foreshadow)
-    }
-
-    this.currentScene = scene
-    return scene
+    
+    // 显示场景
+    this.displayScene(scene);
+    
+    return true;
   }
-
-  // 检查条件
-  checkConditions(conditions) {
-    return conditions.every(condition => {
-      const value = this.storyFlags.get(condition.flag)
-      switch (condition.operator) {
-        case '==': return value === condition.value
-        case '!=': return value !== condition.value
-        case '>': return value > condition.value
-        case '<': return value < condition.value
-        case '>=': return value >= condition.value
-        case '<=': return value <= condition.value
-        case 'contains': return Array.isArray(value) && value.includes(condition.value)
-        default: return false
+  
+  makeChoice(choiceId) {
+    const choice = this.currentScene.choices.find(c => c.id === choiceId);
+    if (!choice) return false;
+    
+    // 设置标志
+    if (choice.setFlags) {
+      Object.assign(this.flags, choice.setFlags);
+    }
+    
+    // 改变关系
+    if (choice.relationshipChange) {
+      for (const [char, change] of Object.entries(choice.relationshipChange)) {
+        this.relationships[char] = (this.relationships[char] || 0) + change;
       }
-    })
-  }
-
-  // 埋设伏笔
-  埋设伏笔(foreshadow) {
-    this.foreshadows.set(foreshadow.id, {
-      id: foreshadow.id,
-      description: foreshadow.description,
-      埋设时间: Date.now(),
-      揭示条件: foreshadow.revealCondition,
-      已揭示: false
-    })
-  }
-
-  // 检查伏笔揭示
-  checkForeshadowReveals() {
-    const revealed = []
-    this.foreshadows.forEach((foreshadow, id) => {
-      if (!foreshadow.已揭示 && this.checkConditions(foreshadow.揭示条件)) {
-        foreshadow.已揭示 = true
-        revealed.push(foreshadow)
-      }
-    })
-    return revealed
-  }
-
-  // 做出选择
-  makeChoice(choiceId, optionId) {
-    const choice = this.currentScene.choices.find(c => c.id === choiceId)
-    if (!choice) return null
-
-    const option = choice.options.find(o => o.id === optionId)
-    if (!option) return null
-
-    // 记录选择
-    this.choices.push({
-      sceneId: this.currentScene.id,
-      choiceId,
-      optionId,
-      timestamp: Date.now()
-    })
-
-    // 应用效果
-    if (option.effects) {
-      this.applyEffects(option.effects)
     }
-
-    // 设置剧情标记
-    if (option.flag) {
-      this.storyFlags.set(option.flag.key, option.flag.value)
-    }
-
-    // 返回下一个场景
-    return option.nextScene
+    
+    // 跳转到下一个场景
+    return this.loadScene(choice.nextScene);
   }
-
-  // 应用效果
-  applyEffects(effects) {
-    effects.forEach(effect => {
-      switch (effect.type) {
-        case 'flag':
-          this.storyFlags.set(effect.key, effect.value)
-          break
-        case 'variable':
-          const current = this.variables.get(effect.key) || 0
-          this.variables.set(effect.key, current + effect.value)
-          break
-        case 'foreshadow':
-          this.埋设伏笔(effect)
-          break
-      }
-    })
+  
+  setFlag(key, value) {
+    this.flags[key] = value;
+  }
+  
+  getFlag(key) {
+    return this.flags[key];
   }
 }
+
+const SCENES = {
+  start: {
+    text: '你醒来发现自己在一个陌生的房间里...',
+    choices: [
+      { id: 'explore', text: '探索房间', nextScene: 'explore_room', setFlags: { explored: true } },
+      { id: 'wait', text: '等待有人来', nextScene: 'wait_for_help' }
+    ]
+  },
+  explore_room: {
+    condition: (flags) => flags.explored,
+    text: '你在房间里发现了一把钥匙...',
+    choices: [
+      { id: 'take', text: '拿起钥匙', nextScene: 'take_key', setFlags: { hasKey: true } },
+      { id: 'leave', text: '放下钥匙', nextScene: 'leave_key' }
+    ]
+  }
+};
 ```
 
-### 2. 伏笔系统 (ForeshadowSystem.js)
-
+### 2. 伏笔系统
 ```javascript
-export class ForeshadowSystem {
+class ForeshadowSystem {
   constructor() {
-    this.伏笔列表 = new Map()
-    this.伏笔链 = []  // 伏笔之间的关联
+    this.foreshadows = [];
+    this.revealed = [];
   }
-
-  // 埋设伏笔
-  埋设伏笔(config) {
-    const 伏笔 = {
+  
+  addForeshadow(config) {
+    this.foreshadows.push({
       id: config.id,
-      名称: config.name,
-      描述: config.description,
-      类型: config.type,  // '线索', '暗示', '铺垫', '悬念'
-      埋设场景: config.scene,
-      埋设时间: Date.now(),
-      揭示条件: config.revealCondition,
-      揭示场景: null,
-      已揭示: false,
-      重要程度: config.importance || 'normal'  // 'low', 'normal', 'high', 'critical'
-    }
-
-    this.伏笔列表.set(伏笔.id, 伏笔)
-
-    // 记录伏笔链
-    if (config.relatedTo) {
-      this.伏笔链.push({
-        源: config.id,
-        目标: config.relatedTo,
-        关系: config.relation || '相关'
-      })
-    }
-
-    return 伏笔
+      hint: config.hint,
+      revealScene: config.revealScene,
+      revealed: false
+    });
   }
-
-  // 检查伏笔揭示
-  checkReveals(storyFlags) {
-    const revealed = []
-
-    this.伏笔列表.forEach((伏笔, id) => {
-      if (伏笔.已揭示) return
-
-      const shouldReveal = this.evaluateCondition(伏笔.揭示条件, storyFlags)
-      if (shouldReveal) {
-        伏笔.已揭示 = true
-        伏笔.揭示时间 = Date.now()
-        revealed.push(伏笔)
-
-        // 检查关联伏笔
-        const related = this.getRelatedForeshadows(id)
-        related.forEach(r => {
-          if (!r.已揭示 && this.canAutoReveal(r, storyFlags)) {
-            r.已揭示 = true
-            r.揭示时间 = Date.now()
-            revealed.push(r)
-          }
-        })
+  
+  checkReveal(sceneId) {
+    for (const foreshadow of this.foreshadows) {
+      if (!foreshadow.revealed && foreshadow.revealScene === sceneId) {
+        this.revealForeshadow(foreshadow);
       }
-    })
-
-    return revealed
-  }
-
-  // 获取伏笔摘要
-  getSummary() {
-    const total = this.伏笔列表.size
-    const revealed = Array.from(this.伏笔列表.values()).filter(f => f.已揭示).length
-    const pending = total - revealed
-
-    return {
-      总数: total,
-      已揭示: revealed,
-      待揭示: pending,
-      揭示率: total > 0 ? (revealed / total * 100).toFixed(1) + '%' : '0%'
     }
   }
-
-  // 获取伏笔链
-  getForeshadowChain(id) {
-    const chain = []
-    let current = id
-
-    while (current) {
-      const 伏笔 = this.伏笔列表.get(current)
-      if (!伏笔) break
-
-      chain.push(伏笔)
-      const link = this.伏笔链.find(l => l.目标 === current)
-      current = link ? link.源 : null
-    }
-
-    return chain.reverse()
+  
+  revealForeshadow(foreshadow) {
+    foreshadow.revealed = true;
+    this.revealed.push(foreshadow);
+    
+    // 显示伏笔回收提示
+    this.showMessage(`伏笔回收: ${foreshadow.hint}`);
   }
 }
+
+const FORESHADOWS = [
+  { id: 'mysterious_letter', hint: '你之前看到的神秘信件...', revealScene: 'chapter3_reveal' },
+  { id: 'strange_sound', hint: '你之前听到的奇怪声音...', revealScene: 'chapter5_reveal' }
+];
 ```
 
-### 3. 角色关系系统 (RelationshipSystem.js)
-
+### 3. 角色关系系统
 ```javascript
-export class RelationshipSystem {
+class RelationshipSystem {
   constructor() {
-    this.characters = new Map()
-    this.relationships = new Map()  // characterA-characterB -> relationship
+    this.characters = {};
   }
-
+  
   addCharacter(config) {
-    this.characters.set(config.id, {
-      id: config.id,
+    this.characters[config.id] = {
       name: config.name,
-      description: config.description,
-      personality: config.personality || [],
-      好感度: 50,
-      信任值: 50,
-      背景故事: config.backstory || ''
-    })
+      trust: 0,
+      affection: 0,
+      flags: {}
+    };
   }
-
-  // 更新好感度
-  updateAffinity(characterId, delta, reason) {
-    const character = this.characters.get(characterId)
-    if (!character) return
-
-    const oldValue = character.好感度
-    character.好感度 = Math.max(0, Math.min(100, character.好感度 + delta))
-
+  
+  changeTrust(characterId, amount) {
+    const char = this.characters[characterId];
+    if (!char) return;
+    
+    char.trust = Math.max(-100, Math.min(100, char.trust + amount));
+    this.checkRelationshipChange(characterId);
+  }
+  
+  changeAffection(characterId, amount) {
+    const char = this.characters[characterId];
+    if (!char) return;
+    
+    char.affection = Math.max(-100, Math.min(100, char.affection + amount));
+    this.checkRelationshipChange(characterId);
+  }
+  
+  checkRelationshipChange(characterId) {
+    const char = this.characters[characterId];
+    
+    // 检查关系变化
+    if (char.trust >= 50 && !char.flags.highTrust) {
+      char.flags.highTrust = true;
+      this.onRelationshipChange(characterId, 'highTrust');
+    }
+    
+    if (char.affection >= 50 && !char.flags.highAffection) {
+      char.flags.highAffection = true;
+      this.onRelationshipChange(characterId, 'highAffection');
+    }
+  }
+  
+  getRelationship(characterId) {
+    const char = this.characters[characterId];
+    if (!char) return null;
+    
     return {
-      characterId,
-      oldValue,
-      newValue: character.好感度,
-      delta,
-      reason
-    }
+      trust: char.trust,
+      affection: char.affection,
+      level: this.getRelationshipLevel(char)
+    };
   }
+  
+  getRelationshipLevel(char) {
+    const total = char.trust + char.affection;
+    if (total >= 80) return 'soulmate';
+    if (total >= 50) return 'close';
+    if (total >= 20) return 'friend';
+    if (total >= 0) return 'acquaintance';
+    return 'stranger';
+  }
+}
+```
 
-  // 更新信任值
-  updateTrust(characterId, delta, reason) {
-    const character = this.characters.get(characterId)
-    if (!character) return
-
-    const oldValue = character.信任值
-    character.信任值 = Math.max(0, Math.min(100, character.信任值 + delta))
-
+### 4. 存档系统
+```javascript
+class SaveSystem {
+  constructor() {
+    this.slots = 3;
+  }
+  
+  save(slot, gameState) {
+    const saveData = {
+      timestamp: Date.now(),
+      scene: gameState.currentScene,
+      flags: gameState.flags,
+      relationships: gameState.relationships,
+      history: gameState.history
+    };
+    
+    localStorage.setItem(`save_${slot}`, JSON.stringify(saveData));
+  }
+  
+  load(slot) {
+    const data = localStorage.getItem(`save_${slot}`);
+    if (!data) return null;
+    
+    return JSON.parse(data);
+  }
+  
+  getSaveInfo(slot) {
+    const data = this.load(slot);
+    if (!data) return null;
+    
     return {
-      characterId,
-      oldValue,
-      newValue: character.信任值,
-      delta,
-      reason
-    }
-  }
-
-  // 获取关系状态
-  getRelationshipStatus(charA, charB) {
-    const key = `${charA}-${charB}`
-    const relationship = this.relationships.get(key)
-
-    if (!relationship) return '陌生人'
-
-    const affinity = relationship.好感度
-    const trust = relationship.信任值
-
-    if (affinity >= 80 && trust >= 80) return '挚友'
-    if (affinity >= 60 && trust >= 60) return '好友'
-    if (affinity >= 40 && trust >= 40) return '熟人'
-    if (affinity < 20 && trust < 20) return '敌对'
-    return '普通'
-  }
-
-  // 触发关系事件
-  triggerRelationshipEvent(charA, charB, event) {
-    const key = `${charA}-${charB}`
-    let relationship = this.relationships.get(key)
-
-    if (!relationship) {
-      relationship = { 好感度: 50, 信任值: 50, 事件历史: [] }
-      this.relationships.set(key, relationship)
-    }
-
-    relationship.事件历史.push({
-      时间: Date.now(),
-      事件: event,
-      影响: event.effects
-    })
-
-    // 应用效果
-    if (event.effects) {
-      if (event.effects.好感度) relationship.好感度 += event.effects.好感度
-      if (event.effects.信任值) relationship.信任值 += event.effects.信任值
-    }
+      timestamp: new Date(data.timestamp).toLocaleString(),
+      scene: data.scene,
+      playTime: data.playTime
+    };
   }
 }
 ```
 
-### 4. 剧情场景数据 (storyScenes.js)
-
+### 5. 文本显示系统
 ```javascript
-export const STORY_SCENES = {
-  '序章_开始': {
-    id: '序章_开始',
-    title: '序章：命运的开始',
-    剧情: [
-      { speaker: '旁白', text: '在一个平静的早晨，你收到了一封神秘的信件...' },
-      { speaker: '旁白', text: '信中写着："你被选中了，今晚午夜，老地方见。"' },
-      { speaker: '主角', text: '这是什么？谁寄来的？' }
-    ],
-    伏笔: {
-      id: '神秘信件',
-      name: '神秘信件',
-      description: '一封来源不明的信件，暗示着某种命运',
-      type: '悬念',
-      revealCondition: { flag: '知道信件来源', value: true }
-    },
-    choices: [
-      {
-        id: '序章_选择1',
-        question: '你决定怎么做？',
-        options: [
-          {
-            id: '赴约',
-            text: '赴约 - 去老地方看看',
-            effects: [{ type: 'flag', key: '选择赴约', value: true }],
-            nextScene: '序章_赴约'
-          },
-          {
-            id: '忽略',
-            text: '忽略 - 当作恶作剧',
-            effects: [{ type: 'flag', key: '选择忽略', value: true }],
-            nextScene: '序章_忽略'
-          }
-        ]
-      }
-    ]
-  },
-
-  '序章_赴约': {
-    id: '序章_赴约',
-    title: '序章：神秘的会面',
-    剧情: [
-      { speaker: '旁白', text: '你来到了老地方，一个废弃的仓库...' },
-      { speaker: '神秘人', text: '你来了，我等你很久了。' },
-      { speaker: '主角', text: '你是谁？这封信是你寄的？' },
-      { speaker: '神秘人', text: '我是谁不重要，重要的是你将要面对的...' }
-    ],
-    伏笔: {
-      id: '神秘人身份',
-      name: '神秘人身份',
-      description: '神秘人似乎知道很多关于你的事情',
-      type: '铺垫',
-      revealCondition: { flag: '知道神秘人身份', value: true }
-    },
-    人物影响: [
-      { characterId: '神秘人', 好感度: +10, 原因: '选择赴约' }
-    ],
-    choices: [
-      {
-        id: '序章_选择2',
-        question: '你如何回应？',
-        options: [
-          {
-            id: '询问',
-            text: '询问 - 你到底是谁？',
-            effects: [
-              { type: 'flag', key: '主动询问', value: true },
-              { type: 'foreshadow', id: '询问伏笔', description: '你的追问让神秘人更加警惕' }
-            ],
-            nextScene: '序章_询问'
-          },
-          {
-            id: '倾听',
-            text: '倾听 - 让他继续说',
-            effects: [{ type: 'flag', key: '选择倾听', value: true }],
-            nextScene: '序章_倾听'
-          }
-        ]
-      }
-    ]
+class TextDisplay {
+  constructor() {
+    this.textQueue = [];
+    this.currentText = '';
+    this.charIndex = 0;
+    this.speed = 30; // 每个字符的毫秒数
+  }
+  
+  showText(text, speaker) {
+    this.textQueue.push({ text, speaker });
+    if (!this.isDisplaying) {
+      this.displayNext();
+    }
+  }
+  
+  displayNext() {
+    if (this.textQueue.length === 0) {
+      this.isDisplaying = false;
+      return;
+    }
+    
+    const { text, speaker } = this.textQueue.shift();
+    this.currentText = text;
+    this.speaker = speaker;
+    this.charIndex = 0;
+    this.isDisplaying = true;
+    
+    this.typeWriter();
+  }
+  
+  typeWriter() {
+    if (this.charIndex >= this.currentText.length) {
+      this.isDisplaying = false;
+      return;
+    }
+    
+    this.charIndex++;
+    this.displayText(this.currentText.substring(0, this.charIndex));
+    
+    setTimeout(() => this.typeWriter(), this.speed);
+  }
+  
+  skip() {
+    this.charIndex = this.currentText.length;
+    this.displayText(this.currentText);
+    this.isDisplaying = false;
   }
 }
 ```
 
-## 剧情设计要点
+## 迭代策略
 
-### 伏笔设计原则
+### 第一版：基础剧情
+- 简单剧情
+- 2 个选择
+- 基础 UI
+- 文字显示
 
-| 类型 | 说明 | 示例 |
-|------|------|------|
-| **线索型** | 直接指向真相的证据 | 一张照片、一段对话 |
-| **暗示型** | 间接暗示未来事件 | 角色的一句话、环境描写 |
-| **铺垫型** | 为后续剧情做铺垫 | 角色的背景故事、历史事件 |
-| **悬念型** | 制造悬念引发好奇 | 神秘信件、失踪事件 |
+### 第二版：分支剧情
+- 多条剧情线
+- 选择系统
+- 存档系统
+- 角色立绘
 
-### 伏笔回收策略
+### 第三版：关系系统
+- 角色关系
+- 好感度系统
+- 多结局
+- 伏笔系统
 
-1. **自动回收**：当条件满足时自动揭示
-2. **手动回收**：玩家主动触发揭示
-3. **渐进回收**：分多次逐步揭示
-4. **反转回收**：揭示时带来意想不到的反转
+### 第四版：深度玩法
+- 10 个结局
+- 成就系统
+- 图鉴系统
+- 音乐系统
 
-### 选择影响追踪
+### 第五版：变现
+- 看广告解锁章节
+- 内购系统
+- 社交分享
+- 推送通知
 
-```javascript
-// 选择影响记录
-const choiceImpact = {
-  '选择赴约': {
-    直接影响: '进入主线剧情',
-    间接影响: '增加神秘人好感度',
-    长期影响: '解锁隐藏结局'
-  },
-  '选择忽略': {
-    直接影响: '错过主线剧情',
-    间接影响: '触发平行剧情',
-    长期影响: '只能达成普通结局'
-  }
-}
-```
+## 常见错误
 
-## 游戏玩法
-
-1. **阅读剧情**：跟随故事发展
-2. **做出选择**：在关键节点做出决定
-3. **收集线索**：发现并记住伏笔
-4. **推进剧情**：解锁新场景和角色
-5. **揭示伏笔**：条件满足时伏笔自动揭示
-6. **达成结局**：根据选择和伏笔触发不同结局
-
-## 扩展点
-
-- 添加新场景：在 `STORY_SCENES` 中定义
-- 添加新角色：在 `CharacterConfig` 中定义
-- 添加新伏笔类型：在 `ForeshadowSystem` 中扩展
-- 添加成就系统：创建 `AchievementManager`
-- 添加剧情回溯：创建 `StoryTimeline`
+1. **选择没有意义**：每个选择都要影响剧情
+2. **剧情太平淡**：要有起伏和反转
+3. **角色太扁平**：角色要有性格和成长
+4. **伏笔没回收**：埋的伏笔后面要回收
+5. **没有存档**：长剧情要有存档功能

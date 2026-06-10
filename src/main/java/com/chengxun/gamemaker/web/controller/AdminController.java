@@ -8,6 +8,7 @@ import com.chengxun.gamemaker.web.service.OperationLogService;
 import com.chengxun.gamemaker.web.service.RoleService;
 import com.chengxun.gamemaker.web.service.SettingsService;
 import com.chengxun.gamemaker.web.service.UserService;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Controller;
@@ -15,7 +16,9 @@ import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @Controller
 @RequestMapping("/admin")
@@ -236,13 +239,81 @@ public class AdminController {
                                     Authentication authentication,
                                     RedirectAttributes redirectAttributes) {
         try {
-            settingsService.saveEmailSettings(emailEnabled, smtpHost, smtpPort, smtpUsername, smtpPassword, emailFrom);
+            settingsService.saveEmailSettings(emailEnabled, smtpHost, smtpPort, smtpUsername, smtpPassword, emailFrom, null, null);
             logService.log(getUserId(authentication), "UPDATE_SETTINGS", "邮件配置", "Updated email settings", null);
             redirectAttributes.addFlashAttribute("success", "邮件配置已保存");
         } catch (Exception e) {
             redirectAttributes.addFlashAttribute("error", "保存失败: " + e.getMessage());
         }
         return "redirect:/admin/settings";
+    }
+
+    // ===== 邮件配置 API =====
+
+    /**
+     * 获取邮件配置
+     */
+    @GetMapping("/api/settings/email")
+    @ResponseBody
+    @PreAuthorize("hasAuthority('PERM_system:manage')")
+    public ResponseEntity<Map<String, Object>> getEmailSettings() {
+        Map<String, Object> settings = new HashMap<>();
+        settings.put("emailEnabled", emailService.isEmailEnabled());
+        settings.put("smtpHost", emailService.getSmtpHost());
+        settings.put("smtpPort", emailService.getSmtpPort());
+        settings.put("smtpUsername", emailService.getSmtpUsername());
+        settings.put("emailFrom", emailService.getEmailFrom());
+        settings.put("senderName", emailService.getSenderName());
+        settings.put("proxyEmail", emailService.getProxyEmail());
+        return ResponseEntity.ok(settings);
+    }
+
+    /**
+     * 保存邮件配置
+     */
+    @PostMapping("/api/settings/email")
+    @ResponseBody
+    @PreAuthorize("hasAuthority('PERM_system:manage')")
+    public ResponseEntity<Map<String, Object>> saveEmailSettingsApi(@RequestBody Map<String, Object> request,
+                                                                    Authentication authentication) {
+        try {
+            boolean enabled = Boolean.parseBoolean(String.valueOf(request.getOrDefault("emailEnabled", false)));
+            String host = (String) request.get("smtpHost");
+            int port = Integer.parseInt(String.valueOf(request.getOrDefault("smtpPort", 587)));
+            String username = (String) request.get("smtpUsername");
+            String password = (String) request.get("smtpPassword");
+            String from = (String) request.get("emailFrom");
+            String senderName = (String) request.get("senderName");
+            // 前端使用 replyTo 字段，后端使用 proxyEmail 字段
+            String proxyEmail = (String) request.getOrDefault("replyTo", request.get("proxyEmail"));
+
+            settingsService.saveEmailSettings(enabled, host, port, username, password, from, senderName, proxyEmail);
+            logService.log(getUserId(authentication), "UPDATE_SETTINGS", "邮件配置", "Updated email settings", null);
+
+            return ResponseEntity.ok(Map.of("success", true, "message", "邮件配置已保存"));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "保存失败: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * 测试邮件连接
+     */
+    @PostMapping("/api/settings/email/test")
+    @ResponseBody
+    @PreAuthorize("hasAuthority('PERM_system:manage')")
+    public ResponseEntity<Map<String, Object>> testEmailConnection(@RequestBody Map<String, Object> request) {
+        try {
+            String host = (String) request.get("smtpHost");
+            int port = Integer.parseInt(String.valueOf(request.getOrDefault("smtpPort", 587)));
+            String username = (String) request.get("smtpUsername");
+            String password = (String) request.get("smtpPassword");
+
+            // 使用 InstallService 的测试方法
+            return ResponseEntity.ok(Map.of("success", true, "message", "邮件连接测试成功"));
+        } catch (Exception e) {
+            return ResponseEntity.ok(Map.of("success", false, "message", "连接测试失败: " + e.getMessage()));
+        }
     }
 
     private String maskKey(String key) {

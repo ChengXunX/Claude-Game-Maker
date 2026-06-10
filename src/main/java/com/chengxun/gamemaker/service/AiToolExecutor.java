@@ -176,6 +176,18 @@ public class AiToolExecutor {
                     return executeAddMcpServer(params);
                 case "test_mcp_server":
                     return executeTestMcpServer(params);
+                case "get_mcp_server":
+                    return executeGetMcpServer(params);
+                case "toggle_mcp_server":
+                    return executeToggleMcpServer(params);
+                case "delete_mcp_server":
+                    return executeDeleteMcpServer(params);
+                case "list_mcp_tools":
+                    return executeListMcpTools(params);
+                case "bind_mcp_to_agent":
+                    return executeBindMcpToAgent(params);
+                case "install_mcp_from_template":
+                    return executeInstallMcpFromTemplate(params);
 
                 // ===== 系统监控 =====
                 case "list_alerts":
@@ -228,6 +240,64 @@ public class AiToolExecutor {
                     return executeGetSystemInfo();
                 case "get_diagnostic":
                     return executeGetDiagnostic();
+
+                // ===== 文件管理 =====
+                case "search_files":
+                    return executeSearchFiles(params);
+                case "list_files":
+                    return executeListFiles(params);
+                case "get_file_usage":
+                    return executeGetFileUsage(params);
+
+                // ===== Agent 招聘 =====
+                case "recruit_agent":
+                    return executeRecruitAgent(params);
+                case "list_recruited_agents":
+                    return executeListRecruitedAgents();
+                case "delete_agent":
+                    return executeDeleteAgent(params);
+
+                // ===== 项目详情 =====
+                case "get_project_detail":
+                    return executeGetProjectDetail(params);
+                case "set_project_goal":
+                    return executeSetProjectGoal(params);
+                case "get_project_milestones":
+                    return executeGetProjectMilestones(params);
+
+                // ===== 调度器 =====
+                case "get_scheduler_status":
+                    return executeGetSchedulerStatus();
+                case "trigger_schedule":
+                    return executeTriggerSchedule();
+
+                // ===== 诊断 =====
+                case "run_diagnostic":
+                    return executeRunDiagnostic();
+                case "quick_health_check":
+                    return executeQuickHealthCheck();
+
+                // ===== 代码浏览 =====
+                case "browse_code":
+                    return executeBrowseCode(params);
+                case "read_code_file":
+                    return executeReadCodeFile(params);
+
+                // ===== 通知模板 =====
+                case "list_notification_templates":
+                    return executeListNotificationTemplates();
+
+                // ===== 自定义Agent模板 =====
+                case "list_custom_agent_templates":
+                    return executeListCustomAgentTemplates();
+                case "create_custom_agent_template":
+                    return executeCreateCustomAgentTemplate(params);
+
+                // ===== 知识库 =====
+                case "get_knowledge_stats":
+                    return executeGetKnowledgeStats();
+                case "get_solutions":
+                    return executeGetSolutions(params);
 
                 // ===== 通用API调用 =====
                 case "call_api":
@@ -604,6 +674,71 @@ public class AiToolExecutor {
         }
     }
 
+    private Map<String, Object> executeGetMcpServer(Map<String, Object> params) {
+        String serverId = (String) params.get("serverId");
+        try {
+            var server = mcpService.getServer(Long.parseLong(serverId));
+            if (server == null) return Map.of("success", false, "error", "MCP服务器不存在");
+            var tools = mcpService.getTools(Long.parseLong(serverId));
+            return Map.of("success", true, "server", server, "tools", tools);
+        } catch (Exception e) {
+            return Map.of("success", false, "error", e.getMessage());
+        }
+    }
+
+    private Map<String, Object> executeToggleMcpServer(Map<String, Object> params) {
+        String serverId = (String) params.get("serverId");
+        try {
+            var result = mcpService.toggleServer(Long.parseLong(serverId));
+            return Map.of("success", true, "message", "MCP服务器状态已切换", "enabled", result.isEnabled());
+        } catch (Exception e) {
+            return Map.of("success", false, "error", e.getMessage());
+        }
+    }
+
+    private Map<String, Object> executeDeleteMcpServer(Map<String, Object> params) {
+        String serverId = (String) params.get("serverId");
+        try {
+            mcpService.deleteServer(Long.parseLong(serverId));
+            return Map.of("success", true, "message", "MCP服务器已删除");
+        } catch (Exception e) {
+            return Map.of("success", false, "error", e.getMessage());
+        }
+    }
+
+    private Map<String, Object> executeListMcpTools(Map<String, Object> params) {
+        String serverId = (String) params.get("serverId");
+        try {
+            var tools = mcpService.getTools(Long.parseLong(serverId));
+            return Map.of("success", true, "tools", tools, "total", tools.size());
+        } catch (Exception e) {
+            return Map.of("success", false, "error", e.getMessage());
+        }
+    }
+
+    private Map<String, Object> executeBindMcpToAgent(Map<String, Object> params) {
+        String agentRole = (String) params.get("agentRole");
+        String projectId = (String) params.get("projectId");
+        String serverId = (String) params.get("serverId");
+        try {
+            var binding = mcpService.bindServer(agentRole, projectId, Long.parseLong(serverId));
+            return Map.of("success", true, "message", "MCP服务器已绑定到Agent", "bindingId", binding.getId());
+        } catch (Exception e) {
+            return Map.of("success", false, "error", e.getMessage());
+        }
+    }
+
+    private Map<String, Object> executeInstallMcpFromTemplate(Map<String, Object> params) {
+        String templateKey = (String) params.get("templateKey");
+        String projectId = (String) params.getOrDefault("projectId", null);
+        try {
+            var server = mcpService.installFromTemplate(templateKey, projectId, null);
+            return Map.of("success", true, "message", "MCP服务器从模板安装成功", "serverId", server.getId(), "name", server.getName());
+        } catch (Exception e) {
+            return Map.of("success", false, "error", "安装失败: " + e.getMessage());
+        }
+    }
+
     // ===== 系统监控 =====
 
     private Map<String, Object> executeListAlerts() {
@@ -874,6 +1009,247 @@ public class AiToolExecutor {
         } catch (Exception e) {
             return Map.of("success", false, "error", e.getMessage());
         }
+    }
+
+    // ===== 文件管理 =====
+
+    @Autowired
+    private com.chengxun.gamemaker.web.service.AgentFileService fileService;
+
+    private Map<String, Object> executeSearchFiles(Map<String, Object> params) {
+        String keyword = (String) params.get("keyword");
+        String agentId = (String) params.get("agentId");
+        try {
+            org.springframework.data.domain.Page<com.chengxun.gamemaker.web.entity.AgentFile> result;
+            if (agentId != null && !agentId.isEmpty()) {
+                result = fileService.searchFiles(agentId, keyword, org.springframework.data.domain.PageRequest.of(0, 20));
+            } else {
+                result = fileService.searchFilesGlobal(keyword, org.springframework.data.domain.PageRequest.of(0, 20));
+            }
+            return Map.of("success", true, "files", result.getContent(), "total", result.getTotalElements());
+        } catch (Exception e) {
+            return Map.of("success", false, "error", e.getMessage());
+        }
+    }
+
+    private Map<String, Object> executeListFiles(Map<String, Object> params) {
+        String agentId = (String) params.get("agentId");
+        try {
+            org.springframework.data.domain.Page<com.chengxun.gamemaker.web.entity.AgentFile> result;
+            if (agentId != null && !agentId.isEmpty()) {
+                result = fileService.getAgentFiles(agentId, org.springframework.data.domain.PageRequest.of(0, 20));
+            } else {
+                result = fileService.getAllFiles(org.springframework.data.domain.PageRequest.of(0, 20));
+            }
+            return Map.of("success", true, "files", result.getContent(), "total", result.getTotalElements());
+        } catch (Exception e) {
+            return Map.of("success", false, "error", e.getMessage());
+        }
+    }
+
+    private Map<String, Object> executeGetFileUsage(Map<String, Object> params) {
+        String agentId = (String) params.get("agentId");
+        try {
+            var usage = fileService.getStorageUsage(agentId);
+            return Map.of("success", true, "usage", usage);
+        } catch (Exception e) {
+            return Map.of("success", false, "error", e.getMessage());
+        }
+    }
+
+    // ===== Agent 招聘 =====
+
+    @Autowired
+    private com.chengxun.gamemaker.service.AgentRecruitmentService recruitmentService;
+
+    private Map<String, Object> executeRecruitAgent(Map<String, Object> params) {
+        String producerId = (String) params.get("producerId");
+        String role = (String) params.get("role");
+        String name = (String) params.getOrDefault("name", null);
+        try {
+            // 获取项目工作目录
+            var producer = agentManager.getAgent(producerId);
+            String workDir = producer != null ? producer.getDefinition().getWorkDir() : "/tmp";
+            var result = recruitmentService.recruitAgent(producerId, role, name, workDir);
+            return Map.of("success", true, "message", "Agent招聘成功: " + role, "agentId", result.getId());
+        } catch (Exception e) {
+            return Map.of("success", false, "error", "招聘失败: " + e.getMessage());
+        }
+    }
+
+    private Map<String, Object> executeListRecruitedAgents() {
+        try {
+            var agents = agentManager.getAllAgents();
+            List<Map<String, Object>> list = new ArrayList<>();
+            for (var agent : agents) {
+                Map<String, Object> info = new HashMap<>();
+                info.put("id", agent.getId());
+                info.put("name", agent.getName());
+                info.put("role", agent.getRole());
+                info.put("alive", agent.isAlive());
+                list.add(info);
+            }
+            return Map.of("success", true, "agents", list, "total", list.size());
+        } catch (Exception e) {
+            return Map.of("success", false, "error", e.getMessage());
+        }
+    }
+
+    private Map<String, Object> executeDeleteAgent(Map<String, Object> params) {
+        String agentId = (String) params.get("agentId");
+        try {
+            agentManager.removeAgent(agentId);
+            return Map.of("success", true, "message", "Agent已删除: " + agentId);
+        } catch (Exception e) {
+            return Map.of("success", false, "error", "删除失败: " + e.getMessage());
+        }
+    }
+
+    // ===== 项目详情 =====
+
+    private Map<String, Object> executeGetProjectDetail(Map<String, Object> params) {
+        String projectId = (String) params.get("projectId");
+        try {
+            var project = projectManager.getProject(projectId);
+            if (project == null) {
+                return Map.of("success", false, "error", "项目不存在: " + projectId);
+            }
+            Map<String, Object> detail = new HashMap<>();
+            detail.put("id", project.getId());
+            detail.put("name", project.getName());
+            detail.put("description", project.getDescription());
+            detail.put("workDir", project.getWorkDir());
+            detail.put("status", project.getStatus());
+            detail.put("goal", project.getGoal());
+            detail.put("goalType", project.getGoalType());
+            detail.put("goalStatus", project.getGoalStatus());
+            detail.put("goalProgress", project.getGoalProgress());
+            detail.put("agentIds", project.getAgentIds());
+            return Map.of("success", true, "project", detail);
+        } catch (Exception e) {
+            return Map.of("success", false, "error", e.getMessage());
+        }
+    }
+
+    @Autowired
+    private com.chengxun.gamemaker.service.GoalService goalService;
+
+    private Map<String, Object> executeSetProjectGoal(Map<String, Object> params) {
+        String projectId = (String) params.get("projectId");
+        String goal = (String) params.get("goal");
+        String goalType = (String) params.getOrDefault("goalType", "CUSTOM");
+        try {
+            com.chengxun.gamemaker.model.GameProject.GoalType type;
+            try {
+                type = com.chengxun.gamemaker.model.GameProject.GoalType.valueOf(goalType.toUpperCase());
+            } catch (Exception e) {
+                type = com.chengxun.gamemaker.model.GameProject.GoalType.CUSTOM;
+            }
+            goalService.createGoal(projectId, goal, type, null);
+            return Map.of("success", true, "message", "项目目标已设置: " + goal);
+        } catch (Exception e) {
+            return Map.of("success", false, "error", "设置目标失败: " + e.getMessage());
+        }
+    }
+
+    private Map<String, Object> executeGetProjectMilestones(Map<String, Object> params) {
+        String projectId = (String) params.get("projectId");
+        try {
+            var milestones = goalService.getMilestones(projectId);
+            return Map.of("success", true, "milestones", milestones, "total", milestones.size());
+        } catch (Exception e) {
+            return Map.of("success", false, "error", e.getMessage());
+        }
+    }
+
+    // ===== 调度器 =====
+
+    @Autowired
+    private com.chengxun.gamemaker.service.AgentScheduler agentScheduler;
+
+    private Map<String, Object> executeGetSchedulerStatus() {
+        try {
+            var agentStatuses = agentScheduler.getAllAgentStatus();
+            var config = agentScheduler.getSchedulerConfig();
+            Map<String, Object> status = new HashMap<>();
+            status.put("agentCount", agentStatuses.size());
+            status.put("agents", agentStatuses);
+            status.put("config", config);
+            return Map.of("success", true, "scheduler", status);
+        } catch (Exception e) {
+            return Map.of("success", false, "error", e.getMessage());
+        }
+    }
+
+    private Map<String, Object> executeTriggerSchedule() {
+        try {
+            agentScheduler.triggerSchedule();
+            return Map.of("success", true, "message", "调度已触发");
+        } catch (Exception e) {
+            return Map.of("success", false, "error", "触发调度失败: " + e.getMessage());
+        }
+    }
+
+    // ===== 诊断（通过通用API调用实现） =====
+
+    private Map<String, Object> executeRunDiagnostic() {
+        return executeCallApi(Map.of("method", "POST", "path", "/api/diagnostic/run"), null);
+    }
+
+    private Map<String, Object> executeQuickHealthCheck() {
+        return executeCallApi(Map.of("method", "GET", "path", "/api/diagnostic/quick"), null);
+    }
+
+    // ===== 代码浏览（通过通用API调用实现） =====
+
+    private Map<String, Object> executeBrowseCode(Map<String, Object> params) {
+        String projectId = (String) params.get("projectId");
+        String path = (String) params.getOrDefault("path", "");
+        return executeCallApi(Map.of("method", "GET", "path", "/api/code-browser/tree/" + projectId + "?path=" + path), null);
+    }
+
+    private Map<String, Object> executeReadCodeFile(Map<String, Object> params) {
+        String projectId = (String) params.get("projectId");
+        String path = (String) params.get("path");
+        return executeCallApi(Map.of("method", "GET", "path", "/api/code-browser/content/" + projectId + "?path=" + path), null);
+    }
+
+    // ===== 通知模板（通过通用API调用实现） =====
+
+    private Map<String, Object> executeListNotificationTemplates() {
+        return executeCallApi(Map.of("method", "GET", "path", "/api/notification-templates"), null);
+    }
+
+    // ===== 自定义Agent模板 =====
+
+    private Map<String, Object> executeListCustomAgentTemplates() {
+        return executeCallApi(Map.of("method", "GET", "path", "/api/recruitment/custom-templates"), null);
+    }
+
+    private Map<String, Object> executeCreateCustomAgentTemplate(Map<String, Object> params) {
+        String role = (String) params.get("role");
+        String name = (String) params.get("name");
+        String description = (String) params.getOrDefault("description", "");
+        String systemPrompt = (String) params.getOrDefault("systemPrompt", "");
+        try {
+            String body = objectMapper.writeValueAsString(Map.of(
+                "role", role, "name", name, "description", description, "systemPrompt", systemPrompt
+            ));
+            return executeCallApi(Map.of("method", "POST", "path", "/api/recruitment/custom-templates", "body", body), null);
+        } catch (Exception e) {
+            return Map.of("success", false, "error", "创建模板失败: " + e.getMessage());
+        }
+    }
+
+    // ===== 知识库（通过通用API调用实现） =====
+
+    private Map<String, Object> executeGetKnowledgeStats() {
+        return executeCallApi(Map.of("method", "GET", "path", "/api/knowledge-base/stats"), null);
+    }
+
+    private Map<String, Object> executeGetSolutions(Map<String, Object> params) {
+        String problemType = (String) params.get("problemType");
+        return executeCallApi(Map.of("method", "GET", "path", "/api/knowledge-base/solutions/" + problemType), null);
     }
 
     // ===== 通用API调用 =====

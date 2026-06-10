@@ -26,7 +26,12 @@
         </el-form-item>
 
         <el-form-item label="邮箱" prop="email">
-          <el-input v-model="form.email" placeholder="请输入邮箱" />
+          <div v-if="emailChangePending" class="email-pending">
+            <el-tag type="warning" size="small">审批中</el-tag>
+            <span class="pending-email">{{ pendingNewEmail }}</span>
+            <el-button type="info" size="small" text @click="handleCancelEmailChange">取消申请</el-button>
+          </div>
+          <el-input v-else v-model="form.email" placeholder="请输入邮箱" />
         </el-form-item>
 
         <el-form-item label="头像URL" prop="avatar">
@@ -57,6 +62,13 @@
         <el-icon><Lock /></el-icon> 修改密码
       </el-button>
     </el-card>
+
+    <!-- 邮箱换绑验证码弹窗 -->
+    <EmailChangeDialog
+      v-model="showEmailChangeDialog"
+      :current-email="originalEmail"
+      @success="handleEmailChangeSuccess"
+    />
   </div>
 </template>
 
@@ -72,7 +84,8 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { authApi } from '@/api'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import EmailChangeDialog from '@/components/EmailChangeDialog.vue'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -80,6 +93,14 @@ const userStore = useUserStore()
 const formRef = ref(null)
 const isEditing = ref(false)
 const saving = ref(false)
+
+// 邮箱变更审批
+const emailChangePending = ref(false)
+const pendingNewEmail = ref('')
+const originalEmail = ref('')
+
+// 邮箱换绑验证码弹窗
+const showEmailChangeDialog = ref(false)
 
 /** 表单数据 */
 const form = ref({
@@ -119,6 +140,7 @@ const loadUserInfo = () => {
       avatar: user.avatar || '',
       roleName: user.role?.displayName || user.role?.name || ''
     }
+    originalEmail.value = user.email || ''
   }
 }
 
@@ -139,9 +161,56 @@ const handleSave = async () => {
     await formRef.value.validate()
     saving.value = true
 
+    // 检查邮箱是否变更
+    const emailChanged = form.value.email !== originalEmail.value && form.value.email !== ''
+
+    if (emailChanged) {
+      // 邮箱变更：检查是否可以走验证码换绑流程
+      try {
+        const checkRes = await authApi.checkEmailChangeCondition()
+
+        if (checkRes.success && checkRes.canUseVerification) {
+          // 可以走验证码换绑流程
+          // 先保存其他字段
+          await authApi.updateProfile({
+            nickname: form.value.nickname,
+            avatar: form.value.avatar
+          })
+          await userStore.getUserInfo()
+
+          // 弹出验证码换绑弹窗
+          showEmailChangeDialog.value = true
+          isEditing.value = false
+          return
+        } else {
+          // 走审批流程
+          await ElMessageBox.confirm(
+            '当前邮箱不可用，邮箱变更需要管理员审批，审批通过后新邮箱才会生效。是否继续？',
+            '邮箱变更确认',
+            { confirmButtonText: '提交审批', cancelButtonText: '取消', type: 'warning' }
+          )
+
+          await authApi.requestEmailChange({
+            newEmail: form.value.email,
+            reason: '用户主动变更邮箱'
+          })
+
+          emailChangePending.value = true
+          pendingNewEmail.value = form.value.email
+          form.value.email = originalEmail.value // 恢复原邮箱显示
+          isEditing.value = false
+          ElMessage.success('邮箱变更审批已提交，等待管理员审批')
+          return
+        }
+      } catch (e) {
+        if (e === 'cancel') return
+        throw e
+      }
+    }
+
+    // 非邮箱变更，直接保存
     await authApi.updateProfile({
       nickname: form.value.nickname,
-      email: form.value.email,
       avatar: form.value.avatar
     })
 
@@ -159,7 +228,27 @@ const handleSave = async () => {
   }
 }
 
-onMounted(() => {
+/** 取消邮箱变更申请 */
+const handleCancelEmailChange = () => {
+  emailChangePending.value = false
+  pendingNewEmail.value = ''
+  ElMessage.info('邮箱变更申请已取消')
+}
+
+/** 邮箱换绑成功回调 */
+const handleEmailChangeSuccess = async () => {
+  await userStore.getUserInfo()
+  loadUserInfo()
+  ElMessage.success('邮箱更换成功')
+}
+
+onMounted(async () => {
+  // 先从后端刷新用户数据，确保显示最新信息（如审批通过后的邮箱）
+  try {
+    await userStore.getUserInfo()
+  } catch (e) {
+    // 忽略刷新失败，使用缓存数据
+  }
   loadUserInfo()
 })
 </script>
@@ -191,6 +280,22 @@ onMounted(() => {
   .card-header {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  /* 邮箱审批中状态 */
+  .email-pending {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: #fdf6ec;
+    border-radius: 4px;
+    border: 1px solid #e6a23c;
+  }
+
+  .pending-email {
+    font-weight: 500;
+    color: #606266;
   }
 
   /* 表单标签宽度调整 */

@@ -138,8 +138,9 @@ public class SkillManager {
             Files.createDirectories(dir);
 
             String examplesStr = skill.getExamples() != null ? String.join(" | ", skill.getExamples()) : "";
-            String content = String.format("---\nname: %s\ndescription: %s\ntrigger: %s\nexamples: %s\n---\n\n%s",
-                skill.getName(), skill.getDescription(), skill.getTriggerPattern(), examplesStr, skill.getPrompt());
+            String category = skill.getCategory() != null ? skill.getCategory() : "custom";
+            String content = String.format("---\nname: %s\ndescription: %s\ntrigger: %s\ncategory: %s\nexamples: %s\n---\n\n%s",
+                skill.getName(), skill.getDescription(), skill.getTriggerPattern(), category, examplesStr, skill.getPrompt());
 
             Path skillPath = dir.resolve(skill.getId() + ".md");
             Files.writeString(skillPath, content);
@@ -175,7 +176,14 @@ public class SkillManager {
                 .forEach(path -> {
                     Skill skill = loadSkillFromPath(path);
                     if (skill != null) {
-                        skill.setCategory("custom");
+                        // 从文件内容中读取原始 category，不强制覆盖
+                        String content = readSkillFileContent(path);
+                        String originalCategory = extractFrontmatterField(content, "category");
+                        if (originalCategory != null && !originalCategory.isEmpty()) {
+                            skill.setCategory(originalCategory);
+                        } else {
+                            skill.setCategory("custom");
+                        }
                         globalSkills.put(skill.getId(), skill);
                     }
                 });
@@ -183,6 +191,37 @@ public class SkillManager {
         } catch (IOException e) {
             log.error("Failed to load custom global skills", e);
         }
+    }
+
+    /**
+     * 读取技能文件原始内容
+     */
+    private String readSkillFileContent(Path path) {
+        try {
+            return Files.readString(path);
+        } catch (IOException e) {
+            return "";
+        }
+    }
+
+    /**
+     * 从 YAML frontmatter 中提取字段
+     */
+    private String extractFrontmatterField(String content, String fieldName) {
+        if (content == null) return null;
+        String[] lines = content.split("\n");
+        boolean inFrontmatter = false;
+        for (String line : lines) {
+            if (line.trim().equals("---")) {
+                if (inFrontmatter) break;
+                inFrontmatter = true;
+                continue;
+            }
+            if (inFrontmatter && line.startsWith(fieldName + ":")) {
+                return line.substring(fieldName.length() + 1).trim();
+            }
+        }
+        return null;
     }
 
     // ===== 项目级别 SKILL 操作 =====

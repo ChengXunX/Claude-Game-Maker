@@ -3,14 +3,17 @@ package com.chengxun.gamemaker.web.controller;
 import com.chengxun.gamemaker.web.entity.NotificationTemplate;
 import com.chengxun.gamemaker.web.entity.NotificationTemplate.Category;
 import com.chengxun.gamemaker.web.entity.NotificationTemplate.Channel;
+import com.chengxun.gamemaker.web.entity.User;
 import com.chengxun.gamemaker.web.exception.BusinessException;
 import com.chengxun.gamemaker.web.service.NotificationTemplateService;
+import com.chengxun.gamemaker.web.service.UserService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -35,9 +38,12 @@ public class NotificationTemplateController {
     private static final Logger log = LoggerFactory.getLogger(NotificationTemplateController.class);
 
     private final NotificationTemplateService templateService;
+    private final UserService userService;
 
-    public NotificationTemplateController(NotificationTemplateService templateService) {
+    public NotificationTemplateController(NotificationTemplateService templateService,
+                                           UserService userService) {
         this.templateService = templateService;
+        this.userService = userService;
     }
 
     /**
@@ -181,5 +187,64 @@ public class NotificationTemplateController {
     @PreAuthorize("hasAuthority('PERM_notification:manage')")
     public ResponseEntity<Map<String, String>> getVariableDescriptions() {
         return ResponseEntity.ok(templateService.getVariableDescriptions());
+    }
+
+    /**
+     * 测试发送通知模板
+     * 使用系统配置发送真实的测试通知
+     * 邮件类型会发送给当前登录用户的邮箱
+     */
+    @Operation(summary = "测试发送", description = "使用系统配置发送测试通知")
+    @PostMapping("/{id}/test")
+    @PreAuthorize("hasAuthority('PERM_notification:manage')")
+    public ResponseEntity<Map<String, Object>> testSendTemplate(@PathVariable Long id,
+                                                                 Authentication authentication) {
+        try {
+            // 获取当前用户的邮箱
+            String userEmail = null;
+            if (authentication != null) {
+                User user = userService.getUserByUsername(authentication.getName());
+                if (user != null) {
+                    userEmail = user.getEmail();
+                }
+            }
+
+            Map<String, Object> result = templateService.testSendTemplate(id, userEmail);
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            log.error("测试发送通知失败: {}", e.getMessage());
+            return ResponseEntity.badRequest().body(Map.of(
+                "status", "error",
+                "message", e.getMessage()
+            ));
+        }
+    }
+
+    /**
+     * 测试发送邮件模板到指定邮箱
+     */
+    @Operation(summary = "测试发送邮件", description = "发送测试邮件到指定邮箱")
+    @PostMapping("/{id}/test-email")
+    @PreAuthorize("hasAuthority('PERM_notification:manage')")
+    public ResponseEntity<Map<String, Object>> testSendEmail(@PathVariable Long id,
+                                                              @RequestBody Map<String, String> request) {
+        try {
+            String toEmail = request.get("toEmail");
+            if (toEmail == null || toEmail.isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of(
+                    "status", "error",
+                    "message", "请提供收件邮箱地址"
+                ));
+            }
+
+            Map<String, Object> result = templateService.testSendEmailTemplate(id, toEmail);
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            log.error("测试发送邮件失败: {}", e.getMessage());
+            return ResponseEntity.badRequest().body(Map.of(
+                "status", "error",
+                "message", e.getMessage()
+            ));
+        }
     }
 }

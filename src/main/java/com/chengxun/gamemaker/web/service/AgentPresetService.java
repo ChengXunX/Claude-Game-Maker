@@ -228,6 +228,17 @@ public class AgentPresetService {
         createSystemPreset("标准数值策划", "numerical-planner", "数值策划 Agent，负责游戏数值设计、经济系统、平衡性", 3);
         createSystemPreset("标准 Git 专员", "git-commit", "Git 提交专员 Agent，负责代码提交、分支管理、版本控制", 2);
         createSystemPreset("标准测试员", "tester", "测试 Agent，负责功能测试、性能测试、Bug 报告", 2);
+        createSystemPreset("安全工程师", "security-expert", "安全工程师 Agent，负责代码安全审计、漏洞检测、反作弊系统", 3);
+        createSystemPreset("数据分析师", "data-analyst", "数据分析师 Agent，负责玩家行为分析、留存分析、付费分析", 3);
+        createSystemPreset("技术美术", "tech-artist", "技术美术 Agent，负责 Shader 开发、渲染优化、美术工具开发", 3);
+        createSystemPreset("产品经理", "product-manager", "产品经理 Agent，负责产品规划、需求分析、用户体验设计", 3);
+        createSystemPreset("本地化专员", "localization", "本地化专员 Agent，负责多语言翻译、文化适配、本地化流程", 2);
+        createSystemPreset("AI 工程师", "ai-engineer", "AI 工程师 Agent，负责 NPC 行为 AI、寻路算法、对话系统", 3);
+        createSystemPreset("性能优化师", "performance-engineer", "性能优化师 Agent，负责性能分析、瓶颈定位、优化方案", 3);
+        createSystemPreset("音频设计师", "audio-dev", "音频设计师 Agent，负责音效设计、背景音乐、音频系统", 2);
+        createSystemPreset("剧情策划", "narrative-planner", "剧情策划 Agent，负责世界观构建、角色设定、剧情设计", 3);
+        createSystemPreset("关卡设计师", "level-design", "关卡设计师 Agent，负责关卡流程、地图布局、难度曲线", 3);
+        createSystemPreset("运维工程师", "devops", "运维工程师 Agent，负责 CI/CD、服务器部署、监控告警", 2);
 
         log.info("System agent presets initialized");
     }

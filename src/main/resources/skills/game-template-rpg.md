@@ -1,11 +1,36 @@
 ---
-name: game-template-rpg
-description: RPG游戏模板 - 提供完整的RPG游戏项目骨架
-category: game-template
-triggerPattern: RPG, role-playing, 角色扮演, JRPG, adventure
+name: RPG游戏开发模板
+description: RPG游戏开发模板，适用于角色扮演、冒险类游戏
+trigger: RPG, role-playing, 角色扮演, JRPG, adventure, 冒险
+examples: Final Fantasy|Dragon Quest|Undertale|Persona|Pokémon
 ---
 
 # RPG 游戏模板
+
+## 游戏设计核心原则
+
+### 核心循环（每 5-10 分钟一轮）
+```
+探索地图 → 遇到敌人 → 战斗 → 获得奖励 → 升级 → 继续探索
+```
+- 战斗必须有**策略感**（不是无脑攻击）
+- 升级必须有**成长感**（属性提升、新技能解锁）
+- 剧情必须有**代入感**（玩家关心角色命运）
+
+### 玩家心理学
+- **收集欲**：装备、技能、怪物图鉴激发收集欲
+- **成长感**：从弱小到强大的渐进体验
+- **探索欲**：隐藏宝箱、秘密区域激发好奇心
+- **剧情驱动**：想知道接下来发生什么
+
+### 战斗系统设计要点
+```
+回合制战斗核心：
+1. 每个决策都有意义（攻击/防御/技能/道具）
+2. 敌人有弱点，需要观察和策略
+3. 战斗不能太长（普通战 30 秒，BOSS 战 2-3 分钟）
+4. 战败惩罚要轻（读档重来，不要损失太多进度）
+```
 
 ## 概述
 

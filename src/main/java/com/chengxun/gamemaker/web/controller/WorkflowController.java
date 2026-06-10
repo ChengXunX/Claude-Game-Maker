@@ -99,10 +99,10 @@ public class WorkflowController {
                         step.addDependency(dep);
                     }
                 }
-                if (stepData.containsKey("parallel")) {
+                if (stepData.containsKey("parallel") && stepData.get("parallel") != null) {
                     step.setParallel((Boolean) stepData.get("parallel"));
                 }
-                if (stepData.containsKey("requiresApproval")) {
+                if (stepData.containsKey("requiresApproval") && stepData.get("requiresApproval") != null) {
                     step.setRequiresApproval((Boolean) stepData.get("requiresApproval"));
                 }
                 steps.add(step);
@@ -213,7 +213,7 @@ public class WorkflowController {
                             step.addDependency(dep);
                         }
                     }
-                    if (stepData.containsKey("requiresApproval")) {
+                    if (stepData.containsKey("requiresApproval") && stepData.get("requiresApproval") != null) {
                         step.setRequiresApproval((Boolean) stepData.get("requiresApproval"));
                     }
                     steps.add(step);
@@ -397,13 +397,33 @@ public class WorkflowController {
         String projectId = (String) request.get("projectId");
         Map<String, String> parameters = (Map<String, String>) request.get("parameters");
 
-        WorkflowInstance instance = workflowEngine.startWorkflow(templateId, projectId, parameters);
+        if (templateId == null || templateId.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of(
+                "status", "error",
+                "message", "请选择工作流模板"
+            ));
+        }
+        if (projectId == null || projectId.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of(
+                "status", "error",
+                "message", "请选择所属项目"
+            ));
+        }
 
-        return ResponseEntity.ok(Map.of(
-            "status", "success",
-            "instanceId", instance.getId(),
-            "message", "工作流已启动"
-        ));
+        try {
+            WorkflowInstance instance = workflowEngine.startWorkflow(templateId, projectId, parameters);
+            return ResponseEntity.ok(Map.of(
+                "status", "success",
+                "instanceId", instance.getId(),
+                "message", "工作流已启动"
+            ));
+        } catch (Exception e) {
+            log.error("启动工作流失败: {}", e.getMessage());
+            return ResponseEntity.badRequest().body(Map.of(
+                "status", "error",
+                "message", "启动工作流失败: " + e.getMessage()
+            ));
+        }
     }
 
     /**

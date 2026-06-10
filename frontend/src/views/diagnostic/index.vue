@@ -220,212 +220,197 @@
 
     <!-- 无数据提示 -->
     <el-empty v-if="!result && !loading" description="暂无自检数据，点击执行自检" />
-  </div>
 
-  <!-- CPU 详情对话框 -->
-  <el-dialog v-model="cpuDialogVisible" title="CPU 详细信息" width="900px">
-    <div v-if="cpuDetails" class="detail-content">
-      <el-descriptions :column="2" border class="mb-4">
-        <el-descriptions-item label="操作系统">{{ cpuDetails.osName }} {{ cpuDetails.osArch }}</el-descriptions-item>
-        <el-descriptions-item label="系统版本">{{ cpuDetails.osVersion }}</el-descriptions-item>
-        <el-descriptions-item label="CPU 核心">{{ cpuDetails.availableProcessors }}</el-descriptions-item>
-        <el-descriptions-item label="系统负载">{{ cpuDetails.systemLoadAverage }}</el-descriptions-item>
-        <el-descriptions-item label="系统 CPU">
-          <el-progress :percentage="cpuDetails.systemCpuLoad" :color="getCpuColor(cpuDetails.systemCpuLoad)" :stroke-width="10" style="width: 120px; display: inline-block" />
-          <span style="margin-left: 4px">{{ cpuDetails.systemCpuLoad }}%</span>
-        </el-descriptions-item>
-        <el-descriptions-item label="进程 CPU">
-          <el-progress :percentage="cpuDetails.processCpuLoad" :color="getCpuColor(cpuDetails.processCpuLoad)" :stroke-width="10" style="width: 120px; display: inline-block" />
-          <span style="margin-left: 4px">{{ cpuDetails.processCpuLoad }}%</span>
-        </el-descriptions-item>
-        <el-descriptions-item label="进程 PID">{{ cpuDetails.pid }}</el-descriptions-item>
-        <el-descriptions-item label="CPU 时间">{{ cpuDetails.processCpuTime }}ms</el-descriptions-item>
-        <el-descriptions-item label="运行时间">{{ cpuDetails.uptimeFormatted }}</el-descriptions-item>
-        <el-descriptions-item label="虚拟内存">{{ cpuDetails.committedVirtualMemory }}MB</el-descriptions-item>
-      </el-descriptions>
-
-      <div class="detail-section" v-if="cpuDetails.env">
-        <h4>系统环境</h4>
-        <el-descriptions :column="2" border>
-          <el-descriptions-item label="Java 版本">{{ cpuDetails.javaVersion }}</el-descriptions-item>
-          <el-descriptions-item label="JVM">{{ cpuDetails.jvmName }} {{ cpuDetails.jvmVersion }}</el-descriptions-item>
-          <el-descriptions-item label="运行用户">{{ cpuDetails.env.user }}</el-descriptions-item>
-          <el-descriptions-item label="工作目录">{{ cpuDetails.env.userDir }}</el-descriptions-item>
-          <el-descriptions-item label="临时目录">{{ cpuDetails.env.tempDir }}</el-descriptions-item>
-          <el-descriptions-item label="文件编码">{{ cpuDetails.env.fileEncoding }}</el-descriptions-item>
-          <el-descriptions-item label="物理内存">{{ cpuDetails.env.freePhysicalMemoryMB }}MB / {{ cpuDetails.env.availableMemoryMB }}MB</el-descriptions-item>
-          <el-descriptions-item label="交换空间">{{ cpuDetails.env.freeSwapSpaceMB }}MB / {{ cpuDetails.env.totalSwapSpaceMB }}MB</el-descriptions-item>
+    <!-- 详情对话框（放在主 div 内部，避免多根元素问题） -->
+    <!-- CPU 详情 -->
+    <el-dialog v-model="cpuDialogVisible" title="CPU 详细信息" width="900px" append-to-body destroy-on-close>
+      <div v-if="cpuDetails" class="detail-content">
+        <el-descriptions :column="2" border class="mb-4">
+          <el-descriptions-item label="操作系统">{{ cpuDetails.osName }} {{ cpuDetails.osArch }}</el-descriptions-item>
+          <el-descriptions-item label="系统版本">{{ cpuDetails.osVersion }}</el-descriptions-item>
+          <el-descriptions-item label="CPU 核心">{{ cpuDetails.availableProcessors }}</el-descriptions-item>
+          <el-descriptions-item label="系统负载">{{ cpuDetails.systemLoadAverage }}</el-descriptions-item>
+          <el-descriptions-item label="系统 CPU">
+            <el-progress :percentage="cpuDetails.systemCpuLoad" :color="getCpuColor(cpuDetails.systemCpuLoad)" :stroke-width="10" style="width: 120px; display: inline-block" />
+            <span style="margin-left: 4px">{{ cpuDetails.systemCpuLoad }}%</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="进程 CPU">
+            <el-progress :percentage="cpuDetails.processCpuLoad" :color="getCpuColor(cpuDetails.processCpuLoad)" :stroke-width="10" style="width: 120px; display: inline-block" />
+            <span style="margin-left: 4px">{{ cpuDetails.processCpuLoad }}%</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="进程 PID">{{ cpuDetails.pid }}</el-descriptions-item>
+          <el-descriptions-item label="CPU 时间">{{ cpuDetails.processCpuTime }}ms</el-descriptions-item>
+          <el-descriptions-item label="运行时间">{{ cpuDetails.uptimeFormatted }}</el-descriptions-item>
+          <el-descriptions-item label="虚拟内存">{{ cpuDetails.committedVirtualMemory }}MB</el-descriptions-item>
         </el-descriptions>
-      </div>
 
-      <div class="detail-section" v-if="cpuDetails.topCpuThreads?.length">
-        <h4>CPU 占用 TOP {{ cpuDetails.topCpuThreads.length }} 线程</h4>
-        <el-table :data="cpuDetails.topCpuThreads" stripe size="small" max-height="300">
-          <el-table-column prop="id" label="ID" width="70" />
-          <el-table-column prop="name" label="线程名" min-width="180" show-overflow-tooltip />
-          <el-table-column label="状态" width="100">
-            <template #default="{ row }">
-              <el-tag :type="getStateType(row.state)" size="small">{{ row.state }}</el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column label="CPU 耗时" width="100">
-            <template #default="{ row }">{{ row.cpuTimeMs }}ms</template>
-          </el-table-column>
-          <el-table-column label="栈顶方法" min-width="250" show-overflow-tooltip>
-            <template #default="{ row }">
-              <span class="stack-trace">{{ row.stackTop || '-' }}</span>
-            </template>
-          </el-table-column>
-        </el-table>
-      </div>
+        <div class="detail-section" v-if="cpuDetails.env">
+          <h4>系统环境</h4>
+          <el-descriptions :column="2" border>
+            <el-descriptions-item label="Java 版本">{{ cpuDetails.javaVersion }}</el-descriptions-item>
+            <el-descriptions-item label="JVM">{{ cpuDetails.jvmName }} {{ cpuDetails.jvmVersion }}</el-descriptions-item>
+            <el-descriptions-item label="运行用户">{{ cpuDetails.env.user }}</el-descriptions-item>
+            <el-descriptions-item label="工作目录">{{ cpuDetails.env.userDir }}</el-descriptions-item>
+            <el-descriptions-item label="临时目录">{{ cpuDetails.env.tempDir }}</el-descriptions-item>
+            <el-descriptions-item label="文件编码">{{ cpuDetails.env.fileEncoding }}</el-descriptions-item>
+            <el-descriptions-item label="物理内存">{{ cpuDetails.env.freePhysicalMemoryMB }}MB / {{ cpuDetails.env.availableMemoryMB }}MB</el-descriptions-item>
+            <el-descriptions-item label="交换空间">{{ cpuDetails.env.freeSwapSpaceMB }}MB / {{ cpuDetails.env.totalSwapSpaceMB }}MB</el-descriptions-item>
+          </el-descriptions>
+        </div>
 
-      <div class="detail-section" v-if="cpuDetails.jvmArgs?.length">
-        <h4>JVM 启动参数</h4>
-        <div class="param-list">
-          <div v-for="(arg, i) in cpuDetails.jvmArgs" :key="i" class="param-item">{{ arg }}</div>
+        <div class="detail-section" v-if="cpuDetails.topCpuThreads?.length">
+          <h4>CPU 占用 TOP {{ cpuDetails.topCpuThreads.length }} 线程</h4>
+          <el-table :data="cpuDetails.topCpuThreads" stripe size="small" max-height="300">
+            <el-table-column prop="id" label="ID" width="70" />
+            <el-table-column prop="name" label="线程名" min-width="180" show-overflow-tooltip />
+            <el-table-column label="状态" width="100">
+              <template #default="{ row }">
+                <el-tag :type="getStateType(row.state)" size="small">{{ row.state }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="CPU 耗时" width="100">
+              <template #default="{ row }">{{ row.cpuTimeMs }}ms</template>
+            </el-table-column>
+            <el-table-column label="栈顶方法" min-width="250" show-overflow-tooltip>
+              <template #default="{ row }">
+                <span class="stack-trace">{{ row.stackTop || '-' }}</span>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
+
+        <div class="detail-section" v-if="cpuDetails.jvmArgs?.length">
+          <h4>JVM 启动参数</h4>
+          <div class="param-list">
+            <div v-for="(arg, i) in cpuDetails.jvmArgs" :key="i" class="param-item">{{ arg }}</div>
+          </div>
         </div>
       </div>
-    </div>
-  </el-dialog>
+    </el-dialog>
 
-  <!-- 内存详情对话框 -->
-  <el-dialog v-model="memoryDialogVisible" title="内存详细信息" width="800px">
-    <div v-if="memoryDetails" class="detail-content">
-      <el-descriptions :column="2" border class="mb-4">
-        <el-descriptions-item label="堆内存已用">{{ memoryDetails.heap?.used }}MB</el-descriptions-item>
-        <el-descriptions-item label="堆内存已分配">{{ memoryDetails.heap?.committed }}MB</el-descriptions-item>
-        <el-descriptions-item label="堆内存最大">{{ memoryDetails.heap?.max }}MB</el-descriptions-item>
-        <el-descriptions-item label="非堆内存已用">{{ memoryDetails.nonHeap?.used }}MB</el-descriptions-item>
-      </el-descriptions>
-      <div class="detail-section" v-if="memoryDetails.pools?.length">
-        <h4>内存池详情</h4>
-        <el-table :data="memoryDetails.pools" stripe size="small">
-          <el-table-column prop="name" label="名称" min-width="200" show-overflow-tooltip />
-          <el-table-column prop="type" label="类型" width="80" />
-          <el-table-column label="已用" width="80">
-            <template #default="{ row }">{{ row.used }}MB</template>
-          </el-table-column>
-          <el-table-column label="已分配" width="80">
-            <template #default="{ row }">{{ row.committed }}MB</template>
-          </el-table-column>
-          <el-table-column label="最大" width="80">
-            <template #default="{ row }">{{ row.max > 0 ? row.max + 'MB' : '-' }}</template>
-          </el-table-column>
-          <el-table-column label="使用率" width="100">
-            <template #default="{ row }">
-              <el-progress v-if="row.usagePercent != null" :percentage="row.usagePercent" :stroke-width="6" :show-text="false" style="width: 60px; display: inline-block" />
-              <span style="margin-left: 4px">{{ row.usagePercent != null ? row.usagePercent + '%' : '-' }}</span>
-            </template>
-          </el-table-column>
-        </el-table>
-      </div>
-      <div class="detail-section" v-if="memoryDetails.gc?.length">
-        <h4>GC 信息</h4>
-        <el-table :data="memoryDetails.gc" stripe size="small">
-          <el-table-column prop="name" label="GC 名称" min-width="200" />
-          <el-table-column prop="collectionCount" label="回收次数" width="100" />
-          <el-table-column label="回收耗时" width="120">
-            <template #default="{ row }">{{ row.collectionTime }}ms</template>
-          </el-table-column>
-          <el-table-column label="内存池" min-width="200" show-overflow-tooltip>
-            <template #default="{ row }">{{ row.memoryPoolNames?.join(', ') }}</template>
-          </el-table-column>
-        </el-table>
-      </div>
-    </div>
-  </el-dialog>
-
-  <!-- 线程详情对话框 -->
-  <el-dialog v-model="threadDialogVisible" title="线程详细信息" width="900px">
-    <div v-if="threadDetails" class="detail-content">
-      <el-descriptions :column="4" border class="mb-4">
-        <el-descriptions-item label="总线程">{{ threadDetails.threadCount }}</el-descriptions-item>
-        <el-descriptions-item label="守护线程">{{ threadDetails.daemonThreadCount }}</el-descriptions-item>
-        <el-descriptions-item label="峰值线程">{{ threadDetails.peakThreadCount }}</el-descriptions-item>
-        <el-descriptions-item label="已启动线程">{{ threadDetails.totalStartedThreadCount }}</el-descriptions-item>
-      </el-descriptions>
-      <div class="detail-section" v-if="threadDetails.stateDistribution">
-        <h4>线程状态分布</h4>
-        <div class="state-tags">
-          <el-tag v-for="(count, state) in threadDetails.stateDistribution" :key="state" :type="getStateType(state)" class="state-tag">
-            {{ state }}: {{ count }}
-          </el-tag>
+    <!-- 内存详情 -->
+    <el-dialog v-model="memoryDialogVisible" title="内存详细信息" width="800px" append-to-body destroy-on-close>
+      <div v-if="memoryDetails" class="detail-content">
+        <el-descriptions :column="2" border class="mb-4">
+          <el-descriptions-item label="堆内存已用">{{ memoryDetails.heap?.used }}MB</el-descriptions-item>
+          <el-descriptions-item label="堆内存已分配">{{ memoryDetails.heap?.committed }}MB</el-descriptions-item>
+          <el-descriptions-item label="堆内存最大">{{ memoryDetails.heap?.max }}MB</el-descriptions-item>
+          <el-descriptions-item label="非堆内存已用">{{ memoryDetails.nonHeap?.used }}MB</el-descriptions-item>
+        </el-descriptions>
+        <div class="detail-section" v-if="memoryDetails.pools?.length">
+          <h4>内存池详情</h4>
+          <el-table :data="memoryDetails.pools" stripe size="small">
+            <el-table-column prop="name" label="名称" min-width="200" show-overflow-tooltip />
+            <el-table-column prop="type" label="类型" width="80" />
+            <el-table-column label="已用" width="80">
+              <template #default="{ row }">{{ row.used }}MB</template>
+            </el-table-column>
+            <el-table-column label="已分配" width="80">
+              <template #default="{ row }">{{ row.committed }}MB</template>
+            </el-table-column>
+            <el-table-column label="最大" width="80">
+              <template #default="{ row }">{{ row.max > 0 ? row.max + 'MB' : '-' }}</template>
+            </el-table-column>
+            <el-table-column label="使用率" width="100">
+              <template #default="{ row }">
+                <el-progress v-if="row.usagePercent != null" :percentage="row.usagePercent" :stroke-width="6" :show-text="false" style="width: 60px; display: inline-block" />
+                <span style="margin-left: 4px">{{ row.usagePercent != null ? row.usagePercent + '%' : '-' }}</span>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
+        <div class="detail-section" v-if="memoryDetails.gc?.length">
+          <h4>GC 信息</h4>
+          <el-table :data="memoryDetails.gc" stripe size="small">
+            <el-table-column prop="name" label="GC 名称" min-width="200" />
+            <el-table-column prop="collectionCount" label="回收次数" width="100" />
+            <el-table-column label="回收耗时" width="120">
+              <template #default="{ row }">{{ row.collectionTime }}ms</template>
+            </el-table-column>
+            <el-table-column label="内存池" min-width="200" show-overflow-tooltip>
+              <template #default="{ row }">{{ row.memoryPoolNames?.join(', ') }}</template>
+            </el-table-column>
+          </el-table>
         </div>
       </div>
-      <div class="detail-section" v-if="threadDetails.threads?.length">
-        <h4>线程列表（前 {{ threadDetails.totalShown }} 个）</h4>
-        <el-table :data="threadDetails.threads" stripe size="small" max-height="400">
-          <el-table-column prop="id" label="ID" width="70" />
-          <el-table-column prop="name" label="名称" min-width="200" show-overflow-tooltip />
-          <el-table-column label="状态" width="90">
-            <template #default="{ row }">
-              <el-tag :type="getStateType(row.state)" size="small">{{ row.state }}</el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column label="守护" width="60">
-            <template #default="{ row }">{{ row.daemon ? '是' : '否' }}</template>
-          </el-table-column>
-          <el-table-column label="CPU 时间" width="90">
-            <template #default="{ row }">{{ row.cpuTime }}ms</template>
-          </el-table-column>
-          <el-table-column label="堆栈" min-width="300" show-overflow-tooltip>
-            <template #default="{ row }">
-              <span class="stack-trace">{{ row.stackTrace?.[0] || '-' }}</span>
-            </template>
-          </el-table-column>
-        </el-table>
-      </div>
-    </div>
-  </el-dialog>
+    </el-dialog>
 
-  <!-- 磁盘详情对话框 -->
-  <el-dialog v-model="diskDialogVisible" title="磁盘详细信息" width="700px">
-    <div v-if="diskDetails" class="detail-content">
-      <el-descriptions :column="2" border class="mb-4">
-        <el-descriptions-item label="工作目录">{{ diskDetails.workDir }}</el-descriptions-item>
-        <el-descriptions-item label="目录可用">{{ diskDetails.workDirFreeGB }}GB</el-descriptions-item>
-      </el-descriptions>
-      <div class="detail-section" v-if="diskDetails.drives?.length">
-        <h4>磁盘分区</h4>
-        <el-table :data="diskDetails.drives" stripe size="small">
-          <el-table-column prop="path" label="挂载点" width="100" />
-          <el-table-column label="总空间" width="100">
-            <template #default="{ row }">{{ row.totalGB }}GB</template>
-          </el-table-column>
-          <el-table-column label="可用" width="100">
-            <template #default="{ row }">{{ row.freeGB }}GB</template>
-          </el-table-column>
-          <el-table-column label="使用率" min-width="200">
-            <template #default="{ row }">
-              <el-progress :percentage="row.usagePercent" :color="getDiskColor(row.usagePercent)" :stroke-width="10" />
-            </template>
-          </el-table-column>
-        </el-table>
+    <!-- 线程详情 -->
+    <el-dialog v-model="threadDialogVisible" title="线程详细信息" width="900px" append-to-body destroy-on-close>
+      <div v-if="threadDetails" class="detail-content">
+        <el-descriptions :column="4" border class="mb-4">
+          <el-descriptions-item label="总线程">{{ threadDetails.threadCount }}</el-descriptions-item>
+          <el-descriptions-item label="守护线程">{{ threadDetails.daemonThreadCount }}</el-descriptions-item>
+          <el-descriptions-item label="峰值线程">{{ threadDetails.peakThreadCount }}</el-descriptions-item>
+          <el-descriptions-item label="已启动线程">{{ threadDetails.totalStartedThreadCount }}</el-descriptions-item>
+        </el-descriptions>
+        <div class="detail-section" v-if="threadDetails.stateDistribution">
+          <h4>线程状态分布</h4>
+          <div class="state-tags">
+            <el-tag v-for="(count, state) in threadDetails.stateDistribution" :key="state" :type="getStateType(state)" class="state-tag">
+              {{ state }}: {{ count }}
+            </el-tag>
+          </div>
+        </div>
+        <div class="detail-section" v-if="threadDetails.threads?.length">
+          <h4>线程列表（前 {{ threadDetails.totalShown }} 个）</h4>
+          <el-table :data="threadDetails.threads" stripe size="small" max-height="400">
+            <el-table-column prop="id" label="ID" width="70" />
+            <el-table-column prop="name" label="名称" min-width="200" show-overflow-tooltip />
+            <el-table-column label="状态" width="90">
+              <template #default="{ row }">
+                <el-tag :type="getStateType(row.state)" size="small">{{ row.state }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="守护" width="60">
+              <template #default="{ row }">{{ row.daemon ? '是' : '否' }}</template>
+            </el-table-column>
+            <el-table-column label="CPU 时间" width="90">
+              <template #default="{ row }">{{ row.cpuTime }}ms</template>
+            </el-table-column>
+            <el-table-column label="堆栈" min-width="300" show-overflow-tooltip>
+              <template #default="{ row }">
+                <span class="stack-trace">{{ row.stackTrace?.[0] || '-' }}</span>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
       </div>
-    </div>
-  </el-dialog>
+    </el-dialog>
+
+    <!-- 磁盘详情 -->
+    <el-dialog v-model="diskDialogVisible" title="磁盘详细信息" width="700px" append-to-body destroy-on-close>
+      <div v-if="diskDetails" class="detail-content">
+        <el-descriptions :column="2" border class="mb-4">
+          <el-descriptions-item label="工作目录">{{ diskDetails.workDir }}</el-descriptions-item>
+          <el-descriptions-item label="目录可用">{{ diskDetails.workDirFreeGB }}GB</el-descriptions-item>
+        </el-descriptions>
+        <div class="detail-section" v-if="diskDetails.drives?.length">
+          <h4>磁盘分区</h4>
+          <el-table :data="diskDetails.drives" stripe size="small">
+            <el-table-column prop="path" label="挂载点" width="100" />
+            <el-table-column label="总空间" width="100">
+              <template #default="{ row }">{{ row.totalGB }}GB</template>
+            </el-table-column>
+            <el-table-column label="可用" width="100">
+              <template #default="{ row }">{{ row.freeGB }}GB</template>
+            </el-table-column>
+            <el-table-column label="使用率" min-width="200">
+              <template #default="{ row }">
+                <el-progress :percentage="row.usagePercent" :color="getDiskColor(row.usagePercent)" :stroke-width="10" />
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
+      </div>
+    </el-dialog>
+  </div>
 </template>
 
 <script setup>
-/**
- * 系统自检页面
- * 实时显示系统健康状态和诊断信息
- *
- * 功能：
- * - 实时 CPU、内存、磁盘、线程指标
- * - 可点击卡片展开详情
- * - 自动刷新（每 10 秒）
- * - 运行时间显示
- *
- * 操作维度：系统级
- * 权限要求：系统管理员
- */
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { ref, computed, onMounted, onUnmounted, onDeactivated, watch } from 'vue'
 import { diagnosticApi } from '@/api'
 import { ElMessage } from 'element-plus'
-
-const route = useRoute()
 
 const loading = ref(false)
 const running = ref(false)
@@ -434,36 +419,30 @@ const expandedCard = ref(null)
 const autoRefresh = ref(true)
 let refreshTimer = null
 
-// 详情对话框
 const cpuDialogVisible = ref(false)
 const memoryDialogVisible = ref(false)
 const threadDialogVisible = ref(false)
 const diskDialogVisible = ref(false)
 
-// 详情数据
 const cpuDetails = ref(null)
 const memoryDetails = ref(null)
 const threadDetails = ref(null)
 const diskDetails = ref(null)
 
-/** 总体状态文本 */
 const overallStatusText = computed(() => {
   if (!result.value) return '未检测'
   return result.value.overallStatus === 'UP' ? '系统正常' : '系统异常'
 })
 
-/** 总体状态类型 */
 const overallStatusType = computed(() => {
   if (!result.value) return 'info'
   return result.value.overallStatus === 'UP' ? 'success' : 'warning'
 })
 
-/** 切换卡片展开 */
 const toggleCard = (card) => {
   expandedCard.value = expandedCard.value === card ? null : card
 }
 
-/** 打开详情对话框 */
 const openDetail = async (type) => {
   try {
     switch (type) {
@@ -489,7 +468,6 @@ const openDetail = async (type) => {
   }
 }
 
-/** 获取线程状态类型 */
 const getStateType = (state) => {
   const typeMap = {
     'RUNNABLE': 'success',
@@ -502,34 +480,29 @@ const getStateType = (state) => {
   return typeMap[state] || ''
 }
 
-/** 获取 CPU 颜色 */
 const getCpuColor = (percent) => {
   if (percent < 50) return '#67c23a'
   if (percent < 80) return '#e6a23c'
   return '#f56c6c'
 }
 
-/** 获取内存颜色 */
 const getMemoryColor = (percent) => {
   if (percent < 70) return '#67c23a'
   if (percent < 90) return '#e6a23c'
   return '#f56c6c'
 }
 
-/** 获取磁盘颜色 */
 const getDiskColor = (percent) => {
   if (percent < 70) return '#67c23a'
   if (percent < 90) return '#e6a23c'
   return '#f56c6c'
 }
 
-/** 格式化时间 */
 const formatTime = (time) => {
   if (!time) return '-'
   return new Date(time).toLocaleString('zh-CN')
 }
 
-/** 执行自检 */
 const runDiagnostic = async () => {
   running.value = true
   try {
@@ -543,7 +516,6 @@ const runDiagnostic = async () => {
   }
 }
 
-/** 加载结果 */
 const loadResult = async () => {
   loading.value = true
   try {
@@ -556,17 +528,15 @@ const loadResult = async () => {
   }
 }
 
-/** 启动自动刷新 */
 const startAutoRefresh = () => {
   stopAutoRefresh()
   refreshTimer = setInterval(() => {
     if (autoRefresh.value) {
       loadResult()
     }
-  }, 10000) // 每 10 秒刷新
+  }, 10000)
 }
 
-/** 停止自动刷新 */
 const stopAutoRefresh = () => {
   if (refreshTimer) {
     clearInterval(refreshTimer)
@@ -574,21 +544,23 @@ const stopAutoRefresh = () => {
   }
 }
 
-/** 监听自动刷新开关 */
-watch(autoRefresh, (val) => {
-  if (val) {
-    startAutoRefresh()
-  } else {
-    stopAutoRefresh()
-  }
-})
-
-/** 路由变化时关闭所有弹窗，防止 keep-alive 下弹窗 DOM 残留导致页面空白 */
-watch(() => route.path, () => {
+/** 关闭所有弹窗 */
+const closeAllDialogs = () => {
   cpuDialogVisible.value = false
   memoryDialogVisible.value = false
   threadDialogVisible.value = false
   diskDialogVisible.value = false
+}
+
+watch(autoRefresh, (val) => {
+  if (val) startAutoRefresh()
+  else stopAutoRefresh()
+})
+
+/** 组件被缓存时关闭弹窗、停止刷新 */
+onDeactivated(() => {
+  closeAllDialogs()
+  stopAutoRefresh()
 })
 
 onMounted(() => {
@@ -605,7 +577,7 @@ onUnmounted(() => {
 .diagnostic-page {
   padding: 20px;
   background: #f5f7fa;
-  min-height: 100vh;
+  min-height: calc(100vh - 120px);
 }
 
 .control-bar {

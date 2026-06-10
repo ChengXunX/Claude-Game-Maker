@@ -1,424 +1,281 @@
 ---
-name: game-template-platformer
-description: 平台跳跃游戏模板 - 提供完整的平台跳跃游戏项目骨架
-category: game-template
-triggerPattern: platformer, platform game, 跳跃, 横版, side-scrolling
+name: 平台跳跃游戏开发模板
+description: 平台跳跃游戏开发模板，适用于横版动作类游戏
+trigger: platformer, platform game, 跳跃, 横版, side-scrolling, 马里奥
+examples: Super Mario|Celeste|Hollow Knight|Ori|Dead Cells
 ---
 
-# 平台跳跃游戏模板
+# 平台跳跃游戏开发模板
 
-## 概述
+## 游戏设计核心原则
 
-这是一个完整的平台跳跃游戏模板，基于 Phaser 3 引擎。包含：
-- 角色控制（移动、跳跃、冲刺）
-- 关卡系统（多关卡、检查点）
-- 敌人系统（AI 行为、碰撞检测）
-- UI 系统（生命值、分数、菜单）
-- 音效系统
-
-## 项目结构
-
+### 核心循环（每关 2-5 分钟）
 ```
-game-project/
-├── index.html          # 入口页面
-├── package.json        # 依赖配置
-├── vite.config.js      # 构建配置
-├── src/
-│   ├── main.js         # 游戏入口
-│   ├── config.js       # 游戏配置
-│   ├── scenes/
-│   │   ├── BootScene.js    # 启动场景
-│   │   ├── MenuScene.js    # 菜单场景
-│   │   ├── GameScene.js    # 游戏场景
-│   │   └── GameOverScene.js # 结束场景
-│   ├── sprites/
-│   │   ├── Player.js       # 玩家角色
-│   │   ├── Enemy.js        # 敌人基类
-│   │   └── Platform.js     # 平台
-│   ├── objects/
-│   │   ├── Coin.js         # 金币
-│   │   ├── PowerUp.js      # 道具
-│   │   └── Checkpoint.js   # 检查点
-│   ├── ui/
-│   │   ├── HUD.js          # 游戏内UI
-│   │   └── Menu.js         # 菜单UI
-│   └── utils/
-│       ├── LevelManager.js # 关卡管理
-│       └── SoundManager.js # 音效管理
-└── assets/
-    ├── images/             # 图片资源
-    ├── sounds/             # 音效资源
-    └── levels/             # 关卡数据
+观察地形 → 跳跃/移动 → 收集物品 → 躲避/消灭敌人 → 到达终点
+```
+- 跳跃必须**手感好**（响应快、空中可微调、落地缓冲）
+- 死亡必须**公平**（玩家觉得是自己的错，不是游戏的错）
+- 检查点必须**频繁**（每 30-60 秒一个检查点）
+
+### 玩家心理学
+- **掌控感**：玩家觉得"我能精确控制角色"
+- **探索欲**：隐藏区域、秘密通道激发好奇心
+- **成长感**：新能力解锁后可以到达之前到不了的地方
+- **挑战欲**：高难度关卡激发"再试一次"的冲动
+
+### 手感优化（最重要！）
+```
+跳跃手感公式：
+1. 按住跳跃键时间越长，跳得越高（变量跳跃）
+2. 空中可以微调水平方向（空中控制）
+3. 下落速度比上升速度快（重力感）
+4. 落地前 0.1 秒按跳跃键可以"土狼跳"（宽容窗口）
+5. 离开平台后 0.1 秒内仍可跳跃（边缘跳跃）
 ```
 
-## 目录配置
+## 核心系统设计
 
-| 目录路径 | 用途 | 可访问角色 | 说明 |
-|---------|------|-----------|------|
-| /src | 游戏源代码 | client-dev | 游戏主程序、场景 |
-| /src/scenes | 游戏场景 | client-dev | 各个游戏场景的实现 |
-| /src/sprites | 游戏精灵 | client-dev | 玩家、敌人、平台等 |
-| /src/objects | 游戏对象 | client-dev | 金币、道具、检查点等 |
-| /src/ui | UI组件 | client-dev, ui-dev | HUD、菜单等UI |
-| /src/utils | 工具类 | client-dev | 关卡管理、音效管理等 |
-| /assets | 资源文件 | ui-dev | 图片、音频、关卡文件 |
-| /assets/levels | 关卡数据 | client-dev, system-planner | 关卡设计数据 |
-| /config | 配置文件 | | 游戏配置（所有角色可访问） |
-| /docs | 文档 | system-planner | 需求文档、设计文档 |
-
-## 核心代码模板
-
-### 1. 游戏配置 (config.js)
-
+### 1. 玩家控制（手感核心）
 ```javascript
-export const GAME_CONFIG = {
-  width: 800,
-  height: 600,
-  backgroundColor: '#2c3e50',
-  physics: {
-    default: 'arcade',
-    arcade: {
-      gravity: { y: 300 },
-      debug: false
-    }
-  },
-  player: {
-    speed: 160,
-    jumpForce: -330,
-    dashSpeed: 300,
-    maxHealth: 3,
-    invincibleTime: 1500
-  },
-  enemies: {
-    speed: 80,
-    damage: 1
-  }
-}
-```
-
-### 2. 玩家角色 (Player.js)
-
-```javascript
-export class Player extends Phaser.Physics.Arcade.Sprite {
+class Player extends Phaser.Physics.Arcade.Sprite {
   constructor(scene, x, y) {
-    super(scene, x, y, 'player')
-    scene.add.existing(this)
-    scene.physics.add.existing(this)
-
-    this.setCollideWorldBounds(true)
-    this.setBounce(0.1)
-
-    this.health = GAME_CONFIG.player.maxHealth
-    this.isInvincible = false
-    this.canDash = true
-    this.isDashing = false
+    super(scene, x, y, 'player');
+    scene.add.existing(this);
+    scene.physics.add.existing(this);
+    
+    // 物理参数（调整这些改变手感）
+    this.setCollideWorldBounds(true);
+    this.setBounce(0);
+    this.setDragX(1000); // 地面摩擦
+    this.setMaxVelocity(300, 600);
+    
+    // 状态
+    this.health = 3;
+    this.isInvincible = false;
+    this.canDoubleJump = false;
+    this.hasDoubleJumped = false;
+    this.coyoteTime = 0; // 土狼时间
+    this.jumpBufferTime = 0; // 跳跃缓冲
   }
 
   update(cursors) {
-    if (this.isDashing) return
-
     // 水平移动
     if (cursors.left.isDown) {
-      this.setVelocityX(-GAME_CONFIG.player.speed)
-      this.setFlipX(true)
+      this.setVelocityX(-200);
+      this.setFlipX(true);
     } else if (cursors.right.isDown) {
-      this.setVelocityX(GAME_CONFIG.player.speed)
-      this.setFlipX(false)
+      this.setVelocityX(200);
+      this.setFlipX(false);
     } else {
-      this.setVelocityX(0)
+      this.setVelocityX(0);
     }
-
-    // 跳跃
-    if (cursors.up.isDown && this.body.touching.down) {
-      this.setVelocityY(GAME_CONFIG.player.jumpForce)
-    }
-
-    // 动画
-    this.updateAnimation()
-  }
-
-  dash() {
-    if (!this.canDash) return
-    this.canDash = false
-    this.isDashing = true
-
-    const direction = this.flipX ? -1 : 1
-    this.setVelocityX(GAME_CONFIG.player.dashSpeed * direction)
-
-    this.scene.time.delayedCall(200, () => {
-      this.isDashing = false
-    })
-
-    this.scene.time.delayedCall(1000, () => {
-      this.canDash = true
-    })
-  }
-
-  takeDamage(amount) {
-    if (this.isInvincible) return
-
-    this.health -= amount
-    this.isInvincible = true
-
-    // 闪烁效果
-    this.scene.tweens.add({
-      targets: this,
-      alpha: 0.5,
-      duration: 100,
-      yoyo: true,
-      repeat: 5
-    })
-
-    this.scene.time.delayedCall(GAME_CONFIG.player.invincibleTime, () => {
-      this.isInvincible = false
-      this.setAlpha(1)
-    })
-
-    if (this.health <= 0) {
-      this.die()
-    }
-  }
-
-  die() {
-    this.setTint(0xff0000)
-    this.setVelocity(0, -200)
-    this.body.enable = false
-
-    this.scene.time.delayedCall(1000, () => {
-      this.scene.scene.start('GameOverScene', { score: this.scene.score })
-    })
-  }
-
-  updateAnimation() {
+    
+    // 土狼时间（离开平台后短暂时间内仍可跳跃）
     if (this.body.touching.down) {
-      if (this.body.velocity.x !== 0) {
-        this.play('run', true)
-      } else {
-        this.play('idle', true)
-      }
+      this.coyoteTime = 100; // 100ms 宽容窗口
     } else {
-      this.play('jump', true)
+      this.coyoteTime = Math.max(0, this.coyoteTime - 16);
     }
-  }
-}
-```
-
-### 3. 敌人基类 (Enemy.js)
-
-```javascript
-export class Enemy extends Phaser.Physics.Arcade.Sprite {
-  constructor(scene, x, y, texture) {
-    super(scene, x, y, texture)
-    scene.add.existing(this)
-    scene.physics.add.existing(this)
-
-    this.setCollideWorldBounds(true)
-    this.health = 1
-    this.damage = GAME_CONFIG.enemies.damage
-    this.speed = GAME_CONFIG.enemies.speed
-
-    this.direction = 1
-    this.patrolDistance = 200
-    this.startX = x
-  }
-
-  update() {
-    this.patrol()
-  }
-
-  patrol() {
-    this.setVelocityX(this.speed * this.direction)
-
-    if (Math.abs(this.x - this.startX) > this.patrolDistance) {
-      this.direction *= -1
-      this.setFlipX(this.direction < 0)
-    }
-  }
-
-  takeDamage(amount) {
-    this.health -= amount
-    if (this.health <= 0) {
-      this.die()
-    }
-  }
-
-  die() {
-    // 死亡动画
-    this.scene.tweens.add({
-      targets: this,
-      alpha: 0,
-      y: this.y + 50,
-      duration: 300,
-      onComplete: () => {
-        this.destroy()
-      }
-    })
-
-    // 掉落金币
-    this.dropLoot()
-  }
-
-  dropLoot() {
-    if (Math.random() < 0.3) {
-      const coin = new Coin(this.scene, this.x, this.y)
-      this.scene.coins.add(coin)
-    }
-  }
-}
-```
-
-### 4. 游戏场景 (GameScene.js)
-
-```javascript
-export class GameScene extends Phaser.Scene {
-  constructor() {
-    super('GameScene')
-  }
-
-  init(data) {
-    this.level = data.level || 1
-    this.score = data.score || 0
-  }
-
-  create() {
-    // 创建背景
-    this.createBackground()
-
-    // 创建地图
-    this.createLevel()
-
-    // 创建玩家
-    this.player = new Player(this, 100, 450)
-
-    // 创建敌人
-    this.enemies = this.physics.add.group()
-    this.createEnemies()
-
-    // 创建金币
-    this.coins = this.physics.add.group()
-    this.createCoins()
-
-    // 设置碰撞
-    this.setupCollisions()
-
-    // 创建UI
-    this.hud = new HUD(this)
-
-    // 输入控制
-    this.cursors = this.input.keyboard.createCursorKeys()
-    this.spaceKey = this.input.keyboard.addKey('SPACE')
-    this.dashKey = this.input.keyboard.addKey('SHIFT')
-
-    // 分数
-    this.score = 0
-  }
-
-  update() {
-    this.player.update(this.cursors)
-
-    // 冲刺
-    if (Phaser.Input.Keyboard.JustDown(this.dashKey)) {
-      this.player.dash()
-    }
-
-    // 更新敌人
-    this.enemies.children.iterate(enemy => {
-      enemy.update()
-    })
-
-    // 更新UI
-    this.hud.update(this.player.health, this.score)
-
-    // 检查关卡完成
-    this.checkLevelComplete()
-  }
-
-  createBackground() {
-    // 视差背景
-    this.bg1 = this.add.tileSprite(0, 0, 800, 600, 'bg1')
-      .setOrigin(0, 0)
-      .setScrollFactor(0)
-  }
-
-  createLevel() {
-    // 从JSON加载关卡数据
-    const levelData = this.cache.json.get(`level${this.level}`)
-
-    this.platforms = this.physics.add.staticGroup()
-    levelData.platforms.forEach(p => {
-      this.platforms.create(p.x, p.y, 'platform')
-    })
-  }
-
-  createEnemies() {
-    const levelData = this.cache.json.get(`level${this.level}`)
-    levelData.enemies.forEach(e => {
-      const enemy = new Enemy(this, e.x, e.y, e.type)
-      this.enemies.add(enemy)
-    })
-  }
-
-  createCoins() {
-    const levelData = this.cache.json.get(`level${this.level}`)
-    levelData.coins.forEach(c => {
-      const coin = new Coin(this, c.x, c.y)
-      this.coins.add(coin)
-    })
-  }
-
-  setupCollisions() {
-    // 玩家与平台
-    this.physics.add.collider(this.player, this.platforms)
-
-    // 敌人与平台
-    this.physics.add.collider(this.enemies, this.platforms)
-
-    // 玩家与金币
-    this.physics.add.overlap(this.player, this.coins, this.collectCoin, null, this)
-
-    // 玩家与敌人
-    this.physics.add.overlap(this.player, this.enemies, this.hitEnemy, null, this)
-  }
-
-  collectCoin(player, coin) {
-    coin.collect()
-    this.score += 10
-  }
-
-  hitEnemy(player, enemy) {
-    if (player.body.velocity.y > 0 && player.y < enemy.y) {
-      // 踩踏敌人
-      enemy.takeDamage(1)
-      player.setVelocityY(-200)
-      this.score += 20
+    
+    // 跳跃缓冲（提前按跳跃键）
+    if (cursors.up.isDown) {
+      this.jumpBufferTime = 100;
     } else {
-      // 被敌人碰到
-      player.takeDamage(enemy.damage)
+      this.jumpBufferTime = Math.max(0, this.jumpBufferTime - 16);
     }
-  }
-
-  checkLevelComplete() {
-    if (this.player.x > 750) {
-      this.scene.start('GameScene', {
-        level: this.level + 1,
-        score: this.score
-      })
+    
+    // 跳跃逻辑
+    if (this.jumpBufferTime > 0 && this.coyoteTime > 0) {
+      this.setVelocityY(-400); // 跳跃力度
+      this.coyoteTime = 0;
+      this.jumpBufferTime = 0;
+      this.hasDoubleJumped = false;
+    }
+    
+    // 变量跳跃（松开跳跃键减速）
+    if (!cursors.up.isDown && this.body.velocity.y < -100) {
+      this.setVelocityY(this.body.velocity.y * 0.85);
+    }
+    
+    // 二段跳
+    if (this.canDoubleJump && !this.body.touching.down && 
+        Phaser.Input.Keyboard.JustDown(cursors.up) && !this.hasDoubleJumped) {
+      this.setVelocityY(-350);
+      this.hasDoubleJumped = true;
+    }
+    
+    // 重力加速度（下落更快）
+    if (this.body.velocity.y > 0) {
+      this.body.setGravityY(300);
+    } else {
+      this.body.setGravityY(0);
     }
   }
 }
 ```
 
-## 使用方法
+### 2. 关卡设计原则
+```
+教程区: 教基本操作（移动、跳跃、攻击）
+安全区: 放松，收集物品
+挑战区: 需要精确操作
+高潮区: 关卡最难的部分
+奖励区: 隐藏区域，高价值物品
+```
 
-1. 使用此模板创建新项目
-2. 替换 `assets/images/` 中的图片资源
-3. 修改 `assets/levels/` 中的关卡数据
-4. 调整 `config.js` 中的游戏参数
-5. 运行 `npm run dev` 预览游戏
+### 3. 敌人设计
+| 敌人类型 | 行为 | 击杀方式 | 出现场景 |
+|----------|------|----------|----------|
+| 巡逻兵 | 左右移动 | 踩踏/攻击 | 基础关卡 |
+| 飞行兵 | 上下移动 | 攻击 | 进阶关卡 |
+| 射手兵 | 固定位置射击 | 躲避+攻击 | 挑战关卡 |
+| BOSS | 多阶段攻击 | 找弱点 | 关卡结尾 |
 
-## 扩展点
+### 4. 能力解锁
+| 能力 | 解锁时机 | 作用 |
+|------|----------|------|
+| 基础跳跃 | 游戏开始 | 跨越障碍 |
+| 二段跳 | 第 3 关 | 到达更高平台 |
+| 冲刺 | 第 5 关 | 快速移动/跨越大坑 |
+| 墙跳 | 第 8 关 | 攀爬墙壁 |
+| 下砸 | 第 10 关 | 破坏地面障碍 |
 
-- 添加新敌人类型：继承 `Enemy` 类
-- 添加新道具：继承 `PowerUp` 类
-- 添加新关卡：在 `assets/levels/` 中添加 JSON 文件
-- 添加音效：在 `assets/sounds/` 中添加音频文件
+## 关键技术实现
+
+### 碰撞检测
+```javascript
+setupCollisions() {
+  // 玩家与平台
+  this.physics.add.collider(this.player, this.platforms);
+  
+  // 敌人与平台
+  this.physics.add.collider(this.enemies, this.platforms);
+  
+  // 玩家与金币
+  this.physics.add.overlap(this.player, this.coins, this.collectCoin, null, this);
+  
+  // 玩家与敌人（区分踩踏和碰撞）
+  this.physics.add.overlap(this.player, this.enemies, this.hitEnemy, null, this);
+}
+
+hitEnemy(player, enemy) {
+  if (player.body.velocity.y > 0 && player.y < enemy.y - 10) {
+    // 踩踏：玩家在敌人上方且向下移动
+    enemy.takeDamage(1);
+    player.setVelocityY(-300); // 弹起
+    this.score += 100;
+    this.showScorePopup(enemy.x, enemy.y, '+100');
+  } else if (!player.isInvincible) {
+    // 被撞：受伤
+    player.takeDamage(1);
+  }
+}
+```
+
+### 视差背景
+```javascript
+createParallaxBackground() {
+  // 多层背景，越远的层移动越慢
+  this.bg1 = this.add.tileSprite(0, 0, 800, 600, 'bg_sky')
+    .setOrigin(0, 0).setScrollFactor(0);
+  this.bg2 = this.add.tileSprite(0, 0, 800, 600, 'bg_mountains')
+    .setOrigin(0, 0).setScrollFactor(0);
+  this.bg3 = this.add.tileSprite(0, 0, 800, 600, 'bg_trees')
+    .setOrigin(0, 0).setScrollFactor(0);
+}
+
+update() {
+  // 背景跟随相机移动，但速度不同
+  this.bg1.tilePositionX = this.cameras.main.scrollX * 0.1;
+  this.bg2.tilePositionX = this.cameras.main.scrollX * 0.3;
+  this.bg3.tilePositionX = this.cameras.main.scrollX * 0.5;
+}
+```
+
+### 检查点系统
+```javascript
+class Checkpoint extends Phaser.Physics.Arcade.Sprite {
+  constructor(scene, x, y) {
+    super(scene, x, y, 'checkpoint');
+    scene.add.existing(this);
+    scene.physics.add.existing(this, true); // 静态
+    
+    this.activated = false;
+  }
+  
+  activate(player) {
+    if (this.activated) return;
+    
+    this.activated = true;
+    this.play('checkpoint_activate');
+    
+    // 保存检查点位置
+    player.checkpoint = { x: this.x, y: this.y };
+    
+    // 显示提示
+    this.scene.showMessage('检查点已激活！');
+  }
+}
+```
+
+## 关卡设计
+
+### 关卡节奏
+```
+第1关: 教学关 - 只有平台和金币，教基本操作
+第2关: 简单关 - 引入敌人，教踩踏
+第3关: 跳跃关 - 需要精确跳跃，解锁二段跳
+第4关: 收集关 - 收集所有星星才能过关
+第5关: 速度关 - 限时通过，解锁冲刺
+第6关: 探索关 - 大地图，隐藏通道
+第7关: 战斗关 - 大量敌人
+第8关: 攀爬关 - 垂直关卡，解锁墙跳
+第9关: 综合关 - 结合所有机制
+第10关: BOSS关 - BOSS 战
+```
+
+### 隐藏要素
+- 隐藏通道（墙壁可以穿过）
+- 隐藏金币（需要特定能力才能到达）
+- 秘密关卡（收集所有星星解锁）
+- 成就系统（挑战性目标）
+
+## 迭代策略
+
+### 第一版：最小可玩版本
+- 基础移动和跳跃
+- 1 个关卡
+- 平台和金币
+- 简单 UI
+
+### 第二版：核心手感
+- 优化跳跃手感（变量跳跃、土狼跳）
+- 添加敌人和踩踏
+- 添加 3 个关卡
+- 添加音效
+
+### 第三版：能力系统
+- 添加二段跳
+- 添加冲刺
+- 添加 5 个关卡
+- 添加检查点
+
+### 第四版：内容扩展
+- 添加 BOSS
+- 添加隐藏区域
+- 添加 10 个关卡
+- 添加成就系统
+
+### 第五版：打磨
+- 优化手感细节
+- 添加粒子效果
+- 优化关卡设计
+- 添加音乐
+
+## 常见错误
+
+1. **手感差**：跳跃必须响应快、可微调、有宽容窗口
+2. **死亡太频繁**：检查点要频繁，死亡惩罚要轻
+3. **关卡太长**：每关 2-5 分钟，太长会疲惫
+4. **没有教程**：必须渐进式教玩家新机制
+5. **视觉反馈弱**：跳跃、落地、受伤都要有动画和音效

@@ -8,7 +8,7 @@
             <el-icon :size="28"><Document /></el-icon>
           </div>
           <div class="stat-info">
-            <div class="stat-value">{{ stats.totalDocuments || 0 }}</div>
+            <div class="stat-value">{{ stats.processedDocumentsCount || 0 }}</div>
             <div class="stat-label">知识文档</div>
           </div>
         </el-card>
@@ -19,8 +19,8 @@
             <el-icon :size="28"><Tools /></el-icon>
           </div>
           <div class="stat-info">
-            <div class="stat-value">{{ stats.totalSkills || 0 }}</div>
-            <div class="stat-label">Agent 技能</div>
+            <div class="stat-value">{{ stats.learnedSkillsCount || 0 }}</div>
+            <div class="stat-label">已学技能</div>
           </div>
         </el-card>
       </el-col>
@@ -30,8 +30,8 @@
             <el-icon :size="28"><TrendCharts /></el-icon>
           </div>
           <div class="stat-info">
-            <div class="stat-value">{{ stats.evolutionCount || 0 }}</div>
-            <div class="stat-label">进化次数</div>
+            <div class="stat-value">{{ stats.learnedPatternsCount || 0 }}</div>
+            <div class="stat-label">已学模式</div>
           </div>
         </el-card>
       </el-col>
@@ -41,8 +41,8 @@
             <el-icon :size="28"><Timer /></el-icon>
           </div>
           <div class="stat-info">
-            <div class="stat-value">{{ stats.lastEvolution || '从未' }}</div>
-            <div class="stat-label">上次进化</div>
+            <div class="stat-value">{{ stats.evolutionCount || 0 }}</div>
+            <div class="stat-label">进化次数</div>
           </div>
         </el-card>
       </el-col>
@@ -69,7 +69,7 @@
       </el-alert>
 
       <el-row :gutter="16">
-        <!-- 自动进化 -->
+        <!-- 整理知识库 -->
         <el-col :span="8">
           <el-card shadow="hover" class="feature-card">
             <div class="feature-icon">
@@ -88,7 +88,7 @@
           </el-card>
         </el-col>
 
-        <!-- 自进化 -->
+        <!-- 触发自进化 -->
         <el-col :span="8">
           <el-card shadow="hover" class="feature-card">
             <div class="feature-icon">
@@ -131,6 +131,60 @@
           </el-card>
         </el-col>
       </el-row>
+    </el-card>
+
+    <!-- 已学习的模式 -->
+    <el-card class="section-card">
+      <template #header>
+        <div class="section-header">
+          <div>
+            <el-icon :size="20" color="#67C23A"><TrendCharts /></el-icon>
+            <span>已学习的模式</span>
+          </div>
+          <el-tag type="info">{{ learnedPatterns.length }} 个模式</el-tag>
+        </div>
+      </template>
+      <el-table :data="learnedPatterns" stripe size="small" v-if="learnedPatterns.length > 0">
+        <el-table-column prop="key" label="模式标识" min-width="200" show-overflow-tooltip />
+        <el-table-column prop="frequency" label="出现频率" width="100" align="center">
+          <template #default="{ row }">
+            <el-tag :type="row.frequency >= 3 ? 'success' : row.frequency >= 2 ? 'warning' : 'info'" size="small">
+              {{ row.frequency }} 次
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="来源" min-width="200">
+          <template #default="{ row }">
+            <span class="source-text">{{ row.sources?.slice(0, 3).join(', ') || '-' }}</span>
+          </template>
+        </el-table-column>
+      </el-table>
+      <el-empty v-else description="暂无已学习的模式" />
+    </el-card>
+
+    <!-- 已学习的技能 -->
+    <el-card class="section-card">
+      <template #header>
+        <div class="section-header">
+          <div>
+            <el-icon :size="20" color="#E6A23C"><Tools /></el-icon>
+            <span>已学习的技能</span>
+          </div>
+          <el-tag type="info">{{ learnedSkills.length }} 个技能</el-tag>
+        </div>
+      </template>
+      <el-table :data="learnedSkills" stripe size="small" v-if="learnedSkills.length > 0">
+        <el-table-column prop="id" label="技能ID" width="200" show-overflow-tooltip />
+        <el-table-column prop="description" label="描述" min-width="250" show-overflow-tooltip />
+        <el-table-column prop="learnedFrom" label="学习来源" width="150" show-overflow-tooltip />
+        <el-table-column label="项目" width="120">
+          <template #default="{ row }">
+            <el-tag v-if="row.projectId" size="small" type="primary">{{ row.projectId }}</el-tag>
+            <span v-else class="text-muted">全局</span>
+          </template>
+        </el-table-column>
+      </el-table>
+      <el-empty v-else description="暂无已学习的技能" />
     </el-card>
 
     <!-- 手动操作区 -->
@@ -304,10 +358,10 @@ const showDocSelectDialog = ref(false)
 const loadingFiles = ref(false)
 
 const stats = ref({
-  totalDocuments: 0,
-  totalSkills: 0,
+  processedDocumentsCount: 0,
+  learnedSkillsCount: 0,
+  learnedPatternsCount: 0,
   evolutionCount: 0,
-  lastEvolution: '从未',
   autoEvolutionEnabled: true
 })
 
@@ -315,6 +369,8 @@ const agents = ref([])
 const templates = ref([])
 const projects = ref([])
 const learningRecords = ref([])
+const learnedPatterns = ref([])
+const learnedSkills = ref([])
 const projectFiles = ref([])
 const docSelectProjectId = ref('')
 
@@ -366,7 +422,6 @@ const loadProjectFiles = async (projectId) => {
   loadingFiles.value = true
   try {
     const files = await codeBrowserApi.getFileTree(projectId)
-    // 过滤出文档类型的文件
     projectFiles.value = flattenFiles(files || []).filter(f =>
       !f.isDirectory && isDocument(f.name)
     )
@@ -424,13 +479,34 @@ const formatSize = (bytes) => {
 /** 加载数据 */
 const loadData = async () => {
   try {
-    const kbStats = await knowledgeBaseApi.getStats()
-    if (kbStats) {
-      stats.value.totalDocuments = kbStats.totalDocuments || 0
-      stats.value.totalSkills = kbStats.totalSkills || 0
+    const evoStats = await knowledgeEvolutionApi.getStats()
+    if (evoStats) {
+      stats.value = {
+        processedDocumentsCount: evoStats.processedDocumentsCount || 0,
+        learnedSkillsCount: evoStats.learnedSkillsCount || 0,
+        learnedPatternsCount: evoStats.learnedPatternsCount || 0,
+        bestPracticesCount: evoStats.bestPracticesCount || 0,
+        solutionsCount: evoStats.solutionsCount || 0,
+        evolutionCount: evoStats.evolutionCount || 0,
+        autoEvolutionEnabled: true
+      }
     }
   } catch (error) {
-    console.error('加载知识库统计失败:', error)
+    console.error('加载进化统计失败:', error)
+  }
+
+  try {
+    const patterns = await knowledgeEvolutionApi.getLearnedPatterns()
+    learnedPatterns.value = patterns || []
+  } catch (error) {
+    console.error('加载已学习模式失败:', error)
+  }
+
+  try {
+    const skills = await knowledgeEvolutionApi.getLearnedSkills()
+    learnedSkills.value = skills || []
+  } catch (error) {
+    console.error('加载已学习技能失败:', error)
   }
 
   try {
@@ -453,15 +529,40 @@ const loadData = async () => {
   } catch (error) {
     console.error('加载项目列表失败:', error)
   }
+
+  // 加载持久化的学习记录
+  loadLearningRecords()
+}
+
+/** 加载持久化的学习记录 */
+const loadLearningRecords = () => {
+  try {
+    const saved = localStorage.getItem('knowledge-evolution-records')
+    if (saved) {
+      learningRecords.value = JSON.parse(saved)
+    }
+  } catch (e) {
+    console.error('加载学习记录失败:', e)
+  }
+}
+
+/** 保存学习记录到本地存储 */
+const saveLearningRecords = () => {
+  try {
+    localStorage.setItem('knowledge-evolution-records', JSON.stringify(learningRecords.value))
+  } catch (e) {
+    console.error('保存学习记录失败:', e)
+  }
 }
 
 /** 整理知识库 */
 const handleOrganize = async () => {
   organizing.value = true
   try {
-    const result = await knowledgeEvolutionApi.organize()
+    await knowledgeEvolutionApi.organize()
     ElMessage.success('知识库整理完成！已重新建立知识索引。')
     addLearningRecord('知识库整理', '完成了知识库的整理和索引重建', 'auto', 'system')
+    stats.value.evolutionCount = (stats.value.evolutionCount || 0) + 1
     loadData()
   } catch (error) {
     ElMessage.error('整理失败：' + (error.message || '未知错误'))
@@ -474,11 +575,10 @@ const handleOrganize = async () => {
 const handleEvolve = async () => {
   evolving.value = true
   try {
-    const result = await knowledgeEvolutionApi.evolve()
+    await knowledgeEvolutionApi.evolve()
     ElMessage.success('自进化完成！Agent 已从历史经验中学习。')
     addLearningRecord('自进化', 'Agent 分析了历史任务并优化了知识库', 'auto', 'system')
     stats.value.evolutionCount = (stats.value.evolutionCount || 0) + 1
-    stats.value.lastEvolution = '刚刚'
     loadData()
   } catch (error) {
     ElMessage.error('自进化失败：' + (error.message || '未知错误'))
@@ -530,7 +630,7 @@ const handleLearnGame = async () => {
       'manual',
       'system'
     )
-    gameForm.value = { gameDescription: '', templateId: '', success: true }
+    gameForm.value = { learnMode: 'existing', projectId: '', gameDescription: '', templateId: '', success: true }
     loadData()
   } catch (error) {
     ElMessage.error('学习失败：' + (error.message || '未知错误'))
@@ -554,6 +654,8 @@ const addLearningRecord = (title, description, source, agentId) => {
   if (learningRecords.value.length > 50) {
     learningRecords.value = learningRecords.value.slice(0, 50)
   }
+  // 持久化保存
+  saveLearningRecords()
 }
 
 onMounted(() => {
@@ -750,6 +852,16 @@ onMounted(() => {
   color: var(--el-text-color-secondary);
   font-size: 13px;
   margin-bottom: 12px;
+}
+
+.source-text {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.text-muted {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
 }
 
 /* 手机端适配 */

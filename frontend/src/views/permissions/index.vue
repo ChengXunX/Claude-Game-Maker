@@ -122,7 +122,7 @@
           </template>
 
           <el-table :data="definitions" v-loading="loading" stripe>
-            <el-table-column prop="permission" label="权限标识" width="200" />
+            <el-table-column prop="permissionKey" label="权限标识" width="200" />
             <el-table-column prop="name" label="名称" width="150" />
             <el-table-column prop="description" label="描述" min-width="200" />
             <el-table-column prop="category" label="分类" width="100" />
@@ -152,7 +152,7 @@
     </el-tabs>
 
     <!-- 申请权限对话框 -->
-    <el-dialog v-model="requestDialogVisible" title="申请权限" width="500px">
+    <el-dialog v-model="requestDialogVisible" title="申请权限" width="500px" destroy-on-close>
       <el-form :model="requestForm" label-width="100px">
         <el-form-item label="权限">
           <el-select v-model="requestForm.permission" placeholder="选择权限" filterable>
@@ -170,7 +170,7 @@
     </el-dialog>
 
     <!-- 用户权限管理对话框 -->
-    <el-dialog v-model="userPermDialogVisible" title="用户权限管理" width="600px">
+    <el-dialog v-model="userPermDialogVisible" title="用户权限管理" width="600px" destroy-on-close>
       <el-descriptions :column="2" border class="mb-4">
         <el-descriptions-item label="用户名">{{ currentUser?.username }}</el-descriptions-item>
         <el-descriptions-item label="角色">{{ currentUser?.role?.displayName || currentUser?.role?.name || '-' }}</el-descriptions-item>
@@ -195,10 +195,10 @@
     </el-dialog>
 
     <!-- 创建权限定义对话框 -->
-    <el-dialog v-model="defDialogVisible" :title="isEditDef ? '编辑权限' : '新增权限'" width="500px">
+    <el-dialog v-model="defDialogVisible" :title="isEditDef ? '编辑权限' : '新增权限'" width="500px" destroy-on-close>
       <el-form ref="defFormRef" :model="defForm" :rules="defRules" label-width="100px">
-        <el-form-item label="权限标识" prop="permission">
-          <el-input v-model="defForm.permission" placeholder="如：projects:manage" :disabled="isEditDef" />
+        <el-form-item label="权限标识" prop="permissionKey">
+          <el-input v-model="defForm.permissionKey" placeholder="如：projects:manage" :disabled="isEditDef" />
         </el-form-item>
         <el-form-item label="名称" prop="name">
           <el-input v-model="defForm.name" placeholder="如：项目管理" />
@@ -267,14 +267,14 @@ const isEditDef = ref(false)
 const defFormRef = ref(null)
 const saving = ref(false)
 const defForm = ref({
-  permission: '',
+  permissionKey: '',
   name: '',
   description: '',
   category: '',
   enabled: true
 })
 const defRules = {
-  permission: [{ required: true, message: '请输入权限标识', trigger: 'blur' }],
+  permissionKey: [{ required: true, message: '请输入权限标识', trigger: 'blur' }],
   name: [{ required: true, message: '请输入名称', trigger: 'blur' }],
   category: [{ required: true, message: '请选择分类', trigger: 'change' }]
 }
@@ -295,24 +295,31 @@ const formatTime = (time) => {
 }
 
 const handleTabClick = () => {
-  loadData()
+  // 数据已在初始化时全部加载，无需重复请求
 }
 
-const loadData = async () => {
+/** 加载所有 tab 数据 */
+const loadAllData = async () => {
   loading.value = true
   try {
-    if (activeTab.value === 'request') {
-      const data = await api.get('/permissions/api/user/' + userStore.userId)
-      myRequests.value = data || []
-    } else if (activeTab.value === 'approval') {
-      const pendingData = await api.get('/permissions/api/pending-count')
-      pendingRequests.value = pendingData.requests || []
-    } else if (activeTab.value === 'users') {
-      const data = await api.get('/permissions/admin/users')
-      users.value = data || []
-    } else if (activeTab.value === 'definitions') {
-      const data = await api.get('/permissions/api/definitions')
-      definitions.value = data || []
+    const requests = [
+      api.get('/permissions/api/user/' + userStore.userId).catch(() => [])
+    ]
+    // 管理员额外加载审批、用户、定义数据
+    if (isAdmin.value) {
+      requests.push(
+        api.get('/permissions/api/pending').catch(() => []),
+        api.get('/permissions/api/admin/users').catch(() => []),
+        api.get('/permissions/api/definitions').catch(() => [])
+      )
+    }
+
+    const results = await Promise.all(requests)
+    myRequests.value = Array.isArray(results[0]) ? results[0] : []
+    if (isAdmin.value) {
+      pendingRequests.value = Array.isArray(results[1]) ? results[1] : (results[1]?.requests || [])
+      users.value = Array.isArray(results[2]) ? results[2] : []
+      definitions.value = Array.isArray(results[3]) ? results[3] : []
     }
   } catch (error) {
     ElMessage.error('加载数据失败')
@@ -321,12 +328,42 @@ const loadData = async () => {
   }
 }
 
+/** 单独刷新某个 tab 数据 */
+const refreshTab = async (tab) => {
+  try {
+    if (tab === 'request') {
+      const data = await api.get('/permissions/api/user/' + userStore.userId)
+      myRequests.value = Array.isArray(data) ? data : []
+    } else if (tab === 'approval') {
+      const pendingData = await api.get('/permissions/api/pending')
+      pendingRequests.value = Array.isArray(pendingData) ? pendingData : (pendingData?.requests || [])
+    } else if (tab === 'users') {
+      const data = await api.get('/permissions/api/admin/users')
+      users.value = Array.isArray(data) ? data : []
+    } else if (tab === 'definitions') {
+      const data = await api.get('/permissions/api/definitions')
+      definitions.value = Array.isArray(data) ? data : []
+    }
+  } catch (error) {
+    // ignore
+  }
+}
+
 const loadAvailablePermissions = async () => {
   try {
     const data = await api.get('/permissions/api/available')
-    availablePermissions.value = data || []
+    // 后端返回 Map<String, String> { permissionKey: name }，转换为数组格式
+    if (data && typeof data === 'object' && !Array.isArray(data)) {
+      availablePermissions.value = Object.entries(data).map(([key, name]) => ({
+        permission: key,
+        name: name
+      }))
+    } else {
+      availablePermissions.value = Array.isArray(data) ? data : []
+    }
   } catch (error) {
     console.error('加载可用权限失败')
+    availablePermissions.value = []
   }
 }
 
@@ -346,7 +383,7 @@ const handleSubmitRequest = async () => {
     await api.post('/permissions/api/request', requestForm.value)
     ElMessage.success('申请已提交')
     requestDialogVisible.value = false
-    loadData()
+    refreshTab(activeTab.value)
   } catch (error) {
     ElMessage.error('提交失败')
   }
@@ -357,7 +394,7 @@ const handleCancel = async (request) => {
     await ElMessageBox.confirm('确定要撤销此申请吗？', '撤销确认')
     await api.post(`/permissions/api/request/${request.id}/cancel`)
     ElMessage.success('已撤销')
-    loadData()
+    refreshTab(activeTab.value)
   } catch (error) {
     if (error !== 'cancel') {
       ElMessage.error('撤销失败')
@@ -369,7 +406,7 @@ const handleApprove = async (request) => {
   try {
     await api.post(`/permissions/api/approve/${request.id}`)
     ElMessage.success('已批准')
-    loadData()
+    refreshTab(activeTab.value)
   } catch (error) {
     ElMessage.error('批准失败')
   }
@@ -380,7 +417,7 @@ const handleReject = async (request) => {
     const { value: reason } = await ElMessageBox.prompt('请输入拒绝原因', '拒绝申请')
     await api.post(`/permissions/api/reject/${request.id}`, { reason })
     ElMessage.success('已拒绝')
-    loadData()
+    refreshTab(activeTab.value)
   } catch (error) {
     if (error !== 'cancel') {
       ElMessage.error('拒绝失败')
@@ -390,15 +427,16 @@ const handleReject = async (request) => {
 
 const handleManageUser = async (user) => {
   currentUser.value = user
-  userPermissions.value = user.extraPermissions ? [...user.extraPermissions] : []
+  userPermissions.value = Array.isArray(user.extraPermissions) ? [...user.extraPermissions] : []
   userPermDialogVisible.value = true
 
   // 加载所有权限定义
   try {
     const data = await api.get('/permissions/api/definitions')
-    allPermissions.value = data || []
+    allPermissions.value = Array.isArray(data) ? data : []
   } catch (error) {
     console.error('加载权限定义失败')
+    allPermissions.value = []
   }
 }
 
@@ -422,7 +460,7 @@ const handleSaveUserPermissions = async () => {
 
     ElMessage.success('权限更新成功')
     userPermDialogVisible.value = false
-    loadData()
+    refreshTab(activeTab.value)
   } catch (error) {
     ElMessage.error('更新失败')
   } finally {
@@ -433,7 +471,7 @@ const handleSaveUserPermissions = async () => {
 const handleCreateDefinition = () => {
   isEditDef.value = false
   defForm.value = {
-    permission: '',
+    permissionKey: '',
     name: '',
     description: '',
     category: '',
@@ -468,7 +506,7 @@ const handleSubmitDefinition = async () => {
     }
     ElMessage.success(isEditDef.value ? '更新成功' : '创建成功')
     defDialogVisible.value = false
-    loadData()
+    refreshTab(activeTab.value)
   } catch (error) {
     ElMessage.error('操作失败')
   } finally {
@@ -480,7 +518,7 @@ const handleToggleDefinition = async (definition) => {
   try {
     await api.post(`/permissions/api/definitions/${definition.id}/toggle`)
     ElMessage.success('状态已切换')
-    loadData()
+    refreshTab(activeTab.value)
   } catch (error) {
     ElMessage.error('操作失败')
   }
@@ -491,7 +529,7 @@ const handleDeleteDefinition = async (definition) => {
     await ElMessageBox.confirm(`确定要删除权限 "${definition.name}" 吗？`, '删除确认')
     await api.delete(`/permissions/api/definitions/${definition.id}`)
     ElMessage.success('删除成功')
-    loadData()
+    refreshTab(activeTab.value)
   } catch (error) {
     if (error !== 'cancel') {
       ElMessage.error('删除失败')
@@ -500,7 +538,7 @@ const handleDeleteDefinition = async (definition) => {
 }
 
 onMounted(() => {
-  loadData()
+  loadAllData()
 })
 </script>
 

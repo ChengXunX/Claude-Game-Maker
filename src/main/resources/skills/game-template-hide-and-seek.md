@@ -1,457 +1,321 @@
 ---
-name: game-template-hide-and-seek
-description: 躲猫猫游戏模板 - 提供完整的躲猫猫游戏项目骨架
-category: game-template
-triggerPattern: hide and seek, 躲猫猫, 捉迷藏, 捕捉, 追逐, chase, seeker, hider
+name: 躲猫猫游戏开发模板
+description: 躲猫猫游戏开发模板，适用于躲藏、寻找、追逐类游戏
+trigger: hide and seek, 躲猫猫, 捉迷藏, 捕捉, 追逐, chase, seeker, hider
+examples: 躲猫猫|捉迷藏|Prop Hunt|Among Us|Dead by Daylight
 ---
 
-# 躲猫猫游戏模板
+# 躲猫猫游戏开发模板
 
-## 概述
+## 游戏设计核心原则
 
-多人躲猫猫游戏模板，基于 Phaser 3 + Socket.IO。包含：
-- 角色系统（躲藏者、寻找者）
-- 地图系统（多房间、障碍物、躲藏点）
-- 视野系统（视野范围、遮挡检测）
-- 道具系统（隐身、加速、陷阱）
-- 计时系统（回合时间、倒计时）
-- 多人实时对战
-
-## 项目结构
-
+### 核心循环（每局 5-15 分钟）
 ```
-game-hide-seek/
-├── index.html
-├── package.json
-├── server/
-│   └── index.js              # Socket.IO 服务端
-├── src/
-│   ├── main.js
-│   ├── config.js
-│   ├── scenes/
-│   │   ├── BootScene.js
-│   │   ├── MenuScene.js
-│   │   ├── LobbyScene.js     # 大厅
-│   │   ├── GameScene.js      # 游戏场景
-│   │   └── ResultScene.js    # 结果场景
-│   ├── entities/
-│   │   ├── Player.js          # 玩家基类
-│   │   ├── Hider.js           # 躲藏者
-│   │   ├── Seeker.js          # 寻找者
-│   │   └── Prop.js            # 道具
-│   ├── systems/
-│   │   ├── VisionSystem.js    # 视野系统
-│   │   ├── HideSystem.js      # 躲藏系统
-│   │   ├── PropSystem.js      # 道具系统
-│   │   └── TimerSystem.js     # 计时系统
-│   ├── map/
-│   │   ├── GameMap.js         # 地图管理
-│   │   └── MapObjects.js      # 地图物件
-│   └── ui/
-│       ├── HUD.js
-│       ├── MiniMap.js
-│       └── ChatBox.js
-└── assets/
+选择阵营 → 躲藏/寻找 → 追逐/躲藏 → 被抓/找到 → 结算
+```
+- **紧张感**：随时可能被发现
+- **策略性**：选择躲藏位置
+- **刺激感**：追逐的紧张感
+
+### 玩家心理学
+- **"躲藏成功"的成就感**：成功躲藏的满足感
+- **"找到猎物"的快感**：找到躲藏者的爽感
+- **"追逐刺激"的紧张感**：追逐的紧张感
+- **"团队合作"的乐趣**：和队友配合
+
+### 躲猫猫设计要点
+```
+躲猫猫核心：
+1. 阵营平衡：躲藏者和寻找者要平衡
+2. 地图设计：要有足够躲藏点
+3. 视野系统：寻找者有视野限制
+4. 时间限制：不能无限躲藏
 ```
 
-## 核心代码
+## 核心系统设计
 
-### 1. 游戏配置 (config.js)
-
+### 1. 阵营系统
 ```javascript
-export const GAME_CONFIG = {
-  width: 800,
-  height: 600,
-  roundTime: 180,        // 回合时间（秒）
-  seekerDelay: 10,       // 寻找者出发延迟（秒）
-  visionRange: 150,      // 视野范围
-  seekerVisionRange: 200,
-  playerSpeed: 150,
-  seekerSpeed: 180,
-  maxPlayers: 8,
-  minPlayers: 2,
-  props: {
-    speedBoost: { duration: 5, multiplier: 1.5 },
-    invisibility: { duration: 8 },
-    trap: { duration: 30, slowMultiplier: 0.5 }
+class TeamSystem {
+  constructor() {
+    this.hiders = [];
+    this.seekers = [];
+    this.maxHiders = 4;
+    this.maxSeekers = 1;
+  }
+  
+  joinTeam(player, team) {
+    if (team === 'hider' && this.hiders.length < this.maxHiders) {
+      this.hiders.push(player);
+      player.team = 'hider';
+      return true;
+    }
+    
+    if (team === 'seeker' && this.seekers.length < this.maxSeekers) {
+      this.seekers.push(player);
+      player.team = 'seeker';
+      return true;
+    }
+    
+    return false;
+  }
+  
+  getTeamCount() {
+    return {
+      hiders: this.hiders.length,
+      seekers: this.seekers.length
+    };
+  }
+  
+  checkWinCondition() {
+    // 所有躲藏者都被找到
+    if (this.hiders.every(h => h.caught)) {
+      return 'seekers';
+    }
+    
+    // 时间到
+    if (this.time <= 0) {
+      return 'hiders';
+    }
+    
+    return null;
   }
 }
 ```
 
-### 2. 躲藏者 (Hider.js)
-
+### 2. 躲藏系统
 ```javascript
-export class Hider extends Phaser.Physics.Arcade.Sprite {
-  constructor(scene, x, y, playerId, playerName) {
-    super(scene, x, y, 'hider')
-    this.playerId = playerId
-    this.playerName = playerName
-    this.isHiding = false
-    this.hideSpot = null
-    this.isInvisible = false
-    this.speed = GAME_CONFIG.playerSpeed
-    this.health = 1
-    this.props = []
-    this.score = 0
+class HideSystem {
+  constructor() {
+    this.hideSpots = [];
+    this.occupiedSpots = [];
   }
-
-  update(cursors) {
-    if (this.isHiding) return
-
-    let vx = 0, vy = 0
-    if (cursors.left.isDown) vx = -this.speed
-    if (cursors.right.isDown) vx = this.speed
-    if (cursors.up.isDown) vy = -this.speed
-    if (cursors.down.isDown) vy = this.speed
-    this.setVelocity(vx, vy)
-
-    // 检查是否可以躲藏
-    this.checkHideSpot()
+  
+  addHideSpot(config) {
+    this.hideSpots.push({
+      id: config.id,
+      position: config.position,
+      type: config.type, // bush, box, closet, etc.
+      capacity: config.capacity || 1,
+      occupants: []
+    });
   }
+  
+  hide(player, spotId) {
+    const spot = this.hideSpots.find(s => s.id === spotId);
+    if (!spot) return false;
+    
+    if (spot.occupants.length >= spot.capacity) return false;
+    
+    spot.occupants.push(player);
+    player.hidingSpot = spot;
+    player.visible = false;
+    
+    return true;
+  }
+  
+  unhide(player) {
+    if (!player.hidingSpot) return false;
+    
+    const spot = player.hidingSpot;
+    spot.occupants = spot.occupants.filter(p => p !== player);
+    player.hidingSpot = null;
+    player.visible = true;
+    
+    return true;
+  }
+  
+  isSpotOccupied(spotId) {
+    const spot = this.hideSpots.find(s => s.id === spotId);
+    return spot && spot.occupants.length > 0;
+  }
+}
+```
 
-  checkHideSpot() {
-    const hideSpots = this.scene.hideSpots.getChildren()
-    for (const spot of hideSpots) {
-      if (this.scene.physics.overlap(this, spot)) {
-        this.canHide = true
-        this.currentHideSpot = spot
-        return
+### 3. 视野系统
+```javascript
+class VisionSystem {
+  constructor() {
+    this.seekerVisionRange = 300;
+    this.hiderVisionRange = 200;
+    this.fieldOfView = 90; // 度
+  }
+  
+  canSee(seeker, target) {
+    const distance = this.getDistance(seeker.position, target.position);
+    
+    // 距离检查
+    if (distance > this.seekerVisionRange) return false;
+    
+    // 角度检查
+    const angle = this.getAngle(seeker.position, seeker.facing, target.position);
+    if (Math.abs(angle) > this.fieldOfView / 2) return false;
+    
+    // 遮挡检查
+    if (this.isObstructed(seeker.position, target.position)) return false;
+    
+    // 躲藏检查
+    if (target.hidingSpot && !this.canSeeThroughSpot(target.hidingSpot)) {
+      return false;
+    }
+    
+    return true;
+  }
+  
+  isObstructed(from, to) {
+    // 射线检测是否有障碍物
+    const obstacles = this.getObstacles();
+    
+    for (const obstacle of obstacles) {
+      if (this.lineIntersectsRect(from, to, obstacle)) {
+        return true;
       }
     }
-    this.canHide = false
-    this.currentHideSpot = null
+    
+    return false;
   }
-
-  hide() {
-    if (!this.canHide || !this.currentHideSpot) return false
-
-    this.isHiding = true
-    this.hideSpot = this.currentHideSpot
-    this.setVelocity(0, 0)
-    this.setVisible(false)
-    this.body.enable = false
-
-    return true
-  }
-
-  unhide() {
-    if (!this.isHiding) return
-
-    this.isHiding = false
-    this.hideSpot = null
-    this.setVisible(true)
-    this.body.enable = true
-  }
-
-  useProp(propType) {
-    const prop = this.props.find(p => p.type === propType && p.count > 0)
-    if (!prop) return false
-
-    prop.count--
-
-    switch (propType) {
-      case 'speedBoost':
-        this.applySpeedBoost()
-        break
-      case 'invisibility':
-        this.applyInvisibility()
-        break
-      case 'trap':
-        this.placeTrap()
-        break
-    }
-
-    return true
-  }
-
-  applySpeedBoost() {
-    const originalSpeed = this.speed
-    this.speed *= GAME_CONFIG.props.speedBoost.multiplier
-    this.scene.time.delayedCall(GAME_CONFIG.props.speedBoost.duration * 1000, () => {
-      this.speed = originalSpeed
-    })
-  }
-
-  applyInvisibility() {
-    this.isInvisible = true
-    this.setAlpha(0.3)
-    this.scene.time.delayedCall(GAME_CONFIG.props.invisibility.duration * 1000, () => {
-      this.isInvisible = false
-      this.setAlpha(1)
-    })
-  }
-
-  placeTrap() {
-    const trap = this.scene.traps.create(this.x, this.y, 'trap')
-    trap.owner = this.playerId
-    trap.lifespan = GAME_CONFIG.props.trap.duration * 1000
-  }
-
-  caught() {
-    this.health = 0
-    this.setTint(0xff0000)
-    this.setVelocity(0, 0)
-    this.scene.events.emit('hiderCaught', { playerId: this.playerId })
+  
+  canSeeThroughSpot(spot) {
+    // 某些躲藏点可以看到
+    return spot.type === 'bush'; // 灌木丛可以看到轮廓
   }
 }
 ```
 
-### 3. 寻找者 (Seeker.js)
-
+### 4. 追逐系统
 ```javascript
-export class Seeker extends Phaser.Physics.Arcade.Sprite {
-  constructor(scene, x, y, playerId, playerName) {
-    super(scene, x, y, 'seeker')
-    this.playerId = playerId
-    this.playerName = playerName
-    this.speed = GAME_CONFIG.seekerSpeed
-    this.visionRange = GAME_CONFIG.seekerVisionRange
-    this.caughtCount = 0
-    this.cooldown = 0
+class ChaseSystem {
+  constructor() {
+    this.chaseSpeed = 1.5; // 追逐速度倍数
+    this.escapeDistance = 500;
   }
-
-  update(cursors) {
-    let vx = 0, vy = 0
-    if (cursors.left.isDown) vx = -this.speed
-    if (cursors.right.isDown) vx = this.speed
-    if (cursors.up.isDown) vy = -this.speed
-    if (cursors.down.isDown) vy = this.speed
-    this.setVelocity(vx, vy)
-
-    // 更新冷却
-    if (this.cooldown > 0) {
-      this.cooldown -= 16 // 假设60fps
-    }
-
-    // 检测附近的躲藏者
-    this.detectHiders()
+  
+  startChase(seeker, hider) {
+    seeker.chasing = hider;
+    hider.beingChased = true;
+    
+    // 加速
+    seeker.speed *= this.chaseSpeed;
   }
-
-  detectHiders() {
-    const hiders = this.scene.hiders.getChildren()
-    for (const hider of hiders) {
-      if (hider.isHiding || hider.isInvisible || hider.health <= 0) continue
-
-      const distance = Phaser.Math.Distance.Between(this.x, this.y, hider.x, hider.y)
-      if (distance <= this.visionRange) {
-        // 检查是否有遮挡
-        if (!this.isBlocked(hider)) {
-          this.scene.events.emit('hiderDetected', {
-            seekerId: this.playerId,
-            hiderId: hider.playerId
-          })
+  
+  endChase(seeker, hider) {
+    seeker.chasing = null;
+    hider.beingChased = false;
+    
+    // 恢复速度
+    seeker.speed /= this.chaseSpeed;
+  }
+  
+  update(delta) {
+    for (const seeker of this.seekers) {
+      if (seeker.chasing) {
+        const distance = this.getDistance(seeker.position, seeker.chasing.position);
+        
+        if (distance > this.escapeDistance) {
+          this.endChase(seeker, seeker.chasing);
+        } else if (distance < 30) {
+          this.catchHider(seeker, seeker.chasing);
         }
       }
     }
   }
-
-  isBlocked(target) {
-    // 简化的遮挡检测
-    const obstacles = this.scene.obstacles.getChildren()
-    for (const obstacle of obstacles) {
-      const line = new Phaser.Geom.Line(this.x, this.y, target.x, target.y)
-      const rect = obstacle.getBounds()
-      if (Phaser.Geom.Intersects.LineToRectangle(line, rect)) {
-        return true
-      }
-    }
-    return false
-  }
-
-  catch(hider) {
-    if (this.cooldown > 0) return false
-    if (hider.isHiding || hider.isInvisible) return false
-
-    const distance = Phaser.Math.Distance.Between(this.x, this.y, hider.x, hider.y)
-    if (distance > 50) return false
-
-    hider.caught()
-    this.caughtCount++
-    this.cooldown = 2000 // 2秒冷却
-
-    return true
+  
+  catchHider(seeker, hider) {
+    hider.caught = true;
+    hider.visible = true;
+    
+    this.endChase(seeker, hider);
+    
+    // 显示捕获效果
+    this.showCatchEffect(seeker, hider);
   }
 }
 ```
 
-### 4. 游戏场景 (GameScene.js)
-
+### 5. 道具系统
 ```javascript
-export class GameScene extends Phaser.Scene {
+class PowerUpSystem {
   constructor() {
-    super('GameScene')
+    this.powerups = [];
   }
-
-  init(data) {
-    this.roomId = data.roomId
-    this.players = data.players
-    this.isSeeker = data.isSeeker
+  
+  spawnPowerUp(config) {
+    this.powerups.push({
+      id: config.id,
+      type: config.type,
+      position: config.position,
+      collected: false
+    });
   }
-
-  create() {
-    // 创建地图
-    this.gameMap = new GameMap(this)
-    this.gameMap.loadMap('level1')
-
-    // 创建玩家
-    this.createPlayers()
-
-    // 创建道具
-    this.propSystem = new PropSystem(this)
-    this.propSystem.spawnProps()
-
-    // 创建视野系统
-    this.visionSystem = new VisionSystem(this)
-
-    // 创建计时系统
-    this.timerSystem = new TimerSystem(this, GAME_CONFIG.roundTime)
-    this.timerSystem.onTimeUp(() => this.endRound())
-    this.timerSystem.start()
-
-    // 设置碰撞
-    this.setupCollisions()
-
-    // 输入
-    this.cursors = this.input.keyboard.createCursorKeys()
-    this.spaceKey = this.input.keyboard.addKey('SPACE')
-    this.eKey = this.input.keyboard.addKey('E')
-
-    // UI
-    this.hud = new HUD(this)
-  }
-
-  update() {
-    this.localPlayer?.update(this.cursors)
-    this.visionSystem.update()
-    this.timerSystem.update()
-    this.hud.update()
-  }
-
-  createPlayers() {
-    this.hiders = this.add.group()
-    this.seekers = this.add.group()
-
-    this.players.forEach(playerData => {
-      const spawnPoint = this.gameMap.getSpawnPoint(playerData.role)
-
-      if (playerData.role === 'seeker') {
-        const seeker = new Seeker(this, spawnPoint.x, spawnPoint.y, playerData.id, playerData.name)
-        this.seekers.add(seeker)
-        if (playerData.isLocal) this.localPlayer = seeker
-      } else {
-        const hider = new Hider(this, spawnPoint.x, spawnPoint.y, playerData.id, playerData.name)
-        this.hiders.add(hider)
-        if (playerData.isLocal) this.localPlayer = hider
-      }
-    })
-  }
-
-  setupCollisions() {
-    // 玩家与障碍物
-    this.physics.add.collider(this.hiders, this.obstacles)
-    this.physics.add.collider(this.seekers, this.obstacles)
-
-    // 寻找者与躲藏者
-    this.physics.add.overlap(this.seekers, this.hiders, (seeker, hider) => {
-      seeker.catch(hider)
-    })
-
-    // 躲藏者与道具
-    this.physics.add.overlap(this.hiders, this.props, (hider, prop) => {
-      hider.pickupProp(prop)
-      prop.destroy()
-    })
-  }
-
-  endRound() {
-    const hidersAlive = this.hiders.getChildren().filter(h => h.health > 0).length
-    const seekersWon = hidersAlive === 0
-
-    this.scene.start('ResultScene', {
-      hidersAlive,
-      seekersWon,
-      caughtCount: this.seekers.getChildren()[0]?.caughtCount || 0
-    })
+  
+  collectPowerUp(player, powerupId) {
+    const powerup = this.powerups.find(p => p.id === powerupId);
+    if (!powerup || powerup.collected) return false;
+    
+    powerup.collected = true;
+    
+    switch (powerup.type) {
+      case 'speed':
+        player.speed *= 1.5;
+        setTimeout(() => player.speed /= 1.5, 5000);
+        break;
+      case 'invisible':
+        player.visible = false;
+        setTimeout(() => player.visible = true, 3000);
+        break;
+      case 'reveal':
+        // 显示所有躲藏者位置
+        this.revealAllHiders();
+        break;
+    }
+    
+    return true;
   }
 }
+
+const POWERUPS = {
+  speed: { name: '加速', duration: 5000 },
+  invisible: { name: '隐身', duration: 3000 },
+  reveal: { name: '透视', duration: 0 }
+};
 ```
 
-### 5. Socket.IO 服务端 (server/index.js)
+## 迭代策略
 
-```javascript
-const io = require('socket.io')(3000, {
-  cors: { origin: '*' }
-})
+### 第一版：基础躲猫猫
+- 2 个阵营
+- 简单地图
+- 基础躲藏
+- 基础 UI
 
-const rooms = new Map()
+### 第二版：视野系统
+- 视野系统
+- 遮挡检测
+- 多个躲藏点
+- 计时系统
 
-io.on('connection', (socket) => {
-  console.log(`Player connected: ${socket.id}`)
+### 第三版：道具系统
+- 道具系统
+- 多种道具
+- 道具效果
+- 道具刷新
 
-  socket.on('joinRoom', (data) => {
-    const { roomId, playerName } = data
-    let room = rooms.get(roomId)
+### 第四版：深度玩法
+- 多种地图
+- 多种模式
+- 成就系统
+- 排行榜
 
-    if (!room) {
-      room = { id: roomId, players: [], state: 'waiting' }
-      rooms.set(roomId, room)
-    }
+### 第五版：多人对战
+- 在线对战
+- 房间系统
+- 聊天系统
+- 社区功能
 
-    const player = {
-      id: socket.id,
-      name: playerName,
-      role: room.players.length === 0 ? 'seeker' : 'hider',
-      isReady: false
-    }
+## 常见错误
 
-    room.players.push(player)
-    socket.join(roomId)
-    socket.roomId = roomId
-
-    io.to(roomId).emit('playerJoined', player)
-    io.to(roomId).emit('roomState', room)
-  })
-
-  socket.on('playerMove', (data) => {
-    socket.to(socket.roomId).emit('playerMoved', {
-      playerId: socket.id,
-      x: data.x,
-      y: data.y
-    })
-  })
-
-  socket.on('playerHide', () => {
-    socket.to(socket.roomId).emit('playerHidden', { playerId: socket.id })
-  })
-
-  socket.on('playerCaught', (data) => {
-    io.to(socket.roomId).emit('hiderCaught', {
-      hiderId: data.hiderId,
-      seekerId: socket.id
-    })
-  })
-
-  socket.on('disconnect', () => {
-    const room = rooms.get(socket.roomId)
-    if (room) {
-      room.players = room.players.filter(p => p.id !== socket.id)
-      io.to(socket.roomId).emit('playerLeft', { playerId: socket.id })
-      if (room.players.length === 0) rooms.delete(socket.roomId)
-    }
-  })
-})
-```
-
-## 使用方法
-
-1. 使用此模板创建新项目
-2. 启动服务端 `node server/index.js`
-3. 启动客户端 `npm run dev`
-4. 多个浏览器访问开始游戏
-
-## 扩展点
-
-- 添加新地图：在 `assets/maps/` 中添加地图数据
-- 添加新道具：在 `PropSystem.js` 中实现
-- 添加新角色技能：继承 `Player` 类
-- 添加排行榜：创建 `LeaderboardManager`
+1. **阵营不平衡**：躲藏者和寻找者要平衡
+2. **地图太小**：要有足够躲藏空间
+3. **视野太好**：寻找者视野不能太好
+4. **没有时间限制**：不能无限躲藏
+5. **没有道具**：要有道具增加乐趣

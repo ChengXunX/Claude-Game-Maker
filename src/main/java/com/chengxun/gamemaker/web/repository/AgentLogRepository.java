@@ -28,7 +28,7 @@ public interface AgentLogRepository extends JpaRepository<AgentLog, Long> {
            "(:agentId IS NULL OR a.agentId = :agentId) AND " +
            "(:action IS NULL OR a.action = :action) AND " +
            "(:level IS NULL OR a.level = :level) AND " +
-           "(:keyword IS NULL OR a.summary LIKE %:keyword% OR a.detail LIKE %:keyword%) AND " +
+           "(:keyword IS NULL OR a.summary LIKE %:keyword% OR a.detail LIKE %:keyword% OR a.decision LIKE %:keyword%) AND " +
            "(:startTime IS NULL OR a.createdAt >= :startTime) AND " +
            "(:endTime IS NULL OR a.createdAt <= :endTime) " +
            "ORDER BY a.createdAt DESC")
@@ -44,7 +44,7 @@ public interface AgentLogRepository extends JpaRepository<AgentLog, Long> {
            "(:agentId IS NULL OR a.agentId = :agentId) AND " +
            "(:action IS NULL OR a.action = :action) AND " +
            "(:level IS NULL OR a.level = :level) AND " +
-           "(:keyword IS NULL OR a.summary LIKE %:keyword% OR a.detail LIKE %:keyword%) AND " +
+           "(:keyword IS NULL OR a.summary LIKE %:keyword% OR a.detail LIKE %:keyword% OR a.decision LIKE %:keyword%) AND " +
            "(:startTime IS NULL OR a.createdAt >= :startTime) AND " +
            "(:endTime IS NULL OR a.createdAt <= :endTime) " +
            "ORDER BY a.createdAt DESC")
@@ -60,4 +60,32 @@ public interface AgentLogRepository extends JpaRepository<AgentLog, Long> {
 
     @Query("SELECT a.agentId, COUNT(a) FROM AgentLog a GROUP BY a.agentId ORDER BY COUNT(a) DESC")
     List<Object[]> countByAgent();
+
+    @Query("SELECT a.agentId, COUNT(a) FROM AgentLog a WHERE a.action = :action AND a.createdAt >= :since GROUP BY a.agentId ORDER BY COUNT(a) DESC")
+    List<Object[]> countByAgentAndActionSince(@Param("action") String action, @Param("since") LocalDateTime since);
+
+    @Query("SELECT a.agentId, COUNT(a) FROM AgentLog a WHERE a.action = 'TASK_COMPLETED' AND a.createdAt >= :since GROUP BY a.agentId")
+    List<Object[]> countCompletedTasksByAgentSince(@Param("since") LocalDateTime since);
+
+    @Query("SELECT a.agentId, COUNT(a) FROM AgentLog a WHERE a.action = 'TASK_FAILED' AND a.createdAt >= :since GROUP BY a.agentId")
+    List<Object[]> countFailedTasksByAgentSince(@Param("since") LocalDateTime since);
+
+    @Query("SELECT a.agentId, COUNT(a) FROM AgentLog a WHERE a.action = 'DECISION' AND a.createdAt >= :since GROUP BY a.agentId")
+    List<Object[]> countDecisionsByAgentSince(@Param("since") LocalDateTime since);
+
+    @Query("SELECT a.agentId, COUNT(a) FROM AgentLog a WHERE a.action = 'AI_CALL' AND a.createdAt >= :since GROUP BY a.agentId")
+    List<Object[]> countAiCallsByAgentSince(@Param("since") LocalDateTime since);
+
+    @Query("SELECT a.agentId, COUNT(a) FROM AgentLog a WHERE a.level = 'ERROR' AND a.createdAt >= :since GROUP BY a.agentId")
+    List<Object[]> countErrorsByAgentSince(@Param("since") LocalDateTime since);
+
+    /**
+     * 统计指定Agent在指定时间后的指定action的日志数量
+     */
+    long countByAgentIdAndActionAndCreatedAtAfter(String agentId, String action, LocalDateTime createdAt);
+
+    /**
+     * 统计指定Agent在指定时间后的指定level的日志数量
+     */
+    long countByAgentIdAndLevelAndCreatedAtAfter(String agentId, String level, LocalDateTime createdAt);
 }

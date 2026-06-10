@@ -2,6 +2,7 @@ package com.chengxun.gamemaker.web.repository;
 
 import com.chengxun.gamemaker.web.entity.PerformanceMetric;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -89,4 +90,15 @@ public interface PerformanceMetricRepository extends JpaRepository<PerformanceMe
      */
     @Query("SELECT m FROM PerformanceMetric m WHERE m.metricName = :name ORDER BY m.createdAt DESC")
     List<PerformanceMetric> findRecentByName(@Param("name") String metricName);
+
+    /**
+     * 分批删除指定时间之前的指标数据
+     *
+     * @param cutoff 截止时间
+     * @param limit 每批删除数量
+     * @return 实际删除的记录数
+     */
+    @Modifying
+    @Query(value = "DELETE FROM performance_metrics WHERE created_at < :cutoff LIMIT :limit", nativeQuery = true)
+    int deleteByCreatedAtBefore(@Param("cutoff") LocalDateTime cutoff, @Param("limit") int limit);
 }

@@ -9,6 +9,9 @@ public class AgentContext {
     private String workDir;
     private String currentTaskId;
     private String projectSummary;
+    private String apiKey;
+    private String apiUrl;
+    private String model;
     private List<WorkingMemoryItem> workingMemory = new ArrayList<>();
     private List<String> learnedPatterns = new ArrayList<>();
     private List<ApiConfigRecord> apiHistory = new ArrayList<>();
@@ -62,6 +65,28 @@ public class AgentContext {
             .orElse(null);
     }
 
+    /**
+     * 获取所有工作记忆（key-value 格式）
+     *
+     * @return 工作记忆的 Map 视图
+     */
+    public Map<String, String> getAllWorkingMemory() {
+        Map<String, String> result = new LinkedHashMap<>();
+        for (WorkingMemoryItem item : workingMemory) {
+            result.put(item.getKey(), item.getValue());
+        }
+        return result;
+    }
+
+    /**
+     * 移除指定 key 的工作记忆
+     *
+     * @param key 要移除的记忆 key
+     */
+    public void removeWorkingMemory(String key) {
+        workingMemory.removeIf(item -> item.getKey().equals(key));
+    }
+
     public void touch() {
         this.lastActiveTime = LocalDateTime.now();
     }
@@ -81,6 +106,15 @@ public class AgentContext {
 
     public String getProjectSummary() { return projectSummary; }
     public void setProjectSummary(String projectSummary) { this.projectSummary = projectSummary; }
+
+    public String getApiKey() { return apiKey; }
+    public void setApiKey(String apiKey) { this.apiKey = apiKey; }
+
+    public String getApiUrl() { return apiUrl; }
+    public void setApiUrl(String apiUrl) { this.apiUrl = apiUrl; }
+
+    public String getModel() { return model; }
+    public void setModel(String model) { this.model = model; }
 
     public List<WorkingMemoryItem> getWorkingMemory() { return workingMemory; }
     public void setWorkingMemory(List<WorkingMemoryItem> workingMemory) { this.workingMemory = workingMemory; }

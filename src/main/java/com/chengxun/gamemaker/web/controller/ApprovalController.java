@@ -38,6 +38,16 @@ public class ApprovalController {
     }
 
     /**
+     * 获取所有审批请求（含已处理的）
+     */
+    @GetMapping("/all")
+    @Operation(summary = "获取所有审批请求")
+    @PreAuthorize("hasRole('ADMIN') or hasAuthority('PERM_approval:manage')")
+    public ResponseEntity<List<ApprovalRequest>> getAllRequests() {
+        return ResponseEntity.ok(approvalService.getAllRequests());
+    }
+
+    /**
      * 获取所有待审批请求
      */
     @GetMapping("/pending")
@@ -69,7 +79,8 @@ public class ApprovalController {
             Authentication authentication) {
 
         User user = userService.getUserByUsername(authentication.getName());
-        boolean approved = (Boolean) request.getOrDefault("approved", false);
+        Object approvedObj = request.getOrDefault("approved", false);
+        boolean approved = approvedObj instanceof Boolean ? (Boolean) approvedObj : false;
         String comment = (String) request.getOrDefault("comment", "");
 
         try {

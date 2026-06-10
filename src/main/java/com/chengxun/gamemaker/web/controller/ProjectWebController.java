@@ -9,13 +9,18 @@ import com.chengxun.gamemaker.model.AgentDefinition;
 import com.chengxun.gamemaker.model.GameProject;
 import com.chengxun.gamemaker.service.GoalService;
 import com.chengxun.gamemaker.service.TemplateService;
+import com.chengxun.gamemaker.web.entity.GameTemplateEntity;
 import com.chengxun.gamemaker.web.entity.ProjectMember;
 import com.chengxun.gamemaker.web.entity.User;
+import com.chengxun.gamemaker.web.repository.GameTemplateRepository;
 import com.chengxun.gamemaker.web.service.OperationLogService;
 import com.chengxun.gamemaker.web.service.ProjectPermissionService;
 import com.chengxun.gamemaker.web.service.UserService;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
@@ -25,9 +30,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
 import java.nio.file.Path;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 
 /**
  * 项目管理控制器
@@ -56,11 +59,14 @@ public class ProjectWebController {
     private final AgentManager agentManager;
     private final AppConfig appConfig;
     private final GoalService goalService;
+    private final GameTemplateRepository gameTemplateRepository;
+    private final ObjectMapper objectMapper;
 
     public ProjectWebController(ProjectManager projectManager, TemplateService templateService,
                                 ProjectPermissionService permissionService, UserService userService,
                                 OperationLogService logService, AgentManager agentManager,
-                                AppConfig appConfig, GoalService goalService) {
+                                AppConfig appConfig, GoalService goalService,
+                                GameTemplateRepository gameTemplateRepository, ObjectMapper objectMapper) {
         this.projectManager = projectManager;
         this.templateService = templateService;
         this.permissionService = permissionService;
@@ -69,6 +75,8 @@ public class ProjectWebController {
         this.agentManager = agentManager;
         this.appConfig = appConfig;
         this.goalService = goalService;
+        this.gameTemplateRepository = gameTemplateRepository;
+        this.objectMapper = objectMapper;
     }
 
     // ===== Web页面 =====
@@ -166,7 +174,7 @@ public class ProjectWebController {
             }
 
             // T09: 自动创建默认 Agent（producer + server-dev）
-            autoCreateDefaultAgents(project);
+            autoCreateDefaultAgents(project, templateId);
 
             logService.log(user != null ? user.getId() : null, "CREATE_PROJECT",
                 project.getName(), "Created project at " + workDir, project.getId());
@@ -252,11 +260,12 @@ public class ProjectWebController {
         }
 
         if (project.getGoalStatus() == GameProject.GoalStatus.REVIEW) {
-            project.setGoalStatus(GameProject.GoalStatus.COMPLETED);
-            project.setGoalProgress(100);
-            project.touch();
-            projectManager.saveProjectConfig(project);
-            redirectAttributes.addFlashAttribute("success", "目标已确认完成！");
+            boolean completed = goalService.completeGoal(projectId);
+            if (completed) {
+                redirectAttributes.addFlashAttribute("success", "目标已确认完成！所有 Agent 已停止，项目已归档。");
+            } else {
+                redirectAttributes.addFlashAttribute("error", "目标完成操作失败");
+            }
         } else {
             redirectAttributes.addFlashAttribute("warning", "目标当前状态不支持确认");
         }
@@ -315,20 +324,28 @@ public class ProjectWebController {
      * T04+T05+T06+T07: 创建项目 API 加固
      * 支持创建时设置目标和API配置
      */
+    @SuppressWarnings("unchecked")
     @PostMapping("/api/create")
     @ResponseBody
     @PreAuthorize("hasAuthority('PERM_projects:manage')")
-    public ResponseEntity<Map<String, Object>> createProjectApi(@RequestBody Map<String, String> request,
+    public ResponseEntity<Map<String, Object>> createProjectApi(@RequestBody Map<String, Object> request,
                                                                  Authentication authentication) {
-        String name = request.get("name");
-        String description = request.get("description");
-        String workDir = request.get("workDir");
-        String templateId = request.get("templateId");
-        String goal = request.get("goal");
-        String goalType = request.get("goalType");
-        String apiKey = request.get("apiKey");
-        String apiUrl = request.get("apiUrl");
-        String model = request.get("model");
+        String name = (String) request.get("name");
+        String description = (String) request.get("description");
+        String workDir = (String) request.get("workDir");
+        String templateId = (String) request.get("templateId");
+        String goal = (String) request.get("goal");
+        String goalType = (String) request.get("goalType");
+        String apiKey = (String) request.get("apiKey");
+        String apiUrl = (String) request.get("apiUrl");
+        String model = (String) request.get("model");
+
+        // 前端传来的 Agent 角色列表
+        List<String> agentRoles = null;
+        Object agentsObj = request.get("agents");
+        if (agentsObj instanceof List<?> list) {
+            agentRoles = list.stream().map(Object::toString).toList();
+        }
 
         if (name == null || name.isEmpty()) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "message", "项目名称不能为空"));
@@ -356,6 +373,9 @@ public class ProjectWebController {
             if (user != null) {
                 permissionService.addMember(project.getId(), user.getId(), ProjectMember.ProjectRole.OWNER);
             }
+
+            // 根据前端选择或模板创建默认 Agent
+            autoCreateDefaultAgents(project, templateId, agentRoles);
 
             // 设置项目目标（如果提供了）
             if (goal != null && !goal.isEmpty()) {
@@ -445,6 +465,9 @@ public class ProjectWebController {
     @ResponseBody
     @PreAuthorize("hasAuthority('PERM_projects:manage')")
     public ResponseEntity<Map<String, Object>> removeProject(@PathVariable String projectId) {
+        // 先停止并移除该项目的所有 Agent，防止继续消耗 Token
+        agentManager.removeProjectAgents(projectId);
+
         boolean removed = projectManager.removeFromIndex(projectId);
         if (removed) {
             permissionService.removeAllMembers(projectId);
@@ -452,6 +475,26 @@ public class ProjectWebController {
         } else {
             return ResponseEntity.badRequest().body(Map.of("success", false, "message", "项目不存在"));
         }
+    }
+
+    @PostMapping("/api/{projectId}/archive")
+    @ResponseBody
+    @PreAuthorize("hasAuthority('PERM_projects:manage')")
+    public ResponseEntity<Map<String, Object>> archiveProject(@PathVariable String projectId) {
+        GameProject project = projectManager.getProject(projectId);
+        if (project == null) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "项目不存在"));
+        }
+
+        // 停止该项目的所有 Agent
+        agentManager.removeProjectAgents(projectId);
+
+        // 更新项目状态为归档
+        project.setStatus(GameProject.ProjectStatus.ARCHIVED);
+        projectManager.saveProjectConfig(project);
+
+        log.info("项目已归档: {}", projectId);
+        return ResponseEntity.ok(Map.of("success", true, "message", "项目已归档"));
     }
 
     @PostMapping("/api/{projectId}/refresh")
@@ -566,6 +609,107 @@ public class ProjectWebController {
         return ResponseEntity.ok(Map.of("success", true, "message", "目录配置已删除"));
     }
 
+    /**
+     * 人工验证里程碑
+     *
+     * @param projectId 项目 ID
+     * @param milestoneId 里程碑 ID
+     * @param request 验证请求
+     * @return 操作结果
+     */
+    @PostMapping("/api/{projectId}/milestones/{milestoneId}/verify")
+    @ResponseBody
+    @PreAuthorize("hasAuthority('PERM_projects:manage')")
+    public ResponseEntity<Map<String, Object>> verifyMilestone(@PathVariable String projectId,
+                                                                @PathVariable String milestoneId,
+                                                                @RequestBody Map<String, Object> request,
+                                                                Authentication authentication) {
+        log.info("收到验证里程碑请求: projectId={}, milestoneId={}, passed={}", projectId, milestoneId, request.get("passed"));
+
+        GameProject project = projectManager.getProject(projectId);
+        if (project == null) {
+            log.warn("验证失败：项目不存在 {}", projectId);
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "项目不存在"));
+        }
+
+        User user = userService.getUserByUsername(authentication.getName());
+        if (user == null) {
+            log.warn("验证失败：用户不存在");
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "用户不存在"));
+        }
+
+        Boolean passed = (Boolean) request.get("passed");
+        String comment = (String) request.get("comment");
+
+        if (passed == null) {
+            log.warn("验证失败：验证结果为空");
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "验证结果不能为空"));
+        }
+
+        try {
+            boolean result = goalService.verifyMilestoneManually(projectId, milestoneId, passed, comment, user.getUsername());
+            log.info("验证结果: projectId={}, milestoneId={}, passed={}, result={}", projectId, milestoneId, passed, result);
+            if (result) {
+                return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "message", passed ? "里程碑验证通过" : "里程碑验证未通过",
+                    "passed", passed
+                ));
+            } else {
+                log.warn("验证失败：里程碑不存在或状态不允许验证, milestoneId={}", milestoneId);
+                return ResponseEntity.badRequest().body(Map.of("success", false, "message", "验证失败，里程碑不存在或状态不允许验证"));
+            }
+        } catch (Exception e) {
+            log.error("验证里程碑失败", e);
+            return ResponseEntity.internalServerError().body(Map.of("success", false, "message", "验证失败: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * 获取项目验证文档
+     *
+     * @param projectId 项目 ID
+     * @return 验证文档内容
+     */
+    @GetMapping("/api/{projectId}/verification-doc")
+    @ResponseBody
+    @PreAuthorize("hasAuthority('PERM_projects:view')")
+    public ResponseEntity<Map<String, Object>> getVerificationDoc(@PathVariable String projectId) {
+        GameProject project = projectManager.getProject(projectId);
+        if (project == null) {
+            return ResponseEntity.notFound().build();
+        }
+
+        Map<String, Object> doc = new HashMap<>();
+        doc.put("projectId", projectId);
+        doc.put("projectName", project.getName());
+        doc.put("goal", project.getGoal());
+        doc.put("goalStatus", project.getGoalStatus());
+        doc.put("goalProgress", project.getGoalProgress());
+
+        // 里程碑验证信息
+        List<Map<String, Object>> milestones = new ArrayList<>();
+        for (GameProject.GoalMilestone milestone : project.getMilestones()) {
+            Map<String, Object> m = new HashMap<>();
+            m.put("id", milestone.getId());
+            m.put("title", milestone.getTitle());
+            m.put("description", milestone.getDescription());
+            m.put("status", milestone.getStatus());
+            m.put("progress", milestone.getProgress());
+            m.put("verificationCriteria", milestone.getVerificationCriteria());
+            m.put("verificationResult", milestone.getVerificationResult());
+            m.put("verificationFailCount", milestone.getVerificationFailCount());
+            milestones.add(m);
+        }
+        doc.put("milestones", milestones);
+
+        // 项目规则
+        String rules = projectManager.loadProjectRules(projectId);
+        doc.put("rules", rules);
+
+        return ResponseEntity.ok(doc);
+    }
+
     // ===== 安全校验 =====
 
     /**
@@ -594,51 +738,244 @@ public class ProjectWebController {
 
     private boolean isForbiddenPath(String path) {
         String normalized = Path.of(path).toAbsolutePath().normalize().toString();
-        return FORBIDDEN_PATHS.stream().anyMatch(forbidden ->
-            normalized.equals(forbidden) || normalized.startsWith(forbidden + "/"));
+        // 只精确匹配禁止路径，不禁止子目录（如 /home/user/project 是合法的）
+        return FORBIDDEN_PATHS.contains(normalized);
     }
 
     /**
      * T09: 自动创建默认 Agent
      * 创建项目后自动创建 producer 和 server-dev Agent
      */
-    private void autoCreateDefaultAgents(GameProject project) {
+    /**
+     * 创建项目的默认 Agent
+     *
+     * 优先级：前端指定的角色列表 > 模板配置 > 默认（系统策划）
+     *
+     * @param project 项目
+     * @param templateId 模板ID（可选）
+     */
+    private void autoCreateDefaultAgents(GameProject project, String templateId) {
+        autoCreateDefaultAgents(project, templateId, null);
+    }
+
+    /**
+     * 创建项目的默认 Agent
+     * 制作人是必须的，始终创建；其余为可选 Agent
+     *
+     * @param project 项目
+     * @param templateId 模板ID（可选）
+     * @param agentRoles 前端指定的可选 Agent 角色列表（可选，优先使用）
+     */
+    private void autoCreateDefaultAgents(GameProject project, String templateId, List<String> agentRoles) {
         try {
             String projectId = project.getId();
             String workDir = project.getWorkDir();
 
-            // 创建 producer Agent
-            AgentDefinition producerDef = AgentDefinition.builder()
-                .id("producer")
-                .name("制作人")
-                .role("producer")
-                .description("项目制作人，负责协调团队和任务分配")
-                .workDir(workDir)
-                .projectId(projectId)
-                .apiKey(appConfig.getClaude().getApiKey())
-                .apiUrl(appConfig.getClaude().getApiUrl())
-                .model(appConfig.getClaude().getModel())
-                .parent(true)
-                .build();
-            agentManager.createAgent(producerDef);
+            // 制作人是必须的，始终创建
+            createAgentForProject(projectId, workDir, "producer", "制作人",
+                "协调团队、分配任务、审查工作");
 
-            // 创建 server-dev Agent
-            AgentDefinition serverDef = AgentDefinition.builder()
-                .id("server-dev")
-                .name("服务端开发")
-                .role("server-dev")
-                .description("服务端开发 Agent，负责后端逻辑和 API")
-                .workDir(workDir)
-                .projectId(projectId)
-                .apiKey(appConfig.getClaude().getApiKey())
-                .apiUrl(appConfig.getClaude().getApiUrl())
-                .model(appConfig.getClaude().getModel())
-                .build();
-            agentManager.createAgent(serverDef);
+            // 优先使用前端指定的可选角色列表
+            if (agentRoles != null && !agentRoles.isEmpty()) {
+                for (String role : agentRoles) {
+                    if ("producer".equals(role)) continue; // 制作人已创建，跳过
+                    createAgentForProject(projectId, workDir, role, getDefaultAgentName(role), "");
+                }
+                return;
+            }
 
-            log.info("Default agents created for project: {}", projectId);
+            // 尝试从模板获取 Agent 配置
+            List<Map<String, String>> agentConfigs = getTemplateAgentConfigs(templateId);
+            if (agentConfigs != null && !agentConfigs.isEmpty()) {
+                for (Map<String, String> agentCfg : agentConfigs) {
+                    String role = agentCfg.getOrDefault("role", "system-planner");
+                    if ("producer".equals(role)) continue; // 制作人已创建，跳过
+                    String name = agentCfg.getOrDefault("name", role);
+                    String desc = agentCfg.getOrDefault("description", "");
+                    createAgentForProject(projectId, workDir, role, name, desc);
+                }
+                return;
+            }
+
+            // 默认创建系统策划
+            createAgentForProject(projectId, workDir, "system-planner", "系统策划",
+                "负责游戏系统设计和规划，将创意转化为可实现的系统方案");
         } catch (Exception e) {
             log.warn("Failed to create default agents for project {}: {}", project.getId(), e.getMessage());
         }
+    }
+
+    /**
+     * 为项目创建单个 Agent
+     */
+    private void createAgentForProject(String projectId, String workDir, String role, String name, String description) {
+        AgentDefinition.Builder builder = AgentDefinition.builder()
+            .id(role)
+            .name(name)
+            .role(role)
+            .description(description)
+            .workDir(workDir)
+            .projectId(projectId)
+            .apiKey(appConfig.getClaude().getApiKey())
+            .apiUrl(appConfig.getClaude().getApiUrl())
+            .model(appConfig.getClaude().getModel());
+
+        if ("producer".equals(role)) {
+            builder.parent(true);
+        }
+
+        agentManager.createAgent(builder.build());
+        log.info("Agent created: {} ({}) for project: {}", name, role, projectId);
+    }
+
+    /**
+     * 获取角色的默认名称
+     */
+    private String getDefaultAgentName(String role) {
+        return switch (role) {
+            case "producer" -> "制作人";
+            case "server-dev" -> "服务端开发";
+            case "client-dev" -> "客户端开发";
+            case "ui-dev" -> "UI设计";
+            case "system-planner" -> "系统策划";
+            case "numerical-planner" -> "数值策划";
+            case "tester" -> "测试工程师";
+            case "git-commit" -> "Git专员";
+            case "security-expert" -> "安全工程师";
+            case "data-analyst" -> "数据分析师";
+            case "ai-engineer" -> "AI工程师";
+            case "devops" -> "运维工程师";
+            case "audio-dev" -> "音频设计师";
+            case "narrative-planner" -> "剧情策划";
+            case "level-design" -> "关卡设计师";
+            case "performance-engineer" -> "性能优化";
+            case "tech-artist" -> "技术美术";
+            case "product-manager" -> "产品经理";
+            case "localization" -> "本地化";
+            default -> role;
+        };
+    }
+
+    /**
+     * 从游戏模板中解析 Agent 配置列表
+     *
+     * @param templateId 模板ID
+     * @return Agent 配置列表，每个包含 role/name/description；无配置返回 null
+     */
+    @SuppressWarnings("unchecked")
+    private List<Map<String, String>> getTemplateAgentConfigs(String templateId) {
+        if (templateId == null || templateId.isEmpty()) {
+            return null;
+        }
+
+        try {
+            // 先从数据库模板查
+            Optional<GameTemplateEntity> dbTemplate = gameTemplateRepository.findById(templateId);
+            if (dbTemplate.isPresent() && dbTemplate.get().getConfigJson() != null) {
+                Map<String, Object> config = objectMapper.readValue(
+                    dbTemplate.get().getConfigJson(),
+                    new TypeReference<Map<String, Object>>() {}
+                );
+                Object agents = config.get("agents");
+                if (agents instanceof List<?> list && !list.isEmpty()) {
+                    return (List<Map<String, String>>) (List<?>) list;
+                }
+            }
+
+            // 再从文件模板查
+            Map<String, Object> fileTemplate = templateService.getTemplate(templateId);
+            if (fileTemplate != null && fileTemplate.containsKey("agents")) {
+                Object agents = fileTemplate.get("agents");
+                if (agents instanceof List<?> list && !list.isEmpty()) {
+                    return (List<Map<String, String>>) (List<?>) list;
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Failed to parse template agent configs for {}: {}", templateId, e.getMessage());
+        }
+
+        return null;
+    }
+
+    // ===== 项目看板 API =====
+
+    @Autowired(required = false)
+    private com.chengxun.gamemaker.service.ProjectBoard projectBoard;
+
+    @Autowired(required = false)
+    private com.chengxun.gamemaker.service.EventBus eventBus;
+
+    /**
+     * 获取项目看板数据
+     */
+    @GetMapping("/api/{projectId}/board")
+    @ResponseBody
+    @PreAuthorize("hasAuthority('PERM_projects:view')")
+    public ResponseEntity<Map<String, Object>> getProjectBoard(@PathVariable String projectId) {
+        if (projectBoard == null) {
+            return ResponseEntity.ok(Map.of("error", "看板服务未启用"));
+        }
+
+        com.chengxun.gamemaker.service.ProjectBoard.BoardData board = projectBoard.getBoard(projectId);
+        if (board == null) {
+            return ResponseEntity.ok(Map.of(
+                "projectId", projectId,
+                "agentStatuses", Map.of(),
+                "taskCards", List.of(),
+                "blockers", List.of(),
+                "sharedContext", Map.of()
+            ));
+        }
+
+        Map<String, Object> response = new HashMap<>();
+        response.put("projectId", projectId);
+        response.put("agentStatuses", board.agentStatuses);
+        response.put("taskCards", board.taskCards);
+        response.put("blockers", board.blockers);
+        response.put("sharedContext", board.sharedContext);
+        response.put("lastUpdated", board.lastUpdated);
+        return ResponseEntity.ok(response);
+    }
+
+    /**
+     * 获取项目看板摘要（供 Agent 上下文使用）
+     */
+    @GetMapping("/api/{projectId}/board/summary")
+    @ResponseBody
+    @PreAuthorize("hasAuthority('PERM_projects:view')")
+    public ResponseEntity<Map<String, String>> getProjectBoardSummary(@PathVariable String projectId) {
+        if (projectBoard == null) {
+            return ResponseEntity.ok(Map.of("summary", "看板服务未启用"));
+        }
+
+        String summary = projectBoard.buildBoardSummary(projectId);
+        return ResponseEntity.ok(Map.of("summary", summary));
+    }
+
+    /**
+     * 获取项目最近事件
+     */
+    @GetMapping("/api/{projectId}/events")
+    @ResponseBody
+    @PreAuthorize("hasAuthority('PERM_projects:view')")
+    public ResponseEntity<List<Map<String, Object>>> getProjectEvents(
+            @PathVariable String projectId,
+            @RequestParam(defaultValue = "20") int limit) {
+        if (eventBus == null) {
+            return ResponseEntity.ok(List.of());
+        }
+
+        List<com.chengxun.gamemaker.service.EventBus.ProjectEvent> events = eventBus.getRecentEvents(projectId, limit);
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (com.chengxun.gamemaker.service.EventBus.ProjectEvent event : events) {
+            Map<String, Object> item = new HashMap<>();
+            item.put("eventId", event.getEventId());
+            item.put("eventType", event.getEventType());
+            item.put("sourceAgentId", event.getSourceAgentId());
+            item.put("data", event.getData());
+            item.put("timestamp", event.getTimestamp());
+            result.add(item);
+        }
+        return ResponseEntity.ok(result);
     }
 }

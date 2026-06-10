@@ -122,6 +122,34 @@ public class CapabilityController {
     }
 
     /**
+     * 获取能力变更历史
+     */
+    @GetMapping("/changes")
+    public ResponseEntity<List<CapabilityRegistry.CapabilityChangeRecord>> getChangeHistory() {
+        return ResponseEntity.ok(capabilityRegistry.getChangeHistory());
+    }
+
+    /**
+     * 获取指定角色的能力变更历史
+     */
+    @GetMapping("/changes/role/{agentRole}")
+    public ResponseEntity<List<CapabilityRegistry.CapabilityChangeRecord>> getChangeHistoryByRole(
+            @PathVariable String agentRole) {
+        return ResponseEntity.ok(capabilityRegistry.getChangeHistoryByRole(agentRole));
+    }
+
+    /**
+     * 批量更新能力
+     */
+    @PutMapping("/batch")
+    public ResponseEntity<List<AgentCapability>> batchUpdateCapabilities(
+            @RequestBody List<AgentCapability> capabilities) {
+        List<AgentCapability> saved = capabilityRegistry.batchUpdate(capabilities);
+        log.info("Batch updated {} capabilities", saved.size());
+        return ResponseEntity.ok(saved);
+    }
+
+    /**
      * 按分类查询能力
      */
     @GetMapping("/category/{category}")

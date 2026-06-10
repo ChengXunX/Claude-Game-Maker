@@ -53,4 +53,16 @@ public interface AgentFileRepository extends JpaRepository<AgentFile, Long> {
 
     /** 获取最近的文件 */
     List<AgentFile> findTop10ByAgentIdAndDeletedFalseOrderByCreatedAtDesc(String agentId);
+
+    /** 获取所有文件（分页） */
+    Page<AgentFile> findByDeletedFalseOrderByCreatedAtDesc(Pageable pageable);
+
+    /** 获取所有 Agent ID 列表（去重） */
+    @Query("SELECT DISTINCT f.agentId FROM AgentFile f WHERE f.deleted = false")
+    List<String> findDistinctAgentIds();
+
+    /** 全局搜索文件名（不限 Agent） */
+    @Query("SELECT f FROM AgentFile f WHERE f.deleted = false " +
+           "AND LOWER(f.fileName) LIKE LOWER(CONCAT('%', :keyword, '%')) ORDER BY f.createdAt DESC")
+    Page<AgentFile> searchByFileNameGlobal(@Param("keyword") String keyword, Pageable pageable);
 }
