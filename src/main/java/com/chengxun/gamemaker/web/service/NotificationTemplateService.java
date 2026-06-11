@@ -1,8 +1,10 @@
 package com.chengxun.gamemaker.web.service;
 
+import com.chengxun.gamemaker.web.entity.Notification;
 import com.chengxun.gamemaker.web.entity.NotificationTemplate;
 import com.chengxun.gamemaker.web.entity.NotificationTemplate.Category;
 import com.chengxun.gamemaker.web.entity.NotificationTemplate.Channel;
+import com.chengxun.gamemaker.web.repository.NotificationRepository;
 import com.chengxun.gamemaker.web.repository.NotificationTemplateRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -61,11 +63,14 @@ public class NotificationTemplateService {
     private static final DateTimeFormatter DATETIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     private final NotificationTemplateRepository templateRepository;
+    private final NotificationRepository notificationRepository;
     private final EmailService emailService;
 
     public NotificationTemplateService(NotificationTemplateRepository templateRepository,
+                                        NotificationRepository notificationRepository,
                                         @org.springframework.context.annotation.Lazy EmailService emailService) {
         this.templateRepository = templateRepository;
+        this.notificationRepository = notificationRepository;
         this.emailService = emailService;
     }
 
@@ -353,6 +358,9 @@ public class NotificationTemplateService {
         created += createIfAbsent("APPROVAL_APPROVED_FEISHU", "飞书审批通过", Channel.FEISHU, Category.SYSTEM,
             "[审批通过] ${requestTypeDesc}",
             "**审批通过通知**\n\n- 类型：${requestTypeDesc}\n- 描述：${description}\n- 审批人：${approverName}\n- 审批意见：${approvalComment}\n- 时间：${time}");
+        created += createIfAbsent("APPROVAL_APPROVED_DINGTALK", "钉钉审批通过", Channel.DINGTALK, Category.SYSTEM,
+            "[审批通过] ${requestTypeDesc}",
+            "### ✅ 审批通过通知\n\n---\n\n- **类型**：${requestTypeDesc}\n- **描述**：${description}\n- **审批人**：${approverName}\n- **审批意见**：${approvalComment}\n- **时间**：${time}");
 
         // 审批拒绝通知（通知请求者审批被拒绝）
         created += createIfAbsent("APPROVAL_REJECTED_SYSTEM", "站内审批拒绝", Channel.SYSTEM, Category.SYSTEM,
@@ -364,6 +372,9 @@ public class NotificationTemplateService {
         created += createIfAbsent("APPROVAL_REJECTED_FEISHU", "飞书审批拒绝", Channel.FEISHU, Category.SYSTEM,
             "[审批拒绝] ${requestTypeDesc}",
             "**审批拒绝通知**\n\n- 类型：${requestTypeDesc}\n- 描述：${description}\n- 审批人：${approverName}\n- 拒绝原因：${approvalComment}\n- 时间：${time}");
+        created += createIfAbsent("APPROVAL_REJECTED_DINGTALK", "钉钉审批拒绝", Channel.DINGTALK, Category.SYSTEM,
+            "[审批拒绝] ${requestTypeDesc}",
+            "### ❌ 审批拒绝通知\n\n---\n\n- **类型**：${requestTypeDesc}\n- **描述**：${description}\n- **审批人**：${approverName}\n- **拒绝原因**：${approvalComment}\n- **时间**：${time}");
 
         created += createIfAbsent("PERMISSION_SYSTEM", "站内权限通知", Channel.SYSTEM, Category.SYSTEM,
             "权限通知: ${title}",
@@ -438,6 +449,433 @@ public class NotificationTemplateService {
             "❌ 错误信息：${errorMessage}\n" +
             "━━━━━━━━━━━━━━━━━━\n\n" +
             "请检查项目配置后重试。");
+
+        // ===== 绩效通知模板 =====
+        created += createIfAbsent("PERFORMANCE_SYSTEM", "站内绩效通知", Channel.SYSTEM, Category.SYSTEM,
+            "📊 绩效通知: ${title}",
+            "📊 绩效通知\n\n" +
+            "━━━━━━━━━━━━━━━━━━\n" +
+            "${content}\n" +
+            "🕐 通知时间：${time}\n" +
+            "━━━━━━━━━━━━━━━━━━");
+
+        created += createIfAbsent("PERFORMANCE_EMAIL", "邮件绩效通知", Channel.EMAIL, Category.SYSTEM,
+            "📊 绩效通知: ${title}",
+            "<div style=\"font-family: 'Microsoft YaHei', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;\">\n" +
+            "  <div style=\"background: linear-gradient(135deg, #20c997 0%, #12b886 100%); color: white; padding: 20px; border-radius: 10px 10px 0 0; text-align: center;\">\n" +
+            "    <h1 style=\"margin: 0; font-size: 24px;\">📊 绩效通知</h1>\n" +
+            "  </div>\n" +
+            "  <div style=\"background: #f8f9fa; padding: 20px; border: 1px solid #e9ecef; border-top: none; border-radius: 0 0 10px 10px;\">\n" +
+            "    <p>${content}</p>\n" +
+            "    <p style=\"color: #666; margin-top: 20px;\">通知时间：${time}</p>\n" +
+            "  </div>\n" +
+            "</div>");
+
+        created += createIfAbsent("PERFORMANCE_FEISHU", "飞书绩效通知", Channel.FEISHU, Category.SYSTEM,
+            "📊 绩效通知: ${title}",
+            "**📊 绩效通知**\n\n" +
+            "---\n\n" +
+            "${content}\n\n" +
+            "---\n\n" +
+            "通知时间：${time}");
+
+        created += createIfAbsent("PERFORMANCE_DINGTALK", "钉钉绩效通知", Channel.DINGTALK, Category.SYSTEM,
+            "📊 绩效通知: ${title}",
+            "### 📊 绩效通知\n\n" +
+            "---\n\n" +
+            "${content}\n\n" +
+            "---\n\n" +
+            "通知时间：${time}");
+
+        // 离职审批通知
+        created += createIfAbsent("DISMISSAL_REQUEST_SYSTEM", "站内离职审批", Channel.SYSTEM, Category.SYSTEM,
+            "🔔 离职审批请求: ${agentName}",
+            "🔔 离职审批请求\n\n" +
+            "━━━━━━━━━━━━━━━━━━\n" +
+            "🤖 Agent名称：${agentName}\n" +
+            "📋 申请原因：${reason}\n" +
+            "👤 申请人：${requesterName}\n" +
+            "🕐 申请时间：${time}\n" +
+            "━━━━━━━━━━━━━━━━━━\n\n" +
+            "请及时处理！");
+
+        created += createIfAbsent("DISMISSAL_REQUEST_EMAIL", "邮件离职审批", Channel.EMAIL, Category.SYSTEM,
+            "🔔 离职审批请求: ${agentName}",
+            "<div style=\"font-family: 'Microsoft YaHei', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;\">\n" +
+            "  <div style=\"background: linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%); color: white; padding: 20px; border-radius: 10px 10px 0 0; text-align: center;\">\n" +
+            "    <h1 style=\"margin: 0; font-size: 24px;\">🔔 离职审批请求</h1>\n" +
+            "    <p style=\"margin: 10px 0 0 0; opacity: 0.9;\">请及时处理</p>\n" +
+            "  </div>\n" +
+            "  <div style=\"background: #f8f9fa; padding: 20px; border: 1px solid #e9ecef; border-top: none;\">\n" +
+            "    <table style=\"width: 100%; border-collapse: collapse;\">\n" +
+            "      <tr><td style=\"padding: 10px; border-bottom: 1px solid #e9ecef; color: #666;\">Agent名称</td><td style=\"padding: 10px; border-bottom: 1px solid #e9ecef; font-weight: bold;\">${agentName}</td></tr>\n" +
+            "      <tr><td style=\"padding: 10px; border-bottom: 1px solid #e9ecef; color: #666;\">申请原因</td><td style=\"padding: 10px; border-bottom: 1px solid #e9ecef;\">${reason}</td></tr>\n" +
+            "      <tr><td style=\"padding: 10px; border-bottom: 1px solid #e9ecef; color: #666;\">申请人</td><td style=\"padding: 10px; border-bottom: 1px solid #e9ecef;\">${requesterName}</td></tr>\n" +
+            "      <tr><td style=\"padding: 10px; color: #666;\">申请时间</td><td style=\"padding: 10px;\">${time}</td></tr>\n" +
+            "    </table>\n" +
+            "  </div>\n" +
+            "  <div style=\"background: #fff3cd; padding: 15px; border: 1px solid #ffc107; border-top: none; border-radius: 0 0 10px 10px;\">\n" +
+            "    <p style=\"margin: 0; color: #856404;\">💡 请及时处理离职审批请求</p>\n" +
+            "  </div>\n" +
+            "</div>");
+
+        created += createIfAbsent("DISMISSAL_REQUEST_FEISHU", "飞书离职审批", Channel.FEISHU, Category.SYSTEM,
+            "🔔 离职审批请求: ${agentName}",
+            "**🔔 离职审批请求**\n\n" +
+            "---\n\n" +
+            "**Agent名称**：${agentName}\n" +
+            "**申请原因**：${reason}\n" +
+            "**申请人**：${requesterName}\n" +
+            "**申请时间**：${time}\n\n" +
+            "---\n\n" +
+            "请及时处理！");
+
+        created += createIfAbsent("DISMISSAL_REQUEST_DINGTALK", "钉钉离职审批", Channel.DINGTALK, Category.SYSTEM,
+            "🔔 离职审批请求: ${agentName}",
+            "### 🔔 离职审批请求\n\n" +
+            "---\n\n" +
+            "- **Agent名称**：${agentName}\n" +
+            "- **申请原因**：${reason}\n" +
+            "- **申请人**：${requesterName}\n" +
+            "- **申请时间**：${time}\n\n" +
+            "---\n\n" +
+            "请及时处理！");
+
+        // ===== 项目通知模板 =====
+        created += createIfAbsent("PROJECT_IMPORT_SYSTEM", "站内项目导入", Channel.SYSTEM, Category.SYSTEM,
+            "📁 项目导入完成: ${projectName}",
+            "📁 项目导入完成\n\n" +
+            "━━━━━━━━━━━━━━━━━━\n" +
+            "📁 项目名称：${projectName}\n" +
+            "📊 导入状态：${status}\n" +
+            "📝 备注：${remark}\n" +
+            "🕐 完成时间：${time}\n" +
+            "━━━━━━━━━━━━━━━━━━");
+
+        created += createIfAbsent("PROJECT_IMPORT_EMAIL", "邮件项目导入", Channel.EMAIL, Category.SYSTEM,
+            "📁 项目导入完成: ${projectName}",
+            "<div style=\"font-family: 'Microsoft YaHei', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;\">\n" +
+            "  <div style=\"background: linear-gradient(135deg, #339af0 0%, #228be6 100%); color: white; padding: 20px; border-radius: 10px 10px 0 0; text-align: center;\">\n" +
+            "    <h1 style=\"margin: 0; font-size: 24px;\">📁 项目导入完成</h1>\n" +
+            "  </div>\n" +
+            "  <div style=\"background: #f8f9fa; padding: 20px; border: 1px solid #e9ecef; border-top: none; border-radius: 0 0 10px 10px;\">\n" +
+            "    <table style=\"width: 100%; border-collapse: collapse;\">\n" +
+            "      <tr><td style=\"padding: 10px; border-bottom: 1px solid #e9ecef; color: #666;\">项目名称</td><td style=\"padding: 10px; border-bottom: 1px solid #e9ecef; font-weight: bold;\">${projectName}</td></tr>\n" +
+            "      <tr><td style=\"padding: 10px; border-bottom: 1px solid #e9ecef; color: #666;\">导入状态</td><td style=\"padding: 10px; border-bottom: 1px solid #e9ecef;\"><span style=\"background: #51cf66; color: white; padding: 2px 8px; border-radius: 4px;\">${status}</span></td></tr>\n" +
+            "      <tr><td style=\"padding: 10px; color: #666;\">完成时间</td><td style=\"padding: 10px;\">${time}</td></tr>\n" +
+            "    </table>\n" +
+            "  </div>\n" +
+            "</div>");
+
+        // ===== 质量门禁通知模板 =====
+        created += createIfAbsent("QUALITY_GATE_SYSTEM", "站内质量门禁", Channel.SYSTEM, Category.SYSTEM,
+            "🎯 质量门禁评估: ${projectName}",
+            "🎯 质量门禁评估\n\n" +
+            "━━━━━━━━━━━━━━━━━━\n" +
+            "📁 项目名称：${projectName}\n" +
+            "📊 评估结果：${result}\n" +
+            "📈 得分：${score}/100\n" +
+            "🕐 评估时间：${time}\n" +
+            "━━━━━━━━━━━━━━━━━━");
+
+        created += createIfAbsent("QUALITY_GATE_EMAIL", "邮件质量门禁", Channel.EMAIL, Category.SYSTEM,
+            "🎯 质量门禁评估: ${projectName}",
+            "<div style=\"font-family: 'Microsoft YaHei', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;\">\n" +
+            "  <div style=\"background: linear-gradient(135deg, #845ef7 0%, #7048e8 100%); color: white; padding: 20px; border-radius: 10px 10px 0 0; text-align: center;\">\n" +
+            "    <h1 style=\"margin: 0; font-size: 24px;\">🎯 质量门禁评估</h1>\n" +
+            "  </div>\n" +
+            "  <div style=\"background: #f8f9fa; padding: 20px; border: 1px solid #e9ecef; border-top: none; border-radius: 0 0 10px 10px;\">\n" +
+            "    <table style=\"width: 100%; border-collapse: collapse;\">\n" +
+            "      <tr><td style=\"padding: 10px; border-bottom: 1px solid #e9ecef; color: #666;\">项目名称</td><td style=\"padding: 10px; border-bottom: 1px solid #e9ecef; font-weight: bold;\">${projectName}</td></tr>\n" +
+            "      <tr><td style=\"padding: 10px; border-bottom: 1px solid #e9ecef; color: #666;\">评估结果</td><td style=\"padding: 10px; border-bottom: 1px solid #e9ecef;\">${result}</td></tr>\n" +
+            "      <tr><td style=\"padding: 10px; border-bottom: 1px solid #e9ecef; color: #666;\">得分</td><td style=\"padding: 10px; border-bottom: 1px solid #e9ecef; font-weight: bold; color: #845ef7;\">${score}/100</td></tr>\n" +
+            "      <tr><td style=\"padding: 10px; color: #666;\">评估时间</td><td style=\"padding: 10px;\">${time}</td></tr>\n" +
+            "    </table>\n" +
+            "  </div>\n" +
+            "</div>");
+
+        // ===== 招聘通知模板 =====
+        created += createIfAbsent("RECRUITMENT_SYSTEM", "站内招聘通知", Channel.SYSTEM, Category.SYSTEM,
+            "👥 招聘通知: ${title}",
+            "👥 招聘通知\n\n" +
+            "━━━━━━━━━━━━━━━━━━\n" +
+            "${content}\n" +
+            "🕐 通知时间：${time}\n" +
+            "━━━━━━━━━━━━━━━━━━");
+
+        created += createIfAbsent("RECRUITMENT_EMAIL", "邮件招聘通知", Channel.EMAIL, Category.SYSTEM,
+            "👥 招聘通知: ${title}",
+            "<div style=\"font-family: 'Microsoft YaHei', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;\">\n" +
+            "  <div style=\"background: linear-gradient(135deg, #f06595 0%, #e64980 100%); color: white; padding: 20px; border-radius: 10px 10px 0 0; text-align: center;\">\n" +
+            "    <h1 style=\"margin: 0; font-size: 24px;\">👥 招聘通知</h1>\n" +
+            "  </div>\n" +
+            "  <div style=\"background: #f8f9fa; padding: 20px; border: 1px solid #e9ecef; border-top: none; border-radius: 0 0 10px 10px;\">\n" +
+            "    <p>${content}</p>\n" +
+            "    <p style=\"color: #666; margin-top: 20px;\">通知时间：${time}</p>\n" +
+            "  </div>\n" +
+            "</div>");
+
+        // ===== Agent 状态通知模板 =====
+        created += createIfAbsent("AGENT_STATUS_SYSTEM", "站内Agent状态", Channel.SYSTEM, Category.AGENT,
+            "🤖 Agent状态变更: ${agentName}",
+            "🤖 Agent状态变更\n\n" +
+            "━━━━━━━━━━━━━━━━━━\n" +
+            "🤖 Agent名称：${agentName}\n" +
+            "📊 当前状态：${status}\n" +
+            "📝 备注：${remark}\n" +
+            "🕐 变更时间：${time}\n" +
+            "━━━━━━━━━━━━━━━━━━");
+
+        created += createIfAbsent("AGENT_STATUS_EMAIL", "邮件Agent状态", Channel.EMAIL, Category.AGENT,
+            "🤖 Agent状态变更: ${agentName}",
+            "<div style=\"font-family: 'Microsoft YaHei', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;\">\n" +
+            "  <div style=\"background: linear-gradient(135deg, #845ef7 0%, #7048e8 100%); color: white; padding: 20px; border-radius: 10px 10px 0 0; text-align: center;\">\n" +
+            "    <h1 style=\"margin: 0; font-size: 24px;\">🤖 Agent状态变更</h1>\n" +
+            "  </div>\n" +
+            "  <div style=\"background: #f8f9fa; padding: 20px; border: 1px solid #e9ecef; border-top: none; border-radius: 0 0 10px 10px;\">\n" +
+            "    <table style=\"width: 100%; border-collapse: collapse;\">\n" +
+            "      <tr><td style=\"padding: 10px; border-bottom: 1px solid #e9ecef; color: #666;\">Agent名称</td><td style=\"padding: 10px; border-bottom: 1px solid #e9ecef; font-weight: bold;\">${agentName}</td></tr>\n" +
+            "      <tr><td style=\"padding: 10px; border-bottom: 1px solid #e9ecef; color: #666;\">当前状态</td><td style=\"padding: 10px; border-bottom: 1px solid #e9ecef;\"><span style=\"background: #845ef7; color: white; padding: 2px 8px; border-radius: 4px;\">${status}</span></td></tr>\n" +
+            "      <tr><td style=\"padding: 10px; border-bottom: 1px solid #e9ecef; color: #666;\">备注</td><td style=\"padding: 10px; border-bottom: 1px solid #e9ecef;\">${remark}</td></tr>\n" +
+            "      <tr><td style=\"padding: 10px; color: #666;\">变更时间</td><td style=\"padding: 10px;\">${time}</td></tr>\n" +
+            "    </table>\n" +
+            "  </div>\n" +
+            "</div>");
+
+        created += createIfAbsent("AGENT_STATUS_FEISHU", "飞书Agent状态", Channel.FEISHU, Category.AGENT,
+            "🤖 Agent状态变更: ${agentName}",
+            "**🤖 Agent状态变更**\n\n" +
+            "---\n\n" +
+            "**Agent名称**：${agentName}\n" +
+            "**当前状态**：${status}\n" +
+            "**备注**：${remark}\n" +
+            "**变更时间**：${time}\n\n" +
+            "---");
+
+        created += createIfAbsent("AGENT_STATUS_DINGTALK", "钉钉Agent状态", Channel.DINGTALK, Category.AGENT,
+            "🤖 Agent状态变更: ${agentName}",
+            "### 🤖 Agent状态变更\n\n" +
+            "---\n\n" +
+            "- **Agent名称**：${agentName}\n" +
+            "- **当前状态**：${status}\n" +
+            "- **备注**：${remark}\n" +
+            "- **变更时间**：${time}\n\n" +
+            "---");
+
+        // ===== 制作人工作流通知模板（ProducerAgent 使用 PRODUCER_XXX 模板编码） =====
+
+        // --- 审批流程类（prefKey: approval） ---
+
+        // 需要人工审批（工作流/招聘/创建Agent/交付）
+        created += createIfAbsent("PRODUCER_WORKFLOW_HUMAN_APPROVAL_NEEDED_SYSTEM", "站内-需要人工审批", Channel.SYSTEM, Category.SYSTEM,
+            "🔔 需要人工审批: ${title}",
+            "🔔 需要人工审批\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━\n\n请及时处理！");
+        created += createIfAbsent("PRODUCER_WORKFLOW_HUMAN_APPROVAL_NEEDED_EMAIL", "邮件-需要人工审批", Channel.EMAIL, Category.SYSTEM,
+            "🔔 需要人工审批: ${title}",
+            "<div style=\"font-family:'Microsoft YaHei',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><div style=\"background:linear-gradient(135deg,#ff922b 0%,#fd7e14 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;\"><h1 style=\"margin:0;font-size:24px;\">🔔 需要人工审批</h1></div><div style=\"background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;\"><p>${content}</p><p style=\"color:#666;margin-top:20px;\">时间：${time}</p></div></div>");
+        created += createIfAbsent("PRODUCER_WORKFLOW_HUMAN_APPROVAL_NEEDED_FEISHU", "飞书-需要人工审批", Channel.FEISHU, Category.SYSTEM,
+            "🔔 需要人工审批: ${title}",
+            "**🔔 需要人工审批**\n\n---\n\n${content}\n\n---\n\n请及时处理！");
+        created += createIfAbsent("PRODUCER_WORKFLOW_HUMAN_APPROVAL_NEEDED_DINGTALK", "钉钉-需要人工审批", Channel.DINGTALK, Category.SYSTEM,
+            "🔔 需要人工审批: ${title}",
+            "### 🔔 需要人工审批\n\n---\n\n${content}\n\n---\n\n请及时处理！");
+
+        created += createIfAbsent("PRODUCER_RECRUIT_APPROVAL_REQUIRED_SYSTEM", "站内-招聘审批请求", Channel.SYSTEM, Category.SYSTEM,
+            "👥 招聘审批: ${title}",
+            "👥 招聘审批请求\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━\n\n请审批是否允许招聘该 Agent。");
+        created += createIfAbsent("PRODUCER_RECRUIT_APPROVAL_REQUIRED_EMAIL", "邮件-招聘审批请求", Channel.EMAIL, Category.SYSTEM,
+            "👥 招聘审批: ${title}",
+            "<div style=\"font-family:'Microsoft YaHei',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><div style=\"background:linear-gradient(135deg,#f06595 0%,#e64980 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;\"><h1 style=\"margin:0;font-size:24px;\">👥 招聘审批请求</h1></div><div style=\"background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;\"><p>${content}</p><p style=\"color:#666;margin-top:20px;\">时间：${time}</p></div></div>");
+        created += createIfAbsent("PRODUCER_RECRUIT_APPROVAL_REQUIRED_FEISHU", "飞书-招聘审批请求", Channel.FEISHU, Category.SYSTEM,
+            "👥 招聘审批: ${title}",
+            "**👥 招聘审批请求**\n\n---\n\n${content}\n\n---\n\n请审批是否允许招聘该 Agent。");
+        created += createIfAbsent("PRODUCER_RECRUIT_APPROVAL_REQUIRED_DINGTALK", "钉钉-招聘审批请求", Channel.DINGTALK, Category.SYSTEM,
+            "👥 招聘审批: ${title}",
+            "### 👥 招聘审批请求\n\n---\n\n${content}\n\n---\n\n请审批是否允许招聘该 Agent。");
+
+        created += createIfAbsent("PRODUCER_CREATE_AGENT_APPROVAL_REQUIRED_SYSTEM", "站内-创建Agent审批", Channel.SYSTEM, Category.SYSTEM,
+            "🤖 创建Agent审批: ${title}",
+            "🤖 创建Agent审批请求\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━\n\n请审批。");
+        created += createIfAbsent("PRODUCER_CREATE_AGENT_APPROVAL_REQUIRED_EMAIL", "邮件-创建Agent审批", Channel.EMAIL, Category.SYSTEM,
+            "🤖 创建Agent审批: ${title}",
+            "<div style=\"font-family:'Microsoft YaHei',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><div style=\"background:linear-gradient(135deg,#845ef7 0%,#7048e8 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;\"><h1 style=\"margin:0;font-size:24px;\">🤖 创建Agent审批</h1></div><div style=\"background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;\"><p>${content}</p><p style=\"color:#666;margin-top:20px;\">时间：${time}</p></div></div>");
+
+        created += createIfAbsent("PRODUCER_DELIVERY_APPROVAL_SYSTEM", "站内-交付审批", Channel.SYSTEM, Category.SYSTEM,
+            "📦 交付审批: ${title}",
+            "📦 交付审批请求\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━\n\n请审批是否可以交付。");
+        created += createIfAbsent("PRODUCER_DELIVERY_APPROVAL_EMAIL", "邮件-交付审批", Channel.EMAIL, Category.SYSTEM,
+            "📦 交付审批: ${title}",
+            "<div style=\"font-family:'Microsoft YaHei',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><div style=\"background:linear-gradient(135deg,#20c997 0%,#12b886 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;\"><h1 style=\"margin:0;font-size:24px;\">📦 交付审批</h1></div><div style=\"background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;\"><p>${content}</p><p style=\"color:#666;margin-top:20px;\">时间：${time}</p></div></div>");
+
+        created += createIfAbsent("PRODUCER_APPROVAL_REQUIRED_SYSTEM", "站内-需要审批", Channel.SYSTEM, Category.SYSTEM,
+            "📋 需要审批: ${title}",
+            "📋 需要审批\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━\n\n请及时处理！");
+        created += createIfAbsent("PRODUCER_APPROVAL_REQUIRED_EMAIL", "邮件-需要审批", Channel.EMAIL, Category.SYSTEM,
+            "📋 需要审批: ${title}",
+            "<div style=\"font-family:'Microsoft YaHei',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><div style=\"background:linear-gradient(135deg,#ff922b 0%,#fd7e14 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;\"><h1 style=\"margin:0;font-size:24px;\">📋 需要审批</h1></div><div style=\"background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;\"><p>${content}</p><p style=\"color:#666;margin-top:20px;\">时间：${time}</p></div></div>");
+
+        // 审批拒绝类
+        created += createIfAbsent("PRODUCER_APPROVAL_REJECTED_SYSTEM", "站内-审批被拒绝", Channel.SYSTEM, Category.SYSTEM,
+            "❌ 审批被拒绝: ${title}",
+            "❌ 审批被拒绝\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━");
+        created += createIfAbsent("PRODUCER_APPROVAL_REJECTED_EMAIL", "邮件-审批被拒绝", Channel.EMAIL, Category.SYSTEM,
+            "❌ 审批被拒绝: ${title}",
+            "<h2>❌ 审批被拒绝</h2><p>${content}</p><p><b>时间：</b>${time}</p>");
+        created += createIfAbsent("PRODUCER_RECRUIT_REJECTED_SYSTEM", "站内-招聘被拒绝", Channel.SYSTEM, Category.SYSTEM,
+            "❌ 招聘被拒绝: ${title}",
+            "❌ 招聘被拒绝\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━");
+        created += createIfAbsent("PRODUCER_RECRUIT_REJECTED_EMAIL", "邮件-招聘被拒绝", Channel.EMAIL, Category.SYSTEM,
+            "❌ 招聘被拒绝: ${title}",
+            "<h2>❌ 招聘被拒绝</h2><p>${content}</p><p><b>时间：</b>${time}</p>");
+        created += createIfAbsent("PRODUCER_CREATE_AGENT_REJECTED_SYSTEM", "站内-创建Agent被拒绝", Channel.SYSTEM, Category.SYSTEM,
+            "❌ 创建Agent被拒绝: ${title}",
+            "❌ 创建Agent被拒绝\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━");
+        created += createIfAbsent("PRODUCER_CREATE_AGENT_REJECTED_EMAIL", "邮件-创建Agent被拒绝", Channel.EMAIL, Category.SYSTEM,
+            "❌ 创建Agent被拒绝: ${title}",
+            "<h2>❌ 创建Agent被拒绝</h2><p>${content}</p><p><b>时间：</b>${time}</p>");
+        created += createIfAbsent("PRODUCER_DISMISS_REJECTED_SYSTEM", "站内-解雇被拒绝", Channel.SYSTEM, Category.SYSTEM,
+            "❌ 解雇被拒绝: ${title}",
+            "❌ 解雇被拒绝\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━");
+        created += createIfAbsent("PRODUCER_DISMISS_REJECTED_EMAIL", "邮件-解雇被拒绝", Channel.EMAIL, Category.SYSTEM,
+            "❌ 解雇被拒绝: ${title}",
+            "<h2>❌ 解雇被拒绝</h2><p>${content}</p><p><b>时间：</b>${time}</p>");
+
+        // 审批通过/完成类
+        created += createIfAbsent("PRODUCER_RECRUIT_COMPLETED_SYSTEM", "站内-招聘完成", Channel.SYSTEM, Category.SYSTEM,
+            "✅ 招聘完成: ${title}",
+            "✅ 招聘完成\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━");
+        created += createIfAbsent("PRODUCER_RECRUIT_COMPLETED_EMAIL", "邮件-招聘完成", Channel.EMAIL, Category.SYSTEM,
+            "✅ 招聘完成: ${title}",
+            "<h2>✅ 招聘完成</h2><p>${content}</p><p><b>时间：</b>${time}</p>");
+        created += createIfAbsent("PRODUCER_DISMISS_REQUEST_SENT_SYSTEM", "站内-解雇请求已发送", Channel.SYSTEM, Category.SYSTEM,
+            "📤 解雇请求已发送: ${title}",
+            "📤 解雇请求已发送\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━\n\n等待管理员审批。");
+        created += createIfAbsent("PRODUCER_DISMISS_REQUEST_SENT_EMAIL", "邮件-解雇请求已发送", Channel.EMAIL, Category.SYSTEM,
+            "📤 解雇请求已发送: ${title}",
+            "<h2>📤 解雇请求已发送</h2><p>${content}</p><p>等待管理员审批。</p><p><b>时间：</b>${time}</p>");
+
+        // --- Agent 生命周期类（prefKey: agent_status） ---
+
+        created += createIfAbsent("PRODUCER_AGENT_CREATED_SYSTEM", "站内-Agent已创建", Channel.SYSTEM, Category.AGENT,
+            "🤖 Agent已创建: ${title}",
+            "🤖 Agent已创建\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━");
+        created += createIfAbsent("PRODUCER_AGENT_CREATED_EMAIL", "邮件-Agent已创建", Channel.EMAIL, Category.AGENT,
+            "🤖 Agent已创建: ${title}",
+            "<div style=\"font-family:'Microsoft YaHei',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><div style=\"background:linear-gradient(135deg,#51cf66 0%,#40c057 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;\"><h1 style=\"margin:0;font-size:24px;\">🤖 Agent已创建</h1></div><div style=\"background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;\"><p>${content}</p><p style=\"color:#666;margin-top:20px;\">时间：${time}</p></div></div>");
+        created += createIfAbsent("PRODUCER_AGENT_CREATED_FEISHU", "飞书-Agent已创建", Channel.FEISHU, Category.AGENT,
+            "🤖 Agent已创建: ${title}",
+            "**🤖 Agent已创建**\n\n---\n\n${content}\n\n---\n\n时间：${time}");
+        created += createIfAbsent("PRODUCER_AGENT_CREATED_DINGTALK", "钉钉-Agent已创建", Channel.DINGTALK, Category.AGENT,
+            "🤖 Agent已创建: ${title}",
+            "### 🤖 Agent已创建\n\n---\n\n${content}\n\n---\n\n时间：${time}");
+
+        created += createIfAbsent("PRODUCER_AGENT_EVALUATED_SYSTEM", "站内-Agent已评估", Channel.SYSTEM, Category.AGENT,
+            "📊 Agent评估完成: ${title}",
+            "📊 Agent评估完成\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━");
+        created += createIfAbsent("PRODUCER_AGENT_EVALUATED_EMAIL", "邮件-Agent已评估", Channel.EMAIL, Category.AGENT,
+            "📊 Agent评估完成: ${title}",
+            "<div style=\"font-family:'Microsoft YaHei',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><div style=\"background:linear-gradient(135deg,#748ffc 0%,#5c7cfa 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;\"><h1 style=\"margin:0;font-size:24px;\">📊 Agent评估完成</h1></div><div style=\"background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;\"><p>${content}</p><p style=\"color:#666;margin-top:20px;\">时间：${time}</p></div></div>");
+
+        created += createIfAbsent("PRODUCER_TEAM_OPTIMIZATION_SYSTEM", "站内-团队优化", Channel.SYSTEM, Category.AGENT,
+            "🔧 团队优化: ${title}",
+            "🔧 团队优化建议\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━");
+        created += createIfAbsent("PRODUCER_TEAM_OPTIMIZATION_EMAIL", "邮件-团队优化", Channel.EMAIL, Category.AGENT,
+            "🔧 团队优化: ${title}",
+            "<div style=\"font-family:'Microsoft YaHei',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><div style=\"background:linear-gradient(135deg,#845ef7 0%,#7048e8 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;\"><h1 style=\"margin:0;font-size:24px;\">🔧 团队优化建议</h1></div><div style=\"background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;\"><p>${content}</p><p style=\"color:#666;margin-top:20px;\">时间：${time}</p></div></div>");
+
+        created += createIfAbsent("PRODUCER_AUTO_RECRUIT_REQUEST_SYSTEM", "站内-自动招聘请求", Channel.SYSTEM, Category.AGENT,
+            "🔄 自动招聘请求: ${title}",
+            "🔄 自动招聘请求\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━");
+        created += createIfAbsent("PRODUCER_AUTO_RECRUIT_REQUEST_EMAIL", "邮件-自动招聘请求", Channel.EMAIL, Category.AGENT,
+            "🔄 自动招聘请求: ${title}",
+            "<div style=\"font-family:'Microsoft YaHei',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><div style=\"background:linear-gradient(135deg,#f06595 0%,#e64980 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;\"><h1 style=\"margin:0;font-size:24px;\">🔄 自动招聘请求</h1></div><div style=\"background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;\"><p>${content}</p><p style=\"color:#666;margin-top:20px;\">时间：${time}</p></div></div>");
+
+        // --- 工作流/项目类（prefKey: system） ---
+
+        created += createIfAbsent("PRODUCER_WORKFLOW_STARTED_SYSTEM", "站内-工作流已启动", Channel.SYSTEM, Category.SYSTEM,
+            "🚀 工作流已启动: ${title}",
+            "🚀 工作流已启动\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━");
+        created += createIfAbsent("PRODUCER_WORKFLOW_STARTED_EMAIL", "邮件-工作流已启动", Channel.EMAIL, Category.SYSTEM,
+            "🚀 工作流已启动: ${title}",
+            "<h2>🚀 工作流已启动</h2><p>${content}</p><p><b>时间：</b>${time}</p>");
+        created += createIfAbsent("PRODUCER_WORKFLOW_CREATED_SYSTEM", "站内-新工作流已创建", Channel.SYSTEM, Category.SYSTEM,
+            "📋 新工作流已创建: ${title}",
+            "📋 新工作流已创建\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━");
+        created += createIfAbsent("PRODUCER_WORKFLOW_CREATED_EMAIL", "邮件-新工作流已创建", Channel.EMAIL, Category.SYSTEM,
+            "📋 新工作流已创建: ${title}",
+            "<h2>📋 新工作流已创建</h2><p>${content}</p><p><b>时间：</b>${time}</p>");
+        created += createIfAbsent("PRODUCER_WORKFLOW_PRODUCER_APPROVED_SYSTEM", "站内-工作流已自动审批", Channel.SYSTEM, Category.SYSTEM,
+            "✅ 工作流已自动审批: ${title}",
+            "✅ 工作流已自动审批\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━");
+        created += createIfAbsent("PRODUCER_WORKFLOW_PRODUCER_APPROVED_EMAIL", "邮件-工作流已自动审批", Channel.EMAIL, Category.SYSTEM,
+            "✅ 工作流已自动审批: ${title}",
+            "<h2>✅ 工作流已自动审批</h2><p>${content}</p><p><b>时间：</b>${time}</p>");
+        created += createIfAbsent("PRODUCER_VERSION_ITERATION_STARTED_SYSTEM", "站内-版本迭代已启动", Channel.SYSTEM, Category.SYSTEM,
+            "🔄 版本迭代已启动: ${title}",
+            "🔄 版本迭代已启动\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━");
+        created += createIfAbsent("PRODUCER_VERSION_ITERATION_STARTED_EMAIL", "邮件-版本迭代已启动", Channel.EMAIL, Category.SYSTEM,
+            "🔄 版本迭代已启动: ${title}",
+            "<h2>🔄 版本迭代已启动</h2><p>${content}</p><p><b>时间：</b>${time}</p>");
+
+        // 项目卡点/告警类
+        created += createIfAbsent("PRODUCER_MILESTONE_STUCK_SYSTEM", "站内-里程碑卡住", Channel.SYSTEM, Category.SYSTEM,
+            "⚠️ 里程碑卡住: ${title}",
+            "⚠️ 里程碑卡住\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━\n\n请关注项目进展。");
+        created += createIfAbsent("PRODUCER_MILESTONE_STUCK_EMAIL", "邮件-里程碑卡住", Channel.EMAIL, Category.SYSTEM,
+            "⚠️ 里程碑卡住: ${title}",
+            "<div style=\"font-family:'Microsoft YaHei',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><div style=\"background:linear-gradient(135deg,#ff6b6b 0%,#ee5a24 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;\"><h1 style=\"margin:0;font-size:24px;\">⚠️ 里程碑卡住</h1></div><div style=\"background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;\"><p>${content}</p><p style=\"color:#666;margin-top:20px;\">请关注项目进展。时间：${time}</p></div></div>");
+        created += createIfAbsent("PRODUCER_MILESTONE_STUCK_FEISHU", "飞书-里程碑卡住", Channel.FEISHU, Category.SYSTEM,
+            "⚠️ 里程碑卡住: ${title}",
+            "**⚠️ 里程碑卡住**\n\n---\n\n${content}\n\n---\n\n请关注项目进展。");
+        created += createIfAbsent("PRODUCER_MILESTONE_STUCK_DINGTALK", "钉钉-里程碑卡住", Channel.DINGTALK, Category.SYSTEM,
+            "⚠️ 里程碑卡住: ${title}",
+            "### ⚠️ 里程碑卡住\n\n---\n\n${content}\n\n---\n\n请关注项目进展。");
+
+        created += createIfAbsent("PRODUCER_PROJECT_STUCK_SYSTEM", "站内-项目卡住", Channel.SYSTEM, Category.SYSTEM,
+            "🚨 项目卡住: ${title}",
+            "🚨 项目卡住\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━\n\n项目进展受阻，请及时干预。");
+        created += createIfAbsent("PRODUCER_PROJECT_STUCK_EMAIL", "邮件-项目卡住", Channel.EMAIL, Category.SYSTEM,
+            "🚨 项目卡住: ${title}",
+            "<div style=\"font-family:'Microsoft YaHei',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><div style=\"background:linear-gradient(135deg,#ff6b6b 0%,#ee5a24 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;\"><h1 style=\"margin:0;font-size:24px;\">🚨 项目卡住</h1></div><div style=\"background:#fff3cd;padding:20px;border:1px solid #ffc107;border-top:none;border-radius:0 0 10px 10px;\"><p>${content}</p><p style=\"color:#856404;margin-top:20px;\">项目进展受阻，请及时干预。时间：${time}</p></div></div>");
+        created += createIfAbsent("PRODUCER_PROJECT_STUCK_FEISHU", "飞书-项目卡住", Channel.FEISHU, Category.SYSTEM,
+            "🚨 项目卡住: ${title}",
+            "**🚨 项目卡住**\n\n---\n\n${content}\n\n---\n\n项目进展受阻，请及时干预。");
+        created += createIfAbsent("PRODUCER_PROJECT_STUCK_DINGTALK", "钉钉-项目卡住", Channel.DINGTALK, Category.SYSTEM,
+            "🚨 项目卡住: ${title}",
+            "### 🚨 项目卡住\n\n---\n\n${content}\n\n---\n\n项目进展受阻，请及时干预。");
+
+        created += createIfAbsent("PRODUCER_PERIODIC_VERIFY_FAILED_SYSTEM", "站内-定期验证失败", Channel.SYSTEM, Category.SYSTEM,
+            "❌ 定期验证失败: ${title}",
+            "❌ 定期验证失败\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━");
+        created += createIfAbsent("PRODUCER_PERIODIC_VERIFY_FAILED_EMAIL", "邮件-定期验证失败", Channel.EMAIL, Category.SYSTEM,
+            "❌ 定期验证失败: ${title}",
+            "<h2>❌ 定期验证失败</h2><p>${content}</p><p><b>时间：</b>${time}</p>");
+
+        // 版本/绩效类
+        created += createIfAbsent("PRODUCER_VERSION_STAFFING_ISSUE_SYSTEM", "站内-版本人员配置问题", Channel.SYSTEM, Category.SYSTEM,
+            "👥 人员配置问题: ${title}",
+            "👥 版本人员配置问题\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━");
+        created += createIfAbsent("PRODUCER_VERSION_STAFFING_ISSUE_EMAIL", "邮件-版本人员配置问题", Channel.EMAIL, Category.SYSTEM,
+            "👥 人员配置问题: ${title}",
+            "<h2>👥 版本人员配置问题</h2><p>${content}</p><p><b>时间：</b>${time}</p>");
+        created += createIfAbsent("PRODUCER_VERSION_LOW_PERFORMANCE_SYSTEM", "站内-版本低绩效", Channel.SYSTEM, Category.SYSTEM,
+            "📉 版本低绩效: ${title}",
+            "📉 版本低绩效预警\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━");
+        created += createIfAbsent("PRODUCER_VERSION_LOW_PERFORMANCE_EMAIL", "邮件-版本低绩效", Channel.EMAIL, Category.SYSTEM,
+            "📉 版本低绩效: ${title}",
+            "<h2>📉 版本低绩效预警</h2><p>${content}</p><p><b>时间：</b>${time}</p>");
+        created += createIfAbsent("PRODUCER_PROJECT_RULES_GENERATED_SYSTEM", "站内-项目规则已生成", Channel.SYSTEM, Category.SYSTEM,
+            "📜 项目规则已生成: ${title}",
+            "📜 项目规则已生成\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━");
+        created += createIfAbsent("PRODUCER_PROJECT_RULES_GENERATED_EMAIL", "邮件-项目规则已生成", Channel.EMAIL, Category.SYSTEM,
+            "📜 项目规则已生成: ${title}",
+            "<h2>📜 项目规则已生成</h2><p>${content}</p><p><b>时间：</b>${time}</p>");
+        created += createIfAbsent("PRODUCER_TEAM_WARNING_SYSTEM", "站内-团队警告", Channel.SYSTEM, Category.SYSTEM,
+            "⚠️ 团队警告: ${title}",
+            "⚠️ 团队警告\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━");
+        created += createIfAbsent("PRODUCER_TEAM_WARNING_EMAIL", "邮件-团队警告", Channel.EMAIL, Category.SYSTEM,
+            "⚠️ 团队警告: ${title}",
+            "<h2>⚠️ 团队警告</h2><p>${content}</p><p><b>时间：</b>${time}</p>");
 
         if (created > 0) {
             log.info("初始化默认通知模板完成，新增 {} 个模板", created);
@@ -755,10 +1193,11 @@ public class NotificationTemplateService {
      *
      * @param templateId 模板ID
      * @param userEmail 当前用户的邮箱（邮件类型模板使用）
+     * @param userId 当前用户的ID（站内信类型模板使用）
      * @return 发送结果
      * @throws RuntimeException 当系统未配置对应通知渠道时抛出
      */
-    public Map<String, Object> testSendTemplate(Long templateId, String userEmail) {
+    public Map<String, Object> testSendTemplate(Long templateId, String userEmail, Long userId) {
         NotificationTemplate template = templateRepository.findById(templateId)
             .orElseThrow(() -> new RuntimeException("模板不存在: " + templateId));
 
@@ -785,10 +1224,18 @@ public class NotificationTemplateService {
         Channel channel = template.getChannel();
         switch (channel) {
             case SYSTEM:
-                // 站内信通知
+                // 站内信通知 - 实际创建通知记录存入数据库
+                Notification notification = new Notification();
+                notification.setUserId(userId);
+                notification.setTitle(subject);
+                notification.setContent(content);
+                notification.setType(Notification.NotificationType.SYSTEM);
+                notification.setChannel(Notification.NotificationChannel.SYSTEM);
+                notificationRepository.save(notification);
+                log.info("测试站内信通知已发送给用户 {}: {}", userId, subject);
                 return Map.of(
                     "status", "success",
-                    "message", "站内信通知已发送",
+                    "message", "站内信通知已发送，请查看通知列表",
                     "channel", "SYSTEM",
                     "subject", subject,
                     "content", content

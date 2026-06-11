@@ -933,8 +933,17 @@ public class KnowledgeEvolutionService {
      */
     private static class LearnedPattern {
         private final String key;
+        private String patternType;
         private int frequency;
         private List<String> sources = new ArrayList<>();
+        private List<String> examples = new ArrayList<>();
+        private String solution;
+        private LocalDateTime lastOccurrence;
+
+        public LearnedPattern() {
+            this.key = "";
+            this.frequency = 0;
+        }
 
         public LearnedPattern(String key) {
             this.key = key;
@@ -1554,6 +1563,440 @@ public class KnowledgeEvolutionService {
             .filter(w -> w.length() > 2)
             .limit(3)
             .collect(Collectors.joining("_"));
+    }
+
+    // ===== 玩家反馈驱动的知识提取 =====
+
+    /**
+     * 从玩家反馈中提取知识
+     * 当项目有测试反馈、用户评价时，自动提取改进知识
+     *
+     * @param projectId 项目 ID
+     * @param feedbackType 反馈类型：bug_report, gameplay_feedback, ux_feedback, suggestion
+     * @param feedbackContent 反馈内容
+     * @param severity 严重程度：critical, major, minor, suggestion
+     */
+    public void learnFromPlayerFeedback(String projectId, String feedbackType,
+                                         String feedbackContent, String severity) {
+        if (feedbackContent == null || feedbackContent.trim().isEmpty()) return;
+
+        log.info("从玩家反馈中学习: project={}, type={}, severity={}", projectId, feedbackType, severity);
+
+        try {
+            // 根据反馈类型提取知识
+            String category = mapFeedbackCategory(feedbackType);
+            String knowledgeKey = "feedback." + projectId + "." + System.currentTimeMillis();
+
+            // 构建知识内容
+            StringBuilder content = new StringBuilder();
+            content.append("项目: ").append(projectId).append("\n");
+            content.append("反馈类型: ").append(feedbackType).append("\n");
+            content.append("严重程度: ").append(severity).append("\n");
+            content.append("反馈内容: ").append(feedbackContent).append("\n");
+
+            // 记录到知识库
+            knowledgeBase.recordSolution(category, "玩家反馈: " + feedbackType, content.toString());
+
+            // 如果是严重问题，记录为需要优先解决的模式
+            if ("critical".equals(severity) || "major".equals(severity)) {
+                recordCriticalFeedbackPattern(projectId, feedbackType, feedbackContent);
+            }
+
+            log.info("玩家反馈知识已记录: project={}, type={}", projectId, feedbackType);
+        } catch (Exception e) {
+            log.error("从玩家反馈中学习失败", e);
+        }
+    }
+
+    /**
+     * 映射反馈类型到知识类别
+     */
+    private String mapFeedbackCategory(String feedbackType) {
+        if (feedbackType == null) return "player_feedback";
+        return switch (feedbackType.toLowerCase()) {
+            case "bug_report" -> "bug_pattern";
+            case "gameplay_feedback" -> "game_design";
+            case "ux_feedback" -> "game_feel";
+            case "suggestion" -> "player_suggestion";
+            default -> "player_feedback";
+        };
+    }
+
+    /**
+     * 记录严重反馈模式（需要优先解决）
+     */
+    private void recordCriticalFeedbackPattern(String projectId, String feedbackType, String content) {
+        String patternKey = "critical_" + feedbackType + "_" + projectId;
+        LearnedPattern pattern = new LearnedPattern();
+        pattern.patternType = "critical_feedback";
+        pattern.frequency = 1;
+        pattern.examples = new ArrayList<>(List.of(content));
+        pattern.lastOccurrence = LocalDateTime.now();
+        learnedPatterns.put(patternKey, pattern);
+        saveLearnedPatterns();
+    }
+
+    // ===== 跨项目知识迁移 =====
+
+    /**
+     * 获取跨项目推荐知识
+     * 当一个项目遇到问题时，查找其他项目是否有类似经验
+     *
+     * @param projectId 当前项目 ID
+     * @param problemDescription 问题描述
+     * @param gameType 游戏类型
+     * @return 推荐的知识列表（来自其他项目的经验）
+     */
+    public List<CrossProjectKnowledge> getCrossProjectKnowledge(String projectId,
+                                                                 String problemDescription,
+                                                                 String gameType) {
+        List<CrossProjectKnowledge> recommendations = new ArrayList<>();
+
+        // 从学习到的模式中查找相关经验
+        for (Map.Entry<String, LearnedPattern> entry : learnedPatterns.entrySet()) {
+            LearnedPattern pattern = entry.getValue();
+
+            // 跳过当前项目的模式
+            if (entry.getKey().contains(projectId)) continue;
+
+            // 检查是否相关
+            if (isPatternRelevant(pattern, problemDescription, gameType)) {
+                CrossProjectKnowledge knowledge = new CrossProjectKnowledge();
+                knowledge.sourceKey = entry.getKey();
+                knowledge.patternType = pattern.patternType;
+                knowledge.frequency = pattern.frequency;
+                knowledge.description = pattern.examples.isEmpty() ? "" : pattern.examples.get(0);
+                knowledge.relevanceScore = calculateRelevance(pattern, problemDescription, gameType);
+                recommendations.add(knowledge);
+            }
+        }
+
+        // 按相关性排序
+        recommendations.sort((a, b) -> Double.compare(b.relevanceScore, a.relevanceScore));
+
+        // 返回 top 5
+        return recommendations.stream().limit(5).toList();
+    }
+
+    /**
+     * 判断模式是否与当前问题相关
+     */
+    private boolean isPatternRelevant(LearnedPattern pattern, String problemDescription, String gameType) {
+        if (problemDescription == null) return false;
+
+        String problemLower = problemDescription.toLowerCase();
+        String patternType = pattern.patternType != null ? pattern.patternType.toLowerCase() : "";
+
+        // 模式类型匹配
+        if (problemLower.contains(patternType) || patternType.contains(problemLower.substring(0, Math.min(10, problemLower.length())))) {
+            return true;
+        }
+
+        // 示例内容匹配
+        for (String example : pattern.examples) {
+            if (example != null) {
+                String exampleLower = example.toLowerCase();
+                // 简单关键词匹配
+                String[] keywords = problemLower.split("[\\s,，。、]+");
+                for (String keyword : keywords) {
+                    if (keyword.length() > 2 && exampleLower.contains(keyword)) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * 计算模式与当前问题的相关性分数
+     */
+    private double calculateRelevance(LearnedPattern pattern, String problemDescription, String gameType) {
+        double score = 0;
+
+        // 频率越高越相关
+        score += Math.min(pattern.frequency * 2, 20);
+
+        // 最近出现的更相关
+        if (pattern.lastOccurrence != null) {
+            long daysSince = java.time.Duration.between(pattern.lastOccurrence, LocalDateTime.now()).toDays();
+            if (daysSince < 7) score += 15;
+            else if (daysSince < 30) score += 10;
+            else if (daysSince < 90) score += 5;
+        }
+
+        // 有解决方案的更相关
+        if (pattern.solution != null && !pattern.solution.isEmpty()) {
+            score += 10;
+        }
+
+        return score;
+    }
+
+    /**
+     * 导出项目知识供其他项目使用
+     * 在项目完成或里程碑达成时调用
+     *
+     * @param projectId 项目 ID
+     * @param gameType 游戏类型
+     * @param successFactors 成功因素描述
+     */
+    public void exportProjectKnowledge(String projectId, String gameType, String successFactors) {
+        if (successFactors == null || successFactors.trim().isEmpty()) return;
+
+        log.info("导出项目知识: project={}, gameType={}", projectId, gameType);
+
+        try {
+            String patternKey = "exported_" + projectId + "_" + System.currentTimeMillis();
+            LearnedPattern pattern = new LearnedPattern();
+            pattern.patternType = gameType != null ? gameType : "general";
+            pattern.frequency = 1;
+            pattern.examples = new ArrayList<>(List.of(successFactors));
+            pattern.lastOccurrence = LocalDateTime.now();
+
+            // 记录成功因素作为解决方案
+            pattern.solution = successFactors;
+
+            learnedPatterns.put(patternKey, pattern);
+            saveLearnedPatterns();
+
+            log.info("项目知识已导出: project={}", projectId);
+        } catch (Exception e) {
+            log.error("导出项目知识失败", e);
+        }
+    }
+
+    // ===== 跨项目模式学习增强 =====
+
+    /**
+     * 从已完成项目中提取成功模式
+     * 分析项目的关键决策、技术选型、里程碑拆分方式等
+     *
+     * @param projectId 项目ID
+     * @param gameType 游戏类型
+     * @param milestones 里程碑列表
+     * @param projectGoal 项目目标
+     */
+    public void extractProjectPatterns(String projectId, String gameType,
+                                        List<GameProject.GoalMilestone> milestones, String projectGoal) {
+        if (projectId == null || milestones == null) return;
+
+        log.info("提取项目成功模式: project={}, gameType={}", projectId, gameType);
+
+        try {
+            // 1. 提取里程碑拆分模式
+            int milestoneCount = milestones.size();
+            long completedCount = milestones.stream()
+                .filter(m -> m.getStatus() == GameProject.MilestoneStatus.COMPLETED)
+                .count();
+
+            if (completedCount > 0) {
+                String patternKey = "milestone_pattern_" + (gameType != null ? gameType : "general");
+                LearnedPattern pattern = learnedPatterns.get(patternKey);
+                if (pattern == null) {
+                    pattern = new LearnedPattern();
+                    pattern.patternType = "milestone_decomposition";
+                    learnedPatterns.put(patternKey, pattern);
+                }
+                pattern.frequency++;
+                pattern.lastOccurrence = LocalDateTime.now();
+                pattern.examples.add(String.format("项目[%s]: %d个里程碑完成%d个，目标: %s",
+                    projectId, milestoneCount, completedCount,
+                    projectGoal != null && projectGoal.length() > 50 ? projectGoal.substring(0, 50) + "..." : projectGoal));
+            }
+
+            // 2. 提取任务拆分模式
+            for (GameProject.GoalMilestone milestone : milestones) {
+                if (milestone.getTasks() != null && !milestone.getTasks().isEmpty()) {
+                    int taskCount = milestone.getTasks().size();
+                    String patternKey = "task_split_pattern_" + taskCount + "_tasks";
+                    LearnedPattern pattern = learnedPatterns.get(patternKey);
+                    if (pattern == null) {
+                        pattern = new LearnedPattern();
+                        pattern.patternType = "task_splitting";
+                        learnedPatterns.put(patternKey, pattern);
+                    }
+                    pattern.frequency++;
+                    pattern.lastOccurrence = LocalDateTime.now();
+                    pattern.examples.add(String.format("里程碑[%s]拆分为%d个任务",
+                        milestone.getTitle() != null ? milestone.getTitle() : "未知", taskCount));
+                }
+            }
+
+            // 3. 提取角色分配模式
+            Map<String, Integer> roleDistribution = new HashMap<>();
+            for (GameProject.GoalMilestone milestone : milestones) {
+                String role = milestone.getAssignedAgentRole();
+                if (role != null) {
+                    roleDistribution.merge(role, 1, Integer::sum);
+                }
+            }
+            if (!roleDistribution.isEmpty()) {
+                String patternKey = "role_distribution_" + (gameType != null ? gameType : "general");
+                LearnedPattern pattern = learnedPatterns.get(patternKey);
+                if (pattern == null) {
+                    pattern = new LearnedPattern();
+                    pattern.patternType = "role_assignment";
+                    learnedPatterns.put(patternKey, pattern);
+                }
+                pattern.frequency++;
+                pattern.lastOccurrence = LocalDateTime.now();
+                pattern.examples.add(String.format("角色分配: %s",
+                    roleDistribution.entrySet().stream()
+                        .map(e -> e.getKey() + "=" + e.getValue())
+                        .reduce((a, b) -> a + ", " + b).orElse("无")));
+            }
+
+            saveLearnedPatterns();
+            log.info("项目模式提取完成: project={}", projectId);
+
+        } catch (Exception e) {
+            log.error("提取项目模式失败: project={}", projectId, e);
+        }
+    }
+
+    /**
+     * 查询相似项目的成功经验
+     * 根据游戏类型搜索其他项目的成功模式和最佳实践
+     *
+     * @param gameType 游戏类型
+     * @param currentProjectId 当前项目ID（排除自身）
+     * @return 格式化的经验文本，可直接注入prompt
+     */
+    public String querySimilarProjectExperiences(String gameType, String currentProjectId) {
+        if (gameType == null || gameType.isEmpty()) return "";
+
+        StringBuilder experience = new StringBuilder();
+        String lowerType = gameType.toLowerCase();
+
+        // 1. 搜索同类型项目的里程碑模式
+        String milestonePatternKey = "milestone_pattern_" + gameType;
+        LearnedPattern milestonePattern = learnedPatterns.get(milestonePatternKey);
+        if (milestonePattern != null && milestonePattern.frequency > 0) {
+            experience.append("### 同类项目里程碑经验\n\n");
+            experience.append(String.format("共有 %d 个同类项目的经验数据：\n", milestonePattern.frequency));
+            for (String example : milestonePattern.examples.stream().limit(3).toList()) {
+                experience.append("- ").append(example).append("\n");
+            }
+            experience.append("\n");
+        }
+
+        // 2. 搜索任务拆分经验
+        String[] taskSplitKeys = {"task_split_pattern_3_tasks", "task_split_pattern_5_tasks", "task_split_pattern_8_tasks"};
+        for (String key : taskSplitKeys) {
+            LearnedPattern pattern = learnedPatterns.get(key);
+            if (pattern != null && pattern.frequency > 0) {
+                if (experience.indexOf("任务拆分经验") < 0) {
+                    experience.append("### 任务拆分经验\n\n");
+                }
+                for (String example : pattern.examples.stream().limit(2).toList()) {
+                    experience.append("- ").append(example).append("\n");
+                }
+            }
+        }
+        if (experience.indexOf("任务拆分经验") >= 0) experience.append("\n");
+
+        // 3. 搜索角色分配经验
+        String rolePatternKey = "role_distribution_" + gameType;
+        LearnedPattern rolePattern = learnedPatterns.get(rolePatternKey);
+        if (rolePattern != null && rolePattern.frequency > 0) {
+            experience.append("### 角色分配经验\n\n");
+            for (String example : rolePattern.examples.stream().limit(2).toList()) {
+                experience.append("- ").append(example).append("\n");
+            }
+            experience.append("\n");
+        }
+
+        // 4. 搜索最佳实践
+        List<GameKnowledgeBase.BestPractice> matchedPractices = knowledgeBase.getAllBestPractices().stream()
+            .filter(bp -> {
+                String combined = (bp.getCategory() + " " + bp.getTitle() + " " + bp.getContent()).toLowerCase();
+                return combined.contains(lowerType);
+            })
+            .limit(3)
+            .toList();
+
+        if (!matchedPractices.isEmpty()) {
+            experience.append("### 同类游戏最佳实践\n\n");
+            for (GameKnowledgeBase.BestPractice bp : matchedPractices) {
+                experience.append(String.format("- **%s** (%s): %s\n",
+                    bp.getTitle(), bp.getCategory(),
+                    bp.getContent().length() > 200 ? bp.getContent().substring(0, 200) + "..." : bp.getContent()));
+            }
+            experience.append("\n");
+        }
+
+        // 5. 搜索失败教训
+        Map<String, List<GameKnowledgeBase.Solution>> allSolutions = knowledgeBase.getAllSolutions();
+        for (Map.Entry<String, List<GameKnowledgeBase.Solution>> entry : allSolutions.entrySet()) {
+            if (entry.getKey().toLowerCase().contains(lowerType) || lowerType.contains(entry.getKey().toLowerCase())) {
+                List<GameKnowledgeBase.Solution> solutions = entry.getValue();
+                if (!solutions.isEmpty()) {
+                    experience.append("### 同类项目失败教训\n\n");
+                    for (GameKnowledgeBase.Solution sol : solutions.stream().limit(2).toList()) {
+                        experience.append(String.format("- 问题: %s\n  解决: %s\n",
+                            sol.getProblemDescription().length() > 80 ? sol.getProblemDescription().substring(0, 80) + "..." : sol.getProblemDescription(),
+                            sol.getSolution().length() > 150 ? sol.getSolution().substring(0, 150) + "..." : sol.getSolution()));
+                    }
+                    experience.append("\n");
+                }
+            }
+        }
+
+        return experience.toString();
+    }
+
+    /**
+     * 构建跨项目模式摘要
+     * 用于注入到ProducerAgent的决策上下文中
+     *
+     * @param gameType 游戏类型
+     * @param currentProjectId 当前项目ID
+     * @return 格式化的模式摘要
+     */
+    public String buildCrossProjectPatternSummary(String gameType, String currentProjectId) {
+        StringBuilder summary = new StringBuilder();
+
+        // 获取跨项目知识推荐
+        List<CrossProjectKnowledge> recommendations = getCrossProjectKnowledge(
+            currentProjectId, gameType, gameType);
+
+        if (!recommendations.isEmpty()) {
+            summary.append("### 跨项目成功模式\n\n");
+            summary.append("**以下是其他同类项目的成功经验，请参考：**\n\n");
+            for (CrossProjectKnowledge knowledge : recommendations) {
+                summary.append(String.format("- **%s** (频率: %d): %s\n",
+                    knowledge.patternType, knowledge.frequency,
+                    knowledge.description != null && knowledge.description.length() > 100
+                        ? knowledge.description.substring(0, 100) + "..." : knowledge.description));
+            }
+            summary.append("\n");
+        }
+
+        // 添加相似项目经验
+        String similarExperiences = querySimilarProjectExperiences(gameType, currentProjectId);
+        if (!similarExperiences.isEmpty()) {
+            summary.append(similarExperiences);
+        }
+
+        return summary.toString();
+    }
+
+    /**
+     * 跨项目知识推荐
+     */
+    public static class CrossProjectKnowledge {
+        /** 来源标识 */
+        public String sourceKey;
+        /** 模式类型 */
+        public String patternType;
+        /** 出现频率 */
+        public int frequency;
+        /** 描述 */
+        public String description;
+        /** 相关性分数 */
+        public double relevanceScore;
     }
 
     /**

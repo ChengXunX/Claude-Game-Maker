@@ -221,6 +221,61 @@ public class SettingsService {
                 log.info("Loaded email proxy email from database: {}", proxyEmail);
             }
 
+            // 飞书配置
+            String feishuEnabled = configService.getString("feishu.enabled", null);
+            if (feishuEnabled != null) {
+                appConfig.getFeishu().setEnabled(Boolean.parseBoolean(feishuEnabled));
+                log.info("Loaded feishu enabled from database: {}", feishuEnabled);
+            }
+
+            String feishuAppId = configService.getString("feishu.app.id", null);
+            if (feishuAppId != null && !feishuAppId.isEmpty()) {
+                appConfig.getFeishu().setAppId(feishuAppId);
+                log.info("Loaded feishu app id from database");
+            }
+
+            String feishuAppSecret = configService.getString("feishu.app.secret", null);
+            if (feishuAppSecret != null && !feishuAppSecret.isEmpty()) {
+                appConfig.getFeishu().setAppSecret(feishuAppSecret);
+            }
+
+            String feishuWebhookUrl = configService.getString("feishu.webhook.url", null);
+            if (feishuWebhookUrl != null && !feishuWebhookUrl.isEmpty()) {
+                appConfig.getFeishu().setWebhookUrl(feishuWebhookUrl);
+            }
+
+            String feishuChatId = configService.getString("feishu.chat.id", null);
+            if (feishuChatId != null && !feishuChatId.isEmpty()) {
+                appConfig.getFeishu().setChatId(feishuChatId);
+            }
+
+            String feishuVerifyToken = configService.getString("feishu.verify.token", null);
+            if (feishuVerifyToken != null && !feishuVerifyToken.isEmpty()) {
+                appConfig.getFeishu().setVerifyToken(feishuVerifyToken);
+            }
+
+            String feishuEncryptKey = configService.getString("feishu.encrypt.key", null);
+            if (feishuEncryptKey != null && !feishuEncryptKey.isEmpty()) {
+                appConfig.getFeishu().setEncryptKey(feishuEncryptKey);
+            }
+
+            // 钉钉配置
+            String dingtalkEnabled = configService.getString("dingtalk.enabled", null);
+            if (dingtalkEnabled != null) {
+                appConfig.getDingtalk().setEnabled(Boolean.parseBoolean(dingtalkEnabled));
+                log.info("Loaded dingtalk enabled from database: {}", dingtalkEnabled);
+            }
+
+            String dingtalkWebhookUrl = configService.getString("dingtalk.webhook.url", null);
+            if (dingtalkWebhookUrl != null && !dingtalkWebhookUrl.isEmpty()) {
+                appConfig.getDingtalk().setWebhookUrl(dingtalkWebhookUrl);
+            }
+
+            String dingtalkSecret = configService.getString("dingtalk.secret", null);
+            if (dingtalkSecret != null && !dingtalkSecret.isEmpty()) {
+                appConfig.getDingtalk().setSecret(dingtalkSecret);
+            }
+
             log.info("Settings loaded from database");
         } catch (Exception e) {
             log.warn("Failed to load settings from database, will use defaults: {}", e.getMessage());
@@ -265,38 +320,36 @@ public class SettingsService {
     public void saveFeishuSettings(boolean enabled, String appId, String appSecret,
                                    String webhookUrl, String chatId,
                                    String verifyToken, String encryptKey) {
-        Properties props = loadProperties();
-
-        props.setProperty("feishu.enabled", String.valueOf(enabled));
+        // 保存到数据库
+        configService.setConfig("feishu.enabled", String.valueOf(enabled));
         appConfig.getFeishu().setEnabled(enabled);
 
         if (appId != null) {
-            props.setProperty("feishu.app-id", appId);
+            configService.setConfig("feishu.app.id", appId);
             appConfig.getFeishu().setAppId(appId);
         }
         if (appSecret != null && !appSecret.isBlank()) {
-            props.setProperty("feishu.app-secret", appSecret);
+            configService.setConfig("feishu.app.secret", appSecret);
             appConfig.getFeishu().setAppSecret(appSecret);
         }
         if (webhookUrl != null) {
-            props.setProperty("feishu.webhook-url", webhookUrl);
+            configService.setConfig("feishu.webhook.url", webhookUrl);
             appConfig.getFeishu().setWebhookUrl(webhookUrl);
         }
         if (chatId != null) {
-            props.setProperty("feishu.chat-id", chatId);
+            configService.setConfig("feishu.chat.id", chatId);
             appConfig.getFeishu().setChatId(chatId);
         }
         if (verifyToken != null) {
-            props.setProperty("feishu.verify-token", verifyToken);
+            configService.setConfig("feishu.verify.token", verifyToken);
             appConfig.getFeishu().setVerifyToken(verifyToken);
         }
         if (encryptKey != null) {
-            props.setProperty("feishu.encrypt-key", encryptKey);
+            configService.setConfig("feishu.encrypt.key", encryptKey);
             appConfig.getFeishu().setEncryptKey(encryptKey);
         }
 
-        saveProperties(props);
-        log.info("Feishu settings saved");
+        log.info("Feishu settings saved to database: enabled={}", enabled);
     }
 
     /**
@@ -349,22 +402,20 @@ public class SettingsService {
     }
 
     public void saveDingTalkSettings(String webhookUrl, String secret, boolean enabled) {
-        Properties props = loadProperties();
-
-        props.setProperty("dingtalk.enabled", String.valueOf(enabled));
+        // 保存到数据库
+        configService.setConfig("dingtalk.enabled", String.valueOf(enabled));
         appConfig.getDingtalk().setEnabled(enabled);
 
         if (webhookUrl != null) {
-            props.setProperty("dingtalk.webhook-url", webhookUrl);
+            configService.setConfig("dingtalk.webhook.url", webhookUrl);
             appConfig.getDingtalk().setWebhookUrl(webhookUrl);
         }
         if (secret != null) {
-            props.setProperty("dingtalk.secret", secret);
+            configService.setConfig("dingtalk.secret", secret);
             appConfig.getDingtalk().setSecret(secret);
         }
 
-        saveProperties(props);
-        log.info("DingTalk settings saved");
+        log.info("DingTalk settings saved to database: enabled={}", enabled);
     }
 
     private Properties loadProperties() {

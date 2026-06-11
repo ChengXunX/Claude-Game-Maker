@@ -26,12 +26,14 @@ public class ApiTokenService {
     private final ApiTokenRepository tokenRepository;
     private final AgentManager agentManager;
     private final ClaudeCliEngine cliEngine;
+    private final SystemConfigService configService;
 
     public ApiTokenService(ApiTokenRepository tokenRepository, AgentManager agentManager,
-                           ClaudeCliEngine cliEngine) {
+                           ClaudeCliEngine cliEngine, SystemConfigService configService) {
         this.tokenRepository = tokenRepository;
         this.agentManager = agentManager;
         this.cliEngine = cliEngine;
+        this.configService = configService;
     }
 
     public List<ApiToken> getAllTokens() {
@@ -59,6 +61,15 @@ public class ApiTokenService {
 
     public ApiToken createToken(String name, String apiKey, String apiUrl, String model,
                                 Integer maxTokens, Integer contextWindow, String description, String createdBy) {
+        return createToken(name, apiKey, apiUrl, model, maxTokens, contextWindow, description, createdBy, null);
+    }
+
+    /**
+     * 创建 Token（支持指定用途）
+     */
+    public ApiToken createToken(String name, String apiKey, String apiUrl, String model,
+                                Integer maxTokens, Integer contextWindow, String description,
+                                String createdBy, ApiToken.TokenPurpose purpose) {
         ApiToken token = new ApiToken();
         token.setToken("token-" + java.util.UUID.randomUUID().toString().replace("-", ""));
         token.setName(name);
@@ -70,9 +81,10 @@ public class ApiTokenService {
         token.setDescription(description);
         token.setCreatedBy(createdBy);
         token.setStatus(ApiToken.TokenStatus.ACTIVE);
+        token.setPurpose(purpose != null ? purpose : ApiToken.TokenPurpose.AGENT);
 
         ApiToken saved = tokenRepository.save(token);
-        log.info("API token created: {} by {} (contextWindow={})", name, createdBy, token.getContextWindow());
+        log.info("API token created: {} by {} (contextWindow={}, purpose={})", name, createdBy, token.getContextWindow(), token.getPurpose());
         return saved;
     }
 
@@ -259,21 +271,59 @@ public class ApiTokenService {
      * 选择规则：
      * 1. 必须是 ACTIVE 状态
      * 2. 未分配给其他 Agent
-     * 3. agentTags 包含该角色（或为空表示通用）
-     * 4. 按 priority 升序排序（数值越小优先级越高）
+     * 3. 排除 AI_ASSISTANT 专用 Token（隔离）
+     * 4. agentTags 包含该角色（或为空表示通用）
+     * 5. 按分配策略排序：system 模式按优先级+使用量，producer 模式仅按优先级
      *
      * @param agentRole Agent 角色
      * @return 最佳 Token，如果没有合适的则返回 null
      */
     public ApiToken findBestTokenForRole(String agentRole) {
+        String strategy = getAllocationStrategy();
+
         return tokenRepository.findAll().stream()
             .filter(ApiToken::isActive)
             .filter(t -> !t.isAssigned())
+            // 排除 AI 助手专用 Token，Agent 不可使用
+            .filter(t -> t.getPurpose() != ApiToken.TokenPurpose.AI_ASSISTANT)
             .filter(t -> t.isSuitableForRole(agentRole))
-            .min((a, b) -> Integer.compare(
-                a.getPriority() != null ? a.getPriority() : 10,
-                b.getPriority() != null ? b.getPriority() : 10
-            ))
+            .min((a, b) -> {
+                // 先按 priority 排序（数值越小优先级越高）
+                int pa = a.getPriority() != null ? a.getPriority() : 10;
+                int pb = b.getPriority() != null ? b.getPriority() : 10;
+                if (pa != pb) return Integer.compare(pa, pb);
+
+                // system 策略下，同优先级时优先选使用量少的
+                if ("system".equals(strategy)) {
+                    long ua = a.getTotalTokensUsed() != null ? a.getTotalTokensUsed() : 0;
+                    long ub = b.getTotalTokensUsed() != null ? b.getTotalTokensUsed() : 0;
+                    return Long.compare(ua, ub);
+                }
+                return 0;
+            })
+            .orElse(null);
+    }
+
+    /**
+     * 获取当前 Token 分配策略
+     *
+     * @return "system" 或 "producer"，默认 "system"
+     */
+    public String getAllocationStrategy() {
+        return configService.getString("token.allocation.strategy", "system");
+    }
+
+    /**
+     * 查找 AI 助手专用 Token
+     * 优先返回 purpose=AI_ASSISTANT 的活跃 Token
+     *
+     * @return AI 助手专用 Token，没有则返回 null
+     */
+    public ApiToken findAiAssistantToken() {
+        return tokenRepository.findAll().stream()
+            .filter(ApiToken::isActive)
+            .filter(t -> t.getPurpose() == ApiToken.TokenPurpose.AI_ASSISTANT)
+            .findFirst()
             .orElse(null);
     }
 
@@ -288,6 +338,10 @@ public class ApiTokenService {
 
         for (ApiToken token : allTokens) {
             if (!token.isActive() || token.isAssigned()) {
+                continue;
+            }
+            // 排除 AI 助手专用 Token
+            if (token.getPurpose() == ApiToken.TokenPurpose.AI_ASSISTANT) {
                 continue;
             }
 

@@ -217,6 +217,10 @@ INSERT INTO system_configs (config_key, config_value, config_group, value_type, 
 INSERT INTO system_configs (config_key, config_value, config_group, value_type, description, is_system_builtin) VALUES
 ('system.description', 'AI 驱动的游戏开发自动化管理系统', 'system', 'string', '系统描述', TRUE);
 
+-- 用户配置
+INSERT INTO system_configs (config_key, config_value, config_group, value_type, description, is_system_builtin) VALUES
+('user.default.role', 'USER', 'system', 'string', '新注册用户默认角色（USER/READONLY/ADMIN等）', TRUE);
+
 -- 安全配置
 INSERT INTO system_configs (config_key, config_value, config_group, value_type, description, is_system_builtin) VALUES
 ('security.password.min-length', '8', 'security', 'number', '密码最小长度', TRUE);
@@ -495,8 +499,648 @@ INSERT INTO notification_templates (template_code, template_name, channel, categ
 **通知时间**：${time}',
  '用于发送Agent钉钉通知', TRUE, TRUE);
 
+-- 审批结果钉钉模板
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('APPROVAL_APPROVED_DINGTALK', '钉钉审批通过', 'DINGTALK', 'SYSTEM',
+ '[审批通过] ${requestTypeDesc}',
+ '### ✅ 审批通过通知
+
+- **类型**：${requestTypeDesc}
+- **描述**：${description}
+- **审批人**：${approverName}
+- **审批意见**：${approvalComment}
+- **时间**：${time}',
+ '用于发送审批通过钉钉通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('APPROVAL_REJECTED_DINGTALK', '钉钉审批拒绝', 'DINGTALK', 'SYSTEM',
+ '[审批拒绝] ${requestTypeDesc}',
+ '### ❌ 审批拒绝通知
+
+- **类型**：${requestTypeDesc}
+- **描述**：${description}
+- **审批人**：${approverName}
+- **拒绝原因**：${approvalComment}
+- **时间**：${time}',
+ '用于发送审批拒绝钉钉通知', TRUE, TRUE);
+
 -- ============================================
--- 10. Agent 预设数据（含角色提示词）
+-- 9.1 制作人工作流通知模板
+-- ============================================
+
+-- 工作流审批类 - 需要人工审批
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_WORKFLOW_HUMAN_APPROVAL_NEEDED_SYSTEM', '站内-需要人工审批', 'SYSTEM', 'SYSTEM',
+ '🔔 需要人工审批: ${title}',
+ '🔔 需要人工审批
+
+━━━━━━━━━━━━━━━━━━
+${content}
+━━━━━━━━━━━━━━━━━━
+
+请及时处理！',
+ '制作人工作流-需要人工审批站内通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_WORKFLOW_HUMAN_APPROVAL_NEEDED_EMAIL', '邮件-需要人工审批', 'EMAIL', 'SYSTEM',
+ '🔔 需要人工审批: ${title}',
+ '<div style="font-family:''Microsoft YaHei'',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;"><div style="background:linear-gradient(135deg,#ff922b 0%,#fd7e14 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;"><h1 style="margin:0;font-size:24px;">🔔 需要人工审批</h1></div><div style="background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;"><p>${content}</p><p style="color:#666;margin-top:20px;">时间：${time}</p></div></div>',
+ '制作人工作流-需要人工审批邮件通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_WORKFLOW_HUMAN_APPROVAL_NEEDED_FEISHU', '飞书-需要人工审批', 'FEISHU', 'SYSTEM',
+ '🔔 需要人工审批: ${title}',
+ '**🔔 需要人工审批**
+
+---
+
+${content}
+
+---
+
+请及时处理！',
+ '制作人工作流-需要人工审批飞书通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_WORKFLOW_HUMAN_APPROVAL_NEEDED_DINGTALK', '钉钉-需要人工审批', 'DINGTALK', 'SYSTEM',
+ '🔔 需要人工审批: ${title}',
+ '### 🔔 需要人工审批
+
+---
+
+${content}
+
+---
+
+请及时处理！',
+ '制作人工作流-需要人工审批钉钉通知', TRUE, TRUE);
+
+-- 招聘审批请求
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_RECRUIT_APPROVAL_REQUIRED_SYSTEM', '站内-招聘审批请求', 'SYSTEM', 'SYSTEM',
+ '👥 招聘审批: ${title}',
+ '👥 招聘审批请求
+
+━━━━━━━━━━━━━━━━━━
+${content}
+━━━━━━━━━━━━━━━━━━
+
+请审批是否允许招聘该 Agent。',
+ '制作人工作流-招聘审批请求站内通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_RECRUIT_APPROVAL_REQUIRED_EMAIL', '邮件-招聘审批请求', 'EMAIL', 'SYSTEM',
+ '👥 招聘审批: ${title}',
+ '<div style="font-family:''Microsoft YaHei'',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;"><div style="background:linear-gradient(135deg,#f06595 0%,#e64980 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;"><h1 style="margin:0;font-size:24px;">👥 招聘审批请求</h1></div><div style="background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;"><p>${content}</p><p style="color:#666;margin-top:20px;">时间：${time}</p></div></div>',
+ '制作人工作流-招聘审批请求邮件通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_RECRUIT_APPROVAL_REQUIRED_FEISHU', '飞书-招聘审批请求', 'FEISHU', 'SYSTEM',
+ '👥 招聘审批: ${title}',
+ '**👥 招聘审批请求**
+
+---
+
+${content}
+
+---
+
+请审批是否允许招聘该 Agent。',
+ '制作人工作流-招聘审批请求飞书通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_RECRUIT_APPROVAL_REQUIRED_DINGTALK', '钉钉-招聘审批请求', 'DINGTALK', 'SYSTEM',
+ '👥 招聘审批: ${title}',
+ '### 👥 招聘审批请求
+
+---
+
+${content}
+
+---
+
+请审批是否允许招聘该 Agent。',
+ '制作人工作流-招聘审批请求钉钉通知', TRUE, TRUE);
+
+-- 创建Agent审批
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_CREATE_AGENT_APPROVAL_REQUIRED_SYSTEM', '站内-创建Agent审批', 'SYSTEM', 'SYSTEM',
+ '🤖 创建Agent审批: ${title}',
+ '🤖 创建Agent审批请求
+
+━━━━━━━━━━━━━━━━━━
+${content}
+━━━━━━━━━━━━━━━━━━
+
+请审批。',
+ '制作人工作流-创建Agent审批站内通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_CREATE_AGENT_APPROVAL_REQUIRED_EMAIL', '邮件-创建Agent审批', 'EMAIL', 'SYSTEM',
+ '🤖 创建Agent审批: ${title}',
+ '<div style="font-family:''Microsoft YaHei'',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;"><div style="background:linear-gradient(135deg,#845ef7 0%,#7048e8 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;"><h1 style="margin:0;font-size:24px;">🤖 创建Agent审批</h1></div><div style="background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;"><p>${content}</p><p style="color:#666;margin-top:20px;">时间：${time}</p></div></div>',
+ '制作人工作流-创建Agent审批邮件通知', TRUE, TRUE);
+
+-- 交付审批
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_DELIVERY_APPROVAL_SYSTEM', '站内-交付审批', 'SYSTEM', 'SYSTEM',
+ '📦 交付审批: ${title}',
+ '📦 交付审批请求
+
+━━━━━━━━━━━━━━━━━━
+${content}
+━━━━━━━━━━━━━━━━━━
+
+请审批是否可以交付。',
+ '制作人工作流-交付审批站内通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_DELIVERY_APPROVAL_EMAIL', '邮件-交付审批', 'EMAIL', 'SYSTEM',
+ '📦 交付审批: ${title}',
+ '<div style="font-family:''Microsoft YaHei'',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;"><div style="background:linear-gradient(135deg,#20c997 0%,#12b886 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;"><h1 style="margin:0;font-size:24px;">📦 交付审批</h1></div><div style="background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;"><p>${content}</p><p style="color:#666;margin-top:20px;">时间：${time}</p></div></div>',
+ '制作人工作流-交付审批邮件通知', TRUE, TRUE);
+
+-- 通用需要审批
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_APPROVAL_REQUIRED_SYSTEM', '站内-需要审批', 'SYSTEM', 'SYSTEM',
+ '📋 需要审批: ${title}',
+ '📋 需要审批
+
+━━━━━━━━━━━━━━━━━━
+${content}
+━━━━━━━━━━━━━━━━━━
+
+请及时处理！',
+ '制作人工作流-需要审批站内通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_APPROVAL_REQUIRED_EMAIL', '邮件-需要审批', 'EMAIL', 'SYSTEM',
+ '📋 需要审批: ${title}',
+ '<div style="font-family:''Microsoft YaHei'',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;"><div style="background:linear-gradient(135deg,#ff922b 0%,#fd7e14 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;"><h1 style="margin:0;font-size:24px;">📋 需要审批</h1></div><div style="background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;"><p>${content}</p><p style="color:#666;margin-top:20px;">时间：${time}</p></div></div>',
+ '制作人工作流-需要审批邮件通知', TRUE, TRUE);
+
+-- 审批拒绝类
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_APPROVAL_REJECTED_SYSTEM', '站内-审批被拒绝', 'SYSTEM', 'SYSTEM',
+ '❌ 审批被拒绝: ${title}',
+ '❌ 审批被拒绝
+
+━━━━━━━━━━━━━━━━━━
+${content}
+━━━━━━━━━━━━━━━━━━',
+ '制作人工作流-审批被拒绝站内通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_APPROVAL_REJECTED_EMAIL', '邮件-审批被拒绝', 'EMAIL', 'SYSTEM',
+ '❌ 审批被拒绝: ${title}',
+ '<h2>❌ 审批被拒绝</h2><p>${content}</p><p><b>时间：</b>${time}</p>',
+ '制作人工作流-审批被拒绝邮件通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_RECRUIT_REJECTED_SYSTEM', '站内-招聘被拒绝', 'SYSTEM', 'SYSTEM',
+ '❌ 招聘被拒绝: ${title}',
+ '❌ 招聘被拒绝
+
+━━━━━━━━━━━━━━━━━━
+${content}
+━━━━━━━━━━━━━━━━━━',
+ '制作人工作流-招聘被拒绝站内通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_RECRUIT_REJECTED_EMAIL', '邮件-招聘被拒绝', 'EMAIL', 'SYSTEM',
+ '❌ 招聘被拒绝: ${title}',
+ '<h2>❌ 招聘被拒绝</h2><p>${content}</p><p><b>时间：</b>${time}</p>',
+ '制作人工作流-招聘被拒绝邮件通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_CREATE_AGENT_REJECTED_SYSTEM', '站内-创建Agent被拒绝', 'SYSTEM', 'SYSTEM',
+ '❌ 创建Agent被拒绝: ${title}',
+ '❌ 创建Agent被拒绝
+
+━━━━━━━━━━━━━━━━━━
+${content}
+━━━━━━━━━━━━━━━━━━',
+ '制作人工作流-创建Agent被拒绝站内通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_CREATE_AGENT_REJECTED_EMAIL', '邮件-创建Agent被拒绝', 'EMAIL', 'SYSTEM',
+ '❌ 创建Agent被拒绝: ${title}',
+ '<h2>❌ 创建Agent被拒绝</h2><p>${content}</p><p><b>时间：</b>${time}</p>',
+ '制作人工作流-创建Agent被拒绝邮件通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_DISMISS_REJECTED_SYSTEM', '站内-解雇被拒绝', 'SYSTEM', 'SYSTEM',
+ '❌ 解雇被拒绝: ${title}',
+ '❌ 解雇被拒绝
+
+━━━━━━━━━━━━━━━━━━
+${content}
+━━━━━━━━━━━━━━━━━━',
+ '制作人工作流-解雇被拒绝站内通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_DISMISS_REJECTED_EMAIL', '邮件-解雇被拒绝', 'EMAIL', 'SYSTEM',
+ '❌ 解雇被拒绝: ${title}',
+ '<h2>❌ 解雇被拒绝</h2><p>${content}</p><p><b>时间：</b>${time}</p>',
+ '制作人工作流-解雇被拒绝邮件通知', TRUE, TRUE);
+
+-- 审批通过/完成类
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_RECRUIT_COMPLETED_SYSTEM', '站内-招聘完成', 'SYSTEM', 'SYSTEM',
+ '✅ 招聘完成: ${title}',
+ '✅ 招聘完成
+
+━━━━━━━━━━━━━━━━━━
+${content}
+━━━━━━━━━━━━━━━━━━',
+ '制作人工作流-招聘完成站内通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_RECRUIT_COMPLETED_EMAIL', '邮件-招聘完成', 'EMAIL', 'SYSTEM',
+ '✅ 招聘完成: ${title}',
+ '<h2>✅ 招聘完成</h2><p>${content}</p><p><b>时间：</b>${time}</p>',
+ '制作人工作流-招聘完成邮件通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_DISMISS_REQUEST_SENT_SYSTEM', '站内-解雇请求已发送', 'SYSTEM', 'SYSTEM',
+ '📤 解雇请求已发送: ${title}',
+ '📤 解雇请求已发送
+
+━━━━━━━━━━━━━━━━━━
+${content}
+━━━━━━━━━━━━━━━━━━
+
+等待管理员审批。',
+ '制作人工作流-解雇请求已发送站内通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_DISMISS_REQUEST_SENT_EMAIL', '邮件-解雇请求已发送', 'EMAIL', 'SYSTEM',
+ '📤 解雇请求已发送: ${title}',
+ '<h2>📤 解雇请求已发送</h2><p>${content}</p><p>等待管理员审批。</p><p><b>时间：</b>${time}</p>',
+ '制作人工作流-解雇请求已发送邮件通知', TRUE, TRUE);
+
+-- Agent 生命周期类
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_AGENT_CREATED_SYSTEM', '站内-Agent已创建', 'SYSTEM', 'AGENT',
+ '🤖 Agent已创建: ${title}',
+ '🤖 Agent已创建
+
+━━━━━━━━━━━━━━━━━━
+${content}
+━━━━━━━━━━━━━━━━━━',
+ '制作人工作流-Agent已创建站内通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_AGENT_CREATED_EMAIL', '邮件-Agent已创建', 'EMAIL', 'AGENT',
+ '🤖 Agent已创建: ${title}',
+ '<div style="font-family:''Microsoft YaHei'',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;"><div style="background:linear-gradient(135deg,#51cf66 0%,#40c057 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;"><h1 style="margin:0;font-size:24px;">🤖 Agent已创建</h1></div><div style="background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;"><p>${content}</p><p style="color:#666;margin-top:20px;">时间：${time}</p></div></div>',
+ '制作人工作流-Agent已创建邮件通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_AGENT_CREATED_FEISHU', '飞书-Agent已创建', 'FEISHU', 'AGENT',
+ '🤖 Agent已创建: ${title}',
+ '**🤖 Agent已创建**
+
+---
+
+${content}
+
+---
+
+时间：${time}',
+ '制作人工作流-Agent已创建飞书通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_AGENT_CREATED_DINGTALK', '钉钉-Agent已创建', 'DINGTALK', 'AGENT',
+ '🤖 Agent已创建: ${title}',
+ '### 🤖 Agent已创建
+
+---
+
+${content}
+
+---
+
+时间：${time}',
+ '制作人工作流-Agent已创建钉钉通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_AGENT_EVALUATED_SYSTEM', '站内-Agent已评估', 'SYSTEM', 'AGENT',
+ '📊 Agent评估完成: ${title}',
+ '📊 Agent评估完成
+
+━━━━━━━━━━━━━━━━━━
+${content}
+━━━━━━━━━━━━━━━━━━',
+ '制作人工作流-Agent已评估站内通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_AGENT_EVALUATED_EMAIL', '邮件-Agent已评估', 'EMAIL', 'AGENT',
+ '📊 Agent评估完成: ${title}',
+ '<div style="font-family:''Microsoft YaHei'',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;"><div style="background:linear-gradient(135deg,#748ffc 0%,#5c7cfa 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;"><h1 style="margin:0;font-size:24px;">📊 Agent评估完成</h1></div><div style="background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;"><p>${content}</p><p style="color:#666;margin-top:20px;">时间：${time}</p></div></div>',
+ '制作人工作流-Agent已评估邮件通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_TEAM_OPTIMIZATION_SYSTEM', '站内-团队优化', 'SYSTEM', 'AGENT',
+ '🔧 团队优化: ${title}',
+ '🔧 团队优化建议
+
+━━━━━━━━━━━━━━━━━━
+${content}
+━━━━━━━━━━━━━━━━━━',
+ '制作人工作流-团队优化站内通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_TEAM_OPTIMIZATION_EMAIL', '邮件-团队优化', 'EMAIL', 'AGENT',
+ '🔧 团队优化: ${title}',
+ '<div style="font-family:''Microsoft YaHei'',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;"><div style="background:linear-gradient(135deg,#845ef7 0%,#7048e8 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;"><h1 style="margin:0;font-size:24px;">🔧 团队优化建议</h1></div><div style="background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;"><p>${content}</p><p style="color:#666;margin-top:20px;">时间：${time}</p></div></div>',
+ '制作人工作流-团队优化邮件通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_AUTO_RECRUIT_REQUEST_SYSTEM', '站内-自动招聘请求', 'SYSTEM', 'AGENT',
+ '🔄 自动招聘请求: ${title}',
+ '🔄 自动招聘请求
+
+━━━━━━━━━━━━━━━━━━
+${content}
+━━━━━━━━━━━━━━━━━━',
+ '制作人工作流-自动招聘请求站内通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_AUTO_RECRUIT_REQUEST_EMAIL', '邮件-自动招聘请求', 'EMAIL', 'AGENT',
+ '🔄 自动招聘请求: ${title}',
+ '<div style="font-family:''Microsoft YaHei'',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;"><div style="background:linear-gradient(135deg,#f06595 0%,#e64980 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;"><h1 style="margin:0;font-size:24px;">🔄 自动招聘请求</h1></div><div style="background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;"><p>${content}</p><p style="color:#666;margin-top:20px;">时间：${time}</p></div></div>',
+ '制作人工作流-自动招聘请求邮件通知', TRUE, TRUE);
+
+-- 工作流/项目类
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_WORKFLOW_STARTED_SYSTEM', '站内-工作流已启动', 'SYSTEM', 'SYSTEM',
+ '🚀 工作流已启动: ${title}',
+ '🚀 工作流已启动
+
+━━━━━━━━━━━━━━━━━━
+${content}
+━━━━━━━━━━━━━━━━━━',
+ '制作人工作流-工作流已启动站内通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_WORKFLOW_STARTED_EMAIL', '邮件-工作流已启动', 'EMAIL', 'SYSTEM',
+ '🚀 工作流已启动: ${title}',
+ '<h2>🚀 工作流已启动</h2><p>${content}</p><p><b>时间：</b>${time}</p>',
+ '制作人工作流-工作流已启动邮件通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_WORKFLOW_CREATED_SYSTEM', '站内-新工作流已创建', 'SYSTEM', 'SYSTEM',
+ '📋 新工作流已创建: ${title}',
+ '📋 新工作流已创建
+
+━━━━━━━━━━━━━━━━━━
+${content}
+━━━━━━━━━━━━━━━━━━',
+ '制作人工作流-新工作流已创建站内通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_WORKFLOW_CREATED_EMAIL', '邮件-新工作流已创建', 'EMAIL', 'SYSTEM',
+ '📋 新工作流已创建: ${title}',
+ '<h2>📋 新工作流已创建</h2><p>${content}</p><p><b>时间：</b>${time}</p>',
+ '制作人工作流-新工作流已创建邮件通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_WORKFLOW_PRODUCER_APPROVED_SYSTEM', '站内-工作流已自动审批', 'SYSTEM', 'SYSTEM',
+ '✅ 工作流已自动审批: ${title}',
+ '✅ 工作流已自动审批
+
+━━━━━━━━━━━━━━━━━━
+${content}
+━━━━━━━━━━━━━━━━━━',
+ '制作人工作流-工作流已自动审批站内通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_WORKFLOW_PRODUCER_APPROVED_EMAIL', '邮件-工作流已自动审批', 'EMAIL', 'SYSTEM',
+ '✅ 工作流已自动审批: ${title}',
+ '<h2>✅ 工作流已自动审批</h2><p>${content}</p><p><b>时间：</b>${time}</p>',
+ '制作人工作流-工作流已自动审批邮件通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_VERSION_ITERATION_STARTED_SYSTEM', '站内-版本迭代已启动', 'SYSTEM', 'SYSTEM',
+ '🔄 版本迭代已启动: ${title}',
+ '🔄 版本迭代已启动
+
+━━━━━━━━━━━━━━━━━━
+${content}
+━━━━━━━━━━━━━━━━━━',
+ '制作人工作流-版本迭代已启动站内通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_VERSION_ITERATION_STARTED_EMAIL', '邮件-版本迭代已启动', 'EMAIL', 'SYSTEM',
+ '🔄 版本迭代已启动: ${title}',
+ '<h2>🔄 版本迭代已启动</h2><p>${content}</p><p><b>时间：</b>${time}</p>',
+ '制作人工作流-版本迭代已启动邮件通知', TRUE, TRUE);
+
+-- 项目卡点/告警类
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_MILESTONE_STUCK_SYSTEM', '站内-里程碑卡住', 'SYSTEM', 'SYSTEM',
+ '⚠️ 里程碑卡住: ${title}',
+ '⚠️ 里程碑卡住
+
+━━━━━━━━━━━━━━━━━━
+${content}
+━━━━━━━━━━━━━━━━━━
+
+请关注项目进展。',
+ '制作人工作流-里程碑卡住站内通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_MILESTONE_STUCK_EMAIL', '邮件-里程碑卡住', 'EMAIL', 'SYSTEM',
+ '⚠️ 里程碑卡住: ${title}',
+ '<div style="font-family:''Microsoft YaHei'',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;"><div style="background:linear-gradient(135deg,#ff6b6b 0%,#ee5a24 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;"><h1 style="margin:0;font-size:24px;">⚠️ 里程碑卡住</h1></div><div style="background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;"><p>${content}</p><p style="color:#666;margin-top:20px;">请关注项目进展。时间：${time}</p></div></div>',
+ '制作人工作流-里程碑卡住邮件通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_MILESTONE_STUCK_FEISHU', '飞书-里程碑卡住', 'FEISHU', 'SYSTEM',
+ '⚠️ 里程碑卡住: ${title}',
+ '**⚠️ 里程碑卡住**
+
+---
+
+${content}
+
+---
+
+请关注项目进展。',
+ '制作人工作流-里程碑卡住飞书通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_MILESTONE_STUCK_DINGTALK', '钉钉-里程碑卡住', 'DINGTALK', 'SYSTEM',
+ '⚠️ 里程碑卡住: ${title}',
+ '### ⚠️ 里程碑卡住
+
+---
+
+${content}
+
+---
+
+请关注项目进展。',
+ '制作人工作流-里程碑卡住钉钉通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_PROJECT_STUCK_SYSTEM', '站内-项目卡住', 'SYSTEM', 'SYSTEM',
+ '🚨 项目卡住: ${title}',
+ '🚨 项目卡住
+
+━━━━━━━━━━━━━━━━━━
+${content}
+━━━━━━━━━━━━━━━━━━
+
+项目进展受阻，请及时干预。',
+ '制作人工作流-项目卡住站内通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_PROJECT_STUCK_EMAIL', '邮件-项目卡住', 'EMAIL', 'SYSTEM',
+ '🚨 项目卡住: ${title}',
+ '<div style="font-family:''Microsoft YaHei'',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;"><div style="background:linear-gradient(135deg,#ff6b6b 0%,#ee5a24 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;"><h1 style="margin:0;font-size:24px;">🚨 项目卡住</h1></div><div style="background:#fff3cd;padding:20px;border:1px solid #ffc107;border-top:none;border-radius:0 0 10px 10px;"><p>${content}</p><p style="color:#856404;margin-top:20px;">项目进展受阻，请及时干预。时间：${time}</p></div></div>',
+ '制作人工作流-项目卡住邮件通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_PROJECT_STUCK_FEISHU', '飞书-项目卡住', 'FEISHU', 'SYSTEM',
+ '🚨 项目卡住: ${title}',
+ '**🚨 项目卡住**
+
+---
+
+${content}
+
+---
+
+项目进展受阻，请及时干预。',
+ '制作人工作流-项目卡住飞书通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_PROJECT_STUCK_DINGTALK', '钉钉-项目卡住', 'DINGTALK', 'SYSTEM',
+ '🚨 项目卡住: ${title}',
+ '### 🚨 项目卡住
+
+---
+
+${content}
+
+---
+
+项目进展受阻，请及时干预。',
+ '制作人工作流-项目卡住钉钉通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_PERIODIC_VERIFY_FAILED_SYSTEM', '站内-定期验证失败', 'SYSTEM', 'SYSTEM',
+ '❌ 定期验证失败: ${title}',
+ '❌ 定期验证失败
+
+━━━━━━━━━━━━━━━━━━
+${content}
+━━━━━━━━━━━━━━━━━━',
+ '制作人工作流-定期验证失败站内通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_PERIODIC_VERIFY_FAILED_EMAIL', '邮件-定期验证失败', 'EMAIL', 'SYSTEM',
+ '❌ 定期验证失败: ${title}',
+ '<h2>❌ 定期验证失败</h2><p>${content}</p><p><b>时间：</b>${time}</p>',
+ '制作人工作流-定期验证失败邮件通知', TRUE, TRUE);
+
+-- 版本/绩效类
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_VERSION_STAFFING_ISSUE_SYSTEM', '站内-版本人员配置问题', 'SYSTEM', 'SYSTEM',
+ '👥 人员配置问题: ${title}',
+ '👥 版本人员配置问题
+
+━━━━━━━━━━━━━━━━━━
+${content}
+━━━━━━━━━━━━━━━━━━',
+ '制作人工作流-版本人员配置问题站内通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_VERSION_STAFFING_ISSUE_EMAIL', '邮件-版本人员配置问题', 'EMAIL', 'SYSTEM',
+ '👥 人员配置问题: ${title}',
+ '<h2>👥 版本人员配置问题</h2><p>${content}</p><p><b>时间：</b>${time}</p>',
+ '制作人工作流-版本人员配置问题邮件通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_VERSION_LOW_PERFORMANCE_SYSTEM', '站内-版本低绩效', 'SYSTEM', 'SYSTEM',
+ '📉 版本低绩效: ${title}',
+ '📉 版本低绩效预警
+
+━━━━━━━━━━━━━━━━━━
+${content}
+━━━━━━━━━━━━━━━━━━',
+ '制作人工作流-版本低绩效站内通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_VERSION_LOW_PERFORMANCE_EMAIL', '邮件-版本低绩效', 'EMAIL', 'SYSTEM',
+ '📉 版本低绩效: ${title}',
+ '<h2>📉 版本低绩效预警</h2><p>${content}</p><p><b>时间：</b>${time}</p>',
+ '制作人工作流-版本低绩效邮件通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_PROJECT_RULES_GENERATED_SYSTEM', '站内-项目规则已生成', 'SYSTEM', 'SYSTEM',
+ '📜 项目规则已生成: ${title}',
+ '📜 项目规则已生成
+
+━━━━━━━━━━━━━━━━━━
+${content}
+━━━━━━━━━━━━━━━━━━',
+ '制作人工作流-项目规则已生成站内通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_PROJECT_RULES_GENERATED_EMAIL', '邮件-项目规则已生成', 'EMAIL', 'SYSTEM',
+ '📜 项目规则已生成: ${title}',
+ '<h2>📜 项目规则已生成</h2><p>${content}</p><p><b>时间：</b>${time}</p>',
+ '制作人工作流-项目规则已生成邮件通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_TEAM_WARNING_SYSTEM', '站内-团队警告', 'SYSTEM', 'SYSTEM',
+ '⚠️ 团队警告: ${title}',
+ '⚠️ 团队警告
+
+━━━━━━━━━━━━━━━━━━
+${content}
+━━━━━━━━━━━━━━━━━━',
+ '制作人工作流-团队警告站内通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_TEAM_WARNING_EMAIL', '邮件-团队警告', 'EMAIL', 'SYSTEM',
+ '⚠️ 团队警告: ${title}',
+ '<h2>⚠️ 团队警告</h2><p>${content}</p><p><b>时间：</b>${time}</p>',
+ '制作人工作流-团队警告邮件通知', TRUE, TRUE);
+
+-- ============================================
+-- 10. Agent 能力初始化数据
+-- ============================================
+
+-- 制作人能力（producer）
+INSERT INTO agent_capabilities (agent_role, capability_name, display_name, description, category, requires_approval, approval_type, priority, param_schema, execution_type, enabled) VALUES
+('producer', 'createAgent', '招聘团队成员', '根据项目需求招聘新的 Agent 团队成员', 'team_management', TRUE, 'CREATE_AGENT', 1, '{"name":"string|required","role":"string|required","workDir":"string","description":"string"}', 'java', TRUE);
+INSERT INTO agent_capabilities (agent_role, capability_name, display_name, description, category, requires_approval, approval_type, priority, param_schema, execution_type, enabled) VALUES
+('producer', 'deleteAgent', '解雇团队成员', '解雇不适合的 Agent 团队成员', 'team_management', TRUE, 'DELETE_AGENT', 2, '{"agentId":"string|required","reason":"string|required"}', 'java', TRUE);
+INSERT INTO agent_capabilities (agent_role, capability_name, display_name, description, category, requires_approval, approval_type, priority, param_schema, execution_type, enabled) VALUES
+('producer', 'addAgentCapability', '追加Agent能力', '为项目下的 Agent 追加已有的系统能力，扩展其工作范围', 'team_management', FALSE, NULL, 7, '{"agentId":"string|required","capabilityName":"string|required","reason":"string"}', 'java', TRUE);
+INSERT INTO agent_capabilities (agent_role, capability_name, display_name, description, category, requires_approval, approval_type, priority, param_schema, execution_type, enabled) VALUES
+('producer', 'createAgentCapability', '新建Agent能力', '为项目下的 Agent 创建全新的自定义能力（Prompt类型）', 'team_management', FALSE, NULL, 8, '{"agentId":"string|required","capabilityName":"string|required","displayName":"string|required","description":"string|required","promptTemplate":"string|required","paramSchema":"string"}', 'java', TRUE);
+INSERT INTO agent_capabilities (agent_role, capability_name, display_name, description, category, requires_approval, approval_type, priority, param_schema, execution_type, enabled) VALUES
+('producer', 'sendTaskToAgent', '分配任务', '向指定 Agent 分配具体的工作任务', 'task_management', FALSE, NULL, 12, '{"targetAgent":"string|required","taskContent":"string|required","priority":"enum:low,medium,high,urgent","deadline":"string"}', 'java', TRUE);
+INSERT INTO agent_capabilities (agent_role, capability_name, display_name, description, category, requires_approval, approval_type, priority, param_schema, execution_type, enabled) VALUES
+('producer', 'verifyGameProject', '验证游戏项目', '验证游戏项目的结构完整性和代码质量', 'verification', FALSE, NULL, 30, '{"projectDir":"string","includeQualityAnalysis":"boolean|default=true"}', 'java', TRUE);
+INSERT INTO agent_capabilities (agent_role, capability_name, display_name, description, category, requires_approval, approval_type, priority, param_schema, execution_type, enabled) VALUES
+('producer', 'evaluateVersion', '评估当前版本', '评估当前版本的质量和完成度，给出1-10分的评分', 'version_management', FALSE, NULL, 32, '{"projectId":"string"}', 'java', TRUE);
+INSERT INTO agent_capabilities (agent_role, capability_name, display_name, description, category, requires_approval, approval_type, priority, param_schema, execution_type, enabled) VALUES
+('producer', 'planNextVersion', '规划下一版本', '根据当前版本评估结果，规划下一版本的目标和里程碑', 'version_management', FALSE, NULL, 33, '{"projectId":"string","currentScore":"number"}', 'java', TRUE);
+INSERT INTO agent_capabilities (agent_role, capability_name, display_name, description, category, requires_approval, approval_type, priority, param_schema, execution_type, enabled) VALUES
+('producer', 'upgradeVersion', '执行版本升级', '创建新版本历史，重置里程碑状态，开始下一版本迭代', 'version_management', FALSE, NULL, 34, '{"projectId":"string","newVersion":"string|required","newGoal":"string","reason":"string"}', 'java', TRUE);
+INSERT INTO agent_capabilities (agent_role, capability_name, display_name, description, category, requires_approval, approval_type, priority, param_schema, execution_type, enabled) VALUES
+('producer', 'checkVersionIteration', '检查版本迭代', '检查当前版本是否完成，是否需要进入下一版本迭代', 'version_management', FALSE, NULL, 35, '{"projectId":"string"}', 'java', TRUE);
+INSERT INTO agent_capabilities (agent_role, capability_name, display_name, description, category, requires_approval, approval_type, priority, param_schema, execution_type, enabled) VALUES
+('producer', 'stopAllProjectAgents', '停止项目Agent', '目标完成时停止项目内所有Agent', 'version_management', FALSE, NULL, 36, '{"projectId":"string","reason":"string"}', 'java', TRUE);
+
+-- ============================================
+-- 11. Agent 预设数据（含角色提示词）
 -- ============================================
 
 
@@ -1669,6 +2313,18 @@ INSERT INTO permission_definitions (permission_key, name, description, category,
 SELECT 'PERM_context:monitor', '上下文监控', '监控Agent上下文健康', 'Agent', 1, 1, 16
 WHERE NOT EXISTS (SELECT 1 FROM permission_definitions WHERE permission_key = 'PERM_context:monitor');
 
+INSERT INTO permission_definitions (permission_key, name, description, category, enabled, system, sort_order)
+SELECT 'PERM_iteration:view', '迭代查看', '查看版本迭代记录', '项目', 1, 1, 51
+WHERE NOT EXISTS (SELECT 1 FROM permission_definitions WHERE permission_key = 'PERM_iteration:view');
+
+INSERT INTO permission_definitions (permission_key, name, description, category, enabled, system, sort_order)
+SELECT 'PERM_iteration:manage', '迭代管理', '管理版本迭代', '项目', 1, 1, 52
+WHERE NOT EXISTS (SELECT 1 FROM permission_definitions WHERE permission_key = 'PERM_iteration:manage');
+
+INSERT INTO permission_definitions (permission_key, name, description, category, enabled, system, sort_order)
+SELECT 'PERM_supervision:view', '督查查看', '查看督查报告和协作效率', '项目', 1, 1, 53
+WHERE NOT EXISTS (SELECT 1 FROM permission_definitions WHERE permission_key = 'PERM_supervision:view');
+
 -- 为ADMIN角色添加所有新权限
 INSERT INTO role_permissions (role_id, permission)
 SELECT 1, 'PERM_capabilities:view' WHERE NOT EXISTS (SELECT 1 FROM role_permissions WHERE role_id = 1 AND permission = 'PERM_capabilities:view');
@@ -1722,6 +2378,28 @@ INSERT INTO role_permissions (role_id, permission)
 SELECT 3, 'PERM_api:view' WHERE NOT EXISTS (SELECT 1 FROM role_permissions WHERE role_id = 3 AND permission = 'PERM_api:view');
 INSERT INTO role_permissions (role_id, permission)
 SELECT 3, 'PERM_notification:preferences' WHERE NOT EXISTS (SELECT 1 FROM role_permissions WHERE role_id = 3 AND permission = 'PERM_notification:preferences');
+
+-- 为ADMIN角色添加迭代和督查权限
+INSERT INTO role_permissions (role_id, permission)
+SELECT 1, 'iteration:view' WHERE NOT EXISTS (SELECT 1 FROM role_permissions WHERE role_id = 1 AND permission = 'iteration:view');
+INSERT INTO role_permissions (role_id, permission)
+SELECT 1, 'iteration:manage' WHERE NOT EXISTS (SELECT 1 FROM role_permissions WHERE role_id = 1 AND permission = 'iteration:manage');
+INSERT INTO role_permissions (role_id, permission)
+SELECT 1, 'supervision:view' WHERE NOT EXISTS (SELECT 1 FROM role_permissions WHERE role_id = 1 AND permission = 'supervision:view');
+
+-- 为PROJECT_MANAGER角色添加迭代和督查权限
+INSERT INTO role_permissions (role_id, permission)
+SELECT 2, 'iteration:view' WHERE NOT EXISTS (SELECT 1 FROM role_permissions WHERE role_id = 2 AND permission = 'iteration:view');
+INSERT INTO role_permissions (role_id, permission)
+SELECT 2, 'iteration:manage' WHERE NOT EXISTS (SELECT 1 FROM role_permissions WHERE role_id = 2 AND permission = 'iteration:manage');
+INSERT INTO role_permissions (role_id, permission)
+SELECT 2, 'supervision:view' WHERE NOT EXISTS (SELECT 1 FROM role_permissions WHERE role_id = 2 AND permission = 'supervision:view');
+
+-- 为DEVELOPER角色添加查看权限
+INSERT INTO role_permissions (role_id, permission)
+SELECT 3, 'iteration:view' WHERE NOT EXISTS (SELECT 1 FROM role_permissions WHERE role_id = 3 AND permission = 'iteration:view');
+INSERT INTO role_permissions (role_id, permission)
+SELECT 3, 'supervision:view' WHERE NOT EXISTS (SELECT 1 FROM role_permissions WHERE role_id = 3 AND permission = 'supervision:view');
 
 -- ============================================
 -- 系统常量数据
@@ -1790,6 +2468,84 @@ WHERE NOT EXISTS (SELECT 1 FROM system_constants WHERE constant_key = 'file.max-
 INSERT INTO system_constants (constant_key, name, description, default_value, value_type, group_name, unit, min_value, max_value, require_restart)
 SELECT 'performance.max-output-size', '最大输出大小', '沙箱执行最大输出大小', '1048576', 'long', 'performance', '字节', 1024, 10485760, FALSE
 WHERE NOT EXISTS (SELECT 1 FROM system_constants WHERE constant_key = 'performance.max-output-size');
+
+-- 版本迭代相关常量
+INSERT INTO system_constants (constant_key, name, description, default_value, value_type, group_name, unit, min_value, max_value, require_restart)
+SELECT 'version.pass-score', '版本验收通过分数', '版本质量评估通过的最低分数（1-10分）', '7', 'int', 'version', '分', 1, 10, FALSE
+WHERE NOT EXISTS (SELECT 1 FROM system_constants WHERE constant_key = 'version.pass-score');
+
+INSERT INTO system_constants (constant_key, name, description, default_value, value_type, group_name, unit, min_value, max_value, require_restart)
+SELECT 'version.max-iterations', '最大迭代次数', '项目最大版本迭代次数，防止无限循环', '10', 'int', 'version', '次', 1, 100, FALSE
+WHERE NOT EXISTS (SELECT 1 FROM system_constants WHERE constant_key = 'version.max-iterations');
+
+INSERT INTO system_constants (constant_key, name, description, default_value, value_type, group_name, unit, min_value, max_value, require_restart)
+SELECT 'version.min-iterations', '最小迭代次数', '项目最少版本迭代次数，不可低于此数', '1', 'int', 'version', '次', 1, 50, FALSE
+WHERE NOT EXISTS (SELECT 1 FROM system_constants WHERE constant_key = 'version.min-iterations');
+
+INSERT INTO system_constants (constant_key, name, description, default_value, value_type, group_name, unit, min_value, max_value, require_restart)
+SELECT 'version.iteration-strategy', '迭代策略', '版本迭代策略：incremental（增量迭代）、full（全量迭代）、adaptive（自适应迭代）', 'adaptive', 'string', 'version', '', NULL, NULL, FALSE
+WHERE NOT EXISTS (SELECT 1 FROM system_constants WHERE constant_key = 'version.iteration-strategy');
+
+-- ============================================
+-- 版本评估维度配置
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS version_evaluation_dimensions (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    dimension_key VARCHAR(50) NOT NULL UNIQUE,
+    display_name VARCHAR(100) NOT NULL,
+    description TEXT,
+    weight INT NOT NULL DEFAULT 10,
+    criteria TEXT,
+    evaluation_prompt TEXT,
+    min_score INT NOT NULL DEFAULT 5,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    display_order INT NOT NULL DEFAULT 0,
+    system_builtin BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+INSERT INTO version_evaluation_dimensions (dimension_key, display_name, description, weight, criteria, min_score, enabled, display_order, system_builtin)
+SELECT 'functionality', '功能完整性', '核心功能是否完整实现，游戏是否可玩', 30, '核心玩法循环完整、主要功能可用、无阻断性Bug', 6, TRUE, 1, TRUE
+WHERE NOT EXISTS (SELECT 1 FROM version_evaluation_dimensions WHERE dimension_key = 'functionality');
+
+INSERT INTO version_evaluation_dimensions (dimension_key, display_name, description, weight, criteria, min_score, enabled, display_order, system_builtin)
+SELECT 'code_quality', '代码质量', '代码结构、可维护性、规范性', 20, '代码结构清晰、注释完整、无明显坏味道、通过静态检查', 5, TRUE, 2, TRUE
+WHERE NOT EXISTS (SELECT 1 FROM version_evaluation_dimensions WHERE dimension_key = 'code_quality');
+
+INSERT INTO version_evaluation_dimensions (dimension_key, display_name, description, weight, criteria, min_score, enabled, display_order, system_builtin)
+SELECT 'ux', '游戏体验', '可玩性、流畅度、用户界面', 25, '操作流畅、界面美观、交互反馈及时、新手引导完善', 5, TRUE, 3, TRUE
+WHERE NOT EXISTS (SELECT 1 FROM version_evaluation_dimensions WHERE dimension_key = 'ux');
+
+INSERT INTO version_evaluation_dimensions (dimension_key, display_name, description, weight, criteria, min_score, enabled, display_order, system_builtin)
+SELECT 'goal_alignment', '目标达成度', '是否达到项目目标和验收标准', 25, '项目目标基本达成、验收标准通过率>80%', 6, TRUE, 4, TRUE
+WHERE NOT EXISTS (SELECT 1 FROM version_evaluation_dimensions WHERE dimension_key = 'goal_alignment');
+
+-- ============================================
+-- 版本迭代记录表
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS version_iteration_records (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    project_id VARCHAR(100) NOT NULL,
+    version VARCHAR(50) NOT NULL,
+    evaluation_score INT NOT NULL,
+    passed BOOLEAN NOT NULL,
+    evaluation_details TEXT,
+    strengths TEXT,
+    improvements TEXT,
+    recommendation TEXT,
+    need_next_version BOOLEAN NOT NULL,
+    next_version VARCHAR(50),
+    next_goal TEXT,
+    next_milestones TEXT,
+    plan_reason TEXT,
+    completed_milestones INT NOT NULL DEFAULT 0,
+    total_milestones INT NOT NULL DEFAULT 0,
+    result VARCHAR(20) NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 
 -- ============================================
 -- 质量门禁配置数据
@@ -1871,3 +2627,215 @@ WHERE NOT EXISTS (SELECT 1 FROM knowledge_base WHERE title = '对象池模式');
 INSERT INTO knowledge_base (category, subcategory, title, content, tags, source)
 SELECT 'performance', 'optimization', '游戏卡顿优化', '常见原因：渲染过多→对象池、频繁GC→减少临时对象、物理计算过多→降低步频、纹理过大→压缩。', '性能,优化', 'system'
 WHERE NOT EXISTS (SELECT 1 FROM knowledge_base WHERE title = '游戏卡顿优化');
+
+INSERT INTO knowledge_base (category, subcategory, title, content, tags, source)
+SELECT 'game_design', 'level_design', '关卡设计原则', '关卡设计三要素：目标、挑战、奖励。目标：每个关卡有明确的胜利条件。挑战：逐步引入新机制。奖励：通关后给予有意义的奖励。前3关作为教程关。', '关卡,游戏设计,教程', 'system'
+WHERE NOT EXISTS (SELECT 1 FROM knowledge_base WHERE title = '关卡设计原则');
+
+INSERT INTO knowledge_base (category, subcategory, title, content, tags, source)
+SELECT 'game_design', 'ui_design', '游戏UI/UX设计', '游戏UI原则：信息层次、操作反馈、状态可见、容错设计、响应式适配。', 'UI,UX,游戏设计', 'system'
+WHERE NOT EXISTS (SELECT 1 FROM knowledge_base WHERE title = '游戏UI/UX设计');
+
+INSERT INTO knowledge_base (category, subcategory, title, content, tags, source)
+SELECT 'performance', 'memory', '内存优化', '内存优化策略：对象池复用、资源卸载、内存监控、垃圾回收优化、避免内存泄漏。', '性能,内存,优化', 'system'
+WHERE NOT EXISTS (SELECT 1 FROM knowledge_base WHERE title = '内存优化');
+
+INSERT INTO knowledge_base (category, subcategory, title, content, tags, source)
+SELECT 'architecture', 'event_system', '事件系统', '使用事件总线解耦游戏系统：发布者发送事件→事件总线路由→订阅者处理。优点：低耦合、易扩展、支持异步。', '架构,事件系统,解耦', 'system'
+WHERE NOT EXISTS (SELECT 1 FROM knowledge_base WHERE title = '事件系统');
+
+-- ============================================
+-- 工作流模板数据
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS workflow_templates (
+    id VARCHAR(100) PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    description VARCHAR(500),
+    steps_json TEXT,
+    builtin BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+INSERT INTO workflow_templates (id, name, description, steps_json, builtin)
+SELECT 'workflow-producer', '制作人工作流', '制作人的标准工作流程', '{"steps":[{"id":"plan","name":"规划","agentRole":"producer"},{"id":"assign","name":"分配任务","agentRole":"producer"},{"id":"monitor","name":"监控执行","agentRole":"producer"},{"id":"review","name":"审查质量","agentRole":"producer"},{"id":"report","name":"汇报状态","agentRole":"producer"}]}', TRUE
+WHERE NOT EXISTS (SELECT 1 FROM workflow_templates WHERE id = 'workflow-producer');
+
+INSERT INTO workflow_templates (id, name, description, steps_json, builtin)
+SELECT 'workflow-server-dev', '服务端开发工作流', '服务端开发的标准工作流程', '{"steps":[{"id":"design","name":"技术设计","agentRole":"server-dev"},{"id":"implement","name":"代码实现","agentRole":"server-dev"},{"id":"test","name":"单元测试","agentRole":"server-dev"},{"id":"review","name":"代码审查","agentRole":"server-dev"}]}', TRUE
+WHERE NOT EXISTS (SELECT 1 FROM workflow_templates WHERE id = 'workflow-server-dev');
+
+INSERT INTO workflow_templates (id, name, description, steps_json, builtin)
+SELECT 'workflow-tester', '测试工程师工作流', '测试工程师的标准工作流程', '{"steps":[{"id":"plan","name":"测试计划","agentRole":"tester"},{"id":"cases","name":"测试用例","agentRole":"tester"},{"id":"execute","name":"执行测试","agentRole":"tester"},{"id":"report","name":"测试报告","agentRole":"tester"}]}', TRUE
+WHERE NOT EXISTS (SELECT 1 FROM workflow_templates WHERE id = 'workflow-tester');
+
+-- ============================================
+-- 补充缺失的权限（对齐 MySQL 全量63个权限）
+-- ============================================
+
+-- ADMIN 补充缺失的权限
+INSERT INTO role_permissions (role_id, permission)
+SELECT 1, 'token:manage' WHERE NOT EXISTS (SELECT 1 FROM role_permissions WHERE role_id = 1 AND permission = 'token:manage');
+INSERT INTO role_permissions (role_id, permission)
+SELECT 1, 'notification:view' WHERE NOT EXISTS (SELECT 1 FROM role_permissions WHERE role_id = 1 AND permission = 'notification:view');
+INSERT INTO role_permissions (role_id, permission)
+SELECT 1, 'notifications:manage' WHERE NOT EXISTS (SELECT 1 FROM role_permissions WHERE role_id = 1 AND permission = 'notifications:manage');
+INSERT INTO role_permissions (role_id, permission)
+SELECT 1, 'knowledge:manage' WHERE NOT EXISTS (SELECT 1 FROM role_permissions WHERE role_id = 1 AND permission = 'knowledge:manage');
+INSERT INTO role_permissions (role_id, permission)
+SELECT 1, 'approval:view' WHERE NOT EXISTS (SELECT 1 FROM role_permissions WHERE role_id = 1 AND permission = 'approval:view');
+INSERT INTO role_permissions (role_id, permission)
+SELECT 1, 'approval:manage' WHERE NOT EXISTS (SELECT 1 FROM role_permissions WHERE role_id = 1 AND permission = 'approval:manage');
+INSERT INTO role_permissions (role_id, permission)
+SELECT 1, 'users:view' WHERE NOT EXISTS (SELECT 1 FROM role_permissions WHERE role_id = 1 AND permission = 'users:view');
+INSERT INTO role_permissions (role_id, permission)
+SELECT 1, 'system:view' WHERE NOT EXISTS (SELECT 1 FROM role_permissions WHERE role_id = 1 AND permission = 'system:view');
+INSERT INTO role_permissions (role_id, permission)
+SELECT 1, 'system:config' WHERE NOT EXISTS (SELECT 1 FROM role_permissions WHERE role_id = 1 AND permission = 'system:config');
+INSERT INTO role_permissions (role_id, permission)
+SELECT 1, 'system:config:manage' WHERE NOT EXISTS (SELECT 1 FROM role_permissions WHERE role_id = 1 AND permission = 'system:config:manage');
+INSERT INTO role_permissions (role_id, permission)
+SELECT 1, 'system:manage' WHERE NOT EXISTS (SELECT 1 FROM role_permissions WHERE role_id = 1 AND permission = 'system:manage');
+INSERT INTO role_permissions (role_id, permission)
+SELECT 1, 'admin:manage' WHERE NOT EXISTS (SELECT 1 FROM role_permissions WHERE role_id = 1 AND permission = 'admin:manage');
+INSERT INTO role_permissions (role_id, permission)
+SELECT 1, 'version:manage' WHERE NOT EXISTS (SELECT 1 FROM role_permissions WHERE role_id = 1 AND permission = 'version:manage');
+INSERT INTO role_permissions (role_id, permission)
+SELECT 1, 'data:view' WHERE NOT EXISTS (SELECT 1 FROM role_permissions WHERE role_id = 1 AND permission = 'data:view');
+INSERT INTO role_permissions (role_id, permission)
+SELECT 1, 'ai:admin' WHERE NOT EXISTS (SELECT 1 FROM role_permissions WHERE role_id = 1 AND permission = 'ai:admin');
+INSERT INTO role_permissions (role_id, permission)
+SELECT 1, 'agent:manage' WHERE NOT EXISTS (SELECT 1 FROM role_permissions WHERE role_id = 1 AND permission = 'agent:manage');
+INSERT INTO role_permissions (role_id, permission)
+SELECT 1, 'pipeline:intervene' WHERE NOT EXISTS (SELECT 1 FROM role_permissions WHERE role_id = 1 AND permission = 'pipeline:intervene');
+
+-- PROJECT_MANAGER 补充缺失的权限
+INSERT INTO role_permissions (role_id, permission)
+SELECT 2, 'token:view' WHERE NOT EXISTS (SELECT 1 FROM role_permissions WHERE role_id = 2 AND permission = 'token:view');
+INSERT INTO role_permissions (role_id, permission)
+SELECT 2, 'approval:view' WHERE NOT EXISTS (SELECT 1 FROM role_permissions WHERE role_id = 2 AND permission = 'approval:view');
+INSERT INTO role_permissions (role_id, permission)
+SELECT 2, 'system:view' WHERE NOT EXISTS (SELECT 1 FROM role_permissions WHERE role_id = 2 AND permission = 'system:view');
+INSERT INTO role_permissions (role_id, permission)
+SELECT 2, 'system:monitor' WHERE NOT EXISTS (SELECT 1 FROM role_permissions WHERE role_id = 2 AND permission = 'system:monitor');
+
+-- DEVELOPER 补充缺失的权限
+INSERT INTO role_permissions (role_id, permission)
+SELECT 3, 'agents:manage' WHERE NOT EXISTS (SELECT 1 FROM role_permissions WHERE role_id = 3 AND permission = 'agents:manage');
+INSERT INTO role_permissions (role_id, permission)
+SELECT 3, 'token:view' WHERE NOT EXISTS (SELECT 1 FROM role_permissions WHERE role_id = 3 AND permission = 'token:view');
+INSERT INTO role_permissions (role_id, permission)
+SELECT 3, 'approval:view' WHERE NOT EXISTS (SELECT 1 FROM role_permissions WHERE role_id = 3 AND permission = 'approval:view');
+
+-- OPS_ENGINEER 补充缺失的权限
+INSERT INTO role_permissions (role_id, permission)
+SELECT 4, 'token:view' WHERE NOT EXISTS (SELECT 1 FROM role_permissions WHERE role_id = 4 AND permission = 'token:view');
+INSERT INTO role_permissions (role_id, permission)
+SELECT 4, 'notification:view' WHERE NOT EXISTS (SELECT 1 FROM role_permissions WHERE role_id = 4 AND permission = 'notification:view');
+INSERT INTO role_permissions (role_id, permission)
+SELECT 4, 'system:view' WHERE NOT EXISTS (SELECT 1 FROM role_permissions WHERE role_id = 4 AND permission = 'system:view');
+INSERT INTO role_permissions (role_id, permission)
+SELECT 4, 'system:config' WHERE NOT EXISTS (SELECT 1 FROM role_permissions WHERE role_id = 4 AND permission = 'system:config');
+
+-- OBSERVER 补充缺失的权限
+INSERT INTO role_permissions (role_id, permission)
+SELECT 5, 'token:view' WHERE NOT EXISTS (SELECT 1 FROM role_permissions WHERE role_id = 5 AND permission = 'token:view');
+INSERT INTO role_permissions (role_id, permission)
+SELECT 5, 'notification:view' WHERE NOT EXISTS (SELECT 1 FROM role_permissions WHERE role_id = 5 AND permission = 'notification:view');
+INSERT INTO role_permissions (role_id, permission)
+SELECT 5, 'approval:view' WHERE NOT EXISTS (SELECT 1 FROM role_permissions WHERE role_id = 5 AND permission = 'approval:view');
+INSERT INTO role_permissions (role_id, permission)
+SELECT 5, 'system:view' WHERE NOT EXISTS (SELECT 1 FROM role_permissions WHERE role_id = 5 AND permission = 'system:view');
+INSERT INTO role_permissions (role_id, permission)
+SELECT 5, 'system:monitor' WHERE NOT EXISTS (SELECT 1 FROM role_permissions WHERE role_id = 5 AND permission = 'system:monitor');
+
+-- USER 补充
+INSERT INTO role_permissions (role_id, permission)
+SELECT 6, 'notification:view' WHERE NOT EXISTS (SELECT 1 FROM role_permissions WHERE role_id = 6 AND permission = 'notification:view');
+
+-- ============================================
+-- 补充缺失的权限定义（对齐 MySQL 全量60个）
+-- ============================================
+
+INSERT INTO permission_definitions (permission_key, name, description, category, enabled, system, sort_order)
+SELECT 'PERM_data:view', '数据查看', '查看数据和报表', '数据', 1, 1, 1
+WHERE NOT EXISTS (SELECT 1 FROM permission_definitions WHERE permission_key = 'PERM_data:view');
+
+INSERT INTO permission_definitions (permission_key, name, description, category, enabled, system, sort_order)
+SELECT 'PERM_log:view', '日志查看(兼容)', '查看日志（兼容别名）', '日志', 1, 1, 2
+WHERE NOT EXISTS (SELECT 1 FROM permission_definitions WHERE permission_key = 'PERM_log:view');
+
+INSERT INTO permission_definitions (permission_key, name, description, category, enabled, system, sort_order)
+SELECT 'PERM_notifications:manage', '通知管理(兼容)', '管理通知（兼容别名）', '通知', 1, 1, 3
+WHERE NOT EXISTS (SELECT 1 FROM permission_definitions WHERE permission_key = 'PERM_notifications:manage');
+
+-- ============================================
+-- 补充缺失的系统常量
+-- ============================================
+
+INSERT INTO system_constants (constant_key, name, description, default_value, value_type, group_name, unit, min_value, max_value, require_restart)
+SELECT 'agent.history-size', '历史记录大小', '任务/消息历史保留数量', '1000', 'int', 'agent', '条', 100, 10000, FALSE
+WHERE NOT EXISTS (SELECT 1 FROM system_constants WHERE constant_key = 'agent.history-size');
+
+INSERT INTO system_constants (constant_key, name, description, default_value, value_type, group_name, unit, min_value, max_value, require_restart)
+SELECT 'agent.max-warnings', '最大警告次数', '绩效管理最大警告次数，超过触发解雇流程', '3', 'int', 'agent', '次', 1, 10, FALSE
+WHERE NOT EXISTS (SELECT 1 FROM system_constants WHERE constant_key = 'agent.max-warnings');
+
+INSERT INTO system_constants (constant_key, name, description, default_value, value_type, group_name, unit, min_value, max_value, require_restart)
+SELECT 'agent.max-learned-knowledge', '最大知识条数', 'Agent 最大学习知识数量', '100', 'int', 'agent', '条', 10, 1000, FALSE
+WHERE NOT EXISTS (SELECT 1 FROM system_constants WHERE constant_key = 'agent.max-learned-knowledge');
+
+INSERT INTO system_constants (constant_key, name, description, default_value, value_type, group_name, unit, min_value, max_value, require_restart)
+SELECT 'file.quota-mb', 'Agent存储配额', '每个Agent的文件存储配额', '500', 'int', 'file', 'MB', 10, 5000, FALSE
+WHERE NOT EXISTS (SELECT 1 FROM system_constants WHERE constant_key = 'file.quota-mb');
+
+INSERT INTO system_constants (constant_key, name, description, default_value, value_type, group_name, unit, min_value, max_value, require_restart)
+SELECT 'file.storage-dir', '存储目录', '文件存储根目录', 'data/files', 'string', 'file', '', NULL, NULL, TRUE
+WHERE NOT EXISTS (SELECT 1 FROM system_constants WHERE constant_key = 'file.storage-dir');
+
+INSERT INTO system_constants (constant_key, name, description, default_value, value_type, group_name, unit, min_value, max_value, require_restart)
+SELECT 'file.version-limit', '版本保留数', '同名文件保留的最大版本数', '10', 'int', 'file', '个', 1, 100, FALSE
+WHERE NOT EXISTS (SELECT 1 FROM system_constants WHERE constant_key = 'file.version-limit');
+
+INSERT INTO system_constants (constant_key, name, description, default_value, value_type, group_name, unit, min_value, max_value, require_restart)
+SELECT 'security.session-timeout-minutes', '会话超时', 'Web会话超时时间', '30', 'int', 'security', '分钟', 5, 480, FALSE
+WHERE NOT EXISTS (SELECT 1 FROM system_constants WHERE constant_key = 'security.session-timeout-minutes');
+
+INSERT INTO system_constants (constant_key, name, description, default_value, value_type, group_name, unit, min_value, max_value, require_restart)
+SELECT 'rate-limit.auth', '认证限流', '登录接口每分钟请求限制', '10', 'int', 'rate-limit', '次/分钟', 1, 100, FALSE
+WHERE NOT EXISTS (SELECT 1 FROM system_constants WHERE constant_key = 'rate-limit.auth');
+
+INSERT INTO system_constants (constant_key, name, description, default_value, value_type, group_name, unit, min_value, max_value, require_restart)
+SELECT 'rate-limit.write', '写操作限流', '写操作每分钟请求限制', '60', 'int', 'rate-limit', '次/分钟', 5, 500, FALSE
+WHERE NOT EXISTS (SELECT 1 FROM system_constants WHERE constant_key = 'rate-limit.write');
+
+INSERT INTO system_constants (constant_key, name, description, default_value, value_type, group_name, unit, min_value, max_value, require_restart)
+SELECT 'performance.max-backups', '最大备份数', '文件备份最大保留数量', '10', 'int', 'performance', '份', 1, 100, FALSE
+WHERE NOT EXISTS (SELECT 1 FROM system_constants WHERE constant_key = 'performance.max-backups');
+
+INSERT INTO system_constants (constant_key, name, description, default_value, value_type, group_name, unit, min_value, max_value, require_restart)
+SELECT 'performance.ws-session-timeout', 'WebSocket超时', '终端WebSocket会话超时时间', '1800000', 'long', 'performance', '毫秒', 60000, 86400000, FALSE
+WHERE NOT EXISTS (SELECT 1 FROM system_constants WHERE constant_key = 'performance.ws-session-timeout');
+
+INSERT INTO system_constants (constant_key, name, description, default_value, value_type, group_name, unit, min_value, max_value, require_restart)
+SELECT 'performance.context-compact-threshold', '上下文压缩阈值', '触发自动压缩的消息数', '50', 'int', 'performance', '条', 10, 500, FALSE
+WHERE NOT EXISTS (SELECT 1 FROM system_constants WHERE constant_key = 'performance.context-compact-threshold');
+
+INSERT INTO system_constants (constant_key, name, description, default_value, value_type, group_name, unit, min_value, max_value, require_restart)
+SELECT 'notification.batch-size', '批量通知大小', '批量发送通知的批次大小', '100', 'int', 'notification', '条', 10, 1000, FALSE
+WHERE NOT EXISTS (SELECT 1 FROM system_constants WHERE constant_key = 'notification.batch-size');
+
+INSERT INTO system_constants (constant_key, name, description, default_value, value_type, group_name, unit, min_value, max_value, require_restart)
+SELECT 'mcp.discovery-timeout-ms', 'MCP发现超时', 'MCP工具发现超时时间', '10000', 'long', 'mcp', '毫秒', 1000, 60000, FALSE
+WHERE NOT EXISTS (SELECT 1 FROM system_constants WHERE constant_key = 'mcp.discovery-timeout-ms');
+
+-- ============================================
+-- 补充知识库数据
+-- ============================================
+
+INSERT INTO knowledge_base (category, subcategory, title, content, tags, source)
+SELECT 'performance', 'network', '网络优化', '网络优化策略：数据压缩、请求合并、缓存策略、CDN加速、预测补偿。', '性能,网络,优化', 'system'
+WHERE NOT EXISTS (SELECT 1 FROM knowledge_base WHERE title = '网络优化');
+
+-- H2 初始化数据全部完成

@@ -50,14 +50,17 @@ public class GameProject {
     /** 目录配置（目录路径 -> 目录配置），用于告诉 Agent 项目目录结构和用途 */
     private Map<String, DirectoryConfig> directoryConfigs = new HashMap<>();
 
-    /** 项目概况（由制作人统筹更新） */
-    private String projectOverview;
+    /** 项目概况（由制作人统筹更新，兼容 String 和 Map 两种格式） */
+    private Object projectOverview;
 
     /** 项目运行状态（是否在运行中） */
     private boolean running = false;
 
     /** 项目运行和部署规则 */
     private String deploymentRules;
+
+    /** 项目交付时间 */
+    private LocalDateTime deliveredAt;
 
     /**
      * 目标类型枚举
@@ -94,7 +97,7 @@ public class GameProject {
     }
 
     public enum ProjectStatus {
-        CREATED, ACTIVE, PAUSED, COMPLETED, ARCHIVED
+        CREATED, ACTIVE, PAUSED, COMPLETED, ARCHIVED, DELIVERED
     }
 
     /**
@@ -191,6 +194,7 @@ public class GameProject {
         /**
          * 获取参与此里程碑的所有角色
          */
+        @JsonIgnore
         public Set<String> getInvolvedRoles() {
             Set<String> roles = new HashSet<>();
             if (assignedAgentRole != null) {
@@ -207,6 +211,7 @@ public class GameProject {
         /**
          * 获取指定角色的任务列表
          */
+        @JsonIgnore
         public List<MilestoneTask> getTasksByRole(String role) {
             return tasks.stream()
                 .filter(t -> role.equals(t.getAssignedRole()))
@@ -410,6 +415,7 @@ public class GameProject {
         /**
          * 获取任务耗时（分钟）
          */
+        @JsonIgnore
         public long getDurationMinutes() {
             if (startedAt == null) return 0;
             LocalDateTime end = completedAt != null ? completedAt : LocalDateTime.now();
@@ -461,22 +467,27 @@ public class GameProject {
         this.lastActiveAt = LocalDateTime.now();
     }
 
+    @JsonIgnore
     public String getSkillsDir() {
         return projectConfigDir + "/skills";
     }
 
+    @JsonIgnore
     public String getMemoryDir() {
         return projectConfigDir + "/memory";
     }
 
+    @JsonIgnore
     public String getContextsDir() {
         return projectConfigDir + "/contexts";
     }
 
+    @JsonIgnore
     public String getProjectConfigFile() {
         return projectConfigDir + "/project.json";
     }
 
+    @JsonIgnore
     public String getProjectRulesFile() {
         return projectConfigDir + "/rules.md";
     }
@@ -574,6 +585,7 @@ public class GameProject {
      *
      * @return 格式化的目录配置文本
      */
+    @JsonIgnore
     public String getDirectoryConfigText() {
         if (directoryConfigs.isEmpty()) {
             return "";
@@ -592,14 +604,37 @@ public class GameProject {
 
     // ===== 项目概况相关 =====
 
-    public String getProjectOverview() { return projectOverview; }
-    public void setProjectOverview(String projectOverview) { this.projectOverview = projectOverview; }
+    /**
+     * 获取项目概况（自动转为 String）
+     * 兼容旧格式（String）和新格式（Map/Object）
+     */
+    public String getProjectOverview() {
+        if (projectOverview == null) return null;
+        if (projectOverview instanceof String s) return s;
+        // Map/Object 格式转为 JSON 字符串
+        try {
+            return new com.fasterxml.jackson.databind.ObjectMapper()
+                .writerWithDefaultPrettyPrinter().writeValueAsString(projectOverview);
+        } catch (Exception e) {
+            return projectOverview.toString();
+        }
+    }
+
+    /**
+     * 获取项目概况原始对象（可能是 String 或 Map）
+     */
+    public Object getProjectOverviewRaw() { return projectOverview; }
+
+    public void setProjectOverview(Object projectOverview) { this.projectOverview = projectOverview; }
 
     public boolean isRunning() { return running; }
     public void setRunning(boolean running) { this.running = running; }
 
     public String getDeploymentRules() { return deploymentRules; }
     public void setDeploymentRules(String deploymentRules) { this.deploymentRules = deploymentRules; }
+
+    public LocalDateTime getDeliveredAt() { return deliveredAt; }
+    public void setDeliveredAt(LocalDateTime deliveredAt) { this.deliveredAt = deliveredAt; }
 
     /**
      * 是否有目标
@@ -626,6 +661,7 @@ public class GameProject {
      * 获取下一个待执行的里程碑（按顺序，依赖已满足）
      * 优先返回 PENDING 状态，其次返回 IN_PROGRESS 状态（可能是卡住的）
      */
+    @JsonIgnore
     public GoalMilestone getNextMilestone() {
         // 优先返回 PENDING 状态的里程碑
         GoalMilestone pending = milestones.stream()
@@ -699,6 +735,7 @@ public class GameProject {
     /**
      * 获取最新版本历史
      */
+    @JsonIgnore
     public VersionHistory getLatestVersionHistory() {
         if (versionHistory.isEmpty()) {
             return null;
@@ -709,6 +746,7 @@ public class GameProject {
     /**
      * 获取版本数量
      */
+    @JsonIgnore
     public int getVersionCount() {
         return versionHistory.size();
     }

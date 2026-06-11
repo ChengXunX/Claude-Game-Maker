@@ -55,8 +55,18 @@ public class RoleService {
     // 代码审查权限
     public static final String PERM_CODE_REVIEW = "code:review";
 
-    // 通知管理权限
+    // 通知权限
+    public static final String PERM_NOTIFICATION_VIEW = "notification:view";
     public static final String PERM_NOTIFICATION_MANAGE = "notification:manage";
+
+    // Token 权限
+    public static final String PERM_TOKENS_VIEW = "tokens:view";
+
+    // 审批权限
+    public static final String PERM_APPROVAL_VIEW = "approval:view";
+
+    // 系统查看权限
+    public static final String PERM_SYSTEM_VIEW = "system:view";
 
     // AI 助手权限
     public static final String PERM_AI_USE = "ai:use";
@@ -96,8 +106,15 @@ public class RoleService {
         PERM_WORKFLOW_MANAGE,
         // 代码审查权限
         PERM_CODE_REVIEW,
-        // 通知管理权限
+        // 通知权限
+        PERM_NOTIFICATION_VIEW,
         PERM_NOTIFICATION_MANAGE,
+        // Token 权限
+        PERM_TOKENS_VIEW,
+        // 审批权限
+        PERM_APPROVAL_VIEW,
+        // 系统查看权限
+        PERM_SYSTEM_VIEW,
         // AI 助手权限
         PERM_AI_USE,
         // 终端权限
@@ -136,7 +153,14 @@ public class RoleService {
             // 代码审查权限
             case PERM_CODE_REVIEW -> "代码审查";
             // 通知管理权限
+            case PERM_NOTIFICATION_VIEW -> "查看通知";
             case PERM_NOTIFICATION_MANAGE -> "管理通知模板";
+            // Token 权限
+            case PERM_TOKENS_VIEW -> "查看 Token";
+            // 审批权限
+            case PERM_APPROVAL_VIEW -> "查看审批";
+            // 系统查看权限
+            case PERM_SYSTEM_VIEW -> "查看系统信息";
             // AI 助手权限
             case PERM_AI_USE -> "使用 AI 助手";
             // 终端权限
@@ -158,7 +182,7 @@ public class RoleService {
             new HashSet<>(Arrays.asList(PERM_ALL)));
 
         // 项目经理 - 管理项目、Agent和流水线
-        createRoleIfNotExists("PROJECT_MANAGER", "项目经理", "负责项目管理和 Agent 调度", true,
+        createRoleIfNotExists("PROJECT_MANAGER", "项目经理", "负责项目管理和 Agent 调度", false,
             new HashSet<>(Arrays.asList(
                 PERM_DASHBOARD_VIEW,
                 PERM_AGENTS_VIEW,
@@ -189,7 +213,7 @@ public class RoleService {
             )));
 
         // 开发者 - 查看和使用 Agent，执行流水线
-        createRoleIfNotExists("DEVELOPER", "开发者", "使用 Agent 进行开发工作", true,
+        createRoleIfNotExists("DEVELOPER", "开发者", "使用 Agent 进行开发工作", false,
             new HashSet<>(Arrays.asList(
                 PERM_DASHBOARD_VIEW,
                 PERM_AGENTS_VIEW,
@@ -206,7 +230,7 @@ public class RoleService {
             )));
 
         // 运维工程师 - 管理流水线和监控
-        createRoleIfNotExists("OPS_ENGINEER", "运维工程师", "负责系统运维和部署", true,
+        createRoleIfNotExists("OPS_ENGINEER", "运维工程师", "负责系统运维和部署", false,
             new HashSet<>(Arrays.asList(
                 PERM_DASHBOARD_VIEW,
                 PERM_AGENTS_VIEW,
@@ -227,7 +251,7 @@ public class RoleService {
             )));
 
         // 观察者 - 只读权限
-        createRoleIfNotExists("OBSERVER", "观察者", "只读权限，查看系统状态", true,
+        createRoleIfNotExists("OBSERVER", "观察者", "只读权限，查看系统状态", false,
             new HashSet<>(Arrays.asList(
                 PERM_DASHBOARD_VIEW,
                 PERM_AGENTS_VIEW,
@@ -242,10 +266,30 @@ public class RoleService {
             )));
 
         // 普通用户 - 基础权限
-        createRoleIfNotExists("USER", "普通用户", "普通用户，基础权限", true,
+        createRoleIfNotExists("USER", "普通用户", "普通用户，基础权限", false,
             new HashSet<>(Arrays.asList(
                 PERM_DASHBOARD_VIEW,
                 PERM_PROJECTS_VIEW
+            )));
+
+        // 只读访客 - 所有模块只读，不可修改
+        createRoleIfNotExists("READONLY", "只读访客", "只读权限，可查看所有模块但不能修改，供外部人员了解系统特性", false,
+            new HashSet<>(Arrays.asList(
+                PERM_DASHBOARD_VIEW,
+                PERM_AGENTS_VIEW,
+                PERM_AI_USE,
+                PERM_PROJECTS_VIEW,
+                PERM_SKILLS_VIEW,
+                PERM_TOKENS_VIEW,
+                PERM_NOTIFICATION_VIEW,
+                PERM_CODE_REVIEW,
+                PERM_PIPELINE_VIEW,
+                PERM_WORKFLOW_VIEW,
+                PERM_APPROVAL_VIEW,
+                PERM_USERS_VIEW,
+                PERM_LOGS_VIEW,
+                PERM_SYSTEM_VIEW,
+                PERM_MONITOR_VIEW
             )));
 
         log.info("Default roles initialized");
@@ -411,5 +455,25 @@ public class RoleService {
 
         roleRepository.delete(role);
         log.info("Role deleted: {}", role.getName());
+    }
+
+    /**
+     * 获取所有角色的所有权限集合（从数据库读取）
+     * 用于通配符权限 * 的展开，确保管理员拥有所有已定义的权限
+     *
+     * @return 所有权限的集合
+     */
+    public Set<String> getAllPermissionsFromDatabase() {
+        Set<String> allPermissions = new HashSet<>();
+        List<Role> roles = roleRepository.findAll();
+        for (Role role : roles) {
+            if (role.getPermissions() != null) {
+                allPermissions.addAll(role.getPermissions());
+            }
+        }
+        // 移除通配符 *，避免循环
+        allPermissions.remove("*");
+        log.debug("从数据库读取到 {} 个权限定义", allPermissions.size());
+        return allPermissions;
     }
 }

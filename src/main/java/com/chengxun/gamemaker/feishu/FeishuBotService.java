@@ -39,9 +39,15 @@ public class FeishuBotService {
     }
 
     public boolean isEnabled() {
-        return appConfig.getFeishu().isEnabled()
-            && appConfig.getFeishu().getAppId() != null
+        if (!appConfig.getFeishu().isEnabled()) {
+            return false;
+        }
+        // 支持两种配置方式：App ID 或 Webhook URL
+        boolean hasAppId = appConfig.getFeishu().getAppId() != null
             && !appConfig.getFeishu().getAppId().isEmpty();
+        boolean hasWebhook = appConfig.getFeishu().getWebhookUrl() != null
+            && !appConfig.getFeishu().getWebhookUrl().isEmpty();
+        return hasAppId || hasWebhook;
     }
 
     // ===== 消息发送 =====

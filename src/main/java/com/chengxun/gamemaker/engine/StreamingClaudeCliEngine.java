@@ -46,6 +46,10 @@ public class StreamingClaudeCliEngine {
     private final Map<String, ProcessInfo> processes = new ConcurrentHashMap<>();
     private final Map<String, String> sessionIds = new ConcurrentHashMap<>();
 
+    /** 可选注入，用于获取 AI 助手专用 Token */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.chengxun.gamemaker.web.service.ApiTokenService apiTokenService;
+
     public StreamingClaudeCliEngine(AppConfig appConfig) {
         this.appConfig = appConfig;
     }
@@ -112,8 +116,24 @@ public class StreamingClaudeCliEngine {
         String installPath = appConfig.getClaude().getInstallPath();
 
         // 使用默认配置
+        // 如果没有指定 apiKey，优先使用 AI 助手专用 Token，回退到全局配置
         if (apiKey == null || apiKey.isEmpty()) {
-            apiKey = appConfig.getApiKey();
+            if (apiTokenService != null) {
+                try {
+                    com.chengxun.gamemaker.web.entity.ApiToken aiToken = apiTokenService.findAiAssistantToken();
+                    if (aiToken != null) {
+                        apiKey = aiToken.getApiKey();
+                        if (apiUrl == null || apiUrl.isEmpty()) apiUrl = aiToken.getApiUrl();
+                        if (model == null || model.isEmpty()) model = aiToken.getModel();
+                        log.info("Using AI assistant dedicated token: {}", aiToken.getName());
+                    }
+                } catch (Exception e) {
+                    log.debug("Failed to get AI assistant token: {}", e.getMessage());
+                }
+            }
+            if (apiKey == null || apiKey.isEmpty()) {
+                apiKey = appConfig.getApiKey();
+            }
         }
         if (apiUrl == null || apiUrl.isEmpty()) {
             apiUrl = appConfig.getApiUrl();

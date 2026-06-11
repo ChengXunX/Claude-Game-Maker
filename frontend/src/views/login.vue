@@ -114,6 +114,17 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <!-- 联系管理员图片弹窗 -->
+    <el-dialog
+      v-model="showContactImage"
+      title="联系管理员"
+      width="360px"
+    >
+      <div style="text-align: center">
+        <img :src="contactImageUrl" alt="联系管理员" style="max-width: 100%; border-radius: 8px" />
+      </div>
+    </el-dialog>
   </div>
 </template>
 
@@ -138,18 +149,35 @@ const loginForm = reactive({
 })
 
 // 联系管理员
+const showContactImage = ref(false)
+const contactImageUrl = ref('')
+
 const contactAdmin = async () => {
   try {
     const data = await api.get('/auth/admin-contact')
-    if (data.success) {
-      if (data.type === 'link' && data.link) {
-        // 自定义链接：直接跳转
-        window.open(data.link, '_blank')
-      } else if (data.type === 'email' && data.email) {
-        // 邮箱：弹窗显示并打开邮件客户端
-        const email = data.email
+    if (!data.success) {
+      ElMessage.warning(data.message || '管理员未配置联系方式')
+      return
+    }
+
+    const type = data.type
+    // 自定义配置使用 data.value，管理员邮箱回退使用 data.email
+    const value = data.value || data.email
+
+    if (!value) {
+      ElMessage.warning('管理员未配置联系方式')
+      return
+    }
+
+    switch (type) {
+      case 'link':
+        // 链接：新窗口打开
+        window.open(value.startsWith('http') ? value : `https://${value}`, '_blank')
+        break
+      case 'email':
+        // 邮箱：弹窗确认后打开邮件客户端
         ElMessageBox.alert(
-          `请联系系统管理员申请账号：\n\n邮箱：${email}\n\n点击"确定"将打开邮件客户端。`,
+          `请联系系统管理员申请账号：\n\n邮箱：${value}\n\n点击"确定"将打开邮件客户端。`,
           '联系管理员',
           {
             confirmButtonText: '确定',
@@ -158,15 +186,16 @@ const contactAdmin = async () => {
             type: 'info'
           }
         ).then(() => {
-          window.location.href = `mailto:${email}?subject=ChengXun Game Maker - 账号申请&body=您好，我需要申请一个系统账号。`
-        }).catch(() => {
-          // 用户点击了关闭
-        })
-      } else {
-        ElMessage.warning('管理员未配置联系方式，请联系系统管理员')
-      }
-    } else {
-      ElMessage.warning(data.message || '管理员未配置联系方式')
+          window.location.href = `mailto:${value}?subject=${encodeURIComponent('ChengXun Game Maker - 账号申请')}&body=${encodeURIComponent('您好，我需要申请一个系统账号。')}`
+        }).catch(() => {})
+        break
+      case 'image':
+        // 图片：弹窗展示
+        contactImageUrl.value = value
+        showContactImage.value = true
+        break
+      default:
+        ElMessage.warning('未知的联系方式类型')
     }
   } catch (error) {
     ElMessage.warning('无法获取管理员联系方式，请稍后重试')
@@ -209,7 +238,11 @@ const handleLogin = async () => {
           router.push('/')
         }
       } catch (error) {
-        ElMessage.error(error.response?.data?.message || '登录失败')
+        // 拦截器已处理 401/403 错误提示，此处仅补充其他错误
+        const status = error.response?.status
+        if (status !== 401 && status !== 403) {
+          ElMessage.error(error.response?.data?.message || '登录失败')
+        }
       } finally {
         loading.value = false
       }

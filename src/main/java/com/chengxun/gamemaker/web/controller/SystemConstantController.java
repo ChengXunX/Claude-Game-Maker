@@ -21,7 +21,6 @@ import java.util.Set;
  */
 @Controller
 @RequestMapping({"/constants", "/api/constants"})
-@PreAuthorize("hasAuthority('PERM_admin:manage')")
 public class SystemConstantController {
 
     private static final Logger log = LoggerFactory.getLogger(SystemConstantController.class);
@@ -33,6 +32,7 @@ public class SystemConstantController {
     }
 
     @GetMapping
+    @PreAuthorize("hasAuthority('PERM_admin:manage')")
     public String constantsPage(Model model, Authentication authentication) {
         model.addAttribute("username", authentication.getName());
         model.addAttribute("constants", constantService.getAll());
@@ -42,24 +42,28 @@ public class SystemConstantController {
 
     @GetMapping("/api/all")
     @ResponseBody
+    @PreAuthorize("hasAuthority('PERM_admin:manage')")
     public List<SystemConstant> getAll() {
         return constantService.getAll();
     }
 
     @GetMapping("/api/group/{group}")
     @ResponseBody
+    @PreAuthorize("hasAuthority('PERM_admin:manage')")
     public List<SystemConstant> getByGroup(@PathVariable String group) {
         return constantService.getByGroup(group);
     }
 
     @GetMapping("/api/groups")
     @ResponseBody
+    @PreAuthorize("hasAuthority('PERM_admin:manage')")
     public Set<String> getGroups() {
         return constantService.getGroups();
     }
 
     @PostMapping("/api/update")
     @ResponseBody
+    @PreAuthorize("hasAuthority('PERM_admin:manage')")
     public ResponseEntity<?> update(@RequestBody Map<String, String> body) {
         try {
             String key = body.get("key");
@@ -73,6 +77,7 @@ public class SystemConstantController {
 
     @PostMapping("/api/batch-update")
     @ResponseBody
+    @PreAuthorize("hasAuthority('PERM_admin:manage')")
     public ResponseEntity<?> batchUpdate(@RequestBody Map<String, String> updates) {
         List<SystemConstant> results = constantService.batchUpdate(updates);
         return ResponseEntity.ok(Map.of("success", true, "updated", results.size()));
@@ -80,6 +85,7 @@ public class SystemConstantController {
 
     @PostMapping("/api/reset/{key}")
     @ResponseBody
+    @PreAuthorize("hasAuthority('PERM_admin:manage')")
     public ResponseEntity<?> resetToDefault(@PathVariable String key) {
         SystemConstant reset = constantService.resetToDefault(key);
         return ResponseEntity.ok(Map.of("success", true, "constant", reset));
@@ -87,6 +93,7 @@ public class SystemConstantController {
 
     @PostMapping("/api/reset-all")
     @ResponseBody
+    @PreAuthorize("hasAuthority('PERM_admin:manage')")
     public ResponseEntity<?> resetAll() {
         constantService.resetAllToDefault();
         return ResponseEntity.ok(Map.of("success", true, "message", "所有常量已恢复默认值"));
@@ -94,6 +101,7 @@ public class SystemConstantController {
 
     @PostMapping("/api/reload")
     @ResponseBody
+    @PreAuthorize("hasAuthority('PERM_admin:manage')")
     public ResponseEntity<?> reload() {
         constantService.reloadCache();
         return ResponseEntity.ok(Map.of("success", true, "message", "常量缓存已重新加载"));

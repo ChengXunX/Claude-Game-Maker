@@ -58,6 +58,9 @@ public class SystemConfigService {
         initConfig("security.login.max-attempts", "5", "最大登录尝试次数", SystemConfig.GROUP_SECURITY, "number", true);
         initConfig("security.login.lockout-minutes", "15", "登录锁定时间（分钟）", SystemConfig.GROUP_SECURITY, "number", true);
 
+        // 用户配置
+        initConfig("user.default.role", "USER", "新注册用户默认角色（USER/READONLY/ADMIN等）", SystemConfig.GROUP_SYSTEM, "string", true);
+
         // Agent配置
         initConfig("agent.task.max-retry", "3", "任务最大重试次数", SystemConfig.GROUP_AGENT, "number", true);
         initConfig("agent.task.retry-delay-ms", "5000", "任务重试延迟（毫秒）", SystemConfig.GROUP_AGENT, "number", true);
@@ -228,6 +231,47 @@ public class SystemConfigService {
         // 刷新 JavaMailSender，使数据库配置生效
         mailConfig.refreshMailSender(javaMailSender);
         log.info("JavaMailSender 已刷新，使用数据库配置");
+
+        // 同步飞书配置
+        String feishuEnabled = getString("feishu.enabled", null);
+        if (feishuEnabled != null) {
+            appConfig.getFeishu().setEnabled(Boolean.parseBoolean(feishuEnabled));
+            log.info("启动同步: feishu.enabled = {}", feishuEnabled);
+        }
+        String feishuAppId = getString("feishu.app.id", null);
+        if (feishuAppId != null && !feishuAppId.isEmpty()) {
+            appConfig.getFeishu().setAppId(feishuAppId);
+            log.info("启动同步: feishu.app.id 已加载");
+        }
+        String feishuAppSecret = getString("feishu.app.secret", null);
+        if (feishuAppSecret != null && !feishuAppSecret.isEmpty()) {
+            appConfig.getFeishu().setAppSecret(feishuAppSecret);
+        }
+        String feishuWebhookUrl = getString("feishu.webhook.url", null);
+        if (feishuWebhookUrl != null && !feishuWebhookUrl.isEmpty()) {
+            appConfig.getFeishu().setWebhookUrl(feishuWebhookUrl);
+            log.info("启动同步: feishu.webhook.url 已加载");
+        }
+        String feishuChatId = getString("feishu.chat.id", null);
+        if (feishuChatId != null && !feishuChatId.isEmpty()) {
+            appConfig.getFeishu().setChatId(feishuChatId);
+        }
+
+        // 同步钉钉配置
+        String dingtalkEnabled = getString("dingtalk.enabled", null);
+        if (dingtalkEnabled != null) {
+            appConfig.getDingtalk().setEnabled(Boolean.parseBoolean(dingtalkEnabled));
+            log.info("启动同步: dingtalk.enabled = {}", dingtalkEnabled);
+        }
+        String dingtalkWebhookUrl = getString("dingtalk.webhook.url", null);
+        if (dingtalkWebhookUrl != null && !dingtalkWebhookUrl.isEmpty()) {
+            appConfig.getDingtalk().setWebhookUrl(dingtalkWebhookUrl);
+            log.info("启动同步: dingtalk.webhook.url 已加载");
+        }
+        String dingtalkSecret = getString("dingtalk.secret", null);
+        if (dingtalkSecret != null && !dingtalkSecret.isEmpty()) {
+            appConfig.getDingtalk().setSecret(dingtalkSecret);
+        }
     }
 
     /**

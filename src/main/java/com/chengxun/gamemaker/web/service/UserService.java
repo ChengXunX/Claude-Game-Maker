@@ -35,14 +35,17 @@ public class UserService implements UserDetailsService {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final RoleService roleService;
+    private final SystemConfigService configService;
 
     @PersistenceContext
     private EntityManager entityManager;
 
-    public UserService(UserRepository userRepository, PasswordEncoder passwordEncoder, RoleService roleService) {
+    public UserService(UserRepository userRepository, PasswordEncoder passwordEncoder,
+                       RoleService roleService, SystemConfigService configService) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.roleService = roleService;
+        this.configService = configService;
     }
 
     @Override
@@ -51,7 +54,14 @@ public class UserService implements UserDetailsService {
             .orElseThrow(() -> new UsernameNotFoundException("User not found: " + username));
 
         if (user.getStatus() != User.UserStatus.APPROVED) {
-            throw new UsernameNotFoundException("User not approved: " + username);
+            // 根据不同状态抛出不同的错误信息，便于前端展示具体原因
+            String statusMsg = switch (user.getStatus()) {
+                case PENDING -> "PENDING";
+                case REJECTED -> "REJECTED";
+                case DISABLED -> "DISABLED";
+                default -> "NOT_APPROVED";
+            };
+            throw new UsernameNotFoundException(statusMsg + ":" + username);
         }
 
         // 构建权限列表
@@ -81,34 +91,15 @@ public class UserService implements UserDetailsService {
     /**
      * 添加所有具体权限
      * 当用户拥有通配符权限 * 时，需要添加所有具体权限以支持 hasAuthority 检查
+     * 从数据库读取所有角色的权限，确保管理员拥有所有已定义的权限
      */
     private void addAllPermissions(List<SimpleGrantedAuthority> authorities) {
-        String[] allPermissions = {
-            "PERM_agents:manage", "PERM_agents:view", "PERM_agents:task",
-            "PERM_skills:view", "PERM_skills:manage",
-            "PERM_tokens:view", "PERM_tokens:manage",
-            "PERM_projects:view", "PERM_projects:manage",
-            "PERM_system:monitor", "PERM_system:manage", "PERM_system:view",
-            "PERM_system:config", "PERM_system:config:manage", "PERM_system:monitor:manage",
-            "PERM_ai:use", "PERM_ai:admin",
-            "PERM_approval:view", "PERM_approval:manage",
-            "PERM_notification:view", "PERM_notification:manage",
-            "PERM_admin:manage",
-            "PERM_roles:manage",
-            "PERM_users:manage",
-            "PERM_logs:view", "PERM_log:view",
-            "PERM_code:review",
-            "PERM_pipeline:view", "PERM_pipeline:manage", "PERM_pipeline:execute",
-            "PERM_pipeline:approve", "PERM_pipeline:intervene",
-            "PERM_workflow:view", "PERM_workflow:manage",
-            "PERM_dashboard:view",
-            "PERM_terminal:use",
-            "PERM_knowledge:manage",
-            "PERM_agent:view", "PERM_agent:manage"
-        };
-        for (String perm : allPermissions) {
-            if (!authorities.contains(new SimpleGrantedAuthority(perm))) {
-                authorities.add(new SimpleGrantedAuthority(perm));
+        // 从数据库读取所有角色的权限集合
+        java.util.Set<String> allPerms = roleService.getAllPermissionsFromDatabase();
+        for (String perm : allPerms) {
+            String auth = "PERM_" + perm;
+            if (!authorities.contains(new SimpleGrantedAuthority(auth))) {
+                authorities.add(new SimpleGrantedAuthority(auth));
             }
         }
     }
@@ -147,9 +138,15 @@ public class UserService implements UserDetailsService {
             throw new RuntimeException("用户名已存在");
         }
 
-        Role defaultRole = roleService.getRoleByName("USER");
+        // 从配置中心读取默认注册角色，管理员可在配置中心修改
+        String defaultRoleName = configService.getString("user.default.role", "USER");
+        Role defaultRole = roleService.getRoleByName(defaultRoleName);
         if (defaultRole == null) {
-            throw new RuntimeException("默认角色不存在，请联系管理员");
+            // 回退到USER角色
+            defaultRole = roleService.getRoleByName("USER");
+            if (defaultRole == null) {
+                throw new RuntimeException("默认角色不存在，请联系管理员");
+            }
         }
 
         User user = new User();
@@ -161,7 +158,7 @@ public class UserService implements UserDetailsService {
         user.setStatus(User.UserStatus.PENDING);
 
         User saved = userRepository.save(user);
-        log.info("User registered: {} (status: PENDING, role: USER)", username);
+        log.info("User registered: {} (status: PENDING, role: {})", username, defaultRole.getName());
         return saved;
     }
 
@@ -213,6 +210,9 @@ public class UserService implements UserDetailsService {
     public User disableUser(Long userId) {
         User user = userRepository.findById(userId)
             .orElseThrow(() -> new RuntimeException("User not found"));
+        if (user.getRole() != null && "ADMIN".equals(user.getRole().getName())) {
+            throw new RuntimeException("管理员账号不可禁用");
+        }
         user.setStatus(User.UserStatus.DISABLED);
         User saved = userRepository.save(user);
         log.info("User disabled: {}", user.getUsername());
@@ -232,6 +232,9 @@ public class UserService implements UserDetailsService {
     public User updateUserRole(Long userId, Long roleId) {
         User user = userRepository.findById(userId)
             .orElseThrow(() -> new RuntimeException("User not found"));
+        if (user.getRole() != null && "ADMIN".equals(user.getRole().getName())) {
+            throw new RuntimeException("管理员账号不可修改角色");
+        }
 
         Role role = roleService.getRoleById(roleId);
         if (role == null) {
@@ -305,8 +308,12 @@ public class UserService implements UserDetailsService {
         if (nickname != null && !nickname.isBlank()) {
             user.setNickname(nickname);
         }
-        user.setEmail(email);
-        user.setAvatar(avatar);
+        if (email != null) {
+            user.setEmail(email);
+        }
+        if (avatar != null) {
+            user.setAvatar(avatar);
+        }
 
         User saved = userRepository.save(user);
         log.info("User profile updated: {}", user.getUsername());

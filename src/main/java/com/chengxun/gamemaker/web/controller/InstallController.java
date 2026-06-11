@@ -145,7 +145,7 @@ public class InstallController {
     @PostMapping("/save-system")
     public ResponseEntity<?> saveSystem(@RequestBody Map<String, String> request) {
         if (installService.isInstalled()) return gone();
-        installService.saveSystemSettings(request.get("systemName"), request.get("jwtSecret"), request.get("contactLink"));
+        installService.saveSystemSettings(request.get("systemName"), request.get("jwtSecret"), request.get("contactLink"), request.get("contactType"));
         return ResponseEntity.ok(Map.of("success", true, "message", "系统配置已保存"));
     }
 

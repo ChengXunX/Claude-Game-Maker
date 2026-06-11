@@ -84,6 +84,7 @@ const routes = [
         component: () => import('@/views/game-verify/index.vue'),
         meta: { title: '游戏验证', icon: 'Monitor', group: '项目管理', permission: 'projects:view' }
       },
+
       {
         path: 'performance',
         name: 'Performance',
@@ -106,19 +107,19 @@ const routes = [
         path: 'approvals',
         name: 'Approvals',
         component: () => import('@/views/approvals/index.vue'),
-        meta: { title: '审批管理', icon: 'Stamp', group: 'Agent管理', permission: 'agents:manage' }
+        meta: { title: '审批管理', icon: 'Stamp', group: '系统管理', permission: 'agents:manage' }
       },
       {
         path: 'capabilities',
         name: 'Capabilities',
         component: () => import('@/views/capabilities/index.vue'),
-        meta: { title: '能力管理', icon: 'Cpu', group: 'Agent管理', permission: 'agents:view' }
+        meta: { title: '能力管理', icon: 'Cpu', group: '项目管理', permission: 'agents:view' }
       },
       {
         path: 'mcp',
         name: 'MCP',
         component: () => import('@/views/mcp/index.vue'),
-        meta: { title: 'MCP管理', icon: 'Connection', group: 'Agent管理', permission: 'agents:manage' }
+        meta: { title: 'MCP管理', icon: 'Connection', group: '集成配置', permission: 'agents:manage' }
       },
       {
         path: 'context-health',
@@ -277,11 +278,11 @@ const routes = [
         meta: { title: '通知偏好', icon: 'Bell', group: '通知中心' }
       },
 
-      // ===== 系统管理 =====
+      // ===== 团队管理 =====
       {
-        path: 'admin',
-        name: 'Admin',
-        meta: { title: '系统管理', icon: 'Setting', group: '系统管理' },
+        path: 'admin/team',
+        name: 'TeamManagement',
+        meta: { title: '团队管理', icon: 'User', group: '系统管理' },
         children: [
           {
             path: 'users',
@@ -301,6 +302,21 @@ const routes = [
             component: () => import('@/views/admin/pending.vue'),
             meta: { title: '待审批用户', permission: 'users:manage' }
           },
+          {
+            path: 'permissions',
+            name: 'Permissions',
+            component: () => import('@/views/permissions/index.vue'),
+            meta: { title: '权限管理', permission: 'admin:manage' }
+          }
+        ]
+      },
+
+      // ===== 运维工具 =====
+      {
+        path: 'admin/ops',
+        name: 'OpsTools',
+        meta: { title: '运维工具', icon: 'Tools', group: '系统管理' },
+        children: [
           {
             path: 'logs',
             name: 'Logs',
@@ -324,7 +340,16 @@ const routes = [
             name: 'Terminal',
             component: () => import('@/views/terminal/index.vue'),
             meta: { title: '系统终端', permission: 'system:monitor' }
-          },
+          }
+        ]
+      },
+
+      // ===== 系统管理 =====
+      {
+        path: 'admin/system',
+        name: 'SystemSettings',
+        meta: { title: '系统管理', icon: 'Setting', group: '系统管理' },
+        children: [
           {
             path: 'configs',
             name: 'Configs',
@@ -338,22 +363,16 @@ const routes = [
             meta: { title: '系统设置' }
           },
           {
-            path: 'files',
-            name: 'Files',
-            component: () => import('@/views/files/index.vue'),
-            meta: { title: '文件管理', permission: 'agents:view' }
-          },
-          {
             path: 'constants',
             name: 'Constants',
             component: () => import('@/views/constants/index.vue'),
             meta: { title: '系统常量', permission: 'system:view' }
           },
           {
-            path: 'permissions',
-            name: 'Permissions',
-            component: () => import('@/views/permissions/index.vue'),
-            meta: { title: '权限管理', permission: 'admin:manage' }
+            path: 'files',
+            name: 'Files',
+            component: () => import('@/views/files/index.vue'),
+            meta: { title: '文件管理', permission: 'agents:view' }
           },
           {
             path: 'api-docs',

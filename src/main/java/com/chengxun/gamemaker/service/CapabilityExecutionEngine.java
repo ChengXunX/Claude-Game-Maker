@@ -83,6 +83,9 @@ public class CapabilityExecutionEngine {
     @Autowired(required = false)
     private ProjectBoard projectBoard;
 
+    @Autowired(required = false)
+    private VersionIterationService versionIterationService;
+
     /**
      * 能力执行器注册表
      * key: capabilityName
@@ -2670,6 +2673,192 @@ public class CapabilityExecutionEngine {
                 return CapabilityResult.success("解雇申请已提交: " + agentId);
             }
             return CapabilityResult.failed("只有制作人可以发起解雇申请");
+        });
+
+        // ===== 版本迭代能力执行器 =====
+
+        // 评估当前版本
+        executors.put("evaluateVersion", (agent, params) -> {
+            String projectId = getParam(params, "projectId", "");
+            if (projectId.isEmpty()) {
+                projectId = agent instanceof BaseAgent ba && ba.getCurrentProject() != null
+                    ? ba.getCurrentProject().getId() : null;
+            }
+            if (projectId == null) {
+                return CapabilityResult.failed("无法确定项目 ID");
+            }
+
+            if (versionIterationService == null) {
+                return CapabilityResult.failed("版本迭代服务不可用");
+            }
+
+            try {
+                VersionIterationService.VersionEvaluationResult result = versionIterationService.evaluateVersion(projectId);
+                StringBuilder sb = new StringBuilder();
+                sb.append("## 版本评估结果\n\n");
+                sb.append(String.format("- 评分: %d/10\n", result.getScore()));
+                sb.append(String.format("- 是否通过: %s\n", result.isPassed() ? "✅ 通过" : "❌ 未通过"));
+                sb.append(String.format("- 详情: %s\n", result.getDetails()));
+
+                if (!result.getStrengths().isEmpty()) {
+                    sb.append("\n### 优点\n");
+                    result.getStrengths().forEach(s -> sb.append("- ").append(s).append("\n"));
+                }
+                if (!result.getImprovements().isEmpty()) {
+                    sb.append("\n### 待改进\n");
+                    result.getImprovements().forEach(s -> sb.append("- ").append(s).append("\n"));
+                }
+                if (result.getRecommendation() != null) {
+                    sb.append("\n### 建议\n").append(result.getRecommendation()).append("\n");
+                }
+
+                return CapabilityResult.success(sb.toString());
+            } catch (Exception e) {
+                return CapabilityResult.failed("版本评估失败: " + e.getMessage());
+            }
+        });
+
+        // 规划下一版本
+        executors.put("planNextVersion", (agent, params) -> {
+            String projectId = getParam(params, "projectId", "");
+            int currentScore = getIntParam(params, "currentScore", 7);
+
+            if (projectId.isEmpty()) {
+                projectId = agent instanceof BaseAgent ba && ba.getCurrentProject() != null
+                    ? ba.getCurrentProject().getId() : null;
+            }
+            if (projectId == null) {
+                return CapabilityResult.failed("无法确定项目 ID");
+            }
+
+            if (versionIterationService == null) {
+                return CapabilityResult.failed("版本迭代服务不可用");
+            }
+
+            try {
+                // 先评估当前版本
+                VersionIterationService.VersionEvaluationResult evaluation = versionIterationService.evaluateVersion(projectId);
+                evaluation.setScore(currentScore); // 使用传入的分数
+
+                // 规划下一版本
+                VersionIterationService.NextVersionPlan plan = versionIterationService.planNextVersion(projectId, evaluation);
+
+                StringBuilder sb = new StringBuilder();
+                sb.append("## 下一版本规划\n\n");
+                sb.append(String.format("- 是否需要迭代: %s\n", plan.isNeedNextVersion() ? "✅ 是" : "❌ 否"));
+                sb.append(String.format("- 规划理由: %s\n", plan.getReason()));
+
+                if (plan.isNeedNextVersion()) {
+                    sb.append(String.format("- 下一版本: %s\n", plan.getNextVersion()));
+                    if (plan.getNextGoal() != null) {
+                        sb.append(String.format("- 下一版本目标: %s\n", plan.getNextGoal()));
+                    }
+                    if (!plan.getNextMilestones().isEmpty()) {
+                        sb.append("\n### 下一版本里程碑\n");
+                        plan.getNextMilestones().forEach(m -> sb.append("- ").append(m).append("\n"));
+                    }
+                }
+
+                return CapabilityResult.success(sb.toString());
+            } catch (Exception e) {
+                return CapabilityResult.failed("版本规划失败: " + e.getMessage());
+            }
+        });
+
+        // 执行版本升级
+        executors.put("upgradeVersion", (agent, params) -> {
+            String projectId = getParam(params, "projectId", "");
+            String newVersion = getParam(params, "newVersion", "");
+            String newGoal = getParam(params, "newGoal", "");
+            String reason = getParam(params, "reason", "版本迭代");
+
+            if (projectId.isEmpty()) {
+                projectId = agent instanceof BaseAgent ba && ba.getCurrentProject() != null
+                    ? ba.getCurrentProject().getId() : null;
+            }
+            if (projectId == null) {
+                return CapabilityResult.failed("无法确定项目 ID");
+            }
+            if (newVersion.isEmpty()) {
+                return CapabilityResult.failed("新版本号不能为空");
+            }
+
+            if (versionIterationService == null) {
+                return CapabilityResult.failed("版本迭代服务不可用");
+            }
+
+            try {
+                // 构建版本规划
+                VersionIterationService.NextVersionPlan plan = new VersionIterationService.NextVersionPlan();
+                plan.setNeedNextVersion(true);
+                plan.setNextVersion(newVersion);
+                plan.setNextGoal(newGoal);
+                plan.setReason(reason);
+
+                // 执行版本升级
+                boolean success = versionIterationService.upgradeVersion(projectId, plan);
+                if (success) {
+                    return CapabilityResult.success(String.format("版本已升级到 %s，里程碑已重置", newVersion));
+                } else {
+                    return CapabilityResult.failed("版本升级失败");
+                }
+            } catch (Exception e) {
+                return CapabilityResult.failed("版本升级失败: " + e.getMessage());
+            }
+        });
+
+        // 检查版本迭代
+        executors.put("checkVersionIteration", (agent, params) -> {
+            String projectId = getParam(params, "projectId", "");
+            if (projectId.isEmpty()) {
+                projectId = agent instanceof BaseAgent ba && ba.getCurrentProject() != null
+                    ? ba.getCurrentProject().getId() : null;
+            }
+            if (projectId == null) {
+                return CapabilityResult.failed("无法确定项目 ID");
+            }
+
+            if (versionIterationService == null) {
+                return CapabilityResult.failed("版本迭代服务不可用");
+            }
+
+            try {
+                int result = versionIterationService.checkVersionIteration(projectId);
+                String message = switch (result) {
+                    case 0 -> "版本未完成，继续当前工作";
+                    case 1 -> "版本已迭代，创建了新版本";
+                    case 2 -> "目标已完成";
+                    default -> "未知状态";
+                };
+                return CapabilityResult.success(message);
+            } catch (Exception e) {
+                return CapabilityResult.failed("检查版本迭代失败: " + e.getMessage());
+            }
+        });
+
+        // 停止项目内所有Agent
+        executors.put("stopAllProjectAgents", (agent, params) -> {
+            String projectId = getParam(params, "projectId", "");
+            String reason = getParam(params, "reason", "目标完成");
+
+            if (projectId.isEmpty()) {
+                projectId = agent instanceof BaseAgent ba && ba.getCurrentProject() != null
+                    ? ba.getCurrentProject().getId() : null;
+            }
+            if (projectId == null) {
+                return CapabilityResult.failed("无法确定项目 ID");
+            }
+
+            if (versionIterationService == null) {
+                return CapabilityResult.failed("版本迭代服务不可用");
+            }
+
+            try {
+                int stoppedCount = versionIterationService.stopAllProjectAgents(projectId);
+                return CapabilityResult.success(String.format("已停止 %d 个项目 Agent，原因: %s", stoppedCount, reason));
+            } catch (Exception e) {
+                return CapabilityResult.failed("停止项目 Agent 失败: " + e.getMessage());
+            }
         });
 
         log.info("Registered {} default capability executors", executors.size());

@@ -411,6 +411,17 @@ public abstract class BaseAgent implements Agent {
             messageBus.registerAgent(this);
         }
 
+        // 【重要】检查是否有旧的上下文需要恢复
+        // 如果 Agent 重启，应该恢复之前的工作上下文，避免丢失状态
+        if (agentContext != null && agentContext.getSessionId() != null) {
+            log.info("检测到旧的会话上下文，尝试恢复: sessionId={}", agentContext.getSessionId());
+            try {
+                recoverContextInternal();
+            } catch (Exception e) {
+                log.warn("恢复上下文失败，将开始新的对话: {}", e.getMessage());
+            }
+        }
+
         // 开始新的对话
         startNewConversation();
 
@@ -915,6 +926,7 @@ public abstract class BaseAgent implements Agent {
     public void saveContext() {
         agentContext.setWorkDir(definition.getWorkDir());
         agentContext.setSessionId(definition.getSessionId());
+        agentContext.setReasoningDepth(definition.getReasoningDepth());
         contextManager.saveContext(agentContext, currentProject);
     }
 
@@ -924,6 +936,9 @@ public abstract class BaseAgent implements Agent {
         if (agentContext != null) {
             definition.setSessionId(agentContext.getSessionId());
             definition.setWorkDir(agentContext.getWorkDir());
+            if (agentContext.getReasoningDepth() != null) {
+                definition.setReasoningDepth(agentContext.getReasoningDepth());
+            }
         }
     }
 
@@ -1165,6 +1180,164 @@ public abstract class BaseAgent implements Agent {
             reviewResult.length() > 500 ? reviewResult.substring(0, 500) + "..." : reviewResult
         );
         saveExperience(recordKey, recordValue);
+    }
+
+    // ===== 结构化协作协议 =====
+
+    /**
+     * 发送结构化任务请求
+     * 标准化的任务分配格式，让接收方明确知道要做什么
+     *
+     * @param targetAgentId 目标Agent
+     * @param taskTitle 任务标题
+     * @param taskDescription 任务描述
+     * @param acceptanceCriteria 验收标准
+     * @param priority 优先级（HIGH/MEDIUM/LOW）
+     * @param dependencies 依赖任务
+     */
+    public void sendStructuredTask(String targetAgentId, String taskTitle, String taskDescription,
+                                   String acceptanceCriteria, String priority, String dependencies) {
+        String structuredContent = String.format(
+            "【结构化任务请求】\n\n" +
+            "任务ID: %s\n" +
+            "任务标题: %s\n" +
+            "优先级: %s\n" +
+            "依赖: %s\n\n" +
+            "## 任务描述\n%s\n\n" +
+            "## 验收标准\n%s\n\n" +
+            "## 注意事项\n" +
+            "- 请按验收标准逐项完成\n" +
+            "- 完成后请发送结构化完成报告\n" +
+            "- 如遇阻塞请及时上报",
+            java.util.UUID.randomUUID().toString().substring(0, 8),
+            taskTitle,
+            priority != null ? priority : "MEDIUM",
+            dependencies != null ? dependencies : "无",
+            taskDescription,
+            acceptanceCriteria
+        );
+
+        AgentMessage message = AgentMessage.builder()
+            .fromAgentId(getId())
+            .toAgentId(targetAgentId)
+            .type(AgentMessage.MessageType.TASK)
+            .content(structuredContent)
+            .build();
+        sendMessage(message);
+        log.info("已发送结构化任务: {} -> {}", getId(), targetAgentId);
+    }
+
+    /**
+     * 发送结构化完成报告
+     * 标准化的任务完成报告格式
+     *
+     * @param taskTitle 任务标题
+     * @param completedCriteria 已完成的验收标准
+     * @param output 输出产物
+     * @param issues 遇到的问题
+     */
+    public void sendStructuredCompletion(String taskTitle, String completedCriteria,
+                                         String output, String issues) {
+        String structuredContent = String.format(
+            "【结构化完成报告】\n\n" +
+            "任务标题: %s\n" +
+            "完成时间: %s\n\n" +
+            "## 验收标准完成情况\n%s\n\n" +
+            "## 输出产物\n%s\n\n" +
+            "## 遇到的问题\n%s",
+            taskTitle,
+            java.time.LocalDateTime.now(),
+            completedCriteria,
+            output,
+            issues != null ? issues : "无"
+        );
+
+        // 发送给ProducerAgent
+        String producerId = getProjectId() + ":producer";
+        AgentMessage message = AgentMessage.builder()
+            .fromAgentId(getId())
+            .toAgentId(producerId)
+            .type(AgentMessage.MessageType.REPORT)
+            .content(structuredContent)
+            .build();
+        sendMessage(message);
+        log.info("已发送结构化完成报告: {}", taskTitle);
+    }
+
+    /**
+     * 发送结构化阻塞报告
+     * 当任务遇到阻塞时的标准报告格式
+     *
+     * @param taskTitle 任务标题
+     * @param blocker 阻塞原因
+     * @param impact 影响范围
+     * @param suggestion 建议解决方案
+     */
+    public void sendStructuredBlocker(String taskTitle, String blocker, String impact, String suggestion) {
+        String structuredContent = String.format(
+            "【结构化阻塞报告】\n\n" +
+            "任务标题: %s\n" +
+            "报告时间: %s\n" +
+            "严重级别: HIGH\n\n" +
+            "## 阻塞原因\n%s\n\n" +
+            "## 影响范围\n%s\n\n" +
+            "## 建议解决方案\n%s\n\n" +
+            "## 需要的支持\n" +
+            "- 请尽快处理阻塞问题\n" +
+            "- 如需要其他Agent协助请指定",
+            taskTitle,
+            java.time.LocalDateTime.now(),
+            blocker,
+            impact,
+            suggestion
+        );
+
+        // 发送给ProducerAgent
+        String producerId = getProjectId() + ":producer";
+        AgentMessage message = AgentMessage.builder()
+            .fromAgentId(getId())
+            .toAgentId(producerId)
+            .type(AgentMessage.MessageType.SYSTEM)
+            .content(structuredContent)
+            .priority(8) // 高优先级
+            .build();
+        sendMessage(message);
+        log.warn("已发送结构化阻塞报告: {}", taskTitle);
+    }
+
+    /**
+     * 发送结构化验证请求
+     * 请求验证某个任务或里程碑的完成情况
+     *
+     * @param targetAgentId 目标Agent（通常是verifier）
+     * @param milestoneId 里程碑ID
+     * @param verificationCriteria 验证标准
+     * @param currentOutput 当前输出
+     */
+    public void sendStructuredVerificationRequest(String targetAgentId, String milestoneId,
+                                                   String verificationCriteria, String currentOutput) {
+        String structuredContent = String.format(
+            "【结构化验证请求】\n\n" +
+            "里程碑ID: %s\n" +
+            "请求时间: %s\n\n" +
+            "## 验证标准\n%s\n\n" +
+            "## 当前输出\n%s\n\n" +
+            "## 请求\n" +
+            "请验证以上输出是否满足验证标准，并给出通过/不通过的判断和改进建议。",
+            milestoneId,
+            java.time.LocalDateTime.now(),
+            verificationCriteria,
+            currentOutput
+        );
+
+        AgentMessage message = AgentMessage.builder()
+            .fromAgentId(getId())
+            .toAgentId(targetAgentId)
+            .type(AgentMessage.MessageType.TASK)
+            .content(structuredContent)
+            .build();
+        sendMessage(message);
+        log.info("已发送结构化验证请求: milestone={}", milestoneId);
     }
 
     // ===== 上下文压缩和恢复 =====

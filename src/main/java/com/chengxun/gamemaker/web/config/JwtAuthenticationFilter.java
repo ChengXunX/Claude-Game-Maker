@@ -113,12 +113,26 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 return;
             }
 
-            // 检查用户状态是否为已禁用
+            // 检查用户状态（禁用/拒绝/待审核均不允许访问）
             try {
                 User user = userService.getUserByUsername(username);
-                if (user == null || user.getStatus() == User.UserStatus.DISABLED) {
-                    log.warn("用户已被禁用或不存在: {}", username);
+                if (user == null) {
+                    log.warn("用户不存在: {}", username);
                     SecurityContextHolder.clearContext();
+                    filterChain.doFilter(request, response);
+                    return;
+                }
+                if (user.getStatus() != User.UserStatus.APPROVED) {
+                    String statusMsg = switch (user.getStatus()) {
+                        case DISABLED -> "账号已被禁用，请联系管理员";
+                        case REJECTED -> "账号审核未通过，请联系管理员";
+                        case PENDING -> "账号正在审核中，请等待管理员审核";
+                        default -> "账号状态异常，请联系管理员";
+                    };
+                    log.warn("用户状态异常: {} - {}", username, user.getStatus());
+                    SecurityContextHolder.clearContext();
+                    // 通过 request attribute 传递错误信息，避免直接写响应导致 Session 冲突
+                    request.setAttribute("ACCOUNT_STATUS_ERROR", statusMsg);
                     filterChain.doFilter(request, response);
                     return;
                 }

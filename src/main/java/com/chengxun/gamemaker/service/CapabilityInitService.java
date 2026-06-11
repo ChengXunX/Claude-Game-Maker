@@ -49,6 +49,7 @@ public class CapabilityInitService {
         initNumericalPlannerCapabilities();
         initGitCommitCapabilities();
         initUiDevCapabilities();
+        initVerifierCapabilities();
         // 新增角色
         initTesterCapabilities();
         initSecurityExpertCapabilities();
@@ -109,6 +110,14 @@ public class CapabilityInitService {
         save(role, "optimizeAgentRole", "优化成员能力", "根据项目进展优化 Agent 的能力组合和工作方式",
             "team_management", false, null, ++priority,
             "{\"agentId\":\"string|required\",\"optimizationType\":\"enum:capabilities,workflow,focus|required\",\"reason\":\"string\"}");
+
+        save(role, "addAgentCapability", "追加Agent能力", "为项目下的 Agent 追加已有的系统能力，扩展其工作范围",
+            "team_management", false, null, ++priority,
+            "{\"agentId\":\"string|required\",\"capabilityName\":\"string|required\",\"reason\":\"string\"}");
+
+        save(role, "createAgentCapability", "新建Agent能力", "为项目下的 Agent 创建全新的自定义能力（Prompt类型），支持特定场景的定制化需求",
+            "team_management", false, null, ++priority,
+            "{\"agentId\":\"string|required\",\"capabilityName\":\"string|required\",\"displayName\":\"string|required\",\"description\":\"string|required\",\"promptTemplate\":\"string|required\",\"paramSchema\":\"string\"}");
 
         save(role, "evaluateAgentPerformance", "评估成员绩效", "定期评估 Agent 的工作表现，提供反馈和改进建议",
             "team_management", false, null, ++priority,
@@ -320,6 +329,36 @@ public class CapabilityInitService {
             "budget", false, null, ++priority,
             "{\"resourceType\":\"enum:api,compute,storage,bandwidth\",\"analysisPeriod\":\"string\"}");
 
+        // ===== 13. 游戏设计评审类 =====
+
+        save(role, "reviewGameDesign", "审查游戏设计", "审查游戏设计方案的完整性、可行性和创新性，提供专业反馈",
+            "design_review", false, null, ++priority,
+            "{\"designType\":\"enum:system,level,numerical,ui,narrative|required\",\"designName\":\"string|required\",\"focus\":\"string\"}");
+
+        save(role, "analyzeGameplayLoop", "分析核心循环", "分析游戏核心循环的合理性，评估留存和心流设计",
+            "design_review", false, null, ++priority,
+            "{\"loopType\":\"enum:short,mid,long|required\",\"description\":\"string\"}");
+
+        // ===== 14. 团队健康监控类 =====
+
+        save(role, "monitorTeamHealth", "监控团队健康", "分析团队成员工作负载、空闲率和协作效率，识别潜在问题",
+            "team_management", false, null, ++priority,
+            "{\"metrics\":\"enum:workload,idle_rate,blockers,collaboration\",\"period\":\"string\"}");
+
+        save(role, "conductRetrospective", "回顾分析", "对已完成的里程碑进行回顾分析，总结经验教训和改进点",
+            "team_management", false, null, ++priority,
+            "{\"milestoneId\":\"string|required\",\"scope\":\"enum:process,technical,team\"}");
+
+        // ===== 15. 工作流优化类 =====
+
+        save(role, "optimizeWorkflow", "优化工作流", "分析当前工作流瓶颈，提出优化方案并实施改进",
+            "project_management", false, null, ++priority,
+            "{\"workflowType\":\"enum:development,review,deployment,testing|required\",\"optimizationGoal\":\"string\"}");
+
+        save(role, "defineQualityGate", "定义质量门禁", "为项目阶段定义质量门禁标准，确保交付质量",
+            "quality_control", false, null, ++priority,
+            "{\"gateType\":\"enum:code_review,testing,security,performance|required\",\"criteria\":\"string|required\"}");
+
         log.info("Producer capabilities initialized: {}", priority);
     }
 
@@ -364,6 +403,23 @@ public class CapabilityInitService {
             "communication", false, null, 30,
             "{\"taskId\":\"string\",\"progress\":\"string|required\"}");
 
+        // API 设计与文档能力
+        save(role, "generateApiDoc", "生成 API 文档", "根据代码自动生成 API 接口文档",
+            "code", false, null, 6,
+            "{\"targetPath\":\"string\",\"format\":\"enum:openapi,markdown\"}");
+
+        save(role, "planDatabaseMigration", "数据库迁移规划", "规划数据库迁移方案，评估风险和回滚策略",
+            "code", false, null, 7,
+            "{\"migrationType\":\"enum:schema_change,data_migration,index_optimize|required\",\"description\":\"string\"}");
+
+        save(role, "scanDependencies", "依赖安全扫描", "扫描项目依赖的安全漏洞和版本风险",
+            "code", false, null, 8,
+            "{\"scope\":\"enum:all,new,changed\",\"severity\":\"enum:critical,high,medium,low\"}");
+
+        save(role, "optimizeQuery", "SQL 查询优化", "分析和优化 SQL 查询性能",
+            "code", false, null, 9,
+            "{\"targetPath\":\"string\",\"queryType\":\"enum:select,join,aggregate\"}");
+
         log.info("ServerDev capabilities initialized");
     }
 
@@ -396,7 +452,28 @@ public class CapabilityInitService {
             "project_management", false, null, 6,
             "{\"milestoneId\":\"string|required\",\"milestoneTitle\":\"string|required\",\"milestoneDescription\":\"string\",\"goal\":\"string\"}");
 
-        log.info("SystemPlanner capabilities initialized: 6");
+        save(role, "decomposeTasks", "分解任务", "将里程碑分解为具体可执行的任务，包含输入/输出/验收标准",
+            "project_management", false, null, 6,
+            "{\"milestoneId\":\"string|required\",\"milestoneTitle\":\"string|required\",\"milestoneDescription\":\"string\",\"goal\":\"string\"}");
+
+        // 竞品分析与设计增强能力
+        save(role, "analyzeCompetitorDesign", "竞品设计分析", "分析同类游戏的系统设计优劣，提取可借鉴的设计模式",
+            "task", false, null, 7,
+            "{\"competitors\":\"string|required\",\"focus\":\"enum:core_loop,progression,monetization,social,ui_ux\"}");
+
+        save(role, "mapUserJourney", "用户旅程映射", "设计完整的用户旅程，从新手到核心玩家的成长路径",
+            "task", false, null, 8,
+            "{\"persona\":\"string|required\",\"journeyScope\":\"enum:onboarding,core_loop,endgame,monetization\"}");
+
+        save(role, "mapSystemDependencies", "系统依赖映射", "分析各系统间的依赖关系，识别耦合点和潜在冲突",
+            "task", false, null, 9,
+            "{\"scope\":\"enum:all,core,combat,economy,social\"}");
+
+        save(role, "analyzePlayerPsychology", "玩家心理分析", "运用心理学原理分析玩家动机、留存驱动和付费心理",
+            "task", false, null, 10,
+            "{\"playerType\":\"enum:achiever,explorer,socializer,killer\",\"analysisFocus\":\"enum:retention,monetization,engagement\"}");
+
+        log.info("SystemPlanner capabilities initialized: 10");
     }
 
     // ===== NumericalPlanner 能力集 =====
@@ -420,7 +497,28 @@ public class CapabilityInitService {
             "communication", false, null, 4,
             "{\"taskId\":\"string\",\"progress\":\"string|required\"}");
 
-        log.info("NumericalPlanner capabilities initialized: 4");
+        // 数值分析增强能力
+        save(role, "runSimulation", "数值仿真", "模拟玩家行为，预测数值走势和极端情况",
+            "task", false, null, 5,
+            "{\"simulationType\":\"enum:combat,economy,progression,gacha\",\"playerCount\":\"number\",\"duration\":\"string\"}");
+
+        save(role, "analyzeStatistics", "统计分析", "对数值设计进行统计分析，检测异常值和分布问题",
+            "task", false, null, 6,
+            "{\"dataType\":\"enum:damage,health,economy,drop_rate\",\"analysisType\":\"enum:distribution,outlier,trend\"}");
+
+        save(role, "visualizeEconomyFlow", "经济流可视化", "生成游戏经济系统的产出/消耗流向图",
+            "task", false, null, 7,
+            "{\"currencyType\":\"string\",\"scope\":\"enum:daily,weekly,monthly,full\"}");
+
+        save(role, "optimizeGachaProbability", "抽卡概率优化", "优化抽卡/扭蛋概率，平衡玩家体验和商业目标",
+            "task", false, null, 8,
+            "{\"gachaType\":\"string|required\",\"pity\":\"boolean\",\"targetRevenue\":\"string\"}");
+
+        save(role, "analyzeProgressionCurve", "进阶曲线分析", "分析玩家进阶曲线，检测卡点和断崖",
+            "task", false, null, 9,
+            "{\"progressionType\":\"enum:level,skill,equipment,castle\",\"maxLevel\":\"number\"}");
+
+        log.info("NumericalPlanner capabilities initialized: 9");
     }
 
     // ===== GitCommit 能力集 =====
@@ -448,7 +546,24 @@ public class CapabilityInitService {
             "communication", false, null, 5,
             "{\"taskId\":\"string\",\"progress\":\"string|required\"}");
 
-        log.info("GitCommit capabilities initialized: 5");
+        // Git 管理增强能力
+        save(role, "manageBranchStrategy", "分支策略管理", "管理 Git 分支策略，确保代码流清晰有序",
+            "task", false, null, 6,
+            "{\"action\":\"enum:create,merge,delete,list\",\"branchType\":\"enum:feature,release,hotfix\",\"branchName\":\"string\"}");
+
+        save(role, "generateReleaseNotes", "生成发布说明", "根据提交记录自动生成版本发布说明",
+            "task", false, null, 7,
+            "{\"fromTag\":\"string\",\"toTag\":\"string\",\"format\":\"enum:markdown,html\"}");
+
+        save(role, "trackCodeOwnership", "代码所有权追踪", "追踪代码文件的主要贡献者和审查者",
+            "task", false, null, 8,
+            "{\"targetPath\":\"string\",\"depth\":\"enum:file,directory,module\"}");
+
+        save(role, "resolveMergeConflict", "合并冲突指导", "提供合并冲突的解决建议和最佳实践",
+            "task", false, null, 9,
+            "{\"conflictFiles\":\"string\",\"strategy\":\"enum:accept_theirs,accept_ours,manual\"}");
+
+        log.info("GitCommit capabilities initialized: 9");
     }
 
     // ===== UiDev 能力集 =====
@@ -472,7 +587,24 @@ public class CapabilityInitService {
             "communication", false, null, 4,
             "{\"taskId\":\"string\",\"progress\":\"string|required\"}");
 
-        log.info("UiDev capabilities initialized: 4");
+        // UI 增强能力
+        save(role, "manageDesignSystem", "设计系统管理", "管理和维护统一的设计系统，包括组件库、颜色、字体等",
+            "task", false, null, 5,
+            "{\"action\":\"enum:create,update,audit,export\",\"scope\":\"enum:colors,typography,spacing,components\"}");
+
+        save(role, "manageAnimationLibrary", "动画库管理", "管理和优化 UI 动画库，确保流畅的交互体验",
+            "task", false, null, 6,
+            "{\"action\":\"enum:create,optimize,audit\",\"animationType\":\"enum:transition,micro_interaction,loading,feedback\"}");
+
+        save(role, "auditAccessibility", "无障碍审计", "审计 UI 的无障碍支持，确保可访问性标准",
+            "task", false, null, 7,
+            "{\"standard\":\"enum:wcag_a,wcag_aa,wcag_aaa\",\"scope\":\"enum:full,page,component\"}");
+
+        save(role, "designThemeSystem", "主题系统设计", "设计和实现多主题切换系统",
+            "task", false, null, 8,
+            "{\"themeType\":\"enum:dark_mode,seasonal,custom\",\"scope\":\"enum:colors,components,full\"}");
+
+        log.info("UiDev capabilities initialized: 8");
     }
 
     // ===== Tester 能力集 =====
@@ -520,6 +652,27 @@ public class CapabilityInitService {
             "communication", false, null, 30,
             "{\"taskId\":\"string\",\"progress\":\"string|required\"}");
 
+        // 测试增强能力
+        save(role, "runPerformanceTest", "性能测试", "执行游戏性能测试，包括帧率、内存、加载时间等",
+            "testing", false, null, 30,
+            "{\"testType\":\"enum:fps,memory,load_time,network\",\"target\":\"string\",\"duration\":\"string\"}");
+
+        save(role, "runSecurityTest", "安全测试", "执行安全测试，检测常见漏洞",
+            "testing", false, null, 31,
+            "{\"scanType\":\"enum:sql_injection,xss,csrf,auth,api\",\"target\":\"string\"}");
+
+        save(role, "generateTestData", "测试数据生成", "生成测试数据，覆盖边界条件和异常场景",
+            "testing", false, null, 32,
+            "{\"dataType\":\"enum:user,game_data,transaction,edge_case\",\"count\":\"number\"}");
+
+        save(role, "manageTestEnvironment", "测试环境管理", "管理测试环境的配置和状态",
+            "testing", false, null, 33,
+            "{\"action\":\"enum:create,reset,configure,status\",\"environment\":\"enum:dev,staging,qa\"}");
+
+        save(role, "manageRegressionSuite", "回归测试套件", "管理和执行回归测试套件",
+            "testing", false, null, 34,
+            "{\"action\":\"enum:create,run,update,report\",\"scope\":\"enum:smoke,full,critical\"}");
+
         log.info("Tester capabilities initialized");
     }
 
@@ -556,7 +709,24 @@ public class CapabilityInitService {
             "communication", false, null, 7,
             "{\"taskId\":\"string\",\"progress\":\"string|required\"}");
 
-        log.info("SecurityExpert capabilities initialized: 7");
+        // 安全增强能力
+        save(role, "buildThreatModel", "威胁建模", "对系统进行威胁建模，识别攻击面和潜在威胁",
+            "task", false, null, 8,
+            "{\"scope\":\"enum:full,api,auth,data,infrastructure\",\"methodology\":\"enum:stride,kill_chain,owasp\"}");
+
+        save(role, "auditCompliance", "合规审计", "审计系统是否符合安全合规要求",
+            "task", false, null, 9,
+            "{\"standard\":\"enum:gdpr,pci_dss,iso27001,owasp_top10\",\"scope\":\"string\"}");
+
+        save(role, "createSecurityTraining", "安全培训材料", "创建安全培训材料和最佳实践指南",
+            "task", false, null, 10,
+            "{\"topic\":\"enum:secure_coding,phishing,data_protection,incident_response\",\"audience\":\"enum:developer,qa,all\"}");
+
+        save(role, "handleSecurityIncident", "安全事件响应", "处理安全事件，制定响应和恢复方案",
+            "communication", true, "SECURITY_INCIDENT", 11,
+            "{\"incidentType\":\"enum:data_breach,unauthorized_access,malware,ddos\",\"severity\":\"enum:critical,high,medium,low|required\",\"description\":\"string|required\"}");
+
+        log.info("SecurityExpert capabilities initialized: 11");
     }
 
     // ===== DataAnalyst 能力集 =====
@@ -596,7 +766,20 @@ public class CapabilityInitService {
             "communication", false, null, 8,
             "{\"taskId\":\"string\",\"progress\":\"string|required\"}");
 
-        log.info("DataAnalyst capabilities initialized: 8");
+        // 数据分析增强能力
+        save(role, "buildPredictiveModel", "预测建模", "构建用户流失、付费等预测模型",
+            "task", false, null, 9,
+            "{\"modelType\":\"enum:churn_prediction,ltv_prediction,segmentation\",\"targetMetric\":\"string\"}");
+
+        save(role, "manageDataQuality", "数据质量管理", "监控数据质量，识别数据异常和缺失",
+            "task", false, null, 10,
+            "{\"dataSource\":\"string\",\"checkType\":\"enum:completeness,accuracy,consistency,freshness\"}");
+
+        save(role, "designFunnelOptimization", "漏斗优化", "分析转化漏斗，识别流失环节并提出优化方案",
+            "task", false, null, 11,
+            "{\"funnelType\":\"enum:onboarding,purchase,engagement,retention\",\"stage\":\"string\"}");
+
+        log.info("DataAnalyst capabilities initialized: 11");
     }
 
     // ===== TechArtist 能力集 =====
@@ -628,7 +811,20 @@ public class CapabilityInitService {
             "communication", false, null, 6,
             "{\"taskId\":\"string\",\"progress\":\"string|required\"}");
 
-        log.info("TechArtist capabilities initialized: 6");
+        // 技术美术增强能力
+        save(role, "optimizeAssetPipeline", "资产管线优化", "优化美术资产的导入、处理和加载流程",
+            "task", false, null, 7,
+            "{\"assetType\":\"enum:texture,mesh,animation,material\",\"optimization\":\"enum:size,load_time,quality\"}");
+
+        save(role, "generateLOD", "LOD 自动生成", "为 3D 模型自动生成多级细节层次",
+            "task", false, null, 8,
+            "{\"targetPath\":\"string\",\"lodLevels\":\"number\",\"distanceThresholds\":\"string\"}");
+
+        save(role, "createBatchProcessor", "批处理工具", "创建批量处理工具，自动化重复性美术工作",
+            "task", false, null, 9,
+            "{\"processorType\":\"enum:texture_resize,format_convert,naming_convention,atlas_packing\",\"inputPath\":\"string\"}");
+
+        log.info("TechArtist capabilities initialized: 9");
     }
 
     // ===== ProductManager 能力集 =====
@@ -664,7 +860,20 @@ public class CapabilityInitService {
             "communication", false, null, 7,
             "{\"taskId\":\"string\",\"progress\":\"string|required\"}");
 
-        log.info("ProductManager capabilities initialized: 7");
+        // 产品经理增强能力
+        save(role, "mapUserStory", "用户故事映射", "创建完整的用户故事地图，梳理功能全景",
+            "task", false, null, 8,
+            "{\"persona\":\"string|required\",\"scope\":\"enum:full_feature,release,mvp\"}");
+
+        save(role, "planRoadmap", "路线图规划", "制定产品路线图，规划版本节奏",
+            "task", false, null, 9,
+            "{\"timeHorizon\":\"enum:quarter,half_year,year\",\"focus\":\"enum:features,tech_debt,growth\"}");
+
+        save(role, "defineOKR", "OKR 制定", "制定产品 OKR，对齐团队目标",
+            "task", false, null, 10,
+            "{\"objective\":\"string|required\",\"keyResults\":\"string\",\"period\":\"enum:quarter,month\"}");
+
+        log.info("ProductManager capabilities initialized: 10");
     }
 
     // ===== Localization 能力集 =====
@@ -696,7 +905,16 @@ public class CapabilityInitService {
             "communication", false, null, 6,
             "{\"taskId\":\"string\",\"progress\":\"string|required\"}");
 
-        log.info("Localization capabilities initialized: 6");
+        // 本地化增强能力
+        save(role, "manageTranslationMemory", "翻译记忆库", "管理翻译记忆库，提高翻译效率和一致性",
+            "task", false, null, 7,
+            "{\"action\":\"enum:add,query,export,import\",\"sourceLang\":\"string\",\"targetLang\":\"string\"}");
+
+        save(role, "auditCulturalSensitivity", "文化敏感审核", "审核内容的文化敏感性，避免文化冲突",
+            "task", false, null, 8,
+            "{\"targetRegion\":\"string\",\"contentType\":\"enum:text,image,audio,ui\",\"riskLevel\":\"enum:high,medium,low\"}");
+
+        log.info("Localization capabilities initialized: 8");
     }
 
     // ===== AiEngineer 能力集 =====
@@ -728,7 +946,20 @@ public class CapabilityInitService {
             "communication", false, null, 6,
             "{\"taskId\":\"string\",\"progress\":\"string|required\"}");
 
-        log.info("AiEngineer capabilities initialized: 6");
+        // AI 工程增强能力
+        save(role, "evaluateModel", "模型评估", "评估 AI 模型的性能和效果",
+            "task", false, null, 7,
+            "{\"modelType\":\"enum:behavior_tree,pathfinding,dialogue,recommendation\",\"metrics\":\"enum:accuracy,speed,memory\"}");
+
+        save(role, "optimizeInference", "推理优化", "优化 AI 推理性能，降低计算开销",
+            "task", false, null, 8,
+            "{\"target\":\"enum:behavior_tree,pathfinding,dialogue\",\"technique\":\"enum:caching,quantization,pruning,batching\"}");
+
+        save(role, "auditAISafety", "AI 安全审计", "审计 AI 系统的安全性和公平性",
+            "task", false, null, 9,
+            "{\"scope\":\"enum:behavior,dialogue,recommendation\",\"concern\":\"enum:safety,fairness,transparency\"}");
+
+        log.info("AiEngineer capabilities initialized: 9");
     }
 
     // ===== PerformanceEngineer 能力集 =====
@@ -764,7 +995,20 @@ public class CapabilityInitService {
             "communication", false, null, 7,
             "{\"taskId\":\"string\",\"progress\":\"string|required\"}");
 
-        log.info("PerformanceEngineer capabilities initialized: 7");
+        // 性能工程增强能力
+        save(role, "setupDistributedTracing", "分布式追踪", "配置分布式追踪系统，定位跨服务性能问题",
+            "task", false, null, 8,
+            "{\"system\":\"enum:jaeger,zipkin,skywalking\",\"scope\":\"enum:full,critical_path\"}");
+
+        save(role, "planCapacity", "容量规划", "根据业务增长预测进行容量规划",
+            "task", false, null, 9,
+            "{\"metric\":\"enum:qps,storage,bandwidth,concurrent_users\",\"timeHorizon\":\"enum:month,quarter,year\"}");
+
+        save(role, "defineSLA", "SLA 制定", "制定服务级别协议和性能基准",
+            "task", false, null, 10,
+            "{\"service\":\"string|required\",\"availability\":\"string\",\"responseTime\":\"string\"}");
+
+        log.info("PerformanceEngineer capabilities initialized: 10");
     }
 
     // ===== AudioDev 能力集 =====
@@ -796,7 +1040,20 @@ public class CapabilityInitService {
             "communication", false, null, 6,
             "{\"taskId\":\"string\",\"progress\":\"string|required\"}");
 
-        log.info("AudioDev capabilities initialized: 6");
+        // 音频增强能力
+        save(role, "designAdaptiveMusic", "自适应音乐系统", "设计根据游戏状态动态切换的音乐系统",
+            "task", false, null, 7,
+            "{\"scene\":\"string\",\"states\":\"string\",\"transitionType\":\"enum:crossfade,layer,switch\"}");
+
+        save(role, "designSpatialAudio", "空间音频设计", "设计 3D 空间音频方案，增强沉浸感",
+            "task", false, null, 8,
+            "{\"environment\":\"enum:indoor,outdoor,underwater,urban\",\"features\":\"enum:reverb,occlusion,doppler\"}");
+
+        save(role, "designAudioEventSystem", "音频事件系统", "设计事件驱动的音频触发系统",
+            "task", false, null, 9,
+            "{\"eventSource\":\"enum:gameplay,ui,environment,character\",\"priority\":\"enum:high,medium,low\"}");
+
+        log.info("AudioDev capabilities initialized: 9");
     }
 
     // ===== NarrativePlanner 能力集 =====
@@ -832,7 +1089,20 @@ public class CapabilityInitService {
             "communication", false, null, 7,
             "{\"taskId\":\"string\",\"progress\":\"string|required\"}");
 
-        log.info("NarrativePlanner capabilities initialized: 7");
+        // 剧情增强能力
+        save(role, "designBranchingNarrative", "分支叙事设计", "设计多分支叙事结构，支持玩家选择影响剧情",
+            "task", false, null, 8,
+            "{\"branchPoint\":\"string\",\"options\":\"string\",\"consequences\":\"string\"}");
+
+        save(role, "mapCharacterRelationships", "角色关系图", "设计和维护角色关系网络图",
+            "task", false, null, 9,
+            "{\"scope\":\"enum:main_cast,full_world,faction\",\"relationshipType\":\"enum:ally,rival,romance,family\"}");
+
+        save(role, "checkDialogueConsistency", "对话一致性检查", "检查对话内容与角色设定的一致性",
+            "task", false, null, 10,
+            "{\"character\":\"string\",\"targetPath\":\"string\",\"checkType\":\"enum:personality,lore,tone\"}");
+
+        log.info("NarrativePlanner capabilities initialized: 10");
     }
 
     // ===== LevelDesign 能力集 =====
@@ -868,7 +1138,20 @@ public class CapabilityInitService {
             "communication", false, null, 7,
             "{\"taskId\":\"string\",\"progress\":\"string|required\"}");
 
-        log.info("LevelDesign capabilities initialized: 7");
+        // 关卡设计增强能力
+        save(role, "generateProceduralLevel", "程序化关卡生成", "使用算法生成关卡布局和内容",
+            "task", false, null, 8,
+            "{\"algorithm\":\"enum:random_walk,cellular_automata,grammar,constraint\",\"constraints\":\"string\"}");
+
+        save(role, "analyzeHeatmap", "热力图分析", "分析玩家在关卡中的行为热力图，优化布局",
+            "task", false, null, 9,
+            "{\"levelId\":\"string\",\"metric\":\"enum:movement,death,engagement,time_spent\"}");
+
+        save(role, "automateLevelTest", "关卡自动化测试", "自动化测试关卡的可通关性和平衡性",
+            "task", false, null, 10,
+            "{\"levelId\":\"string\",\"testType\":\"enum:completion,performance,bug_detection\",\"iterations\":\"number\"}");
+
+        log.info("LevelDesign capabilities initialized: 10");
     }
 
     // ===== DevOps 能力集 =====
@@ -908,7 +1191,24 @@ public class CapabilityInitService {
             "communication", false, null, 8,
             "{\"taskId\":\"string\",\"progress\":\"string|required\"}");
 
-        log.info("DevOps capabilities initialized: 8");
+        // 运维增强能力
+        save(role, "setupIaC", "基础设施即代码", "使用 Terraform/Pulumi 管理基础设施",
+            "task", false, null, 9,
+            "{\"tool\":\"enum:terraform,pulumi,cloudformation\",\"scope\":\"enum:compute,storage,network,full\"}");
+
+        save(role, "setupObservability", "可观测性工程", "配置日志、指标、追踪三位一体的可观测性系统",
+            "task", false, null, 10,
+            "{\"components\":\"enum:logs,metrics,traces\",\"tool\":\"enum:prometheus,grafana,elk,jaeger\"}");
+
+        save(role, "handleIncident", "事故响应", "处理生产环境事故，执行应急响应流程",
+            "communication", true, "INCIDENT", 11,
+            "{\"severity\":\"enum:critical,high,medium,low|required\",\"description\":\"string|required\",\"affectedService\":\"string\"}");
+
+        save(role, "defineSLO", "SLO 制定", "制定服务级别目标和错误预算",
+            "task", false, null, 12,
+            "{\"service\":\"string\",\"availability\":\"string\",\"latency\":\"string\",\"errorBudget\":\"string\"}");
+
+        log.info("DevOps capabilities initialized: 12");
     }
 
     // ===== 通用能力（所有角色） =====
@@ -988,6 +1288,88 @@ public class CapabilityInitService {
         }
 
         log.info("Common capabilities initialized for {} roles", roles.length);
+    }
+
+    // ===== Verifier 能力集 =====
+    /**
+     * 初始化验证官能力集
+     *
+     * 验证官的核心能力：
+     * 1. 结构验证 - 项目目录结构完整性检查
+     * 2. 代码质量 - 代码规范、最佳实践检查
+     * 3. 设计审查 - 游戏设计文档审查
+     * 4. 里程碑验证 - 里程碑交付物验收
+     * 5. 约束规则 - 项目约束规则检查
+     * 6. 报告生成 - 验证报告生成和保存
+     */
+    private void initVerifierCapabilities() {
+        String role = "verifier";
+        int priority = 0;
+
+        // ===== 结构验证 =====
+        save(role, "verifyProjectStructure", "项目结构验证", "验证项目目录结构完整性",
+            "verification", false, null, ++priority,
+            "{\"projectDir\":\"string|required\"}");
+
+        save(role, "verifyFileIntegrity", "文件完整性检查", "检查关键文件是否存在且格式正确",
+            "verification", false, null, ++priority,
+            "{\"projectDir\":\"string|required\",\"requiredFiles\":\"array\"}");
+
+        // ===== 代码质量 =====
+        save(role, "verifyCodeQuality", "代码质量检查", "检查代码规范、文件大小、空文件等",
+            "quality", false, null, ++priority,
+            "{\"projectDir\":\"string|required\",\"maxFileSizeKB\":\"number|default=1024\"}");
+
+        save(role, "checkSensitiveFiles", "敏感文件检查", "检查项目中是否包含敏感信息文件",
+            "security", false, null, ++priority,
+            "{\"projectDir\":\"string|required\"}");
+
+        // ===== 设计审查 =====
+        save(role, "reviewGameDesign", "游戏设计审查", "审查游戏设计文档的合理性和完整性",
+            "review", false, null, ++priority,
+            "{\"projectGoal\":\"string|required\",\"designDocuments\":\"string\"}");
+
+        save(role, "reviewDesignCompleteness", "设计完整性检查", "检查设计文档是否覆盖核心功能",
+            "review", false, null, ++priority,
+            "{\"projectDir\":\"string|required\"}");
+
+        // ===== 里程碑验证 =====
+        save(role, "verifyMilestone", "里程碑验证", "验证里程碑交付物是否满足验收标准",
+            "verification", false, null, ++priority,
+            "{\"milestoneId\":\"string|required\",\"criteria\":\"array\"}");
+
+        save(role, "verifyMilestoneDeliverables", "交付物验证", "验证里程碑的交付物完整性",
+            "verification", false, null, ++priority,
+            "{\"milestoneId\":\"string|required\",\"projectDir\":\"string|required\"}");
+
+        // ===== 约束规则 =====
+        save(role, "checkProjectConstraints", "项目约束检查", "检查项目是否遵守预定义的约束规则",
+            "compliance", false, null, ++priority,
+            "{\"projectDir\":\"string|required\",\"rules\":\"array\"}");
+
+        save(role, "checkDirectorySize", "目录大小检查", "检查项目目录大小是否在限制范围内",
+            "compliance", false, null, ++priority,
+            "{\"projectDir\":\"string|required\",\"maxSizeMB\":\"number|default=1024\"}");
+
+        // ===== 报告生成 =====
+        save(role, "generateVerificationReport", "生成验证报告", "生成完整的验证报告并保存到知识库",
+            "reporting", false, null, ++priority,
+            "{\"includeDetails\":\"boolean|default=true\"}");
+
+        save(role, "getVerificationSummary", "获取验证摘要", "获取当前验证状态的摘要信息",
+            "reporting", false, null, ++priority,
+            "{}");
+
+        // ===== 事件处理 =====
+        save(role, "onCodeCommitted", "代码提交事件处理", "收到代码提交事件后触发增量验证",
+            "event", false, null, ++priority,
+            "{\"commitInfo\":\"object\"}");
+
+        save(role, "onMilestoneChanged", "里程碑变更事件处理", "收到里程碑状态变更事件后触发验证",
+            "event", false, null, ++priority,
+            "{\"milestoneId\":\"string|required\",\"newStatus\":\"string|required\"}");
+
+        log.info("Verifier capabilities initialized: {} capabilities", priority);
     }
 
     // ===== 工具方法 =====

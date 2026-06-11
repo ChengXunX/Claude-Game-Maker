@@ -297,6 +297,80 @@ public class MemoryManager {
         }
     }
 
+    // ===== 跨项目知识共享 =====
+
+    /**
+     * 搜索全局知识库中的经验
+     * 允许Agent参考其他项目的成功经验
+     *
+     * @param category 记忆分类
+     * @param keyword 搜索关键词
+     * @return 匹配的经验列表（项目ID -> 经验内容）
+     */
+    public Map<String, String> searchGlobalExperiences(String category, String keyword) {
+        Map<String, String> results = new HashMap<>();
+        String dataDir = "data/memory";
+
+        Path globalDir = Path.of(dataDir);
+        if (!Files.exists(globalDir)) {
+            return results;
+        }
+
+        try {
+            // 遍历所有Agent的记忆目录
+            Files.list(globalDir)
+                .filter(Files::isDirectory)
+                .forEach(agentDir -> {
+                    Path categoryDir = agentDir.resolve(category);
+                    if (Files.exists(categoryDir)) {
+                        try {
+                            Files.list(categoryDir)
+                                .filter(Files::isRegularFile)
+                                .forEach(file -> {
+                                    try {
+                                        String content = Files.readString(file);
+                                        if (content.contains(keyword)) {
+                                            String agentId = agentDir.getFileName().toString();
+                                            String key = file.getFileName().toString()
+                                                .replace(".md", "").replace(".txt", "");
+                                            results.put(agentId + "/" + key, content);
+                                        }
+                                    } catch (IOException e) {
+                                        // 忽略读取失败
+                                    }
+                                });
+                        } catch (IOException e) {
+                            // 忽略遍历失败
+                        }
+                    }
+                });
+        } catch (IOException e) {
+            log.debug("搜索全局知识库失败: {}", e.getMessage());
+        }
+
+        return results;
+    }
+
+    /**
+     * 保存经验到全局知识库（可跨项目复用）
+     *
+     * @param agentId Agent ID
+     * @param category 记忆分类
+     * @param key 记忆键
+     * @param value 记忆值
+     */
+    public void saveToGlobalKnowledge(String agentId, String category, String key, String value) {
+        String globalDir = "data/memory";
+        Path memoryPath = Path.of(globalDir, agentId, category, key + ".md");
+        try {
+            Files.createDirectories(memoryPath.getParent());
+            Files.writeString(memoryPath, value);
+            log.debug("全局知识已保存: agent={}, category={}, key={}", agentId, category, key);
+        } catch (IOException e) {
+            log.error("保存全局知识失败: agent={}, category={}, key={}", agentId, category, key, e);
+        }
+    }
+
     // ===== 路径方法 =====
 
     /**

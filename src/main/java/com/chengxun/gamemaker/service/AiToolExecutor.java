@@ -303,6 +303,125 @@ public class AiToolExecutor {
                 case "call_api":
                     return executeCallApi(params, userToken);
 
+                // ===== 审批管理 =====
+                case "list_approvals":
+                    return executeCallApi(Map.of("method", "GET",
+                        "path", "/api/approvals/all"), userToken);
+                case "list_pending_approvals":
+                    return executeCallApi(Map.of("method", "GET",
+                        "path", "/api/approvals/pending"), userToken);
+                case "approve_request":
+                    return executeApproveRequest(params, userToken);
+                case "reject_request":
+                    return executeRejectRequest(params, userToken);
+
+                // ===== 权限管理 =====
+                case "list_permission_definitions":
+                    return executeCallApi(Map.of("method", "GET",
+                        "path", "/permissions/api/definitions"), userToken);
+                case "list_pending_permissions":
+                    return executeCallApi(Map.of("method", "GET",
+                        "path", "/permissions/api/pending"), userToken);
+                case "grant_permission":
+                    return executeGrantPermission(params, userToken);
+                case "revoke_permission":
+                    return executeRevokePermission(params, userToken);
+
+                // ===== 知识库 =====
+                case "search_knowledge":
+                    return executeSearchKnowledge(params);
+                case "get_best_practices":
+                    return executeCallApi(Map.of("method", "GET",
+                        "path", "/api/knowledge-base/best-practices"), userToken);
+                case "record_knowledge":
+                    return executeRecordKnowledge(params, userToken);
+
+                // ===== 版本迭代 =====
+                case "get_iteration_stats":
+                    return executeGetIterationStats(params, userToken);
+                case "get_iteration_records":
+                    return executeGetIterationRecords(params, userToken);
+                case "rollback_version":
+                    return executeRollbackVersion(params, userToken);
+                case "get_rollbackable_versions":
+                    return executeGetRollbackableVersions(params, userToken);
+
+                // ===== 督查报告 =====
+                case "get_supervision_report":
+                    return executeGetSupervisionReport(params, userToken);
+                case "get_player_experience":
+                    return executeGetPlayerExperience(params, userToken);
+                case "get_collaboration_metrics":
+                    return executeGetCollaborationMetrics(params, userToken);
+                case "get_risk_prediction":
+                    return executeGetRiskPrediction(params, userToken);
+
+                // ===== 全局搜索 =====
+                case "global_search":
+                    return executeGlobalSearch(params, userToken);
+
+                // ===== 系统常量 =====
+                case "list_system_constants":
+                    return executeCallApi(Map.of("method", "GET",
+                        "path", "/constants/api/all"), userToken);
+                case "update_system_constant":
+                    return executeUpdateSystemConstant(params, userToken);
+
+                // ===== Agent 绩效 =====
+                case "get_agent_performance":
+                    return executeCallApi(Map.of("method", "GET",
+                        "path", "/api/performance/api/all"), userToken);
+                case "get_performance_summary":
+                    return executeCallApi(Map.of("method", "GET",
+                        "path", "/api/performance/api/summary"), userToken);
+
+                // ===== 代码质量 =====
+                case "check_code_quality":
+                    return executeCheckCodeQuality(params, userToken);
+                case "get_code_quality_report":
+                    return executeGetCodeQualityReport(params, userToken);
+
+                // ===== 流水线操作 =====
+                case "cancel_pipeline":
+                    return executeCancelPipeline(params, userToken);
+                case "pause_pipeline":
+                    return executePausePipeline(params, userToken);
+                case "resume_pipeline":
+                    return executeResumePipeline(params, userToken);
+
+                // ===== Agent 健康 =====
+                case "get_detailed_agent_health":
+                    return executeCallApi(Map.of("method", "GET",
+                        "path", "/api/health/agents"), userToken);
+                case "restart_agent":
+                    return executeRestartAgent(params, userToken);
+
+                // ===== 导出 =====
+                case "export_data":
+                    return executeExportData(params, userToken);
+
+                // ===== 通知偏好 =====
+                case "get_notification_preferences":
+                    return executeCallApi(Map.of("method", "GET",
+                        "path", "/api/notification-preferences/api/list"), userToken);
+
+                // ===== 项目看板 =====
+                case "get_project_board":
+                    return executeGetProjectBoard(params, userToken);
+                case "get_project_events":
+                    return executeGetProjectEvents(params, userToken);
+
+                // ===== 知识进化 =====
+                case "get_knowledge_evolution_stats":
+                    return executeCallApi(Map.of("method", "GET",
+                        "path", "/api/knowledge-evolution/stats"), userToken);
+                case "get_learned_patterns":
+                    return executeCallApi(Map.of("method", "GET",
+                        "path", "/api/knowledge-evolution/learned-patterns"), userToken);
+                case "get_learned_skills":
+                    return executeCallApi(Map.of("method", "GET",
+                        "path", "/api/knowledge-evolution/learned-skills"), userToken);
+
                 default:
                     return Map.of("success", false, "error", "未知工具: " + toolName);
             }
@@ -1341,5 +1460,240 @@ public class AiToolExecutor {
             log.error("API调用失败: {} {}", method, path, e);
             return Map.of("success", false, "error", "API调用失败: " + e.getMessage());
         }
+    }
+
+    // ===== 审批管理 =====
+
+    private Map<String, Object> executeApproveRequest(Map<String, Object> params, String userToken) {
+        Number requestId = (Number) params.get("requestId");
+        String comment = (String) params.getOrDefault("comment", "");
+        try {
+            String body = objectMapper.writeValueAsString(Map.of("comment", comment));
+            return executeCallApi(Map.of("method", "POST",
+                "path", "/api/approvals/" + requestId + "/approve", "body", body), userToken);
+        } catch (Exception e) {
+            return Map.of("success", false, "error", "审批失败: " + e.getMessage());
+        }
+    }
+
+    private Map<String, Object> executeRejectRequest(Map<String, Object> params, String userToken) {
+        Number requestId = (Number) params.get("requestId");
+        String comment = (String) params.getOrDefault("comment", "");
+        try {
+            String body = objectMapper.writeValueAsString(Map.of("comment", comment));
+            return executeCallApi(Map.of("method", "POST",
+                "path", "/api/approvals/" + requestId + "/reject", "body", body), userToken);
+        } catch (Exception e) {
+            return Map.of("success", false, "error", "拒绝失败: " + e.getMessage());
+        }
+    }
+
+    // ===== 权限管理 =====
+
+    private Map<String, Object> executeGrantPermission(Map<String, Object> params, String userToken) {
+        Number userId = (Number) params.get("userId");
+        String permission = (String) params.get("permission");
+        String reason = (String) params.getOrDefault("reason", "");
+        try {
+            String body = objectMapper.writeValueAsString(Map.of(
+                "userId", userId.longValue(), "permission", permission, "reason", reason));
+            return executeCallApi(Map.of("method", "POST",
+                "path", "/permissions/api/grant", "body", body), userToken);
+        } catch (Exception e) {
+            return Map.of("success", false, "error", "授权失败: " + e.getMessage());
+        }
+    }
+
+    private Map<String, Object> executeRevokePermission(Map<String, Object> params, String userToken) {
+        Number userId = (Number) params.get("userId");
+        String permission = (String) params.get("permission");
+        try {
+            String body = objectMapper.writeValueAsString(Map.of(
+                "userId", userId.longValue(), "permission", permission));
+            return executeCallApi(Map.of("method", "POST",
+                "path", "/permissions/api/revoke", "body", body), userToken);
+        } catch (Exception e) {
+            return Map.of("success", false, "error", "撤销失败: " + e.getMessage());
+        }
+    }
+
+    // ===== 知识库 =====
+
+    private Map<String, Object> executeSearchKnowledge(Map<String, Object> params) {
+        String keyword = (String) params.get("keyword");
+        try {
+            return executeCallApi(Map.of("method", "GET",
+                "path", "/api/knowledge-base/solutions?keyword=" + keyword), null);
+        } catch (Exception e) {
+            return Map.of("success", false, "error", "搜索失败: " + e.getMessage());
+        }
+    }
+
+    private Map<String, Object> executeRecordKnowledge(Map<String, Object> params, String userToken) {
+        String problemType = (String) params.get("problemType");
+        String title = (String) params.get("title");
+        String content = (String) params.get("content");
+        String tags = (String) params.getOrDefault("tags", "");
+        try {
+            String body = objectMapper.writeValueAsString(Map.of(
+                "problemType", problemType, "title", title, "content", content, "tags", tags));
+            return executeCallApi(Map.of("method", "POST",
+                "path", "/api/knowledge-base/record-solution", "body", body), userToken);
+        } catch (Exception e) {
+            return Map.of("success", false, "error", "记录失败: " + e.getMessage());
+        }
+    }
+
+    // ===== 版本迭代 =====
+
+    private Map<String, Object> executeGetIterationStats(Map<String, Object> params, String userToken) {
+        String projectId = (String) params.get("projectId");
+        return executeCallApi(Map.of("method", "GET",
+            "path", "/api/projects/api/" + projectId + "/iteration-stats"), userToken);
+    }
+
+    private Map<String, Object> executeGetIterationRecords(Map<String, Object> params, String userToken) {
+        String projectId = (String) params.get("projectId");
+        return executeCallApi(Map.of("method", "GET",
+            "path", "/api/projects/api/" + projectId + "/iteration-records"), userToken);
+    }
+
+    private Map<String, Object> executeRollbackVersion(Map<String, Object> params, String userToken) {
+        String projectId = (String) params.get("projectId");
+        String targetVersion = (String) params.get("targetVersion");
+        try {
+            String body = objectMapper.writeValueAsString(Map.of("targetVersion", targetVersion));
+            return executeCallApi(Map.of("method", "POST",
+                "path", "/api/projects/api/" + projectId + "/rollback", "body", body), userToken);
+        } catch (Exception e) {
+            return Map.of("success", false, "error", "回滚失败: " + e.getMessage());
+        }
+    }
+
+    private Map<String, Object> executeGetRollbackableVersions(Map<String, Object> params, String userToken) {
+        String projectId = (String) params.get("projectId");
+        return executeCallApi(Map.of("method", "GET",
+            "path", "/api/projects/api/" + projectId + "/rollbackable-versions"), userToken);
+    }
+
+    // ===== 督查报告 =====
+
+    private Map<String, Object> executeGetSupervisionReport(Map<String, Object> params, String userToken) {
+        String projectId = (String) params.get("projectId");
+        return executeCallApi(Map.of("method", "GET",
+            "path", "/api/projects/api/" + projectId + "/supervision-report"), userToken);
+    }
+
+    private Map<String, Object> executeGetPlayerExperience(Map<String, Object> params, String userToken) {
+        String projectId = (String) params.get("projectId");
+        return executeCallApi(Map.of("method", "GET",
+            "path", "/api/projects/api/" + projectId + "/player-experience"), userToken);
+    }
+
+    private Map<String, Object> executeGetCollaborationMetrics(Map<String, Object> params, String userToken) {
+        String projectId = (String) params.get("projectId");
+        return executeCallApi(Map.of("method", "GET",
+            "path", "/api/projects/api/" + projectId + "/collaboration-metrics"), userToken);
+    }
+
+    private Map<String, Object> executeGetRiskPrediction(Map<String, Object> params, String userToken) {
+        String projectId = (String) params.get("projectId");
+        return executeCallApi(Map.of("method", "GET",
+            "path", "/api/projects/api/" + projectId + "/risk-prediction"), userToken);
+    }
+
+    // ===== 全局搜索 =====
+
+    private Map<String, Object> executeGlobalSearch(Map<String, Object> params, String userToken) {
+        String keyword = (String) params.get("keyword");
+        return executeCallApi(Map.of("method", "GET",
+            "path", "/search/api?keyword=" + keyword), userToken);
+    }
+
+    // ===== 系统常量 =====
+
+    private Map<String, Object> executeUpdateSystemConstant(Map<String, Object> params, String userToken) {
+        String key = (String) params.get("key");
+        String value = (String) params.get("value");
+        try {
+            String body = objectMapper.writeValueAsString(Map.of("key", key, "value", value));
+            return executeCallApi(Map.of("method", "POST",
+                "path", "/constants/api/update", "body", body), userToken);
+        } catch (Exception e) {
+            return Map.of("success", false, "error", "更新失败: " + e.getMessage());
+        }
+    }
+
+    // ===== 代码质量 =====
+
+    private Map<String, Object> executeCheckCodeQuality(Map<String, Object> params, String userToken) {
+        String projectId = (String) params.get("projectId");
+        try {
+            String body = objectMapper.writeValueAsString(Map.of("projectId", projectId));
+            return executeCallApi(Map.of("method", "POST",
+                "path", "/api/code-quality/check", "body", body), userToken);
+        } catch (Exception e) {
+            return Map.of("success", false, "error", "检查失败: " + e.getMessage());
+        }
+    }
+
+    private Map<String, Object> executeGetCodeQualityReport(Map<String, Object> params, String userToken) {
+        String projectId = (String) params.get("projectId");
+        return executeCallApi(Map.of("method", "GET",
+            "path", "/api/code-quality/" + projectId), userToken);
+    }
+
+    // ===== 流水线操作 =====
+
+    private Map<String, Object> executeCancelPipeline(Map<String, Object> params, String userToken) {
+        Number pipelineId = (Number) params.get("pipelineId");
+        return executeCallApi(Map.of("method", "POST",
+            "path", "/api/pipelines/" + pipelineId + "/cancel"), userToken);
+    }
+
+    private Map<String, Object> executePausePipeline(Map<String, Object> params, String userToken) {
+        Number pipelineId = (Number) params.get("pipelineId");
+        return executeCallApi(Map.of("method", "POST",
+            "path", "/api/pipelines/" + pipelineId + "/pause"), userToken);
+    }
+
+    private Map<String, Object> executeResumePipeline(Map<String, Object> params, String userToken) {
+        Number pipelineId = (Number) params.get("pipelineId");
+        return executeCallApi(Map.of("method", "POST",
+            "path", "/api/pipelines/" + pipelineId + "/resume"), userToken);
+    }
+
+    // ===== Agent 健康 =====
+
+    private Map<String, Object> executeRestartAgent(Map<String, Object> params, String userToken) {
+        String agentId = (String) params.get("agentId");
+        return executeCallApi(Map.of("method", "POST",
+            "path", "/api/health/agent/" + agentId + "/restart"), userToken);
+    }
+
+    // ===== 导出 =====
+
+    private Map<String, Object> executeExportData(Map<String, Object> params, String userToken) {
+        String type = (String) params.get("type");
+        String path = switch (type) {
+            case "agents" -> "/api/export/agents/csv";
+            case "logs" -> "/api/export/logs/csv";
+            default -> "/api/export/json";
+        };
+        return executeCallApi(Map.of("method", "GET", "path", path), userToken);
+    }
+
+    // ===== 项目看板 =====
+
+    private Map<String, Object> executeGetProjectBoard(Map<String, Object> params, String userToken) {
+        String projectId = (String) params.get("projectId");
+        return executeCallApi(Map.of("method", "GET",
+            "path", "/api/projects/api/" + projectId + "/board"), userToken);
+    }
+
+    private Map<String, Object> executeGetProjectEvents(Map<String, Object> params, String userToken) {
+        String projectId = (String) params.get("projectId");
+        return executeCallApi(Map.of("method", "GET",
+            "path", "/api/projects/api/" + projectId + "/events"), userToken);
     }
 }

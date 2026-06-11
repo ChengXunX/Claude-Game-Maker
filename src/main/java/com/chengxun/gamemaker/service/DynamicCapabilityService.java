@@ -117,6 +117,12 @@ public class DynamicCapabilityService {
         }
 
         // 初始化各角色的专属能力模板
+        initProducerTemplates();
+        initServerDevTemplates();
+        initSystemPlannerTemplates();
+        initNumericalPlannerTemplates();
+        initGitCommitTemplates();
+        initUiDevTemplates();
         initSecurityExpertTemplates();
         initDataAnalystTemplates();
         initTechArtistTemplates();
@@ -133,6 +139,94 @@ public class DynamicCapabilityService {
         log.info("Role capability templates initialized: {} roles", roleTemplates.size());
     }
 
+    private void initProducerTemplates() {
+        List<CapabilityTemplate> templates = roleTemplates.get("producer");
+        templates.add(new CapabilityTemplate("reviewGameDesign", "审查游戏设计", "审查游戏设计方案的完整性和可行性", "design_review", 1,
+            "{\"designType\":\"enum:system,level,numerical,ui,narrative|required\",\"designName\":\"string|required\"}"));
+        templates.add(new CapabilityTemplate("monitorTeamHealth", "监控团队健康", "分析团队成员工作负载和协作效率", "team_management", 2,
+            "{\"metrics\":\"enum:workload,idle_rate,blockers,collaboration\"}"));
+        templates.add(new CapabilityTemplate("conductRetrospective", "回顾分析", "对已完成的里程碑进行回顾分析", "team_management", 3,
+            "{\"milestoneId\":\"string|required\",\"scope\":\"enum:process,technical,team\"}"));
+        templates.add(new CapabilityTemplate("optimizeWorkflow", "优化工作流", "分析当前工作流瓶颈，提出优化方案", "project_management", 4,
+            "{\"workflowType\":\"enum:development,review,deployment,testing|required\"}"));
+        templates.add(new CapabilityTemplate("defineQualityGate", "定义质量门禁", "为项目阶段定义质量门禁标准", "quality_control", 5,
+            "{\"gateType\":\"enum:code_review,testing,security,performance|required\",\"criteria\":\"string|required\"}"));
+        templates.add(new CapabilityTemplate("addAgentCapability", "追加Agent能力", "为项目下的 Agent 追加已有的系统能力", "team_management", 6,
+            "{\"agentId\":\"string|required\",\"capabilityName\":\"string|required\",\"reason\":\"string\"}"));
+        templates.add(new CapabilityTemplate("createAgentCapability", "新建Agent能力", "为项目下的 Agent 创建全新的自定义能力", "team_management", 7,
+            "{\"agentId\":\"string|required\",\"capabilityName\":\"string|required\",\"displayName\":\"string|required\",\"description\":\"string|required\",\"promptTemplate\":\"string|required\"}"));
+
+        // 版本迭代类能力
+        templates.add(new CapabilityTemplate("evaluateVersion", "评估当前版本", "评估当前版本的质量和完成度，给出1-10分的评分", "version_management", 30,
+            "{\"projectId\":\"string\"}"));
+        templates.add(new CapabilityTemplate("planNextVersion", "规划下一版本", "根据当前版本评估结果，规划下一版本的目标和里程碑", "version_management", 31,
+            "{\"projectId\":\"string\",\"currentScore\":\"number\"}"));
+        templates.add(new CapabilityTemplate("upgradeVersion", "执行版本升级", "创建新版本历史，重置里程碑状态，开始下一版本迭代", "version_management", 32,
+            "{\"projectId\":\"string\",\"newVersion\":\"string|required\",\"newGoal\":\"string\",\"reason\":\"string\"}"));
+        templates.add(new CapabilityTemplate("checkVersionIteration", "检查版本迭代", "检查当前版本是否完成，是否需要进入下一版本迭代", "version_management", 33,
+            "{\"projectId\":\"string\"}"));
+        templates.add(new CapabilityTemplate("stopAllProjectAgents", "停止项目Agent", "目标完成时停止项目内所有Agent", "version_management", 34,
+            "{\"projectId\":\"string\",\"reason\":\"string\"}"));
+    }
+
+    private void initServerDevTemplates() {
+        List<CapabilityTemplate> templates = roleTemplates.get("server-dev");
+        templates.add(new CapabilityTemplate("generateApiDoc", "生成 API 文档", "根据代码自动生成 API 接口文档", "code", 6,
+            "{\"targetPath\":\"string\",\"format\":\"enum:openapi,markdown\"}"));
+        templates.add(new CapabilityTemplate("planDatabaseMigration", "数据库迁移规划", "规划数据库迁移方案", "code", 7,
+            "{\"migrationType\":\"enum:schema_change,data_migration,index_optimize|required\"}"));
+        templates.add(new CapabilityTemplate("scanDependencies", "依赖安全扫描", "扫描项目依赖的安全漏洞", "code", 8,
+            "{\"scope\":\"enum:all,new,changed\",\"severity\":\"enum:critical,high,medium,low\"}"));
+        templates.add(new CapabilityTemplate("optimizeQuery", "SQL 查询优化", "分析和优化 SQL 查询性能", "code", 9,
+            "{\"targetPath\":\"string\",\"queryType\":\"enum:select,join,aggregate\"}"));
+    }
+
+    private void initSystemPlannerTemplates() {
+        List<CapabilityTemplate> templates = roleTemplates.get("system-planner");
+        templates.add(new CapabilityTemplate("analyzeCompetitorDesign", "竞品设计分析", "分析同类游戏的系统设计优劣", "task", 7,
+            "{\"competitors\":\"string|required\",\"focus\":\"enum:core_loop,progression,monetization,social,ui_ux\"}"));
+        templates.add(new CapabilityTemplate("mapUserJourney", "用户旅程映射", "设计完整的用户旅程", "task", 8,
+            "{\"persona\":\"string|required\",\"journeyScope\":\"enum:onboarding,core_loop,endgame,monetization\"}"));
+        templates.add(new CapabilityTemplate("mapSystemDependencies", "系统依赖映射", "分析各系统间的依赖关系", "task", 9,
+            "{\"scope\":\"enum:all,core,combat,economy,social\"}"));
+        templates.add(new CapabilityTemplate("analyzePlayerPsychology", "玩家心理分析", "运用心理学原理分析玩家动机", "task", 10,
+            "{\"playerType\":\"enum:achiever,explorer,socializer,killer\"}"));
+    }
+
+    private void initNumericalPlannerTemplates() {
+        List<CapabilityTemplate> templates = roleTemplates.get("numerical-planner");
+        templates.add(new CapabilityTemplate("runSimulation", "数值仿真", "模拟玩家行为，预测数值走势", "task", 5,
+            "{\"simulationType\":\"enum:combat,economy,progression,gacha\",\"playerCount\":\"number\"}"));
+        templates.add(new CapabilityTemplate("analyzeStatistics", "统计分析", "对数值设计进行统计分析", "task", 6,
+            "{\"dataType\":\"enum:damage,health,economy,drop_rate\",\"analysisType\":\"enum:distribution,outlier,trend\"}"));
+        templates.add(new CapabilityTemplate("visualizeEconomyFlow", "经济流可视化", "生成游戏经济系统的产出/消耗流向图", "task", 7,
+            "{\"currencyType\":\"string\",\"scope\":\"enum:daily,weekly,monthly,full\"}"));
+        templates.add(new CapabilityTemplate("optimizeGachaProbability", "抽卡概率优化", "优化抽卡/扭蛋概率", "task", 8,
+            "{\"gachaType\":\"string|required\",\"pity\":\"boolean\"}"));
+    }
+
+    private void initGitCommitTemplates() {
+        List<CapabilityTemplate> templates = roleTemplates.get("git-commit");
+        templates.add(new CapabilityTemplate("manageBranchStrategy", "分支策略管理", "管理 Git 分支策略", "task", 6,
+            "{\"action\":\"enum:create,merge,delete,list\",\"branchType\":\"enum:feature,release,hotfix\"}"));
+        templates.add(new CapabilityTemplate("generateReleaseNotes", "生成发布说明", "根据提交记录自动生成版本发布说明", "task", 7,
+            "{\"fromTag\":\"string\",\"toTag\":\"string\",\"format\":\"enum:markdown,html\"}"));
+        templates.add(new CapabilityTemplate("trackCodeOwnership", "代码所有权追踪", "追踪代码文件的主要贡献者", "task", 8,
+            "{\"targetPath\":\"string\",\"depth\":\"enum:file,directory,module\"}"));
+    }
+
+    private void initUiDevTemplates() {
+        List<CapabilityTemplate> templates = roleTemplates.get("ui-dev");
+        templates.add(new CapabilityTemplate("manageDesignSystem", "设计系统管理", "管理和维护统一的设计系统", "task", 5,
+            "{\"action\":\"enum:create,update,audit,export\",\"scope\":\"enum:colors,typography,spacing,components\"}"));
+        templates.add(new CapabilityTemplate("manageAnimationLibrary", "动画库管理", "管理和优化 UI 动画库", "task", 6,
+            "{\"action\":\"enum:create,optimize,audit\",\"animationType\":\"enum:transition,micro_interaction,loading,feedback\"}"));
+        templates.add(new CapabilityTemplate("auditAccessibility", "无障碍审计", "审计 UI 的无障碍支持", "task", 7,
+            "{\"standard\":\"enum:wcag_a,wcag_aa,wcag_aaa\",\"scope\":\"enum:full,page,component\"}"));
+        templates.add(new CapabilityTemplate("designThemeSystem", "主题系统设计", "设计和实现多主题切换系统", "task", 8,
+            "{\"themeType\":\"enum:dark_mode,seasonal,custom\",\"scope\":\"enum:colors,components,full\"}"));
+    }
+
     private void initSecurityExpertTemplates() {
         List<CapabilityTemplate> templates = roleTemplates.get("security-expert");
         templates.add(new CapabilityTemplate("auditCode", "代码安全审计", "对代码进行安全审计", "task", 1,
@@ -143,6 +237,12 @@ public class DynamicCapabilityService {
             "{\"scope\":\"string\",\"includeRecommendations\":\"boolean\"}"));
         templates.add(new CapabilityTemplate("alertSecurityRisk", "安全预警", "发现安全风险时预警", "communication", 4,
             "{\"riskType\":\"string|required\",\"severity\":\"enum:critical,high,medium,low|required\",\"description\":\"string|required\"}"));
+        templates.add(new CapabilityTemplate("buildThreatModel", "威胁建模", "对系统进行威胁建模", "task", 5,
+            "{\"scope\":\"enum:full,api,auth,data,infrastructure\",\"methodology\":\"enum:stride,kill_chain,owasp\"}"));
+        templates.add(new CapabilityTemplate("auditCompliance", "合规审计", "审计系统是否符合安全合规要求", "task", 6,
+            "{\"standard\":\"enum:gdpr,pci_dss,iso27001,owasp_top10\"}"));
+        templates.add(new CapabilityTemplate("handleSecurityIncident", "安全事件响应", "处理安全事件", "communication", 7,
+            "{\"incidentType\":\"enum:data_breach,unauthorized_access,malware,ddos\",\"severity\":\"enum:critical,high,medium,low|required\"}"));
     }
 
     private void initDataAnalystTemplates() {
@@ -157,6 +257,10 @@ public class DynamicCapabilityService {
             "{\"hypothesis\":\"string|required\",\"metrics\":\"string\",\"sampleSize\":\"number\"}"));
         templates.add(new CapabilityTemplate("generateDataReport", "数据报告", "生成数据分析报告", "task", 5,
             "{\"reportType\":\"enum:daily,weekly,monthly,custom|required\",\"metrics\":\"string\"}"));
+        templates.add(new CapabilityTemplate("buildPredictiveModel", "预测建模", "构建用户流失、付费等预测模型", "task", 6,
+            "{\"modelType\":\"enum:churn_prediction,ltv_prediction,segmentation\",\"targetMetric\":\"string\"}"));
+        templates.add(new CapabilityTemplate("designFunnelOptimization", "漏斗优化", "分析转化漏斗，识别流失环节", "task", 7,
+            "{\"funnelType\":\"enum:onboarding,purchase,engagement,retention\"}"));
     }
 
     private void initTechArtistTemplates() {
@@ -167,6 +271,10 @@ public class DynamicCapabilityService {
             "{\"targetPath\":\"string\",\"optimizationType\":\"enum:drawcall,shader,memory,overdraw\"}"));
         templates.add(new CapabilityTemplate("createArtTool", "美术工具", "创建自动化工具", "task", 3,
             "{\"toolType\":\"enum:batch_convert,validation,preview,export|required\",\"requirements\":\"string\"}"));
+        templates.add(new CapabilityTemplate("optimizeAssetPipeline", "资产管线优化", "优化美术资产的导入和加载流程", "task", 4,
+            "{\"assetType\":\"enum:texture,mesh,animation,material\",\"optimization\":\"enum:size,load_time,quality\"}"));
+        templates.add(new CapabilityTemplate("generateLOD", "LOD 自动生成", "为 3D 模型自动生成多级细节层次", "task", 5,
+            "{\"targetPath\":\"string\",\"lodLevels\":\"number\"}"));
     }
 
     private void initProductManagerTemplates() {
@@ -179,6 +287,10 @@ public class DynamicCapabilityService {
             "{\"features\":\"string|required\",\"criteria\":\"enum:impact,effort,risk,value\"}"));
         templates.add(new CapabilityTemplate("designUserJourney", "用户旅程", "设计用户旅程", "task", 4,
             "{\"scenario\":\"string|required\",\"persona\":\"string\"}"));
+        templates.add(new CapabilityTemplate("mapUserStory", "用户故事映射", "创建完整的用户故事地图", "task", 5,
+            "{\"persona\":\"string|required\",\"scope\":\"enum:full_feature,release,mvp\"}"));
+        templates.add(new CapabilityTemplate("planRoadmap", "路线图规划", "制定产品路线图", "task", 6,
+            "{\"timeHorizon\":\"enum:quarter,half_year,year\",\"focus\":\"enum:features,tech_debt,growth\"}"));
     }
 
     private void initLocalizationTemplates() {
@@ -191,6 +303,10 @@ public class DynamicCapabilityService {
             "{\"targetLang\":\"string\",\"checkType\":\"enum:text_length,encoding,cultural,format\"}"));
         templates.add(new CapabilityTemplate("manageTerminology", "术语管理", "管理术语表", "task", 4,
             "{\"action\":\"enum:add,update,query,export\",\"term\":\"string\",\"definition\":\"string\"}"));
+        templates.add(new CapabilityTemplate("manageTranslationMemory", "翻译记忆库", "管理翻译记忆库", "task", 5,
+            "{\"action\":\"enum:add,query,export,import\",\"sourceLang\":\"string\",\"targetLang\":\"string\"}"));
+        templates.add(new CapabilityTemplate("auditCulturalSensitivity", "文化敏感审核", "审核内容的文化敏感性", "task", 6,
+            "{\"targetRegion\":\"string\",\"contentType\":\"enum:text,image,audio,ui\"}"));
     }
 
     private void initAiEngineerTemplates() {
@@ -203,6 +319,10 @@ public class DynamicCapabilityService {
             "{\"dialogueType\":\"enum:branching,ai_generated,hybrid\",\"features\":\"string\"}"));
         templates.add(new CapabilityTemplate("optimizeAI", "优化 AI", "优化 AI 性能", "task", 4,
             "{\"target\":\"enum:behavior_tree,pathfinding,dialogue\",\"optimization\":\"enum:speed,memory,quality\"}"));
+        templates.add(new CapabilityTemplate("evaluateModel", "模型评估", "评估 AI 模型的性能和效果", "task", 5,
+            "{\"modelType\":\"enum:behavior_tree,pathfinding,dialogue,recommendation\",\"metrics\":\"enum:accuracy,speed,memory\"}"));
+        templates.add(new CapabilityTemplate("optimizeInference", "推理优化", "优化 AI 推理性能", "task", 6,
+            "{\"target\":\"enum:behavior_tree,pathfinding,dialogue\",\"technique\":\"enum:caching,quantization,pruning,batching\"}"));
     }
 
     private void initPerformanceEngineerTemplates() {
@@ -215,6 +335,10 @@ public class DynamicCapabilityService {
             "{\"targetPath\":\"string\",\"optimizationType\":\"enum:algorithm,caching,async,batch\"}"));
         templates.add(new CapabilityTemplate("runLoadTest", "压力测试", "执行压力测试", "task", 4,
             "{\"concurrentUsers\":\"number\",\"duration\":\"string\",\"scenario\":\"string\"}"));
+        templates.add(new CapabilityTemplate("setupDistributedTracing", "分布式追踪", "配置分布式追踪系统", "task", 5,
+            "{\"system\":\"enum:jaeger,zipkin,skywalking\",\"scope\":\"enum:full,critical_path\"}"));
+        templates.add(new CapabilityTemplate("planCapacity", "容量规划", "根据业务增长预测进行容量规划", "task", 6,
+            "{\"metric\":\"enum:qps,storage,bandwidth,concurrent_users\",\"timeHorizon\":\"enum:month,quarter,year\"}"));
     }
 
     private void initAudioDevTemplates() {
@@ -225,6 +349,10 @@ public class DynamicCapabilityService {
             "{\"scene\":\"string\",\"mood\":\"string\",\"style\":\"string\"}"));
         templates.add(new CapabilityTemplate("designAudioSystem", "音频系统", "设计音频架构", "task", 3,
             "{\"systemType\":\"enum:mixer,3d_audio,adaptive,events\",\"requirements\":\"string\"}"));
+        templates.add(new CapabilityTemplate("designAdaptiveMusic", "自适应音乐系统", "设计根据游戏状态动态切换的音乐系统", "task", 4,
+            "{\"scene\":\"string\",\"states\":\"string\",\"transitionType\":\"enum:crossfade,layer,switch\"}"));
+        templates.add(new CapabilityTemplate("designSpatialAudio", "空间音频设计", "设计 3D 空间音频方案", "task", 5,
+            "{\"environment\":\"enum:indoor,outdoor,underwater,urban\",\"features\":\"enum:reverb,occlusion,doppler\"}"));
     }
 
     private void initNarrativePlannerTemplates() {
@@ -237,6 +365,10 @@ public class DynamicCapabilityService {
             "{\"storyType\":\"enum:main_quest,side_quest,hidden_event\",\"chapter\":\"string\"}"));
         templates.add(new CapabilityTemplate("designDialogue", "对话设计", "设计角色对话", "task", 4,
             "{\"character\":\"string\",\"scene\":\"string\",\"branching\":\"boolean\"}"));
+        templates.add(new CapabilityTemplate("designBranchingNarrative", "分支叙事设计", "设计多分支叙事结构", "task", 5,
+            "{\"branchPoint\":\"string\",\"options\":\"string\",\"consequences\":\"string\"}"));
+        templates.add(new CapabilityTemplate("mapCharacterRelationships", "角色关系图", "设计和维护角色关系网络图", "task", 6,
+            "{\"scope\":\"enum:main_cast,full_world,faction\",\"relationshipType\":\"enum:ally,rival,romance,family\"}"));
     }
 
     private void initLevelDesignTemplates() {
@@ -249,6 +381,10 @@ public class DynamicCapabilityService {
             "{\"enemyTypes\":\"string\",\"difficulty\":\"enum:easy,medium,hard\"}"));
         templates.add(new CapabilityTemplate("designDifficultyCurve", "难度曲线", "设计难度曲线", "task", 4,
             "{\"totalLevels\":\"number\",\"peakLevel\":\"number\"}"));
+        templates.add(new CapabilityTemplate("generateProceduralLevel", "程序化关卡生成", "使用算法生成关卡布局和内容", "task", 5,
+            "{\"algorithm\":\"enum:random_walk,cellular_automata,grammar,constraint\",\"constraints\":\"string\"}"));
+        templates.add(new CapabilityTemplate("analyzeHeatmap", "热力图分析", "分析玩家在关卡中的行为热力图", "task", 6,
+            "{\"levelId\":\"string\",\"metric\":\"enum:movement,death,engagement,time_spent\"}"));
     }
 
     private void initDevOpsTemplates() {
@@ -261,6 +397,10 @@ public class DynamicCapabilityService {
             "{\"metrics\":\"string\",\"thresholds\":\"string\",\"channels\":\"string\"}"));
         templates.add(new CapabilityTemplate("manageContainers", "容器管理", "管理 Docker 容器", "task", 4,
             "{\"action\":\"enum:build,deploy,scale,monitor\",\"service\":\"string\"}"));
+        templates.add(new CapabilityTemplate("setupIaC", "基础设施即代码", "使用 Terraform/Pulumi 管理基础设施", "task", 5,
+            "{\"tool\":\"enum:terraform,pulumi,cloudformation\",\"scope\":\"enum:compute,storage,network,full\"}"));
+        templates.add(new CapabilityTemplate("setupObservability", "可观测性工程", "配置日志、指标、追踪三位一体的可观测性系统", "task", 6,
+            "{\"components\":\"enum:logs,metrics,traces\",\"tool\":\"enum:prometheus,grafana,elk,jaeger\"}"));
     }
 
     private void initTesterTemplates() {
@@ -273,6 +413,12 @@ public class DynamicCapabilityService {
             "{\"title\":\"string|required\",\"severity\":\"enum:critical,high,medium,low|required\",\"steps\":\"string|required\"}"));
         templates.add(new CapabilityTemplate("manageBugList", "缺陷管理", "管理 Bug 列表", "task", 4,
             "{\"action\":\"enum:list,assign,prioritize,close|required\",\"bugId\":\"string\"}"));
+        templates.add(new CapabilityTemplate("runPerformanceTest", "性能测试", "执行游戏性能测试", "task", 5,
+            "{\"testType\":\"enum:fps,memory,load_time,network\",\"target\":\"string\",\"duration\":\"string\"}"));
+        templates.add(new CapabilityTemplate("generateTestData", "测试数据生成", "生成测试数据", "task", 6,
+            "{\"dataType\":\"enum:user,game_data,transaction,edge_case\",\"count\":\"number\"}"));
+        templates.add(new CapabilityTemplate("manageRegressionSuite", "回归测试套件", "管理和执行回归测试套件", "task", 7,
+            "{\"action\":\"enum:create,run,update,report\",\"scope\":\"enum:smoke,full,critical\"}"));
     }
 
     // ===== 核心功能 =====

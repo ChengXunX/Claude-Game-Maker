@@ -200,16 +200,18 @@ public class NotificationTemplateController {
     public ResponseEntity<Map<String, Object>> testSendTemplate(@PathVariable Long id,
                                                                  Authentication authentication) {
         try {
-            // 获取当前用户的邮箱
+            // 获取当前用户的邮箱和ID
             String userEmail = null;
+            Long userId = null;
             if (authentication != null) {
                 User user = userService.getUserByUsername(authentication.getName());
                 if (user != null) {
                     userEmail = user.getEmail();
+                    userId = user.getId();
                 }
             }
 
-            Map<String, Object> result = templateService.testSendTemplate(id, userEmail);
+            Map<String, Object> result = templateService.testSendTemplate(id, userEmail, userId);
             return ResponseEntity.ok(result);
         } catch (Exception e) {
             log.error("测试发送通知失败: {}", e.getMessage());

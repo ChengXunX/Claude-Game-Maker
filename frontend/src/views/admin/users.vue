@@ -135,8 +135,8 @@ const loading = ref(false)
 const users = ref([])
 const roles = ref([])
 
-// 默认用户名列表（系统内置账号）
-const DEFAULT_USERS = ['admin']
+// 系统保护角色（拥有这些角色的用户不可被禁用/编辑）
+const PROTECTED_ROLES = ['ADMIN']
 
 /** 角色对话框 */
 const roleDialogVisible = ref(false)
@@ -180,9 +180,10 @@ const createRules = {
   ]
 }
 
-/** 判断是否是默认用户 */
+/** 判断是否是受保护的系统用户（基于角色判断） */
 const isDefaultUser = (user) => {
-  return DEFAULT_USERS.includes(user.username?.toLowerCase())
+  const roleName = user.role?.name || user.roleName || ''
+  return PROTECTED_ROLES.includes(roleName)
 }
 
 /** 获取角色显示名称 */

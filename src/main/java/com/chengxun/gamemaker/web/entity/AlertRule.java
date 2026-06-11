@@ -46,6 +46,10 @@ public class AlertRule {
     @Column(name = "metric_name", length = 100, nullable = false)
     private String metric;
 
+    /** 条件类型 */
+    @Column(name = "condition_type", length = 20, nullable = false)
+    private String conditionType = "THRESHOLD";
+
     /** 比较运算符 */
     @Column(name = "operator", length = 20, nullable = false)
     private String operator;
@@ -172,6 +176,9 @@ public class AlertRule {
 
     public String getMetric() { return metric; }
     public void setMetric(String metric) { this.metric = metric; }
+
+    public String getConditionType() { return conditionType; }
+    public void setConditionType(String conditionType) { this.conditionType = conditionType; }
 
     public String getOperator() { return operator; }
     public void setOperator(String operator) { this.operator = operator; }

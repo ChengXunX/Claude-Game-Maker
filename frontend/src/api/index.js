@@ -40,12 +40,20 @@ api.interceptors.response.use(
 
       switch (status) {
         case 401:
-          ElMessage.error('登录已过期，请重新登录')
+          // 优先显示后端返回的具体错误原因（如账号被禁用、审核未通过等）
+          ElMessage.error(errorMsg || '登录已过期，请重新登录')
           localStorage.removeItem('token')
           router.push('/login')
           break
         case 403:
-          ElMessage.error(errorMsg || '没有权限访问该资源')
+          // 账号状态异常（禁用/拒绝/待审核），显示具体原因并跳转登录页
+          if (data?.message && ['账号已被禁用', '账号审核未通过', '账号正在审核中', '账号状态异常'].some(k => data.message.includes(k))) {
+            ElMessage.error(data.message)
+            localStorage.removeItem('token')
+            router.push('/login')
+          } else {
+            ElMessage.error(errorMsg || '没有权限访问该资源')
+          }
           break
         case 404:
           ElMessage.error(errorMsg || '请求的资源不存在')
@@ -117,7 +125,15 @@ export const projectApi = {
   addDirectory: (id, data) => api.post(`/projects/api/${id}/directories`, data),
   removeDirectory: (id, dirPath) => api.delete(`/projects/api/${id}/directories/${encodeURIComponent(dirPath)}`),
   verifyMilestone: (projectId, milestoneId, data) => api.post(`/projects/api/${projectId}/milestones/${milestoneId}/verify`, data),
-  getVerificationDoc: (id) => api.get(`/projects/api/${id}/verification-doc`)
+  getVerificationDoc: (id) => api.get(`/projects/api/${id}/verification-doc`),
+  // 版本迭代相关
+  getIterationStats: (id) => api.get(`/projects/api/${id}/iteration-stats`),
+  getIterationRecords: (id) => api.get(`/projects/api/${id}/iteration-records`),
+  rollbackVersion: (id, targetVersion) => api.post(`/projects/api/${id}/rollback`, { targetVersion }),
+  getRollbackableVersions: (id) => api.get(`/projects/api/${id}/rollbackable-versions`),
+  getVersionComparison: (id, version1, version2) => api.get(`/projects/api/${id}/version-comparison`, { params: { version1, version2 } }),
+  exportIterationReport: (id) => api.get(`/projects/api/${id}/export-iteration-report`, { responseType: 'blob' }),
+  getIterationTemplates: () => api.get('/projects/api/iteration-templates')
 }
 
 // ===== 游戏模板管理 API =====
@@ -136,7 +152,9 @@ export const alertApi = {
   deleteRule: (id) => api.delete(`/alerts/rules/${id}`),
   getAlerts: (params) => api.get('/alerts', { params }),
   acknowledgeAlert: (id) => api.post(`/alerts/${id}/acknowledge`),
-  resolveAlert: (id, data) => api.post(`/alerts/${id}/resolve`, data)
+  resolveAlert: (id, data) => api.post(`/alerts/${id}/resolve`, data),
+  batchAcknowledge: () => api.post('/alerts/batch-acknowledge'),
+  getStats: () => api.get('/alerts/stats')
 }
 
 export const monitorApi = {
@@ -506,7 +524,9 @@ export const knowledgeBaseApi = {
   getStats: () => api.get('/knowledge-base/stats'),
   getTemplateStats: (templateId) => api.get(`/knowledge-base/template-stats/${templateId}`),
   getSolutions: (problemType) => api.get(`/knowledge-base/solutions/${problemType}`),
+  getSolutionsList: () => api.get('/knowledge-base/solutions'),
   getBestPractices: (category) => api.get('/knowledge-base/best-practices', { params: { category } }),
+  getUsageRecords: () => api.get('/knowledge-base/usage-records'),
   recordUsage: (data) => api.post('/knowledge-base/record-usage', data),
   recordSolution: (data) => api.post('/knowledge-base/record-solution', data),
   recordBestPractice: (data) => api.post('/knowledge-base/record-best-practice', data)
@@ -567,6 +587,8 @@ export const gameVerifyApi = {
   verify: (projectId) => api.post(`/game-verify/${projectId}/verify`),
   // AI 深度分析游戏质量（后台异步执行，设置较长超时防止误报）
   analyze: (projectId) => api.post(`/game-verify/${projectId}/analyze`, null, { timeout: 60000 }),
+  // 游戏设计审查
+  designReview: (projectId) => api.post(`/game-verify/${projectId}/design-review`, null, { timeout: 60000 }),
   // 获取分析任务状态（轮询接口，设置较长超时）
   getTaskStatus: (taskId) => api.get(`/game-verify/task/${taskId}`, { timeout: 30000 }),
   // 获取项目最新分析状态

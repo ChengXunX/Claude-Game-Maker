@@ -185,6 +185,9 @@ const permissionTree = [
     children: [
       { id: 'notification:view', label: '查看通知', description: '查看系统通知' },
       { id: 'notification:manage', label: '管理通知', description: '管理系统通知' },
+      { id: 'tokens:view', label: '查看 Token', description: '查看 Token 列表和用量' },
+      { id: 'approval:view', label: '查看审批', description: '查看审批记录' },
+      { id: 'system:view', label: '查看系统', description: '查看系统信息' },
       { id: 'code:review', label: '代码审查', description: '进行代码审查' }
     ]
   }

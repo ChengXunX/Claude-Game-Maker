@@ -4,6 +4,7 @@ import com.chengxun.gamemaker.engine.ClaudeCliEngine;
 import com.chengxun.gamemaker.engine.MessageBus;
 import com.chengxun.gamemaker.manager.*;
 import com.chengxun.gamemaker.model.*;
+import com.chengxun.gamemaker.service.PlayerExperienceAnalyzer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -37,6 +38,20 @@ public class SystemPlannerAgent extends BaseAgent {
         super(definition, cliEngine, messageBus, contextManager, memoryManager, skillManager, projectManager);
     }
 
+    /** 上次提出改进方案时间 */
+    private LocalDateTime lastImprovementTime;
+
+    /** 改进方案冷却时间（分钟） */
+    private static final int IMPROVEMENT_COOLDOWN_MINUTES = 45;
+
+    /** 玩家体验分析器（延迟注入） */
+    private com.chengxun.gamemaker.service.PlayerExperienceAnalyzer playerExperienceAnalyzer;
+
+    /** 设置玩家体验分析器 */
+    public void setPlayerExperienceAnalyzer(com.chengxun.gamemaker.service.PlayerExperienceAnalyzer analyzer) {
+        this.playerExperienceAnalyzer = analyzer;
+    }
+
     @Override
     protected void doWork() {
         log.info("SystemPlannerAgent working...");
@@ -64,6 +79,181 @@ public class SystemPlannerAgent extends BaseAgent {
             updateDesignDocuments();
             lastDesignUpdateTime = LocalDateTime.now();
         }
+
+        // 主动提出设计改进（每期都要提出更好玩的内容）
+        if (shouldProposeImprovement()) {
+            proposeDesignImprovement();
+            lastImprovementTime = LocalDateTime.now();
+        }
+    }
+
+    /**
+     * 判断是否需要提出改进方案
+     */
+    private boolean shouldProposeImprovement() {
+        if (currentProject == null || !currentProject.hasGoal()) return false;
+
+        // 检查项目是否在进行中
+        if (currentProject.getGoalStatus() != GameProject.GoalStatus.IN_PROGRESS) return false;
+
+        // 冷却时间检查
+        if (lastImprovementTime != null) {
+            if (!LocalDateTime.now().isAfter(lastImprovementTime.plusMinutes(IMPROVEMENT_COOLDOWN_MINUTES))) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * 主动提出设计改进方案
+     * 每个迭代周期都要思考如何让游戏更好玩
+     */
+    private void proposeDesignImprovement() {
+        if (currentProject == null) return;
+
+        log.info("系统策划主动提出设计改进方案");
+
+        String improvementPrompt = buildImprovementPrompt();
+        String response = sendMessage(improvementPrompt);
+
+        if (response != null && !response.isEmpty()) {
+            // 保存改进方案
+            saveKnowledge("improvement_proposal_" + System.currentTimeMillis(), response);
+
+            // 通知制作人
+            notifyProducerForImprovement(response);
+
+            log.info("设计改进方案已提出并通知制作人");
+        }
+    }
+
+    /**
+     * 构建改进方案提示词
+     */
+    private String buildImprovementPrompt() {
+        StringBuilder sb = new StringBuilder();
+
+        sb.append("## 设计改进任务\n\n");
+        sb.append("你是一个游戏系统策划，需要为当前项目提出设计改进方案，让游戏更好玩、更有吸引力。\n\n");
+
+        // 项目信息
+        sb.append("### 项目信息\n");
+        sb.append("- 项目名称: ").append(currentProject.getName()).append("\n");
+        sb.append("- 项目目标: ").append(currentProject.getGoal()).append("\n");
+        sb.append("- 当前版本: ").append(currentProject.getVersion()).append("\n");
+        sb.append("- 目标进度: ").append(currentProject.getGoalProgress()).append("%\n\n");
+
+        // 当前里程碑
+        if (currentProject.getMilestones() != null) {
+            sb.append("### 当前迭代状态\n");
+            for (var m : currentProject.getMilestones()) {
+                sb.append("- [").append(m.getStatus()).append("] ").append(m.getTitle());
+                if (m.getStatus() == GameProject.MilestoneStatus.IN_PROGRESS) {
+                    sb.append(" ← 当前迭代");
+                }
+                sb.append("\n");
+            }
+            sb.append("\n");
+        }
+
+        // 已有设计文档
+        String existingDesigns = loadKnowledge("design_documents");
+        if (existingDesigns != null) {
+            sb.append("### 已有设计\n");
+            sb.append(existingDesigns.length() > 1000 ?
+                existingDesigns.substring(0, 1000) + "...\n" : existingDesigns + "\n");
+            sb.append("\n");
+        }
+
+        // 历史改进经验
+        String improvementHistory = loadExperience("improvement_proposals");
+        if (improvementHistory != null) {
+            sb.append("### 历史改进方案\n");
+            sb.append(improvementHistory.length() > 500 ?
+                improvementHistory.substring(0, 500) + "...\n" : improvementHistory + "\n");
+            sb.append("\n");
+        }
+
+        // 【新增】玩家体验评分 — 从玩家视角找出最需要改进的地方
+        if (playerExperienceAnalyzer != null) {
+            try {
+                PlayerExperienceAnalyzer.FunScore funScore = playerExperienceAnalyzer.analyzeProject(currentProject);
+                sb.append("### 玩家体验诊断\n\n");
+                sb.append(String.format("综合趣味度: **%d/100**\n", funScore.getOverallScore()));
+                sb.append(String.format("- 核心循环: %d | 挑战感: %d | 奖励反馈: %d | 进度感: %d | 新颖度: %d\n\n",
+                    funScore.getCoreLoopScore(), funScore.getChallengeScore(),
+                    funScore.getRewardScore(), funScore.getProgressionScore(), funScore.getNoveltyScore()));
+
+                if (!funScore.getPainPoints().isEmpty()) {
+                    sb.append("**预测痛点（优先解决）：**\n");
+                    for (String point : funScore.getPainPoints()) {
+                        sb.append("- ").append(point).append("\n");
+                    }
+                    sb.append("\n");
+                }
+
+                if (!funScore.getImprovements().isEmpty()) {
+                    sb.append("**改进建议（按影响度排序）：**\n");
+                    for (String improvement : funScore.getImprovements()) {
+                        sb.append("- ").append(improvement).append("\n");
+                    }
+                    sb.append("\n");
+                }
+
+                // 竞品参考
+                String competitorRef = playerExperienceAnalyzer.getCompetitorReference(
+                    currentProject.getGoal() != null ? currentProject.getGoal() : "");
+                if (!competitorRef.isEmpty()) {
+                    sb.append(competitorRef);
+                }
+            } catch (Exception e) {
+                log.debug("玩家体验分析失败: {}", e.getMessage());
+            }
+        }
+
+        sb.append("## 请提出改进方案\n\n");
+        sb.append("请从以下角度思考如何让游戏更好玩：\n\n");
+        sb.append("1. **核心玩法改进**: 核心循环是否足够有趣？有什么可以增强的？\n");
+        sb.append("2. **新功能建议**: 添加什么新功能能让游戏更有吸引力？\n");
+        sb.append("3. **体验优化**: 哪些地方的用户体验可以改善？\n");
+        sb.append("4. **内容丰富**: 可以增加什么内容让游戏更丰富？\n");
+        sb.append("5. **社交互动**: 是否可以增加社交/竞技元素？\n\n");
+        sb.append("### 输出格式\n\n");
+        sb.append("请输出3-5个具体的改进方案，每个方案包含：\n");
+        sb.append("- 方案名称\n");
+        sb.append("- 预期效果\n");
+        sb.append("- 实现难度（低/中/高）\n");
+        sb.append("- 优先级建议\n\n");
+        sb.append("请给出具体、可执行的改进方案。");
+
+        return sb.toString();
+    }
+
+    /**
+     * 通知制作人改进方案
+     */
+    private void notifyProducerForImprovement(String improvementProposal) {
+        String producerId = getProjectId() + ":producer";
+
+        String message = String.format(
+            "【设计改进提案】\n\n" +
+            "系统策划提出了以下改进方案，让游戏更好玩：\n\n%s\n\n" +
+            "请评估这些方案并决定是否纳入下一个迭代。",
+            improvementProposal.length() > 1500 ?
+                improvementProposal.substring(0, 1500) + "..." : improvementProposal
+        );
+
+        AgentMessage agentMessage = AgentMessage.builder()
+            .fromAgentId(getId())
+            .toAgentId(producerId)
+            .type(AgentMessage.MessageType.REPORT)
+            .content(message)
+            .build();
+        sendMessage(agentMessage);
+
+        log.info("已通知制作人设计改进方案");
     }
 
     /**

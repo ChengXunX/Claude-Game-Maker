@@ -102,6 +102,7 @@ public class NotificationPreferenceController {
 
     /**
      * 获取用户通知偏好（JSON API）
+     * 如果用户没有偏好记录，自动初始化默认值
      */
     @GetMapping("/api/list")
     @ResponseBody
@@ -117,6 +118,13 @@ public class NotificationPreferenceController {
 
             List<NotificationType> visibleTypes = preferenceService.getVisibleTypes(permissions);
             List<NotificationPreference> userPrefs = preferenceService.getUserPreferences(userId);
+
+            // 如果用户没有偏好记录，自动初始化默认值
+            if (userPrefs.isEmpty() && userId > 0) {
+                log.info("User {} has no notification preferences, initializing defaults", userId);
+                preferenceService.initDefaultPreferences(userId);
+                userPrefs = preferenceService.getUserPreferences(userId);
+            }
 
             Map<String, Object> result = new HashMap<>();
             result.put("preferences", userPrefs);

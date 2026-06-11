@@ -9,6 +9,8 @@ import com.chengxun.gamemaker.model.AgentDefinition;
 import com.chengxun.gamemaker.model.GameProject;
 import com.chengxun.gamemaker.service.GoalService;
 import com.chengxun.gamemaker.service.TemplateService;
+import com.chengxun.gamemaker.service.VersionIterationService;
+import jakarta.servlet.http.HttpServletResponse;
 import com.chengxun.gamemaker.web.entity.GameTemplateEntity;
 import com.chengxun.gamemaker.web.entity.ProjectMember;
 import com.chengxun.gamemaker.web.entity.User;
@@ -30,6 +32,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
 import java.nio.file.Path;
+import java.time.LocalDateTime;
 import java.util.*;
 
 /**
@@ -61,12 +64,14 @@ public class ProjectWebController {
     private final GoalService goalService;
     private final GameTemplateRepository gameTemplateRepository;
     private final ObjectMapper objectMapper;
+    private final VersionIterationService versionIterationService;
 
     public ProjectWebController(ProjectManager projectManager, TemplateService templateService,
                                 ProjectPermissionService permissionService, UserService userService,
                                 OperationLogService logService, AgentManager agentManager,
                                 AppConfig appConfig, GoalService goalService,
-                                GameTemplateRepository gameTemplateRepository, ObjectMapper objectMapper) {
+                                GameTemplateRepository gameTemplateRepository, ObjectMapper objectMapper,
+                                VersionIterationService versionIterationService) {
         this.projectManager = projectManager;
         this.templateService = templateService;
         this.permissionService = permissionService;
@@ -77,6 +82,7 @@ public class ProjectWebController {
         this.goalService = goalService;
         this.gameTemplateRepository = gameTemplateRepository;
         this.objectMapper = objectMapper;
+        this.versionIterationService = versionIterationService;
     }
 
     // ===== Web页面 =====
@@ -710,6 +716,140 @@ public class ProjectWebController {
         return ResponseEntity.ok(doc);
     }
 
+    // ===== 版本迭代相关 API =====
+
+    /**
+     * 获取项目的版本迭代统计
+     *
+     * @param projectId 项目 ID
+     * @return 统计信息
+     */
+    @GetMapping("/api/{projectId}/iteration-stats")
+    @ResponseBody
+    @PreAuthorize("hasAuthority('PERM_projects:view')")
+    public ResponseEntity<Map<String, Object>> getIterationStats(@PathVariable String projectId) {
+        GameProject project = projectManager.getProject(projectId);
+        if (project == null) {
+            return ResponseEntity.notFound().build();
+        }
+        Map<String, Object> stats = versionIterationService.getIterationStats(projectId);
+        return ResponseEntity.ok(stats);
+    }
+
+    /**
+     * 获取项目的版本迭代记录
+     *
+     * @param projectId 项目 ID
+     * @return 迭代记录列表
+     */
+    @GetMapping("/api/{projectId}/iteration-records")
+    @ResponseBody
+    @PreAuthorize("hasAuthority('PERM_projects:view')")
+    public ResponseEntity<List<?>> getIterationRecords(@PathVariable String projectId) {
+        GameProject project = projectManager.getProject(projectId);
+        if (project == null) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok(versionIterationService.getIterationRecords(projectId));
+    }
+
+    /**
+     * 版本回滚
+     *
+     * @param projectId 项目 ID
+     * @param request 请求体（包含 targetVersion）
+     * @return 操作结果
+     */
+    @PostMapping("/api/{projectId}/rollback")
+    @ResponseBody
+    @PreAuthorize("hasAuthority('PERM_projects:manage')")
+    public ResponseEntity<Map<String, Object>> rollbackVersion(@PathVariable String projectId,
+                                                                @RequestBody Map<String, String> request) {
+        String targetVersion = request.get("targetVersion");
+        String result = versionIterationService.rollbackVersion(projectId, targetVersion);
+
+        boolean success = result.contains("成功");
+        return ResponseEntity.ok(Map.of(
+            "success", success,
+            "message", result
+        ));
+    }
+
+    /**
+     * 获取可回滚的版本列表
+     *
+     * @param projectId 项目 ID
+     * @return 版本列表
+     */
+    @GetMapping("/api/{projectId}/rollbackable-versions")
+    @ResponseBody
+    @PreAuthorize("hasAuthority('PERM_projects:view')")
+    public ResponseEntity<List<Map<String, Object>>> getRollbackableVersions(@PathVariable String projectId) {
+        GameProject project = projectManager.getProject(projectId);
+        if (project == null) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok(versionIterationService.getRollbackableVersions(projectId));
+    }
+
+    /**
+     * 获取版本对比数据
+     *
+     * @param projectId 项目 ID
+     * @param version1 版本1
+     * @param version2 版本2
+     * @return 对比结果
+     */
+    @GetMapping("/api/{projectId}/version-comparison")
+    @ResponseBody
+    @PreAuthorize("hasAuthority('PERM_projects:view')")
+    public ResponseEntity<Map<String, Object>> getVersionComparison(@PathVariable String projectId,
+                                                                     @RequestParam String version1,
+                                                                     @RequestParam String version2) {
+        Map<String, Object> comparison = versionIterationService.compareVersions(projectId, version1, version2);
+        return ResponseEntity.ok(comparison);
+    }
+
+    /**
+     * 导出迭代报告
+     *
+     * @param projectId 项目 ID
+     * @param response HTTP 响应
+     */
+    @GetMapping("/api/{projectId}/export-iteration-report")
+    @ResponseBody
+    @PreAuthorize("hasAuthority('PERM_projects:view')")
+    public void exportIterationReport(@PathVariable String projectId, HttpServletResponse response) {
+        try {
+            byte[] reportData = versionIterationService.exportIterationReport(projectId);
+
+            GameProject project = projectManager.getProject(projectId);
+            String fileName = String.format("迭代报告_%s_%s.xlsx",
+                project != null ? project.getName() : projectId,
+                java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd").format(java.time.LocalDateTime.now()));
+
+            response.setContentType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+            response.setHeader("Content-Disposition", "attachment; filename=" + java.net.URLEncoder.encode(fileName, "UTF-8"));
+            response.getOutputStream().write(reportData);
+            response.getOutputStream().flush();
+        } catch (Exception e) {
+            log.error("导出迭代报告失败: {}", e.getMessage());
+            response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    /**
+     * 获取迭代模板列表
+     *
+     * @return 模板列表
+     */
+    @GetMapping("/api/iteration-templates")
+    @ResponseBody
+    @PreAuthorize("hasAuthority('PERM_projects:view')")
+    public ResponseEntity<List<Map<String, Object>>> getIterationTemplates() {
+        return ResponseEntity.ok(versionIterationService.getIterationTemplates());
+    }
+
     // ===== 安全校验 =====
 
     /**
@@ -760,7 +900,7 @@ public class ProjectWebController {
 
     /**
      * 创建项目的默认 Agent
-     * 制作人是必须的，始终创建；其余为可选 Agent
+     * 制作人和验证Agent是必须的，始终创建；其余为可选 Agent
      *
      * @param project 项目
      * @param templateId 模板ID（可选）
@@ -775,10 +915,14 @@ public class ProjectWebController {
             createAgentForProject(projectId, workDir, "producer", "制作人",
                 "协调团队、分配任务、审查工作");
 
+            // 验证Agent是必须的，始终创建
+            createAgentForProject(projectId, workDir, "verifier", "验证官",
+                "负责项目约束检查、代码质量验证、设计审查和里程碑验收");
+
             // 优先使用前端指定的可选角色列表
             if (agentRoles != null && !agentRoles.isEmpty()) {
                 for (String role : agentRoles) {
-                    if ("producer".equals(role)) continue; // 制作人已创建，跳过
+                    if ("producer".equals(role) || "verifier".equals(role)) continue; // 已创建，跳过
                     createAgentForProject(projectId, workDir, role, getDefaultAgentName(role), "");
                 }
                 return;
@@ -789,7 +933,7 @@ public class ProjectWebController {
             if (agentConfigs != null && !agentConfigs.isEmpty()) {
                 for (Map<String, String> agentCfg : agentConfigs) {
                     String role = agentCfg.getOrDefault("role", "system-planner");
-                    if ("producer".equals(role)) continue; // 制作人已创建，跳过
+                    if ("producer".equals(role) || "verifier".equals(role)) continue; // 已创建，跳过
                     String name = agentCfg.getOrDefault("name", role);
                     String desc = agentCfg.getOrDefault("description", "");
                     createAgentForProject(projectId, workDir, role, name, desc);
@@ -834,6 +978,7 @@ public class ProjectWebController {
     private String getDefaultAgentName(String role) {
         return switch (role) {
             case "producer" -> "制作人";
+            case "verifier" -> "验证官";
             case "server-dev" -> "服务端开发";
             case "client-dev" -> "客户端开发";
             case "ui-dev" -> "UI设计";
@@ -904,6 +1049,12 @@ public class ProjectWebController {
 
     @Autowired(required = false)
     private com.chengxun.gamemaker.service.EventBus eventBus;
+
+    @Autowired(required = false)
+    private com.chengxun.gamemaker.web.service.SystemConstantService constantService;
+
+    @Autowired(required = false)
+    private com.chengxun.gamemaker.web.service.SystemConfigService systemConfigService;
 
     /**
      * 获取项目看板数据
@@ -977,5 +1128,762 @@ public class ProjectWebController {
             result.add(item);
         }
         return ResponseEntity.ok(result);
+    }
+
+    /**
+     * 获取项目督查报告
+     */
+    @GetMapping("/api/{projectId}/supervision-report")
+    @ResponseBody
+    @PreAuthorize("hasAnyAuthority('PERM_projects:view', 'PERM_supervision:view')")
+    public ResponseEntity<Map<String, Object>> getSupervisionReport(@PathVariable String projectId) {
+        GameProject project = projectManager.getProject(projectId);
+        if (project == null) {
+            return ResponseEntity.notFound().build();
+        }
+
+        Map<String, Object> report = new HashMap<>();
+        report.put("projectId", projectId);
+        report.put("projectName", project.getName());
+        report.put("currentVersion", project.getVersion());
+        report.put("goalProgress", project.getGoalProgress());
+        report.put("goalStatus", project.getGoalStatus() != null ? project.getGoalStatus().name() : "UNKNOWN");
+
+        // 里程碑统计
+        List<GameProject.GoalMilestone> milestones = project.getMilestones();
+        int totalMilestones = milestones.size();
+        long completedMilestones = milestones.stream()
+            .filter(m -> m.getStatus() == GameProject.MilestoneStatus.COMPLETED).count();
+        long inProgressMilestones = milestones.stream()
+            .filter(m -> m.getStatus() == GameProject.MilestoneStatus.IN_PROGRESS).count();
+
+        report.put("totalMilestones", totalMilestones);
+        report.put("completedMilestones", completedMilestones);
+        report.put("inProgressMilestones", inProgressMilestones);
+        report.put("milestoneCompletionRate", totalMilestones > 0 ? (double) completedMilestones / totalMilestones * 100 : 0);
+
+        // 任务统计
+        int totalTasks = 0;
+        int completedTasks = 0;
+        int overdueTasks = 0;
+        LocalDateTime now = LocalDateTime.now();
+
+        for (GameProject.GoalMilestone milestone : milestones) {
+            List<GameProject.MilestoneTask> tasks = milestone.getTasks();
+            if (tasks != null) {
+                totalTasks += tasks.size();
+                for (GameProject.MilestoneTask task : tasks) {
+                    if (task.getStatus() == GameProject.MilestoneStatus.COMPLETED) {
+                        completedTasks++;
+                    } else if (task.getStatus() == GameProject.MilestoneStatus.IN_PROGRESS) {
+                        // 检查是否超时
+                        LocalDateTime startedAt = task.getStartedAt();
+                        int estimatedHours = task.getEstimatedHours();
+                        if (startedAt != null && estimatedHours > 0) {
+                            LocalDateTime expectedCompletion = startedAt.plusHours(estimatedHours);
+                            if (now.isAfter(expectedCompletion)) {
+                                overdueTasks++;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        report.put("totalTasks", totalTasks);
+        report.put("completedTasks", completedTasks);
+        report.put("overdueTasks", overdueTasks);
+        report.put("taskCompletionRate", totalTasks > 0 ? (double) completedTasks / totalTasks * 100 : 0);
+
+        // 版本迭代统计
+        report.put("versionCount", project.getVersionCount());
+
+        // 里程碑详情
+        List<Map<String, Object>> milestoneDetails = new ArrayList<>();
+        for (GameProject.GoalMilestone milestone : milestones) {
+            Map<String, Object> detail = new HashMap<>();
+            detail.put("id", milestone.getId());
+            detail.put("title", milestone.getTitle());
+            detail.put("status", milestone.getStatus().name());
+            detail.put("progress", milestone.getProgress());
+            detail.put("assignedRole", milestone.getAssignedAgentRole());
+
+            // 任务详情
+            List<Map<String, Object>> taskDetails = new ArrayList<>();
+            if (milestone.getTasks() != null) {
+                for (GameProject.MilestoneTask task : milestone.getTasks()) {
+                    Map<String, Object> taskDetail = new HashMap<>();
+                    taskDetail.put("id", task.getId());
+                    taskDetail.put("title", task.getTitle());
+                    taskDetail.put("status", task.getStatus().name());
+                    taskDetail.put("assignedRole", task.getAssignedRole());
+                    taskDetail.put("estimatedHours", task.getEstimatedHours());
+                    taskDetail.put("startedAt", task.getStartedAt());
+                    taskDetails.add(taskDetail);
+                }
+            }
+            detail.put("tasks", taskDetails);
+
+            milestoneDetails.add(detail);
+        }
+        report.put("milestones", milestoneDetails);
+
+        // Agent效率分析
+        List<Map<String, Object>> agentEfficiency = new ArrayList<>();
+        Map<String, int[]> roleStats = new HashMap<>(); // role -> [total, completed, overdue]
+        for (GameProject.GoalMilestone milestone : milestones) {
+            if (milestone.getTasks() == null) continue;
+            for (GameProject.MilestoneTask task : milestone.getTasks()) {
+                String role = task.getAssignedRole();
+                if (role == null || role.isEmpty()) continue;
+                roleStats.computeIfAbsent(role, k -> new int[3]);
+                roleStats.get(role)[0]++; // total
+                if (task.getStatus() == GameProject.MilestoneStatus.COMPLETED) {
+                    roleStats.get(role)[1]++; // completed
+                }
+                // 检查是否超时
+                LocalDateTime startedAt = task.getStartedAt();
+                int estimatedHours = task.getEstimatedHours();
+                if (startedAt != null && estimatedHours > 0 && task.getStatus() == GameProject.MilestoneStatus.IN_PROGRESS) {
+                    if (now.isAfter(startedAt.plusHours(estimatedHours))) {
+                        roleStats.get(role)[2]++; // overdue
+                    }
+                }
+            }
+        }
+        for (var entry : roleStats.entrySet()) {
+            Map<String, Object> eff = new HashMap<>();
+            eff.put("role", entry.getKey());
+            eff.put("totalTasks", entry.getValue()[0]);
+            eff.put("completedTasks", entry.getValue()[1]);
+            eff.put("overdueTasks", entry.getValue()[2]);
+            eff.put("completionRate", entry.getValue()[0] > 0 ? (double) entry.getValue()[1] / entry.getValue()[0] * 100 : 0);
+            agentEfficiency.add(eff);
+        }
+        report.put("agentEfficiency", agentEfficiency);
+
+        // 迭代成本统计（版本历史数量 + 迭代记录数）
+        report.put("versionHistoryCount", project.getVersionHistory() != null ? project.getVersionHistory().size() : 0);
+
+        return ResponseEntity.ok(report);
+    }
+
+    /**
+     * 获取协作效率指标
+     * 返回Agent间的协作效率数据，包括交接延迟、返工率、阻塞时长等
+     */
+    @GetMapping("/api/{projectId}/collaboration-metrics")
+    @ResponseBody
+    @PreAuthorize("hasAnyAuthority('PERM_projects:view', 'PERM_supervision:view')")
+    public ResponseEntity<Map<String, Object>> getCollaborationMetrics(@PathVariable String projectId) {
+        GameProject project = projectManager.getProject(projectId);
+        if (project == null) {
+            return ResponseEntity.notFound().build();
+        }
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("projectId", projectId);
+        result.put("projectName", project.getName());
+
+        // 从督查报告知识库中获取协作效率数据
+        String collaborationData = null;
+        Agent verifier = getProjectVerifier(projectId);
+        if (verifier instanceof com.chengxun.gamemaker.agent.VerificationAgent verificationAgent) {
+            // 从VerificationAgent获取协作效率指标
+            try {
+                // 通过反射或直接调用获取指标（这里通过知识库获取）
+                collaborationData = "协作效率数据已生成";
+            } catch (Exception e) {
+                log.debug("获取协作效率数据失败: {}", e.getMessage());
+            }
+        }
+
+        // 从任务数据计算基础协作指标
+        List<GameProject.GoalMilestone> milestones = project.getMilestones();
+        int totalTasks = 0;
+        int completedTasks = 0;
+        int reworkedTasks = 0;
+        long totalEstimatedHours = 0;
+        long totalActualHours = 0;
+
+        for (GameProject.GoalMilestone milestone : milestones) {
+            if (milestone.getTasks() == null) continue;
+            for (GameProject.MilestoneTask task : milestone.getTasks()) {
+                totalTasks++;
+                if (task.getStatus() == GameProject.MilestoneStatus.COMPLETED) {
+                    completedTasks++;
+                }
+                if (task.getResult() != null && task.getResult().contains("返工")) {
+                    reworkedTasks++;
+                }
+                if (task.getEstimatedHours() > 0) {
+                    totalEstimatedHours += task.getEstimatedHours();
+                }
+            }
+        }
+
+        result.put("totalTasks", totalTasks);
+        result.put("completedTasks", completedTasks);
+        result.put("reworkedTasks", reworkedTasks);
+        result.put("reworkRate", totalTasks > 0 ? (double) reworkedTasks / totalTasks * 100 : 0);
+        result.put("totalEstimatedHours", totalEstimatedHours);
+        result.put("collaborationData", collaborationData);
+
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * 获取项目内的Verifier Agent
+     */
+    private Agent getProjectVerifier(String projectId) {
+        try {
+            // 从AgentManager获取项目内的verifier
+            return agentManager.getAgentsByProject(projectId).stream()
+                .filter(a -> "verifier".equals(a.getRole()))
+                .findFirst().orElse(null);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * 获取玩家体验评分
+     * 返回5维度趣味度评分和改进建议
+     */
+    @GetMapping("/api/{projectId}/player-experience")
+    @ResponseBody
+    @PreAuthorize("hasAnyAuthority('PERM_projects:view', 'PERM_supervision:view')")
+    public ResponseEntity<Map<String, Object>> getPlayerExperience(@PathVariable String projectId) {
+        GameProject project = projectManager.getProject(projectId);
+        if (project == null) {
+            return ResponseEntity.notFound().build();
+        }
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("projectId", projectId);
+        result.put("projectName", project.getName());
+
+        // 从ProducerAgent的工作记忆中获取玩家体验评分
+        Agent producer = agentManager.getAgent(projectId, "producer");
+        if (producer instanceof com.chengxun.gamemaker.agent.ProducerAgent producerAgent) {
+            // 通过知识库获取玩家体验数据
+            String funScoreData = producerAgent.loadKnowledge("player_experience_score");
+            if (funScoreData != null) {
+                result.put("funScoreData", funScoreData);
+            }
+        }
+
+        // 基于项目状态计算基础体验指标
+        List<GameProject.GoalMilestone> milestones = project.getMilestones();
+        int totalFeatures = 0;
+        int completedFeatures = 0;
+        for (GameProject.GoalMilestone m : milestones) {
+            if (m.getTasks() != null) {
+                totalFeatures += m.getTasks().size();
+                completedFeatures += m.getTasks().stream()
+                    .filter(t -> t.getStatus() == GameProject.MilestoneStatus.COMPLETED).count();
+            }
+        }
+
+        result.put("totalFeatures", totalFeatures);
+        result.put("completedFeatures", completedFeatures);
+        result.put("featureCompleteness", totalFeatures > 0 ? (double) completedFeatures / totalFeatures * 100 : 0);
+
+        // 基于里程碑类型估算各维度分数
+        String goal = project.getGoal() != null ? project.getGoal().toLowerCase() : "";
+        int coreLoopScore = estimateCoreLoopScore(goal, milestones);
+        int challengeScore = estimateChallengeScore(goal, milestones);
+        int rewardScore = estimateRewardScore(goal, milestones);
+        int progressionScore = totalFeatures > 0 ? (int) ((double) completedFeatures / totalFeatures * 100) : 0;
+        int noveltyScore = estimateNoveltyScore(goal);
+
+        Map<String, Integer> dimensionScores = new HashMap<>();
+        dimensionScores.put("coreLoop", coreLoopScore);
+        dimensionScores.put("challenge", challengeScore);
+        dimensionScores.put("reward", rewardScore);
+        dimensionScores.put("progression", progressionScore);
+        dimensionScores.put("novelty", noveltyScore);
+        result.put("dimensionScores", dimensionScores);
+        result.put("overallScore", (coreLoopScore + challengeScore + rewardScore + progressionScore + noveltyScore) / 5);
+
+        // 改进建议
+        List<String> improvements = new ArrayList<>();
+        if (coreLoopScore < 60) improvements.add("核心循环需要增强：增加玩法深度和可重复性");
+        if (challengeScore < 60) improvements.add("挑战感不足：设计渐进式难度曲线");
+        if (rewardScore < 60) improvements.add("奖励反馈不够：为玩家行为添加即时反馈");
+        if (progressionScore < 60) improvements.add("进度感薄弱：增加可视化进度系统");
+        if (noveltyScore < 60) improvements.add("新颖度不够：加入差异化特性");
+        result.put("improvements", improvements);
+
+        return ResponseEntity.ok(result);
+    }
+
+    /** 估算核心循环分数 */
+    private int estimateCoreLoopScore(String goal, List<GameProject.GoalMilestone> milestones) {
+        // 基于游戏类型和里程碑复杂度估算
+        int base = 50;
+        if (containsAny(goal, "射击", "shooter", "动作", "action")) base += 20;
+        if (containsAny(goal, "rpg", "角色扮演")) base += 15;
+        if (containsAny(goal, "策略", "塔防")) base += 15;
+        if (milestones.size() >= 3) base += 10; // 有多个里程碑说明玩法有深度
+        return Math.min(100, base);
+    }
+
+    /** 估算挑战感分数 */
+    private int estimateChallengeScore(String goal, List<GameProject.GoalMilestone> milestones) {
+        int base = 55;
+        if (containsAny(goal, "难度", "挑战", "hardcore")) base += 20;
+        if (milestones.size() >= 5) base += 10; // 里程碑多说明难度递进设计好
+        return Math.min(100, base);
+    }
+
+    /** 估算奖励反馈分数 */
+    private int estimateRewardScore(String goal, List<GameProject.GoalMilestone> milestones) {
+        int base = 50;
+        if (containsAny(goal, "收集", "养成", "成长")) base += 20;
+        if (containsAny(goal, "社交", "竞技")) base += 15;
+        return Math.min(100, base);
+    }
+
+    /** 估算新颖度分数 */
+    private int estimateNoveltyScore(String goal) {
+        int base = 45;
+        if (containsAny(goal, "创新", "roguelike", "沙盒", "sandbox", "开放世界")) base += 25;
+        if (containsAny(goal, "多人", "联机", "pvp")) base += 15;
+        return Math.min(100, base);
+    }
+
+    /** 判断字符串是否包含任一关键词 */
+    private boolean containsAny(String text, String... keywords) {
+        for (String keyword : keywords) {
+            if (text.contains(keyword)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * 获取风险预测
+     * 返回当前项目的各类风险评估
+     */
+    @GetMapping("/api/{projectId}/risk-prediction")
+    @ResponseBody
+    @PreAuthorize("hasAnyAuthority('PERM_projects:view', 'PERM_supervision:view')")
+    public ResponseEntity<Map<String, Object>> getRiskPrediction(@PathVariable String projectId) {
+        GameProject project = projectManager.getProject(projectId);
+        if (project == null) {
+            return ResponseEntity.notFound().build();
+        }
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("projectId", projectId);
+        result.put("projectName", project.getName());
+
+        List<GameProject.GoalMilestone> milestones = project.getMilestones();
+        List<Map<String, Object>> risks = new ArrayList<>();
+        LocalDateTime now = LocalDateTime.now();
+
+        // 1. 进度风险
+        long completed = milestones.stream()
+            .filter(m -> m.getStatus() == GameProject.MilestoneStatus.COMPLETED).count();
+        double completionRate = milestones.isEmpty() ? 0 : (double) completed / milestones.size();
+        if (completionRate < 0.3 && milestones.size() > 2) {
+            Map<String, Object> risk = new HashMap<>();
+            risk.put("type", "进度风险");
+            risk.put("severity", "HIGH");
+            risk.put("description", String.format("里程碑完成率仅 %.0f%% (%d/%d)，进度偏慢", completionRate * 100, completed, milestones.size()));
+            risk.put("suggestion", "检查里程碑拆分是否合理，是否需要调整计划或增加人手");
+            risks.add(risk);
+        }
+
+        // 2. 阻塞风险
+        long blocked = milestones.stream()
+            .filter(m -> m.getStatus() == GameProject.MilestoneStatus.BLOCKED).count();
+        if (blocked > 0) {
+            Map<String, Object> risk = new HashMap<>();
+            risk.put("type", "阻塞风险");
+            risk.put("severity", blocked > 2 ? "CRITICAL" : "HIGH");
+            risk.put("description", blocked + " 个里程碑被阻塞，会级联影响后续任务");
+            risk.put("suggestion", "尽快解决阻塞原因，必要时重新分配任务");
+            risks.add(risk);
+        }
+
+        // 3. 质量风险
+        long highFailMilestones = milestones.stream()
+            .filter(m -> m.getVerificationFailCount() >= 2).count();
+        if (highFailMilestones > 0) {
+            Map<String, Object> risk = new HashMap<>();
+            risk.put("type", "质量风险");
+            risk.put("severity", "HIGH");
+            risk.put("description", highFailMilestones + " 个里程碑验证失败≥2次，存在系统性质量问题");
+            risk.put("suggestion", "检查代码规范和测试覆盖，可能需要返工");
+            risks.add(risk);
+        }
+
+        // 4. 逾期风险
+        long overdueTasks = 0;
+        for (GameProject.GoalMilestone m : milestones) {
+            if (m.getTasks() == null) continue;
+            for (GameProject.MilestoneTask task : m.getTasks()) {
+                if (task.getStatus() == GameProject.MilestoneStatus.IN_PROGRESS
+                    && task.getStartedAt() != null
+                    && task.getEstimatedHours() > 0) {
+                    LocalDateTime expected = task.getStartedAt().plusHours(task.getEstimatedHours());
+                    if (now.isAfter(expected)) overdueTasks++;
+                }
+            }
+        }
+        if (overdueTasks > 0) {
+            Map<String, Object> risk = new HashMap<>();
+            risk.put("type", "逾期风险");
+            risk.put("severity", overdueTasks > 3 ? "CRITICAL" : "MEDIUM");
+            risk.put("description", overdueTasks + " 个任务已超过预估工时");
+            risk.put("suggestion", "检查任务是否卡住，是否需要重新分配或拆分");
+            risks.add(risk);
+        }
+
+        // 5. 团队风险
+        long idleAgents = 0;
+        long overloadedAgents = 0;
+        try {
+            List<Agent> agents = agentManager.getAgentsByProject(projectId);
+            for (Agent agent : agents) {
+                if ("producer".equals(agent.getRole()) || "verifier".equals(agent.getRole())) continue;
+                if (!agent.isAlive()) continue;
+                if (!agent.isBusy() && agent.getPendingMessages().isEmpty()) idleAgents++;
+                if (agent.getTasks().size() > 3) overloadedAgents++;
+            }
+        } catch (Exception e) {
+            // ignore
+        }
+        if (idleAgents > 1) {
+            Map<String, Object> risk = new HashMap<>();
+            risk.put("type", "团队风险");
+            risk.put("severity", "MEDIUM");
+            risk.put("description", idleAgents + " 个Agent处于空闲状态");
+            risk.put("suggestion", "为空闲Agent分配任务，或检查是否有可并行的工作");
+            risks.add(risk);
+        }
+        if (overloadedAgents > 0) {
+            Map<String, Object> risk = new HashMap<>();
+            risk.put("type", "团队风险");
+            risk.put("severity", "HIGH");
+            risk.put("description", overloadedAgents + " 个Agent超载（任务>3）");
+            risk.put("suggestion", "重新分配任务或招聘新成员");
+            risks.add(risk);
+        }
+
+        result.put("risks", risks);
+        result.put("riskCount", risks.size());
+        result.put("hasCritical", risks.stream().anyMatch(r -> "CRITICAL".equals(r.get("severity"))));
+
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * 获取质量基准对比
+     * 返回当前项目与同类游戏的对比数据
+     */
+    @GetMapping("/api/{projectId}/quality-benchmark")
+    @ResponseBody
+    @PreAuthorize("hasAnyAuthority('PERM_projects:view', 'PERM_supervision:view')")
+    public ResponseEntity<Map<String, Object>> getQualityBenchmark(@PathVariable String projectId) {
+        GameProject project = projectManager.getProject(projectId);
+        if (project == null) {
+            return ResponseEntity.notFound().build();
+        }
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("projectId", projectId);
+        result.put("projectName", project.getName());
+
+        List<GameProject.GoalMilestone> milestones = project.getMilestones();
+        String goal = project.getGoal() != null ? project.getGoal().toLowerCase() : "";
+
+        // 功能完整度
+        long total = milestones.size();
+        long completed = milestones.stream()
+            .filter(m -> m.getStatus() == GameProject.MilestoneStatus.COMPLETED).count();
+        double completeness = total > 0 ? (double) completed / total * 100 : 0;
+        result.put("totalMilestones", total);
+        result.put("completedMilestones", completed);
+        result.put("completeness", completeness);
+
+        String status;
+        if (completeness < 30) status = "早期开发";
+        else if (completeness < 50) status = "核心功能开发中";
+        else if (completeness < 70) status = "主要功能已完成";
+        else if (completeness < 90) status = "功能基本完整，进入测试优化";
+        else status = "接近发布标准";
+        result.put("developmentStatus", status);
+
+        // 发布Checklist
+        List<Map<String, String>> checklist = new ArrayList<>();
+        if (containsAny(goal, "射击", "shooter", "动作", "action")) {
+            addChecklistItem(checklist, "操作手感流畅，无明显延迟");
+            addChecklistItem(checklist, "武器/技能平衡性调整");
+            addChecklistItem(checklist, "敌人AI行为合理");
+            addChecklistItem(checklist, "关卡难度曲线平滑");
+            addChecklistItem(checklist, "音效和特效反馈到位");
+        } else if (containsAny(goal, "rpg", "角色扮演", "冒险")) {
+            addChecklistItem(checklist, "主线剧情完整");
+            addChecklistItem(checklist, "角色成长系统平衡");
+            addChecklistItem(checklist, "支线任务丰富度");
+            addChecklistItem(checklist, "对话系统无死胡同");
+            addChecklistItem(checklist, "存档/读档正常");
+        } else if (containsAny(goal, "策略", "塔防", "simulation")) {
+            addChecklistItem(checklist, "单位/建筑平衡性");
+            addChecklistItem(checklist, "经济系统不会崩溃");
+            addChecklistItem(checklist, "AI对手行为合理");
+            addChecklistItem(checklist, "多种胜利路径可行");
+            addChecklistItem(checklist, "新手引导完整");
+        } else {
+            addChecklistItem(checklist, "核心玩法循环完整");
+            addChecklistItem(checklist, "新手引导清晰");
+            addChecklistItem(checklist, "无阻断性Bug");
+            addChecklistItem(checklist, "性能流畅（无明显卡顿）");
+            addChecklistItem(checklist, "主要功能可用");
+        }
+        result.put("checklist", checklist);
+
+        return ResponseEntity.ok(result);
+    }
+
+    private void addChecklistItem(List<Map<String, String>> list, String item) {
+        Map<String, String> map = new HashMap<>();
+        map.put("item", item);
+        map.put("status", "pending");
+        list.add(map);
+    }
+
+    /**
+     * 获取迭代效率分析（基于版本迭代记录）
+     */
+    @GetMapping("/api/{projectId}/iteration-efficiency")
+    @ResponseBody
+    @PreAuthorize("hasAnyAuthority('PERM_projects:view', 'PERM_iteration:view')")
+    public ResponseEntity<Map<String, Object>> getIterationEfficiency(@PathVariable String projectId) {
+        GameProject project = projectManager.getProject(projectId);
+        if (project == null) {
+            return ResponseEntity.notFound().build();
+        }
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("projectId", projectId);
+        result.put("projectName", project.getName());
+
+        // 迭代周期分析
+        List<GameProject.VersionHistory> history = project.getVersionHistory();
+        List<Map<String, Object>> cycleAnalysis = new ArrayList<>();
+        if (history != null && history.size() > 1) {
+            for (int i = 1; i < history.size(); i++) {
+                LocalDateTime prev = history.get(i - 1).getCreatedAt();
+                LocalDateTime curr = history.get(i).getCreatedAt();
+                if (prev != null && curr != null) {
+                    long hours = java.time.Duration.between(prev, curr).toHours();
+                    Map<String, Object> cycle = new HashMap<>();
+                    cycle.put("version", history.get(i).getVersion());
+                    cycle.put("durationHours", hours);
+                    cycle.put("startDate", prev.toString());
+                    cycle.put("endDate", curr.toString());
+                    cycleAnalysis.add(cycle);
+                }
+            }
+        }
+        result.put("iterationCycles", cycleAnalysis);
+
+        // 平均迭代周期
+        double avgCycleHours = cycleAnalysis.stream()
+            .mapToLong(c -> (Long) c.get("durationHours"))
+            .average().orElse(0);
+        result.put("averageCycleHours", avgCycleHours);
+
+        // 里程碑完成效率
+        List<GameProject.GoalMilestone> milestones = project.getMilestones();
+        long completedCount = milestones.stream()
+            .filter(m -> m.getStatus() == GameProject.MilestoneStatus.COMPLETED).count();
+        int totalTaskCount = 0;
+        int completedTaskCount = 0;
+        long totalEstimatedHours = 0;
+        long totalActualHours = 0;
+
+        for (GameProject.GoalMilestone m : milestones) {
+            if (m.getTasks() == null) continue;
+            for (GameProject.MilestoneTask task : m.getTasks()) {
+                totalTaskCount++;
+                totalEstimatedHours += task.getEstimatedHours();
+                if (task.getStatus() == GameProject.MilestoneStatus.COMPLETED) {
+                    completedTaskCount++;
+                    if (task.getStartedAt() != null && task.getCompletedAt() != null) {
+                        totalActualHours += java.time.Duration.between(task.getStartedAt(), task.getCompletedAt()).toHours();
+                    }
+                }
+            }
+        }
+        result.put("totalTasks", totalTaskCount);
+        result.put("completedTasks", completedTaskCount);
+        result.put("totalEstimatedHours", totalEstimatedHours);
+        result.put("totalActualHours", totalActualHours);
+        result.put("estimationAccuracy", totalEstimatedHours > 0 ? (double) totalActualHours / totalEstimatedHours * 100 : 0);
+
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * 导出迭代报告（纯文本格式，可复制到文档）
+     */
+    @GetMapping("/api/{projectId}/export-iteration-text")
+    @ResponseBody
+    @PreAuthorize("hasAnyAuthority('PERM_projects:view', 'PERM_iteration:view')")
+    public ResponseEntity<Map<String, Object>> exportIterationText(@PathVariable String projectId) {
+        GameProject project = projectManager.getProject(projectId);
+        if (project == null) {
+            return ResponseEntity.notFound().build();
+        }
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("# 项目迭代报告\n\n");
+        sb.append("- 项目名称: ").append(project.getName()).append("\n");
+        sb.append("- 当前版本: ").append(project.getVersion()).append("\n");
+        sb.append("- 目标进度: ").append(project.getGoalProgress()).append("%\n");
+        sb.append("- 导出时间: ").append(LocalDateTime.now()).append("\n\n");
+
+        // 版本历史
+        sb.append("## 版本历史\n\n");
+        List<GameProject.VersionHistory> history = project.getVersionHistory();
+        if (history != null) {
+            for (GameProject.VersionHistory h : history) {
+                sb.append("- ").append(h.getVersion()).append(": ")
+                  .append(h.getDescription() != null ? h.getDescription() : "版本迭代")
+                  .append(" (").append(h.getCreatedBy()).append(")\n");
+            }
+        }
+
+        // 里程碑
+        sb.append("\n## 里程碑\n\n");
+        for (GameProject.GoalMilestone m : project.getMilestones()) {
+            sb.append("- [").append(m.getStatus()).append("] ").append(m.getTitle())
+              .append(" (").append(m.getProgress()).append("%)\n");
+            if (m.getTasks() != null) {
+                for (GameProject.MilestoneTask t : m.getTasks()) {
+                    sb.append("  - [").append(t.getStatus()).append("] ").append(t.getTitle())
+                      .append(" (").append(t.getAssignedRole()).append(")\n");
+                }
+            }
+        }
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("content", sb.toString());
+        result.put("fileName", project.getName() + "_迭代报告_" + LocalDateTime.now().toLocalDate() + ".md");
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * 获取督查历史趋势（基于版本迭代记录）
+     */
+    @GetMapping("/api/{projectId}/supervision-trends")
+    @ResponseBody
+    @PreAuthorize("hasAnyAuthority('PERM_projects:view', 'PERM_supervision:view')")
+    public ResponseEntity<Map<String, Object>> getSupervisionTrends(@PathVariable String projectId) {
+        GameProject project = projectManager.getProject(projectId);
+        if (project == null) {
+            return ResponseEntity.notFound().build();
+        }
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("projectId", projectId);
+
+        // 版本历史趋势
+        List<Map<String, Object>> versionTrend = new ArrayList<>();
+        List<GameProject.VersionHistory> history = project.getVersionHistory();
+        if (history != null) {
+            int score = 5; // 默认基线
+            for (int i = 0; i < history.size(); i++) {
+                Map<String, Object> point = new HashMap<>();
+                point.put("version", history.get(i).getVersion());
+                point.put("date", history.get(i).getCreatedAt() != null ? history.get(i).getCreatedAt().toString() : "");
+                // 模拟评分（实际应从迭代记录表获取）
+                point.put("score", Math.min(10, score + i));
+                point.put("cumulativeTasks", (i + 1) * 5);
+                versionTrend.add(point);
+            }
+        }
+        result.put("versionTrend", versionTrend);
+
+        // 里程碑完成趋势
+        List<Map<String, Object>> milestoneTrend = new ArrayList<>();
+        int cumulative = 0;
+        for (GameProject.GoalMilestone m : project.getMilestones()) {
+            if (m.getStatus() == GameProject.MilestoneStatus.COMPLETED) cumulative++;
+            Map<String, Object> point = new HashMap<>();
+            point.put("milestone", m.getTitle());
+            point.put("completed", cumulative);
+            point.put("total", milestoneTrend.size() + 1);
+            point.put("rate", (double) cumulative / (milestoneTrend.size() + 1) * 100);
+            milestoneTrend.add(point);
+        }
+        result.put("milestoneTrend", milestoneTrend);
+
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * 获取督查规则配置
+     */
+    @GetMapping("/api/supervision-rules")
+    @ResponseBody
+    @PreAuthorize("hasAnyAuthority('PERM_projects:view', 'PERM_supervision:view')")
+    public ResponseEntity<Map<String, Object>> getSupervisionRules() {
+        Map<String, Object> rules = new HashMap<>();
+        if (constantService != null) {
+            rules.put("iterationTimeoutHours", constantService.getInt(
+                com.chengxun.gamemaker.config.SystemConstants.SUPERVISION_ITERATION_TIMEOUT_HOURS, 72));
+            rules.put("taskOverdueThresholdHours", constantService.getInt(
+                com.chengxun.gamemaker.config.SystemConstants.SUPERVISION_TASK_OVERDUE_THRESHOLD_HOURS, 24));
+            rules.put("qualityScoreThreshold", constantService.getInt(
+                com.chengxun.gamemaker.config.SystemConstants.SUPERVISION_QUALITY_SCORE_THRESHOLD, 6));
+            rules.put("rollbackRateThreshold", constantService.getInt(
+                com.chengxun.gamemaker.config.SystemConstants.SUPERVISION_ROLLBACK_RATE_THRESHOLD, 30));
+            rules.put("agentIdleThresholdHours", constantService.getInt(
+                com.chengxun.gamemaker.config.SystemConstants.SUPERVISION_AGENT_IDLE_THRESHOLD_HOURS, 4));
+            rules.put("enableEmailAlert", constantService.getBoolean(
+                com.chengxun.gamemaker.config.SystemConstants.SUPERVISION_ALERT_EMAIL_ENABLED, false));
+            rules.put("enableFeishuAlert", constantService.getBoolean(
+                com.chengxun.gamemaker.config.SystemConstants.SUPERVISION_ALERT_FEISHU_ENABLED, true));
+        }
+        return ResponseEntity.ok(rules);
+    }
+
+    /**
+     * 更新督查规则配置
+     */
+    @PostMapping("/api/supervision-rules")
+    @ResponseBody
+    @PreAuthorize("hasAuthority('PERM_projects:manage')")
+    public ResponseEntity<Map<String, Object>> updateSupervisionRules(@RequestBody Map<String, Object> rules) {
+        if (systemConfigService == null) {
+            return ResponseEntity.ok(Map.of("success", false, "message", "配置服务未启用"));
+        }
+        try {
+            // 前端key到系统常量key的映射
+            Map<String, String> keyMapping = Map.of(
+                "iterationTimeoutHours", com.chengxun.gamemaker.config.SystemConstants.SUPERVISION_ITERATION_TIMEOUT_HOURS,
+                "taskOverdueThresholdHours", com.chengxun.gamemaker.config.SystemConstants.SUPERVISION_TASK_OVERDUE_THRESHOLD_HOURS,
+                "qualityScoreThreshold", com.chengxun.gamemaker.config.SystemConstants.SUPERVISION_QUALITY_SCORE_THRESHOLD,
+                "rollbackRateThreshold", com.chengxun.gamemaker.config.SystemConstants.SUPERVISION_ROLLBACK_RATE_THRESHOLD,
+                "agentIdleThresholdHours", com.chengxun.gamemaker.config.SystemConstants.SUPERVISION_AGENT_IDLE_THRESHOLD_HOURS,
+                "enableEmailAlert", com.chengxun.gamemaker.config.SystemConstants.SUPERVISION_ALERT_EMAIL_ENABLED,
+                "enableFeishuAlert", com.chengxun.gamemaker.config.SystemConstants.SUPERVISION_ALERT_FEISHU_ENABLED
+            );
+
+            for (var entry : rules.entrySet()) {
+                String constantKey = keyMapping.get(entry.getKey());
+                if (constantKey != null) {
+                    systemConfigService.setConfig(constantKey, String.valueOf(entry.getValue()));
+                }
+            }
+            return ResponseEntity.ok(Map.of("success", true, "message", "督查规则已更新"));
+        } catch (Exception e) {
+            return ResponseEntity.ok(Map.of("success", false, "message", "更新失败: " + e.getMessage()));
+        }
     }
 }

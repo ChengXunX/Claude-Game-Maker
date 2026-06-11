@@ -209,18 +209,47 @@ const userAvatar = computed(() => userStore.avatar || '')
 /** 当前路由路径 */
 const currentRoute = computed(() => route.path)
 
-/** 默认展开的菜单 */
+/** 默认展开的菜单：自动展开当前路由所属的分组 */
 const defaultOpeneds = computed(() => {
-  return [
-    'group:工作台',
-    'group:Agent管理',
-    'group:项目管理',
-    'group:运维中心',
-    'group:通知中心',
-    'group:系统管理',
-    'admin',
-    'admin/integration'
-  ]
+  const opened = []
+
+  // 展开当前路由所属的顶级分组
+  for (const group of menuGroups.value) {
+    if (group.name) {
+      const hasActive = group.items.some(item => {
+        // 有子菜单的路由：检查子菜单路径
+        if (item.children) {
+          return item.children.some(child => {
+            const childPath = '/' + item.path + '/' + child.path
+            return route.path === childPath || route.path.startsWith(childPath + '/')
+          })
+        }
+        // 单级菜单：检查路径
+        const itemPath = '/' + item.path
+        return route.path === itemPath || route.path.startsWith(itemPath + '/')
+      })
+      if (hasActive) {
+        opened.push('group:' + group.name)
+      }
+    }
+  }
+
+  // 展开当前路由所属的子菜单（admin/system 等）
+  for (const group of menuGroups.value) {
+    for (const item of group.items) {
+      if (item.children) {
+        const hasActiveChild = item.children.some(child => {
+          const childPath = '/' + item.path + '/' + child.path
+          return route.path === childPath || route.path.startsWith(childPath + '/')
+        })
+        if (hasActiveChild) {
+          opened.push('/' + item.path)
+        }
+      }
+    }
+  }
+
+  return opened
 })
 
 /** 面包屑导航 */
@@ -303,7 +332,7 @@ const menuGroups = computed(() => {
   })
 
   // 转换为数组，保持顺序
-  const groupOrder = ['工作台', 'Agent管理', '项目管理', '运维中心', '通知中心', '系统管理', '']
+  const groupOrder = ['工作台', 'Agent管理', '项目管理', '运维中心', '通知中心', '系统管理', '集成配置', '']
 
   groupOrder.forEach(name => {
     if (groupMap.has(name) && groupMap.get(name).length > 0) {

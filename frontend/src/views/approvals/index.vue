@@ -60,6 +60,7 @@
               <el-option label="解雇 Agent" value="DISMISS_AGENT" />
               <el-option label="分配 API" value="ASSIGN_API" />
               <el-option label="修改配置" value="CHANGE_CONFIG" />
+              <el-option label="邮箱变更" value="EMAIL_CHANGE" />
               <el-option label="战略决策" value="STRATEGIC_DECISION" />
               <el-option label="项目交付" value="DELIVERY" />
             </el-select>
@@ -205,6 +206,7 @@ const getTypeLabel = (type) => {
     'DISMISS_AGENT': '解雇 Agent',
     'ASSIGN_API': '分配 API',
     'CHANGE_CONFIG': '修改配置',
+    'EMAIL_CHANGE': '邮箱变更',
     'STRATEGIC_DECISION': '战略决策',
     'DELIVERY': '项目交付'
   }
@@ -218,6 +220,7 @@ const getTypeTagType = (type) => {
     'DISMISS_AGENT': 'danger',
     'ASSIGN_API': 'warning',
     'CHANGE_CONFIG': 'info',
+    'EMAIL_CHANGE': 'warning',
     'STRATEGIC_DECISION': 'danger',
     'DELIVERY': 'success'
   }

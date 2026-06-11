@@ -83,6 +83,9 @@ data/projects/
 data/settings.properties
 data/knowledge-base/
 
+# 持久化数据（知识库、技能等，需要 git 追踪）
+!data-persist/
+
 # Runtime settings (may contain API keys saved via admin panel)
 settings.properties
 

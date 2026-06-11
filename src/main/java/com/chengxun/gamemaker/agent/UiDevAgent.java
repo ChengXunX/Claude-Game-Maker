@@ -51,6 +51,55 @@ public class UiDevAgent extends BaseAgent {
         if (shouldCompactContext()) {
             compactContext();
         }
+
+        // 【增强】没有任务时主动检查项目UI质量
+        if (tasks.stream().noneMatch(t -> t.getStatus() == TaskAssignment.TaskStatus.PENDING
+                || t.getStatus() == TaskAssignment.TaskStatus.IN_PROGRESS)) {
+            proactivelyImproveUI();
+        }
+    }
+
+    /**
+     * 主动改进项目UI
+     * 空闲时检查项目中的CSS和HTML，修复样式问题
+     */
+    private void proactivelyImproveUI() {
+        if (currentProject == null || currentProject.getWorkDir() == null) return;
+
+        String projectDir = currentProject.getWorkDir();
+        java.io.File dir = new java.io.File(projectDir);
+        if (!dir.exists()) return;
+
+        // 检查是否有CSS/HTML文件
+        boolean hasUIFiles = false;
+        java.io.File[] files = dir.listFiles();
+        if (files != null) {
+            for (java.io.File f : files) {
+                if (f.getName().endsWith(".css") || f.getName().endsWith(".html")) {
+                    hasUIFiles = true;
+                    break;
+                }
+            }
+        }
+
+        if (!hasUIFiles) return;
+
+        log.info("UI Agent 主动检查项目样式");
+        String prompt = String.format(
+            "你目前没有分配的任务。请主动检查项目 [%s] 的UI和样式：\n\n" +
+            "1. 读取 CSS 和 HTML 文件\n" +
+            "2. 检查是否有样式问题（布局错乱、颜色不协调、响应式问题）\n" +
+            "3. 修复发现的样式问题\n" +
+            "4. 如果可以改进视觉效果（动画、过渡、排版），直接改进\n\n" +
+            "工作目录: %s\n" +
+            "请汇报你做了什么改进。",
+            currentProject.getName(), projectDir);
+
+        String result = sendMessage(prompt);
+        if (result != null) {
+            saveExperience("proactive_ui_" + System.currentTimeMillis(),
+                result.length() > 200 ? result.substring(0, 200) : result);
+        }
     }
 
     @Override

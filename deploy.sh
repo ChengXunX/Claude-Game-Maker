@@ -168,6 +168,24 @@ server {
         proxy_read_timeout 300s;
     }
 
+    # SSE 流式接口（项目讨论）- 需要长超时和禁用缓冲
+    location /api/project-discussions/ {
+        proxy_pass http://127.0.0.1:19922;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # SSE 必须禁用缓冲
+        proxy_buffering off;
+        proxy_cache off;
+
+        # SSE 长超时
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 300s;
+        proxy_read_timeout 300s;
+    }
+
     # API 反向代理到后端
     location /api/ {
         proxy_pass http://127.0.0.1:19922;
@@ -262,7 +280,7 @@ if [ "$(id -u)" -eq 0 ]; then
     nohup su -s /bin/bash "$DEPLOY_USER" -c "
         cd '$PROJECT_DIR' && \
         set -a && source .env && set +a && \
-        java -jar -Xms256m -Xmx512m target/game-maker-1.0-SNAPSHOT.jar \
+        java -jar -Xms8g -Xmx8g -XX:MaxMetaspaceSize=2g target/game-maker-1.0-SNAPSHOT.jar \
             --spring.profiles.active=prod \
             --server.port=$BACKEND_PORT \
             --server.address=127.0.0.1 \
@@ -272,7 +290,7 @@ else
     set -a
     source .env
     set +a
-    nohup java -jar -Xms256m -Xmx512m target/game-maker-1.0-SNAPSHOT.jar \
+    nohup java -jar -Xms8g -Xmx8g -XX:MaxMetaspaceSize=2g target/game-maker-1.0-SNAPSHOT.jar \
         --spring.profiles.active=prod \
         --server.port=$BACKEND_PORT \
         --server.address=127.0.0.1 \

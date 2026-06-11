@@ -535,16 +535,24 @@ public class InstallService {
 
     /**
      * 保存系统基础配置
+     *
+     * @param systemName 系统名称
+     * @param jwtSecret JWT密钥
+     * @param contactLink 联系方式值（链接/邮箱/图片URL）
+     * @param contactType 联系方式类型（link/email/image）
      */
-    public void saveSystemSettings(String systemName, String jwtSecret, String contactLink) {
+    public void saveSystemSettings(String systemName, String jwtSecret, String contactLink, String contactType) {
         if (systemName != null && !systemName.isEmpty()) {
             saveConfig("system.name", systemName, "系统名称", "system");
         }
         if (jwtSecret != null && !jwtSecret.isEmpty()) {
             saveConfig("security.jwt.secret", jwtSecret, "JWT 密钥", "security");
         }
+        if (contactType != null && !contactType.isEmpty()) {
+            saveConfig("system.contact.type", contactType, "联系方式类型", "system");
+        }
         if (contactLink != null) {
-            saveConfig("system.contact.link", contactLink, "联系管理员链接", "system");
+            saveConfig("system.contact.link", contactLink, "联系方式", "system");
         }
     }
 
@@ -637,24 +645,31 @@ public class InstallService {
                 adminRole = roleRepository.save(adminRole);
             }
 
-            // 确保管理员拥有所有权限
+            // 确保管理员拥有所有权限（完整60个）
             Set<String> allPermissions = Set.of(
                 "agents:view", "agents:manage", "agents:task",
                 "skills:view", "skills:manage",
                 "tokens:view", "tokens:manage",
-                "projects:view", "projects:manage",
+                "projects:view", "projects:manage", "projects:edit",
                 "system:monitor", "system:manage", "system:view", "system:config", "system:config:manage", "system:monitor:manage",
                 "ai:use", "ai:admin",
                 "approval:view", "approval:manage",
-                "notification:view", "notification:manage",
+                "notification:view", "notification:manage", "notifications:manage",
                 "admin:manage", "roles:manage",
-                "users:manage", "logs:view", "log:view",
+                "users:view", "users:manage", "logs:view", "log:view",
                 "code:review",
-                "pipeline:view", "pipeline:manage", "pipeline:execute", "pipeline:approve", "pipeline:intervene",
+                "pipeline:view", "pipeline:manage", "pipeline:create", "pipeline:execute", "pipeline:approve", "pipeline:intervene",
                 "workflow:view", "workflow:manage",
                 "dashboard:view", "terminal:use",
                 "knowledge:manage",
-                "agent:view", "agent:manage"
+                "agent:view", "agent:manage", "agent:config", "agent:optimize",
+                "version:manage", "data:view",
+                "PERM_capabilities:view", "PERM_capabilities:manage",
+                "PERM_mcp:view", "PERM_mcp:manage",
+                "PERM_files:view", "PERM_files:manage",
+                "PERM_constants:view", "PERM_constants:manage",
+                "PERM_permissions:view", "PERM_permissions:manage",
+                "PERM_api:view", "PERM_notification:preferences", "PERM_context:monitor"
             );
             if (!adminRole.getPermissions().containsAll(allPermissions)) {
                 adminRole.setPermissions(new HashSet<>(allPermissions));

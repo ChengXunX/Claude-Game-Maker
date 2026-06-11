@@ -54,6 +54,26 @@ public class KnowledgeBaseApiController {
     }
 
     /**
+     * 获取使用记录列表
+     */
+    @GetMapping("/usage-records")
+    @Operation(summary = "获取使用记录列表")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<List<GameKnowledgeBase.TemplateUsageRecord>> getUsageRecords() {
+        return ResponseEntity.ok(knowledgeBase.getAllUsageRecords());
+    }
+
+    /**
+     * 获取解决方案列表
+     */
+    @GetMapping("/solutions")
+    @Operation(summary = "获取解决方案列表")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<List<GameKnowledgeBase.Solution>> getSolutionsList() {
+        return ResponseEntity.ok(knowledgeBase.getAllSolutionsList());
+    }
+
+    /**
      * 获取问题解决方案
      */
     @GetMapping("/solutions/{problemType}")

@@ -452,10 +452,22 @@ const handleDownload = async () => {
 }
 
 onMounted(() => {
-  loadFileTree()
+  // 【修复】等待路由参数就绪后再加载，避免首次导航时 projectId 为空
+  nextTick(() => {
+    if (route.params.projectId) {
+      loadFileTree()
+    }
+  })
   window.addEventListener('resize', handleWindowResize)
   document.addEventListener('fullscreenchange', handleFullscreenChange)
   document.addEventListener('webkitfullscreenchange', handleFullscreenChange)
+})
+
+// 监听路由参数变化，切换项目时重新加载
+watch(() => route.params.projectId, (newId) => {
+  if (newId) {
+    loadFileTree()
+  }
 })
 
 onUnmounted(() => {

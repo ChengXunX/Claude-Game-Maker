@@ -79,6 +79,15 @@ public class TokenApiController {
         String agentTags = (String) request.get("agentTags");
         Integer priority = request.get("priority") != null ?
             Integer.parseInt(String.valueOf(request.get("priority"))) : 10;
+        String purposeStr = (String) request.get("purpose");
+        ApiToken.TokenPurpose purpose = ApiToken.TokenPurpose.AGENT;
+        if (purposeStr != null && !purposeStr.isEmpty()) {
+            try {
+                purpose = ApiToken.TokenPurpose.valueOf(purposeStr);
+            } catch (IllegalArgumentException e) {
+                // 保持默认值 AGENT
+            }
+        }
 
         if (name == null || name.isBlank()) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "message", "Token 名称不能为空"));
@@ -90,7 +99,7 @@ public class TokenApiController {
         try {
             String username = authentication.getName();
             Long userId = getUserId(authentication);
-            ApiToken token = tokenService.createToken(name, apiKey, apiUrl, model, maxTokens, contextWindow, description, username);
+            ApiToken token = tokenService.createToken(name, apiKey, apiUrl, model, maxTokens, contextWindow, description, username, purpose);
             token.setUserId(userId);
             token.setAgentTags(agentTags);
             token.setPriority(priority);
@@ -126,6 +135,7 @@ public class TokenApiController {
             Integer priority = request.get("priority") != null ?
                 Integer.parseInt(String.valueOf(request.get("priority"))) : token.getPriority();
             String status = (String) request.get("status");
+            String purposeStr = (String) request.get("purpose");
 
             tokenService.updateToken(id, name, apiKey, apiUrl, model, maxTokens, contextWindow, description);
             ApiToken updated = tokenService.getTokenById(id);
@@ -133,6 +143,9 @@ public class TokenApiController {
             if (priority != null) updated.setPriority(priority);
             if (status != null) {
                 try { updated.setStatus(ApiToken.TokenStatus.valueOf(status)); } catch (IllegalArgumentException ignored) {}
+            }
+            if (purposeStr != null) {
+                try { updated.setPurpose(ApiToken.TokenPurpose.valueOf(purposeStr)); } catch (IllegalArgumentException ignored) {}
             }
             tokenService.saveToken(updated);
 

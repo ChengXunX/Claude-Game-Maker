@@ -56,6 +56,15 @@ public class ApprovalService {
     @Autowired(required = false)
     private CacheManager cacheManager;
 
+    @Autowired(required = false)
+    private com.chengxun.gamemaker.web.service.ApiTokenService apiTokenService;
+
+    @Autowired(required = false)
+    private com.chengxun.gamemaker.web.service.SystemConfigService systemConfigService;
+
+    @Autowired(required = false)
+    private com.chengxun.gamemaker.manager.ProjectManager projectManager;
+
     public ApprovalService(ApprovalRequestRepository approvalRepository,
                           AgentManager agentManager,
                           NotificationService notificationService,
@@ -101,8 +110,12 @@ public class ApprovalService {
 
         ApprovalRequest saved = approvalRepository.save(request);
 
-        // 通知管理员有新的审批请求
-        notifyAdmins(saved);
+        // 通知管理员有新的审批请求（独立事务，避免通知失败导致审批创建回滚）
+        try {
+            notifyAdminsInNewTransaction(saved);
+        } catch (Exception e) {
+            log.warn("通知管理员失败（不影响审批创建）: {}", e.getMessage());
+        }
 
         log.info("Approval request created: {} for project {} by {} ({})",
             requestType, projectId, requesterId, requesterName);
@@ -244,6 +257,8 @@ public class ApprovalService {
                 case "DELETE_AGENT", "DISMISS_AGENT" -> executeDeleteAgent(request);
                 case "CHANGE_CONFIG" -> executeChangeConfig(request);
                 case "EMAIL_CHANGE" -> executeEmailChange(request);
+                case "STRATEGIC_DECISION" -> executeStrategicDecisionApproved(request);
+                case "DELIVERY" -> executeDeliveryApproved(request);
                 default -> log.warn("Unknown request type: {}", type);
             }
         } catch (Exception e) {
@@ -294,10 +309,35 @@ public class ApprovalService {
     }
 
     /**
-     * 执行分配 API 操作
+     * 执行分配 API Token 操作
+     * 解析审批请求中的 JSON 数据，将 Token 绑定到指定 Agent
      */
+    @SuppressWarnings("unchecked")
     private void executeAssignApi(ApprovalRequest request) {
-        log.info("Executing assign API for request: {}", request.getId());
+        try {
+            Map<String, String> data = objectMapper.readValue(
+                request.getRequestData(), new TypeReference<Map<String, String>>() {});
+
+            String tokenIdStr = data.get("tokenId");
+            String agentId = data.get("agentId");
+            String activation = data.getOrDefault("activation", "immediate");
+
+            if (tokenIdStr == null || agentId == null) {
+                log.warn("分配API缺少必要参数: tokenId={}, agentId={}", tokenIdStr, agentId);
+                return;
+            }
+
+            if (apiTokenService == null) {
+                log.warn("ApiTokenService 不可用，无法执行 Token 分配");
+                return;
+            }
+
+            Long tokenId = Long.parseLong(tokenIdStr);
+            apiTokenService.assignToken(tokenId, agentId, activation);
+            log.info("审批通过，Token 已分配: tokenId={} -> agentId={} ({} activation)", tokenId, agentId, activation);
+        } catch (Exception e) {
+            log.error("分配 API Token 失败: {}", e.getMessage(), e);
+        }
     }
 
     /**
@@ -319,10 +359,33 @@ public class ApprovalService {
     }
 
     /**
-     * 执行修改配置操作
+     * 执行修改系统配置操作
+     * 解析审批请求中的 JSON 数据，更新系统配置项
      */
+    @SuppressWarnings("unchecked")
     private void executeChangeConfig(ApprovalRequest request) {
-        log.info("Executing change config for request: {}", request.getId());
+        try {
+            Map<String, String> data = objectMapper.readValue(
+                request.getRequestData(), new TypeReference<Map<String, String>>() {});
+
+            String configKey = data.get("configKey");
+            String configValue = data.get("configValue");
+
+            if (configKey == null || configValue == null) {
+                log.warn("修改配置缺少必要参数: configKey={}, configValue={}", configKey, configValue);
+                return;
+            }
+
+            if (systemConfigService == null) {
+                log.warn("SystemConfigService 不可用，无法执行配置修改");
+                return;
+            }
+
+            systemConfigService.setConfig(configKey, configValue);
+            log.info("审批通过，系统配置已更新: {} = {}", configKey, configValue);
+        } catch (Exception e) {
+            log.error("修改系统配置失败: {}", e.getMessage(), e);
+        }
     }
 
     /**
@@ -360,6 +423,119 @@ public class ApprovalService {
 
         } catch (Exception e) {
             log.error("邮箱变更执行失败: {}", e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 执行战略决策审批通过的操作
+     * 恢复制作人 Agent 的工作，通知其决策已获批准
+     */
+    private void executeStrategicDecisionApproved(ApprovalRequest request) {
+        try {
+            String requesterId = request.getRequesterId();
+            String projectId = request.getProjectId();
+
+            log.info("战略决策审批通过: requestId={}, requesterId={}, projectId={}",
+                request.getId(), requesterId, projectId);
+
+            // 通知制作人决策已获批准，恢复其工作
+            // 通过 AgentManager 找到对应的制作人并恢复
+            if (agentManager != null) {
+                Agent agent = agentManager.getAgent(requesterId);
+                if (agent instanceof com.chengxun.gamemaker.agent.ProducerAgent producer) {
+                    // 使用 onApprovalCompleted 方法恢复制作人工作
+                    producer.onApprovalCompleted(request.getId().toString(), true,
+                        "战略决策已获老板批准: " + request.getDescription());
+                    log.info("已恢复制作人工作: agentId={}", requesterId);
+                } else {
+                    log.warn("未找到对应的制作人Agent: {}", requesterId);
+                }
+            }
+
+            // 发送通知
+            sendApprovalResultNotification(request, true, "战略决策已批准");
+
+        } catch (Exception e) {
+            log.error("战略决策审批执行失败: {}", e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 执行项目交付审批通过的操作
+     * 标记项目为已交付状态，通知相关 Agent
+     */
+    private void executeDeliveryApproved(ApprovalRequest request) {
+        try {
+            String projectId = request.getProjectId();
+
+            log.info("项目交付审批通过: requestId={}, projectId={}", request.getId(), projectId);
+
+            // 更新项目状态为已交付
+            if (projectId != null && projectManager != null) {
+                var project = projectManager.getProject(projectId);
+                if (project != null) {
+                    project.setStatus(com.chengxun.gamemaker.model.GameProject.ProjectStatus.DELIVERED);
+                    project.setDeliveredAt(LocalDateTime.now());
+                    projectManager.saveProjectConfig(project);
+                    log.info("项目已标记为交付完成: projectId={}", projectId);
+                }
+            }
+
+            // 通知制作人项目已交付
+            String requesterId = request.getRequesterId();
+            if (agentManager != null) {
+                Agent agent = agentManager.getAgent(requesterId);
+                if (agent instanceof com.chengxun.gamemaker.agent.ProducerAgent producer) {
+                    // 使用 onApprovalCompleted 方法通知制作人
+                    producer.onApprovalCompleted(request.getId().toString(), true,
+                        "项目交付已获老板批准，项目正式交付完成！");
+                    log.info("已通知制作人项目交付完成: agentId={}", requesterId);
+                }
+            }
+
+            // 发送通知
+            sendApprovalResultNotification(request, true, "项目交付已批准");
+
+        } catch (Exception e) {
+            log.error("项目交付审批执行失败: {}", e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 发送审批结果通知
+     */
+    private void sendApprovalResultNotification(ApprovalRequest request, boolean approved, String message) {
+        try {
+            if (notificationService != null && userService != null) {
+                String title = approved ? "审批通过" : "审批拒绝";
+                String content = String.format("审批类型: %s\n结果: %s\n%s",
+                    getRequestTypeDesc(request.getRequestType()),
+                    approved ? "通过" : "拒绝",
+                    message);
+
+                // 查找项目管理员用户发送通知
+                // 使用模板系统发送通知
+                Map<String, String> variables = Map.of(
+                    "approvalType", getRequestTypeDesc(request.getRequestType()),
+                    "result", approved ? "通过" : "拒绝",
+                    "message", message,
+                    "requestId", request.getId().toString()
+                );
+
+                // 尝试通过模板发送，如果模板不存在则直接发送
+                try {
+                    notificationService.sendNotificationByTemplate(
+                        null, // 发送给所有管理员
+                        "APPROVAL_RESULT",
+                        variables,
+                        com.chengxun.gamemaker.web.entity.Notification.NotificationType.SYSTEM
+                    );
+                } catch (Exception templateEx) {
+                    log.debug("审批结果通知模板不存在，跳过发送: {}", templateEx.getMessage());
+                }
+            }
+        } catch (Exception e) {
+            log.error("发送审批结果通知失败: {}", e.getMessage());
         }
     }
 
@@ -413,6 +589,8 @@ public class ApprovalService {
     private int getPriorityByType(String requestType) {
         return switch (requestType) {
             case "DELETE_AGENT", "DISMISS_AGENT" -> 1;  // 最高优先级
+            case "STRATEGIC_DECISION" -> 2;  // 战略决策 - 高优先级
+            case "DELIVERY" -> 2;  // 项目交付 - 高优先级
             case "ASSIGN_API" -> 3;
             case "CREATE_AGENT" -> 5;
             case "EMAIL_CHANGE" -> 6;
@@ -433,8 +611,20 @@ public class ApprovalService {
             case "ASSIGN_API" -> "分配 API Token";
             case "CHANGE_CONFIG" -> "修改配置";
             case "EMAIL_CHANGE" -> "邮箱变更";
+            case "STRATEGIC_DECISION" -> "重大决策";
+            case "DELIVERY" -> "项目交付";
             default -> requestType;
         };
+    }
+
+    /**
+     * 通知管理员有新的审批请求
+     * 使用模板系统发送多渠道通知
+     * 注意：在独立事务中执行，避免通知失败导致审批创建回滚
+     */
+    @org.springframework.transaction.annotation.Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
+    public void notifyAdminsInNewTransaction(ApprovalRequest request) {
+        notifyAdmins(request);
     }
 
     /**
@@ -473,7 +663,7 @@ public class ApprovalService {
             // 使用模板通知所有管理员
             if (notificationService != null) {
                 notificationService.notifyAdmins("approval", "APPROVAL_NEW",
-                    variables, com.chengxun.gamemaker.web.entity.Notification.NotificationType.TASK);
+                    variables, com.chengxun.gamemaker.web.entity.Notification.NotificationType.APPROVAL, "/approvals");
             }
 
             log.info("Admin notification sent for approval: {} - {}", request.getRequestType(), request.getDescription());

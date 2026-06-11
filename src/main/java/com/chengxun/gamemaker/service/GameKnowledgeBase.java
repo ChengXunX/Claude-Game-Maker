@@ -173,6 +173,32 @@ public class GameKnowledgeBase {
     }
 
     /**
+     * 获取所有使用记录列表
+     * 按时间倒序排列
+     *
+     * @return 使用记录列表
+     */
+    public List<TemplateUsageRecord> getAllUsageRecords() {
+        return usageRecords.values().stream()
+            .flatMap(List::stream)
+            .sorted((a, b) -> b.getUsedAt().compareTo(a.getUsedAt()))
+            .toList();
+    }
+
+    /**
+     * 获取所有解决方案列表
+     * 按时间倒序排列
+     *
+     * @return 解决方案列表
+     */
+    public List<Solution> getAllSolutionsList() {
+        return solutions.values().stream()
+            .flatMap(List::stream)
+            .sorted((a, b) -> b.getCreatedAt().compareTo(a.getCreatedAt()))
+            .toList();
+    }
+
+    /**
      * 获取模板使用统计
      */
     public Map<String, Object> getTemplateStats(String templateId) {

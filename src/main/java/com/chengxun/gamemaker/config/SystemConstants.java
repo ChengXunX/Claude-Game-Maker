@@ -263,4 +263,122 @@ public final class SystemConstants {
         unit = "个", min = 1, max = 100
     )
     public static final String FILE_VERSION_LIMIT = "file.version-limit";
+
+    // ===== 版本迭代相关 =====
+
+    @SystemConstantDef(
+        key = "version.pass-score",
+        name = "版本验收通过分数",
+        description = "版本质量评估通过的最低分数（1-10分）",
+        defaultValue = "7", valueType = "int", group = "version",
+        unit = "分", min = 1, max = 10
+    )
+    public static final String VERSION_PASS_SCORE = "version.pass-score";
+
+    @SystemConstantDef(
+        key = "version.max-iterations",
+        name = "最大迭代次数",
+        description = "项目最大版本迭代次数，防止无限循环",
+        defaultValue = "10", valueType = "int", group = "version",
+        unit = "次", min = 1, max = 100
+    )
+    public static final String VERSION_MAX_ITERATIONS = "version.max-iterations";
+
+    @SystemConstantDef(
+        key = "version.min-iterations",
+        name = "最小迭代次数",
+        description = "项目最少版本迭代次数，不可低于此数",
+        defaultValue = "1", valueType = "int", group = "version",
+        unit = "次", min = 1, max = 50
+    )
+    public static final String VERSION_MIN_ITERATIONS = "version.min-iterations";
+
+    @SystemConstantDef(
+        key = "version.iteration-strategy",
+        name = "迭代策略",
+        description = "版本迭代策略：incremental（增量迭代）、full（全量迭代）、adaptive（自适应迭代）",
+        defaultValue = "adaptive", valueType = "string", group = "version"
+    )
+    public static final String VERSION_ITERATION_STRATEGY = "version.iteration-strategy";
+
+    @SystemConstantDef(
+        key = "version.iteration-timeout-hours",
+        name = "迭代超时时间",
+        description = "版本迭代超时告警时间（小时），超过此时间未完成则告警",
+        defaultValue = "72", valueType = "int", group = "version",
+        unit = "小时", min = 1, max = 720
+    )
+    public static final String VERSION_ITERATION_TIMEOUT_HOURS = "version.iteration-timeout-hours";
+
+    @SystemConstantDef(
+        key = "version.max-evaluation-history",
+        name = "最大评估历史数",
+        description = "保留的最大版本评估历史记录数",
+        defaultValue = "100", valueType = "int", group = "version",
+        unit = "条", min = 10, max = 1000
+    )
+    public static final String VERSION_MAX_EVALUATION_HISTORY = "version.max-evaluation-history";
+
+    // ===== 督查规则 =====
+
+    @SystemConstantDef(
+        key = "supervision.iteration.timeout.hours",
+        name = "迭代超时阈值",
+        description = "版本迭代超过此时间视为超时，触发预警",
+        defaultValue = "72", valueType = "int", group = "supervision",
+        unit = "小时", min = 12, max = 720
+    )
+    public static final String SUPERVISION_ITERATION_TIMEOUT_HOURS = "supervision.iteration.timeout.hours";
+
+    @SystemConstantDef(
+        key = "supervision.task.overdue.threshold.hours",
+        name = "任务逾期阈值",
+        description = "任务超过预估工时此时间后视为逾期",
+        defaultValue = "24", valueType = "int", group = "supervision",
+        unit = "小时", min = 1, max = 168
+    )
+    public static final String SUPERVISION_TASK_OVERDUE_THRESHOLD_HOURS = "supervision.task.overdue.threshold.hours";
+
+    @SystemConstantDef(
+        key = "supervision.quality.score.threshold",
+        name = "质量评分阈值",
+        description = "迭代评分低于此值视为质量不达标",
+        defaultValue = "6", valueType = "int", group = "supervision",
+        unit = "分", min = 1, max = 10
+    )
+    public static final String SUPERVISION_QUALITY_SCORE_THRESHOLD = "supervision.quality.score.threshold";
+
+    @SystemConstantDef(
+        key = "supervision.rollback.rate.threshold",
+        name = "回滚率阈值",
+        description = "版本回滚率超过此百分比视为异常",
+        defaultValue = "30", valueType = "int", group = "supervision",
+        unit = "%", min = 5, max = 100
+    )
+    public static final String SUPERVISION_ROLLBACK_RATE_THRESHOLD = "supervision.rollback.rate.threshold";
+
+    @SystemConstantDef(
+        key = "supervision.agent.idle.threshold.hours",
+        name = "Agent空闲阈值",
+        description = "Agent无活动超过此时间视为空闲",
+        defaultValue = "4", valueType = "int", group = "supervision",
+        unit = "小时", min = 1, max = 48
+    )
+    public static final String SUPERVISION_AGENT_IDLE_THRESHOLD_HOURS = "supervision.agent.idle.threshold.hours";
+
+    @SystemConstantDef(
+        key = "supervision.alert.email.enabled",
+        name = "邮件预警开关",
+        description = "是否通过邮件发送督查预警",
+        defaultValue = "false", valueType = "boolean", group = "supervision"
+    )
+    public static final String SUPERVISION_ALERT_EMAIL_ENABLED = "supervision.alert.email.enabled";
+
+    @SystemConstantDef(
+        key = "supervision.alert.feishu.enabled",
+        name = "飞书预警开关",
+        description = "是否通过飞书发送督查预警",
+        defaultValue = "true", valueType = "boolean", group = "supervision"
+    )
+    public static final String SUPERVISION_ALERT_FEISHU_ENABLED = "supervision.alert.feishu.enabled";
 }

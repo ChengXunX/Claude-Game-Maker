@@ -12,6 +12,7 @@ public class AgentContext {
     private String apiKey;
     private String apiUrl;
     private String model;
+    private Integer reasoningDepth;
     private List<WorkingMemoryItem> workingMemory = new ArrayList<>();
     private List<String> learnedPatterns = new ArrayList<>();
     private List<ApiConfigRecord> apiHistory = new ArrayList<>();
@@ -115,6 +116,9 @@ public class AgentContext {
 
     public String getModel() { return model; }
     public void setModel(String model) { this.model = model; }
+
+    public Integer getReasoningDepth() { return reasoningDepth; }
+    public void setReasoningDepth(Integer reasoningDepth) { this.reasoningDepth = reasoningDepth; }
 
     public List<WorkingMemoryItem> getWorkingMemory() { return workingMemory; }
     public void setWorkingMemory(List<WorkingMemoryItem> workingMemory) { this.workingMemory = workingMemory; }

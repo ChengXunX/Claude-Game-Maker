@@ -6,6 +6,7 @@ import com.chengxun.gamemaker.web.entity.Notification.NotificationType;
 import com.chengxun.gamemaker.web.entity.NotificationPreference;
 import com.chengxun.gamemaker.web.entity.User;
 import com.chengxun.gamemaker.web.repository.NotificationRepository;
+import com.chengxun.gamemaker.web.repository.NotificationPreferenceRepository;
 import com.chengxun.gamemaker.web.repository.UserRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -39,6 +40,7 @@ public class NotificationService {
     private final UserRepository userRepository;
     private final NotificationTemplateService templateService;
     private final NotificationPreferenceService preferenceService;
+    private final NotificationPreferenceRepository preferenceRepository;
 
     public NotificationService(NotificationRepository notificationRepository,
                                EmailService emailService,
@@ -46,7 +48,8 @@ public class NotificationService {
                                com.chengxun.gamemaker.dingtalk.DingTalkService dingTalkService,
                                UserRepository userRepository,
                                NotificationTemplateService templateService,
-                               NotificationPreferenceService preferenceService) {
+                               NotificationPreferenceService preferenceService,
+                               NotificationPreferenceRepository preferenceRepository) {
         this.notificationRepository = notificationRepository;
         this.emailService = emailService;
         this.feishuService = feishuService;
@@ -54,6 +57,7 @@ public class NotificationService {
         this.userRepository = userRepository;
         this.templateService = templateService;
         this.preferenceService = preferenceService;
+        this.preferenceRepository = preferenceRepository;
     }
 
     /**
@@ -135,7 +139,8 @@ public class NotificationService {
         if (type == null) return "system";
         return switch (type) {
             case WARNING, ERROR -> "alert";
-            case TASK -> "approval";
+            case TASK -> "task";
+            case APPROVAL -> "approval";
             case AGENT -> "agent_status";
             case SUCCESS -> "performance";
             case INFO -> "project";
@@ -330,6 +335,7 @@ public class NotificationService {
 
     /**
      * 检查用户是否启用了指定通知类型和渠道
+     * 同时检查免打扰时间段：如果当前时间在免打扰窗口内，返回 false
      *
      * @param userId 用户ID
      * @param notificationType 通知类型
@@ -340,9 +346,58 @@ public class NotificationService {
                                          NotificationPreference.Channel channel) {
         if (userId == null) return true;
         try {
-            return preferenceService.isNotificationEnabled(userId, notificationType, channel);
+            // 先检查是否启用
+            if (!preferenceService.isNotificationEnabled(userId, notificationType, channel)) {
+                return false;
+            }
+            // 再检查免打扰时间段
+            return !isInQuietPeriod(userId, notificationType, channel);
         } catch (Exception e) {
             return true; // 出错时默认启用
+        }
+    }
+
+    /**
+     * 检查当前时间是否在用户的免打扰时间段内
+     *
+     * @param userId 用户ID
+     * @param notificationType 通知类型
+     * @param channel 渠道
+     * @return true 表示当前在免打扰时间段内，不应发送通知
+     */
+    private boolean isInQuietPeriod(Long userId, String notificationType,
+                                     NotificationPreference.Channel channel) {
+        try {
+            var prefOpt = preferenceRepository.findByUserIdAndNotificationTypeAndChannel(
+                userId, notificationType, channel);
+            if (prefOpt.isEmpty()) return false;
+
+            NotificationPreference pref = prefOpt.get();
+            if (!pref.isDoNotDisturb()) return false;
+
+            String quietStart = pref.getQuietStart();
+            String quietEnd = pref.getQuietEnd();
+            if (quietStart == null || quietEnd == null || quietStart.isEmpty() || quietEnd.isEmpty()) {
+                return false;
+            }
+
+            // 解析免打扰时间段（HH:mm 格式）
+            java.time.LocalTime now = java.time.LocalTime.now();
+            java.time.LocalTime start = java.time.LocalTime.parse(quietStart);
+            java.time.LocalTime end = java.time.LocalTime.parse(quietEnd);
+
+            // 支持跨午夜（如 22:00 - 08:00）
+            if (start.isBefore(end) || start.equals(end)) {
+                // 正常时段：start <= now < end
+                return !now.isBefore(start) && now.isBefore(end);
+            } else {
+                // 跨午夜：now >= start || now < end
+                return !now.isBefore(start) || now.isBefore(end);
+            }
+        } catch (Exception e) {
+            log.debug("检查免打扰时间段失败: userId={}, type={}, channel={}, error={}",
+                userId, notificationType, channel, e.getMessage());
+            return false;
         }
     }
 
@@ -356,6 +411,20 @@ public class NotificationService {
      */
     public void notifyAdmins(String notificationType, String templateCode,
                               Map<String, String> variables, NotificationType type) {
+        notifyAdmins(notificationType, templateCode, variables, type, null);
+    }
+
+    /**
+     * 向所有管理员发送通知（检查偏好，支持多渠道，支持跳转链接）
+     *
+     * @param notificationType 通知类型标识（用于偏好检查）
+     * @param templateCode 模板编码基础名
+     * @param variables 变量映射
+     * @param type 通知类型
+     * @param link 跳转链接（可选）
+     */
+    public void notifyAdmins(String notificationType, String templateCode,
+                              Map<String, String> variables, NotificationType type, String link) {
         List<User> admins = userRepository.findByRoleName("ADMIN");
         log.info("notifyAdmins called: type={}, templateCode={}, adminCount={}", notificationType, templateCode, admins.size());
 
@@ -379,7 +448,7 @@ public class NotificationService {
                         log.debug("Template {} not found, using variables", templateCode);
                     }
                 }
-                sendSystemNotification(admin.getId(), title, content, type);
+                sendSystemNotification(admin.getId(), title, content, type, link);
                 log.info("站内信通知已发送给管理员: {}", admin.getUsername());
 
                 // 邮件

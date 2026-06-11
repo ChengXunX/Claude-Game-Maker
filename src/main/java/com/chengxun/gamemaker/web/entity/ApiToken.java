@@ -87,6 +87,21 @@ public class ApiToken {
         ACTIVE, EXHAUSTED, DISABLED, EXPIRED
     }
 
+    /**
+     * Token 用途枚举
+     * 用于隔离不同场景的 Token，防止 Agent 使用 AI 助手的 Token
+     */
+    public enum TokenPurpose {
+        AGENT,          // Agent 专用
+        AI_ASSISTANT,   // AI 助手专用
+        SHARED          // 共享（兼容旧数据）
+    }
+
+    /** Token 用途，默认 AGENT */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "purpose", length = 20)
+    private TokenPurpose purpose = TokenPurpose.AGENT;
+
     @PreUpdate
     public void preUpdate() {
         this.updatedAt = LocalDateTime.now();
@@ -164,6 +179,9 @@ public class ApiToken {
 
     public LocalDateTime getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
+
+    public TokenPurpose getPurpose() { return purpose; }
+    public void setPurpose(TokenPurpose purpose) { this.purpose = purpose; }
 
     public boolean isActive() { return status == TokenStatus.ACTIVE; }
     public boolean isAssigned() { return assignedAgentId != null && !assignedAgentId.isEmpty(); }

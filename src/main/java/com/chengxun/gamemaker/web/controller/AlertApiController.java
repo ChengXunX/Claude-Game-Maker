@@ -120,4 +120,25 @@ public class AlertApiController {
         alertService.resolveAlert(id, "system", request.get("resolution"));
         return ResponseEntity.ok(Map.of("success", true));
     }
+
+    /**
+     * 批量确认所有待处理告警
+     */
+    @PostMapping("/batch-acknowledge")
+    @Operation(summary = "批量确认所有待处理告警")
+    @PreAuthorize("hasAuthority('PERM_system:monitor')")
+    public ResponseEntity<Map<String, Object>> batchAcknowledge() {
+        int count = alertService.acknowledgeAllPending("system");
+        return ResponseEntity.ok(Map.of("success", true, "count", count));
+    }
+
+    /**
+     * 获取告警统计概览
+     */
+    @GetMapping("/stats")
+    @Operation(summary = "获取告警统计概览")
+    @PreAuthorize("hasAuthority('PERM_system:monitor')")
+    public ResponseEntity<Map<String, Object>> getStats() {
+        return ResponseEntity.ok(alertService.getAlertStatistics());
+    }
 }

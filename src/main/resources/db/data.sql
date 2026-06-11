@@ -14,7 +14,7 @@ INSERT IGNORE INTO roles (id, name, display_name, description, is_system) VALUES
 (6, 'USER', '普通用户', '普通用户，基础权限', TRUE),
 (7, 'READONLY', '只读访客', '只读权限，可查看所有模块但不能修改，供外部人员了解系统特性', TRUE);
 
--- 插入管理员角色权限
+-- 插入管理员角色权限（完整60个权限）
 INSERT IGNORE INTO role_permissions (role_id, permission) VALUES
 (1, 'system:monitor'),
 (1, 'admin:manage'),
@@ -54,7 +54,28 @@ INSERT IGNORE INTO role_permissions (role_id, permission) VALUES
 (1, 'system:manage'),
 (1, 'approval:view'),
 (1, 'tokens:manage'),
-(1, 'agents:view');
+(1, 'agents:view'),
+(1, 'pipeline:create'),
+(1, 'projects:edit'),
+(1, 'data:view'),
+(1, 'version:manage'),
+(1, 'agent:config'),
+(1, 'agent:optimize'),
+(1, 'users:view'),
+(1, 'notifications:manage'),
+(1, 'PERM_capabilities:view'),
+(1, 'PERM_capabilities:manage'),
+(1, 'PERM_mcp:view'),
+(1, 'PERM_mcp:manage'),
+(1, 'PERM_files:view'),
+(1, 'PERM_files:manage'),
+(1, 'PERM_constants:view'),
+(1, 'PERM_constants:manage'),
+(1, 'PERM_permissions:view'),
+(1, 'PERM_permissions:manage'),
+(1, 'PERM_api:view'),
+(1, 'PERM_notification:preferences'),
+(1, 'PERM_context:monitor');
 
 -- 插入项目经理角色权限
 INSERT IGNORE INTO role_permissions (role_id, permission) VALUES
@@ -77,7 +98,23 @@ INSERT IGNORE INTO role_permissions (role_id, permission) VALUES
 (2, 'agents:task'),
 (2, 'ai:use'),
 (2, 'pipeline:view'),
-(2, 'agents:view');
+(2, 'agents:view'),
+(2, 'agent:config'),
+(2, 'agent:optimize'),
+(2, 'version:manage'),
+(2, 'approval:view'),
+(2, 'notification:view'),
+(2, 'tokens:view'),
+(2, 'system:view'),
+(2, 'logs:view'),
+(2, 'PERM_capabilities:view'),
+(2, 'PERM_mcp:view'),
+(2, 'PERM_files:view'),
+(2, 'PERM_constants:view'),
+(2, 'PERM_api:view'),
+(2, 'PERM_notification:preferences'),
+(2, 'PERM_context:monitor'),
+(2, 'skills:manage');
 
 -- 插入开发者角色权限
 INSERT IGNORE INTO role_permissions (role_id, permission) VALUES
@@ -89,7 +126,16 @@ INSERT IGNORE INTO role_permissions (role_id, permission) VALUES
 (3, 'agents:task'),
 (3, 'ai:use'),
 (3, 'pipeline:view'),
-(3, 'agents:view');
+(3, 'agents:view'),
+(3, 'agent:view'),
+(3, 'agent:config'),
+(3, 'notification:view'),
+(3, 'tokens:view'),
+(3, 'approval:view'),
+(3, 'PERM_capabilities:view'),
+(3, 'PERM_files:view'),
+(3, 'PERM_api:view'),
+(3, 'PERM_notification:preferences');
 
 -- 插入运维工程师角色权限
 INSERT IGNORE INTO role_permissions (role_id, permission) VALUES
@@ -105,7 +151,13 @@ INSERT IGNORE INTO role_permissions (role_id, permission) VALUES
 (4, 'pipeline:create'),
 (4, 'pipeline:intervene'),
 (4, 'pipeline:view'),
-(4, 'agents:view');
+(4, 'agents:view'),
+(4, 'system:view'),
+(4, 'system:config'),
+(4, 'logs:view'),
+(4, 'notification:view'),
+(4, 'tokens:view'),
+(4, 'terminal:use');
 
 -- 插入观察者角色权限
 INSERT IGNORE INTO role_permissions (role_id, permission) VALUES
@@ -115,12 +167,21 @@ INSERT IGNORE INTO role_permissions (role_id, permission) VALUES
 (5, 'skills:view'),
 (5, 'ai:use'),
 (5, 'pipeline:view'),
-(5, 'agents:view');
+(5, 'agents:view'),
+(5, 'system:view'),
+(5, 'logs:view'),
+(5, 'notification:view'),
+(5, 'tokens:view'),
+(5, 'approval:view'),
+(5, 'workflow:view'),
+(5, 'code:review');
 
 -- 插入普通用户角色权限
 INSERT IGNORE INTO role_permissions (role_id, permission) VALUES
 (6, 'dashboard:view'),
-(6, 'projects:view');
+(6, 'projects:view'),
+(6, 'notification:view'),
+(6, 'skills:view');
 
 -- 插入只读访客角色权限
 INSERT IGNORE INTO role_permissions (role_id, permission) VALUES
@@ -233,42 +294,65 @@ INSERT IGNORE INTO system_configs (config_key, config_value, config_group, value
 ('system.pagination.default-size', '20', 'system', 'number', '默认分页大小'),
 ('system.pagination.max-size', '100', 'system', 'number', '最大分页大小');
 
--- 插入权限定义
-INSERT IGNORE INTO permission_definitions (permission_key, name, description, category, enabled, system, sort_order) VALUES
-('dashboard:view', '仪表盘查看', '查看仪表盘和系统概览', '工作台', 1, 1, 1),
-('agents:view', 'Agent查看', '查看Agent列表、状态、详情', 'Agent', 1, 1, 1),
-('agents:manage', 'Agent管理', '启动、停止、重启Agent，修改Agent配置', 'Agent', 1, 1, 2),
-('agents:task', 'Agent任务', '向Agent发送任务和指令', 'Agent', 1, 1, 3),
-('ai:use', 'AI助手使用', '使用AI助手进行对话', 'AI', 1, 1, 1),
-('ai:admin', 'AI助手管理', '管理AI配置、知识库、技能生成', 'AI', 1, 1, 2),
-('projects:view', '项目查看', '查看项目列表和详情', '项目', 1, 1, 1),
-('projects:manage', '项目管理', '创建、编辑、删除项目，管理项目配置', '项目', 1, 1, 2),
-('skills:view', '技能查看', '查看技能列表和详情', '技能', 1, 1, 1),
-('skills:manage', '技能管理', '创建、编辑、删除技能，AI生成技能', '技能', 1, 1, 2),
-('tokens:view', 'Token查看', '查看Token列表和用量统计', 'Token', 1, 1, 1),
-('tokens:manage', 'Token管理', '创建、编辑、删除Token，分配Token给Agent', 'Token', 1, 1, 2),
-('notification:view', '通知查看', '查看系统通知和消息', '通知', 1, 1, 1),
-('notification:manage', '通知管理', '管理系统通知、模板、清理无效通知', '通知', 1, 1, 2),
-('code:review', '代码审查', '查看和执行代码审查', '代码', 1, 1, 1),
-('knowledge:manage', '知识库管理', '管理知识库、知识进化、文档索引', '知识库', 1, 1, 1),
-('pipeline:view', '流水线查看', '查看CI/CD流水线列表和状态', '流水线', 1, 1, 1),
-('pipeline:manage', '流水线管理', '创建、编辑、删除流水线', '流水线', 1, 1, 2),
-('pipeline:execute', '流水线执行', '触发流水线执行', '流水线', 1, 1, 3),
-('pipeline:approve', '流水线审批', '审批流水线执行请求', '流水线', 1, 1, 4),
-('pipeline:intervene', '流水线干预', '干预正在执行的流水线', '流水线', 1, 1, 5),
-('workflow:view', '工作流查看', '查看工作流模板和实例', '工作流', 1, 1, 1),
-('workflow:manage', '工作流管理', '创建、编辑、管理工作流', '工作流', 1, 1, 2),
-('approval:view', '审批查看', '查看审批记录和流程', '审批', 1, 1, 1),
-('approval:manage', '审批管理', '处理审批请求，批准或驳回', '审批', 1, 1, 2),
-('users:view', '用户查看', '查看用户列表和详情', '用户', 1, 1, 1),
-('users:manage', '用户管理', '创建、编辑、删除用户，审批注册', '用户', 1, 1, 2),
-('roles:manage', '角色管理', '创建、编辑、删除角色，分配权限', '角色', 1, 1, 1),
-('logs:view', '日志查看', '查看操作日志和审计记录', '日志', 1, 1, 1),
-('system:view', '系统查看', '查看系统信息和状态', '系统', 1, 1, 1),
-('system:monitor', '系统监控', '查看系统监控、资源用量、Agent健康', '系统', 1, 1, 2),
-('system:monitor:manage', '监控管理', '管理告警规则、处理告警', '系统', 1, 1, 3),
-('system:config', '配置查看', '查看系统配置和常量', '系统', 1, 1, 4),
-('system:config:manage', '配置管理', '修改系统配置和常量', '系统', 1, 1, 5),
-('system:manage', '系统管理', '系统级管理操作', '系统', 1, 1, 6),
-('admin:manage', '管理后台', '访问管理后台功能', '系统', 1, 1, 7),
-('terminal:use', '终端使用', '使用系统终端执行命令', '系统', 1, 1, 8);
+-- 插入权限定义（使用 PERM_ 前缀格式，与数据库一致）
+INSERT IGNORE INTO permission_definitions (permission_key, name, description, category, enabled, `system`, sort_order) VALUES
+('PERM_dashboard:view', '仪表盘查看', '查看仪表盘和系统概览', '工作台', 1, 1, 1),
+('PERM_agents:view', 'Agent查看', '查看Agent列表、状态、详情', 'Agent', 1, 1, 1),
+('PERM_agents:manage', 'Agent管理', '启动、停止、重启Agent，修改Agent配置', 'Agent', 1, 1, 2),
+('PERM_agents:task', 'Agent任务', '向Agent发送任务和指令', 'Agent', 1, 1, 3),
+('PERM_ai:use', 'AI助手使用', '使用AI助手进行对话', 'AI', 1, 1, 1),
+('PERM_ai:admin', 'AI助手管理', '管理AI配置、知识库、技能生成', 'AI', 1, 1, 2),
+('PERM_projects:view', '项目查看', '查看项目列表和详情', '项目', 1, 1, 1),
+('PERM_projects:manage', '项目管理', '创建、编辑、删除项目，管理项目配置', '项目', 1, 1, 2),
+('PERM_skills:view', '技能查看', '查看技能列表和详情', '技能', 1, 1, 1),
+('PERM_skills:manage', '技能管理', '创建、编辑、删除技能，AI生成技能', '技能', 1, 1, 2),
+('PERM_tokens:view', 'Token查看', '查看Token列表和用量统计', 'Token', 1, 1, 1),
+('PERM_tokens:manage', 'Token管理', '创建、编辑、删除Token，分配Token给Agent', 'Token', 1, 1, 2),
+('PERM_notification:view', '通知查看', '查看系统通知和消息', '通知', 1, 1, 1),
+('PERM_notification:manage', '通知管理', '管理系统通知、模板、清理无效通知', '通知', 1, 1, 2),
+('PERM_code:review', '代码审查', '查看和执行代码审查', '代码', 1, 1, 1),
+('PERM_knowledge:manage', '知识库管理', '管理知识库、知识进化、文档索引', '知识库', 1, 1, 1),
+('PERM_pipeline:view', '流水线查看', '查看CI/CD流水线列表和状态', '流水线', 1, 1, 1),
+('PERM_pipeline:manage', '流水线管理', '创建、编辑、删除流水线', '流水线', 1, 1, 2),
+('PERM_pipeline:execute', '流水线执行', '触发流水线执行', '流水线', 1, 1, 3),
+('PERM_pipeline:approve', '流水线审批', '审批流水线执行请求', '流水线', 1, 1, 4),
+('PERM_pipeline:intervene', '流水线干预', '干预正在执行的流水线', '流水线', 1, 1, 5),
+('PERM_workflow:view', '工作流查看', '查看工作流模板和实例', '工作流', 1, 1, 1),
+('PERM_workflow:manage', '工作流管理', '创建、编辑、管理工作流', '工作流', 1, 1, 2),
+('PERM_approval:view', '审批查看', '查看审批记录和流程', '审批', 1, 1, 1),
+('PERM_approval:manage', '审批管理', '处理审批请求，批准或驳回', '审批', 1, 1, 2),
+('PERM_users:view', '用户查看', '查看用户列表和详情', '用户', 1, 1, 1),
+('PERM_users:manage', '用户管理', '创建、编辑、删除用户，审批注册', '用户', 1, 1, 2),
+('PERM_roles:manage', '角色管理', '创建、编辑、删除角色，分配权限', '角色', 1, 1, 1),
+('PERM_logs:view', '日志查看', '查看操作日志和审计记录', '日志', 1, 1, 1),
+('PERM_system:view', '系统查看', '查看系统信息和状态', '系统', 1, 1, 1),
+('PERM_system:monitor', '系统监控', '查看系统监控、资源用量、Agent健康', '系统', 1, 1, 2),
+('PERM_system:monitor:manage', '监控管理', '管理告警规则、处理告警', '系统', 1, 1, 3),
+('PERM_system:config', '配置查看', '查看系统配置和常量', '系统', 1, 1, 4),
+('PERM_system:config:manage', '配置管理', '修改系统配置和常量', '系统', 1, 1, 5),
+('PERM_system:manage', '系统管理', '系统级管理操作', '系统', 1, 1, 6),
+('PERM_admin:manage', '管理后台', '访问管理后台功能', '系统', 1, 1, 7),
+('PERM_terminal:use', '终端使用', '使用系统终端执行命令', '系统', 1, 1, 8),
+('PERM_version:manage', '版本迭代管理', '发起和管理版本迭代', '项目', 1, 1, 9),
+('PERM_agent:config', 'Agent配置管理', '管理Agent的项目级配置', 'Agent', 1, 1, 10),
+('PERM_agent:optimize', 'Agent优化', 'AI优化Agent提示词', 'Agent', 1, 1, 11),
+('PERM_agent:view', 'Agent查看(兼容)', '查看Agent列表（兼容别名）', 'Agent', 1, 1, 4),
+('PERM_agent:manage', 'Agent管理(兼容)', '管理Agent（兼容别名）', 'Agent', 1, 1, 5),
+('PERM_pipeline:create', '流水线创建', '创建新的流水线', '流水线', 1, 1, 3),
+('PERM_projects:edit', '项目编辑', '编辑项目配置和设置', '项目', 1, 1, 3),
+('PERM_data:view', '数据查看', '查看数据和报表', '数据', 1, 1, 1),
+('PERM_notifications:manage', '通知管理(兼容)', '管理通知（兼容别名）', '通知', 1, 1, 3),
+('PERM_log:view', '日志查看(兼容)', '查看日志（兼容别名）', '日志', 1, 1, 2),
+('PERM_capabilities:view', '能力查看', '查看Agent能力定义', 'Agent', 1, 1, 20),
+('PERM_capabilities:manage', '能力管理', '创建、编辑、删除Agent能力', 'Agent', 1, 1, 21),
+('PERM_mcp:view', 'MCP查看', '查看MCP服务器', 'Agent', 1, 1, 22),
+('PERM_mcp:manage', 'MCP管理', '管理MCP服务器', 'Agent', 1, 1, 23),
+('PERM_files:view', '文件查看', '查看Agent文件', 'Agent', 1, 1, 24),
+('PERM_files:manage', '文件管理', '上传、删除Agent文件', 'Agent', 1, 1, 25),
+('PERM_constants:view', '常量查看', '查看系统常量', '系统', 1, 1, 30),
+('PERM_constants:manage', '常量管理', '编辑系统常量', '系统', 1, 1, 31),
+('PERM_permissions:view', '权限查看', '查看权限列表', '管理', 1, 1, 40),
+('PERM_permissions:manage', '权限管理', '管理权限定义和审批', '管理', 1, 1, 41),
+('PERM_api:view', 'API文档', '查看API文档', '系统', 1, 1, 32),
+('PERM_notification:preferences', '通知偏好', '配置通知接收偏好', '通知', 1, 1, 50),
+('PERM_context:monitor', '上下文监控', '监控Agent上下文健康', 'Agent', 1, 1, 26);

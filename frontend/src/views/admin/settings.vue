@@ -12,9 +12,24 @@
             <el-form-item label="系统名称">
               <el-input v-model="basicForm.systemName" placeholder="ChengXun Game Maker" />
             </el-form-item>
-            <el-form-item label="联系管理员链接">
-              <el-input v-model="basicForm.contactLink" placeholder="https://example.com/contact 或 邮箱地址" />
-              <div class="form-tip">登录页面"联系管理员"按钮跳转的链接，支持网址或邮箱</div>
+            <el-form-item label="联系方式类型">
+              <el-radio-group v-model="basicForm.contactType">
+                <el-radio value="link">链接</el-radio>
+                <el-radio value="email">邮箱</el-radio>
+                <el-radio value="image">图片</el-radio>
+              </el-radio-group>
+            </el-form-item>
+            <el-form-item v-if="basicForm.contactType === 'link'" label="联系链接">
+              <el-input v-model="basicForm.contactValue" placeholder="https://example.com/contact" />
+              <div class="form-tip">点击后将在新窗口打开该链接</div>
+            </el-form-item>
+            <el-form-item v-if="basicForm.contactType === 'email'" label="联系邮箱">
+              <el-input v-model="basicForm.contactValue" placeholder="admin@example.com" />
+              <div class="form-tip">点击后将打开邮件客户端</div>
+            </el-form-item>
+            <el-form-item v-if="basicForm.contactType === 'image'" label="图片链接">
+              <el-input v-model="basicForm.contactValue" placeholder="https://example.com/qr-code.png" />
+              <div class="form-tip">点击后将以弹窗形式展示图片（如微信二维码）</div>
             </el-form-item>
             <el-form-item>
               <el-button type="primary" @click="saveBasic" :loading="saving">保存</el-button>
@@ -30,6 +45,16 @@
             </el-form-item>
             <el-form-item label="信任天数">
               <el-input-number v-model="securityForm.deviceTrustDays" :min="1" :max="365" />
+            </el-form-item>
+            <el-divider content-position="left">Token 分配策略</el-divider>
+            <el-form-item label="分配策略">
+              <el-radio-group v-model="securityForm.tokenStrategy" class="strategy-radio-group">
+                <el-radio value="system">系统自动分配</el-radio>
+                <el-radio value="producer">制作人分配</el-radio>
+              </el-radio-group>
+              <div class="form-tip">
+                系统自动：新建 Agent 时按优先级+使用量自动分配 Token；制作人分配：由制作人手动分配（能力注入模式）
+              </div>
             </el-form-item>
             <el-form-item>
               <el-button type="primary" @click="saveSecurity" :loading="saving">保存</el-button>
@@ -174,13 +199,15 @@ const apiKeySet = ref(false)
 /** 基本设置表单 */
 const basicForm = ref({
   systemName: 'ChengXun Game Maker',
-  contactLink: ''
+  contactType: 'link',
+  contactValue: ''
 })
 
 /** 安全设置表单 */
 const securityForm = ref({
   deviceTrustEnabled: true,
-  deviceTrustDays: 30
+  deviceTrustDays: 30,
+  tokenStrategy: 'system'
 })
 
 /** Claude 设置表单 */
@@ -374,7 +401,8 @@ const saveBasic = async () => {
   try {
     await configApi.batchUpdate([
       { configKey: 'system.name', configValue: basicForm.value.systemName },
-      { configKey: 'system.contact.link', configValue: basicForm.value.contactLink }
+      { configKey: 'system.contact.type', configValue: basicForm.value.contactType },
+      { configKey: 'system.contact.link', configValue: basicForm.value.contactValue }
     ])
     ElMessage.success('基本设置已保存')
   } catch (error) {
@@ -390,7 +418,8 @@ const saveSecurity = async () => {
   try {
     await configApi.batchUpdate([
       { configKey: 'security.device.trust.enabled', configValue: String(securityForm.value.deviceTrustEnabled) },
-      { configKey: 'security.device.trust.days', configValue: String(securityForm.value.deviceTrustDays) }
+      { configKey: 'security.device.trust.days', configValue: String(securityForm.value.deviceTrustDays) },
+      { configKey: 'token.allocation.strategy', configValue: securityForm.value.tokenStrategy }
     ])
     ElMessage.success('安全设置已保存')
   } catch (error) {
@@ -526,8 +555,11 @@ const loadSettings = async () => {
           case 'system.name':
             basicForm.value.systemName = config.configValue || 'ChengXun Game Maker'
             break
+          case 'system.contact.type':
+            basicForm.value.contactType = config.configValue || 'link'
+            break
           case 'system.contact.link':
-            basicForm.value.contactLink = config.configValue || ''
+            basicForm.value.contactValue = config.configValue || ''
             break
           case 'claude.api.key':
             // 不覆盖用户正在输入的值
@@ -548,6 +580,9 @@ const loadSettings = async () => {
             break
           case 'security.device.trust.days':
             securityForm.value.deviceTrustDays = parseInt(config.configValue) || 30
+            break
+          case 'token.allocation.strategy':
+            securityForm.value.tokenStrategy = config.configValue || 'system'
             break
         }
       })

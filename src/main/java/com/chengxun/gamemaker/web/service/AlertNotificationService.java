@@ -57,6 +57,9 @@ public class AlertNotificationService {
     @Autowired
     private NotificationTemplateService templateService;
 
+    @Autowired
+    private NotificationPreferenceService preferenceService;
+
     /**
      * 发送告警通知
      *
@@ -68,12 +71,24 @@ public class AlertNotificationService {
         // 构建变量映射
         Map<String, String> variables = buildAlertVariables(alert);
 
-        // 发送站内通知给所有管理员
-        sendInAppNotification("ALERT_SYSTEM", variables, alert.getPriority());
+        // 获取所有管理员用户
+        List<User> admins = userRepository.findByRoleName("ADMIN");
+
+        for (User admin : admins) {
+            // 检查用户的通知偏好设置
+            if (!preferenceService.isNotificationEnabled(admin.getId(), "alert",
+                    com.chengxun.gamemaker.web.entity.NotificationPreference.Channel.IN_APP)) {
+                log.debug("User {} disabled alert notifications, skipping", admin.getUsername());
+                continue;
+            }
+
+            // 发送站内通知
+            sendInAppNotificationToUser("ALERT_SYSTEM", variables, alert.getPriority(), admin);
+        }
 
         // 发送邮件通知（如果配置了）
         if (emailService.isEmailEnabled()) {
-            sendEmailNotification("ALERT_EMAIL", variables);
+            sendEmailNotification("ALERT_EMAIL", variables, admins);
         }
 
         // 发送飞书通知
@@ -98,12 +113,20 @@ public class AlertNotificationService {
         variables.put("triggerValue", String.format("%.2f", currentValue));
         variables.put("content", "告警已恢复，系统运行正常");
 
+        // 获取所有管理员用户
+        List<User> admins = userRepository.findByRoleName("ADMIN");
+
         // 发送站内通知给所有管理员
-        sendInAppNotification("ALERT_SYSTEM", variables, "INFO");
+        for (User admin : admins) {
+            if (preferenceService.isNotificationEnabled(admin.getId(), "alert",
+                    com.chengxun.gamemaker.web.entity.NotificationPreference.Channel.IN_APP)) {
+                sendInAppNotificationToUser("ALERT_SYSTEM", variables, "INFO", admin);
+            }
+        }
 
         // 发送邮件通知（如果配置了）
         if (emailService.isEmailEnabled()) {
-            sendEmailNotification("RECOVERY_EMAIL", variables);
+            sendEmailNotification("RECOVERY_EMAIL", variables, admins);
         }
 
         // 发送飞书通知
@@ -135,60 +158,59 @@ public class AlertNotificationService {
     }
 
     /**
-     * 发送站内通知给所有管理员用户
+     * 发送站内通知给指定用户
      *
      * @param templateCode 模板编码
      * @param variables 变量映射
      * @param severity 严重级别
+     * @param user 目标用户
      */
-    private void sendInAppNotification(String templateCode, Map<String, String> variables, String severity) {
+    private void sendInAppNotificationToUser(String templateCode, Map<String, String> variables, String severity, User user) {
         try {
             // 渲染模板
             Map<String, String> rendered = templateService.renderTemplate(templateCode, variables);
             String title = rendered.get("subject");
             String content = rendered.get("content");
 
-            // 获取所有管理员用户并发送通知
-            List<User> admins = userRepository.findByRoleName("ADMIN");
             NotificationType type = mapSeverityToType(severity);
-
-            for (User admin : admins) {
-                try {
-                    notificationService.sendSystemNotification(admin.getId(), title, content, type);
-                } catch (Exception e) {
-                    log.error("Failed to send notification to admin {}: {}", admin.getUsername(), e.getMessage());
-                }
-            }
-            log.info("In-app notification sent to {} admins: title={}, severity={}", admins.size(), title, severity);
+            notificationService.sendSystemNotification(user.getId(), title, content, type);
+            log.debug("In-app notification sent to user: {}", user.getUsername());
         } catch (Exception e) {
-            log.error("Failed to send in-app notification: {}", e.getMessage());
-            // 降级处理：使用默认内容发送
-            sendFallbackInAppNotification(variables, severity);
+            log.error("Failed to send notification to user {}: {}", user.getUsername(), e.getMessage());
         }
     }
 
     /**
-     * 发送邮件通知给所有管理员
+     * 发送邮件通知给指定用户列表
      *
      * @param templateCode 模板编码
      * @param variables 变量映射
+     * @param users 目标用户列表
      */
-    private void sendEmailNotification(String templateCode, Map<String, String> variables) {
+    private void sendEmailNotification(String templateCode, Map<String, String> variables, List<User> users) {
         try {
             // 渲染模板
             Map<String, String> rendered = templateService.renderTemplate(templateCode, variables);
             String subject = rendered.get("subject");
             String content = rendered.get("content");
 
-            List<User> admins = userRepository.findByRoleName("ADMIN");
-            for (User admin : admins) {
-                String email = admin.getEmail();
+            int sentCount = 0;
+            for (User user : users) {
+                // 检查用户是否启用了邮件告警通知
+                if (!preferenceService.isNotificationEnabled(user.getId(), "alert",
+                        com.chengxun.gamemaker.web.entity.NotificationPreference.Channel.EMAIL)) {
+                    log.debug("User {} disabled email alert notifications, skipping", user.getUsername());
+                    continue;
+                }
+
+                String email = user.getEmail();
                 if (email != null && !email.isEmpty()) {
                     emailService.sendGeneralEmail(email, subject, content);
-                    log.debug("Email notification sent to admin: {}", admin.getUsername());
+                    sentCount++;
+                    log.debug("Email notification sent to user: {}", user.getUsername());
                 }
             }
-            log.info("Email notification sent to {} admins: subject={}", admins.size(), subject);
+            log.info("Email notification sent to {} users: subject={}", sentCount, subject);
         } catch (Exception e) {
             log.error("Failed to send email notification: {}", e.getMessage());
         }
@@ -241,30 +263,6 @@ public class AlertNotificationService {
         }
     }
 
-    /**
-     * 降级处理：发送默认格式的站内通知
-     *
-     * @param variables 变量映射
-     * @param severity 严重级别
-     */
-    private void sendFallbackInAppNotification(Map<String, String> variables, String severity) {
-        try {
-            String ruleName = variables.getOrDefault("ruleName", "未知规则");
-            String priorityDesc = variables.getOrDefault("priorityDesc", severity);
-            String title = String.format("[%s] %s", priorityDesc, ruleName);
-            String content = String.format("告警详情：规则[%s]，级别[%s]，当前值[%s]",
-                ruleName, priorityDesc, variables.getOrDefault("triggerValue", "N/A"));
-
-            List<User> admins = userRepository.findByRoleName("ADMIN");
-            NotificationType type = mapSeverityToType(severity);
-
-            for (User admin : admins) {
-                notificationService.sendSystemNotification(admin.getId(), title, content, type);
-            }
-        } catch (Exception e) {
-            log.error("Failed to send fallback notification: {}", e.getMessage());
-        }
-    }
 
     /**
      * 将告警严重级别映射为通知类型

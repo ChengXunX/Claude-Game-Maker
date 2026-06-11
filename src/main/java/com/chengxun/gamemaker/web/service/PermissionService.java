@@ -142,7 +142,14 @@ public class PermissionService {
         saveDefinition("PERM_agent:view", "Agent查看", "查看Agent状态", "Agent", true, 4);
         saveDefinition("PERM_agent:manage", "Agent管理", "管理Agent", "Agent", true, 5);
 
-        log.info("Default permission definitions initialized: 38");
+        // 版本迭代相关
+        saveDefinition("PERM_iteration:view", "迭代查看", "查看版本迭代记录", "项目", true, 12);
+        saveDefinition("PERM_iteration:manage", "迭代管理", "管理版本迭代、回滚", "项目", true, 13);
+
+        // 督查报告相关
+        saveDefinition("PERM_supervision:view", "督查查看", "查看督查报告", "项目", true, 14);
+
+        log.info("Default permission definitions initialized: 41");
     }
 
     private void saveDefinition(String key, String name, String description,

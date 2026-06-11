@@ -141,11 +141,17 @@ public class AuthApiController {
             response.put("message", "用户名或密码错误");
             return ResponseEntity.status(401).body(response);
         } catch (org.springframework.security.core.userdetails.UsernameNotFoundException e) {
-            log.error("用户登录失败(用户不存在或未审核): {} - {}", request.getUsername(), e.getMessage());
+            log.error("用户登录失败(账号状态异常): {} - {}", request.getUsername(), e.getMessage());
             response.put("success", false);
-            if (e.getMessage() != null && e.getMessage().contains("not approved")) {
+            String msg = e.getMessage();
+            if (msg != null && msg.startsWith("PENDING")) {
                 response.put("message", "账号正在审核中，请等待管理员审核");
+            } else if (msg != null && msg.startsWith("REJECTED")) {
+                response.put("message", "账号审核未通过，请联系管理员了解详情");
+            } else if (msg != null && msg.startsWith("DISABLED")) {
+                response.put("message", "账号已被禁用，请联系管理员");
             } else {
+                // 用户不存在的情况
                 response.put("message", "用户名或密码错误");
             }
             return ResponseEntity.status(401).body(response);
@@ -350,12 +356,30 @@ public class AuthApiController {
      */
     @PostMapping("/logout")
     @Operation(summary = "用户登出", description = "用户登出")
-    public ResponseEntity<Map<String, Object>> logout(HttpServletRequest request) {
+    public ResponseEntity<Map<String, Object>> logout(HttpServletRequest request,
+                                                       jakarta.servlet.http.HttpServletResponse httpResponse) {
         Map<String, Object> response = new HashMap<>();
 
         try {
             // 清除 SecurityContext
             SecurityContextHolder.clearContext();
+
+            // 使 session 失效，防止 "Session was invalidated" 错误
+            try {
+                jakarta.servlet.http.HttpSession session = request.getSession(false);
+                if (session != null) {
+                    session.invalidate();
+                }
+            } catch (IllegalStateException ignored) {
+                // session 已失效，忽略
+            }
+
+            // 清除 session cookie
+            jakarta.servlet.http.Cookie cookie = new jakarta.servlet.http.Cookie("SESSION", "");
+            cookie.setPath("/");
+            cookie.setMaxAge(0);
+            cookie.setHttpOnly(true);
+            httpResponse.addCookie(cookie);
 
             response.put("success", true);
             response.put("message", "登出成功");

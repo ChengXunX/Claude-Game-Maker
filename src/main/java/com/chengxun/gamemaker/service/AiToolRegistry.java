@@ -754,11 +754,11 @@ public class AiToolRegistry {
 
         // 72. 从模板安装MCP服务器
         Map<String, ParameterDef> installMcpParams = new HashMap<>();
-        installMcpParams.put("templateKey", new ParameterDef("string", "模板标识（如 unity-mcp, godot-mcp, redis-mcp）", true));
+        installMcpParams.put("templateKey", new ParameterDef("string", "模板标识（如 unity, godot, redis, steam, playfab, firebase, jira, github 等）", true));
         installMcpParams.put("projectId", new ParameterDef("string", "关联项目ID", false));
         registerTool(new AiTool(
             "install_mcp_from_template",
-            "从预置模板安装MCP服务器（支持Unity、Godot、Redis、Steam、PlayFab、Firebase、Jira等）",
+            "从预置模板安装MCP服务器（27个模板：filesystem、github、gitlab、postgres、mysql、redis、mongodb、feishu-doc、feishu-bitable、slack、brave-search、puppeteer、fetch、memory、sequential-thinking、sentry、unity、godot、unreal、playfab、firebase、steam、jira、linear、notion、grafana、sonarqube）",
             installMcpParams,
             "PERM_agents:manage"
         ));
@@ -896,6 +896,402 @@ public class AiToolRegistry {
             toggleCapabilityParams,
             "PERM_agents:manage"
         ));
+
+        // ===== 审批管理 =====
+
+        // 83. 获取审批列表
+        Map<String, ParameterDef> listApprovalsParams = new HashMap<>();
+        listApprovalsParams.put("projectId", new ParameterDef("string", "项目ID（可选）", false));
+        registerTool(new AiTool(
+            "list_approvals",
+            "获取审批列表（支持按项目筛选）",
+            listApprovalsParams,
+            "PERM_approval:view"
+        ));
+
+        // 84. 获取待审批列表
+        registerTool(new AiTool(
+            "list_pending_approvals",
+            "获取待审批的请求列表",
+            Map.of(),
+            "PERM_approval:manage"
+        ));
+
+        // 85. 批准审批请求
+        Map<String, ParameterDef> approveParams = new HashMap<>();
+        approveParams.put("requestId", new ParameterDef("number", "审批请求ID", true));
+        approveParams.put("comment", new ParameterDef("string", "审批意见", false));
+        registerTool(new AiTool(
+            "approve_request",
+            "批准审批请求",
+            approveParams,
+            "PERM_approval:manage"
+        ));
+
+        // 86. 拒绝审批请求
+        Map<String, ParameterDef> rejectParams = new HashMap<>();
+        rejectParams.put("requestId", new ParameterDef("number", "审批请求ID", true));
+        rejectParams.put("comment", new ParameterDef("string", "拒绝原因", false));
+        registerTool(new AiTool(
+            "reject_request",
+            "拒绝审批请求",
+            rejectParams,
+            "PERM_approval:manage"
+        ));
+
+        // ===== 权限管理 =====
+
+        // 87. 获取权限定义列表
+        registerTool(new AiTool(
+            "list_permission_definitions",
+            "获取所有权限定义列表",
+            Map.of(),
+            "PERM_admin:manage"
+        ));
+
+        // 88. 获取待审批权限申请
+        registerTool(new AiTool(
+            "list_pending_permissions",
+            "获取待审批的权限申请列表",
+            Map.of(),
+            "PERM_admin:manage"
+        ));
+
+        // 89. 授予用户权限
+        Map<String, ParameterDef> grantPermParams = new HashMap<>();
+        grantPermParams.put("userId", new ParameterDef("number", "用户ID", true));
+        grantPermParams.put("permission", new ParameterDef("string", "权限标识", true));
+        grantPermParams.put("reason", new ParameterDef("string", "授予原因", false));
+        registerTool(new AiTool(
+            "grant_permission",
+            "授予用户指定权限",
+            grantPermParams,
+            "PERM_admin:manage"
+        ));
+
+        // 90. 撤销用户权限
+        Map<String, ParameterDef> revokePermParams = new HashMap<>();
+        revokePermParams.put("userId", new ParameterDef("number", "用户ID", true));
+        revokePermParams.put("permission", new ParameterDef("string", "权限标识", true));
+        registerTool(new AiTool(
+            "revoke_permission",
+            "撤销用户指定权限",
+            revokePermParams,
+            "PERM_admin:manage"
+        ));
+
+        // ===== 知识库 =====
+
+        // 91. 搜索知识库
+        Map<String, ParameterDef> searchKnowledgeParams = new HashMap<>();
+        searchKnowledgeParams.put("keyword", new ParameterDef("string", "搜索关键词", true));
+        registerTool(new AiTool(
+            "search_knowledge",
+            "搜索知识库条目",
+            searchKnowledgeParams,
+            null
+        ));
+
+        // 92. 获取最佳实践
+        registerTool(new AiTool(
+            "get_best_practices",
+            "获取知识库中的最佳实践列表",
+            Map.of(),
+            null
+        ));
+
+        // 93. 记录知识条目
+        Map<String, ParameterDef> recordKnowledgeParams = new HashMap<>();
+        recordKnowledgeParams.put("problemType", new ParameterDef("string", "问题类型", true));
+        recordKnowledgeParams.put("title", new ParameterDef("string", "标题", true));
+        recordKnowledgeParams.put("content", new ParameterDef("string", "内容", true));
+        recordKnowledgeParams.put("tags", new ParameterDef("string", "标签（逗号分隔）", false));
+        registerTool(new AiTool(
+            "record_knowledge",
+            "记录知识条目到知识库",
+            recordKnowledgeParams,
+            "PERM_admin:manage"
+        ));
+
+        // ===== 版本迭代 =====
+
+        // 94. 获取版本迭代统计
+        Map<String, ParameterDef> iterStatsParams = new HashMap<>();
+        iterStatsParams.put("projectId", new ParameterDef("string", "项目ID", true));
+        registerTool(new AiTool(
+            "get_iteration_stats",
+            "获取项目的版本迭代统计信息",
+            iterStatsParams,
+            "PERM_projects:view"
+        ));
+
+        // 95. 获取迭代历史记录
+        Map<String, ParameterDef> iterRecordsParams = new HashMap<>();
+        iterRecordsParams.put("projectId", new ParameterDef("string", "项目ID", true));
+        registerTool(new AiTool(
+            "get_iteration_records",
+            "获取项目的版本迭代历史记录",
+            iterRecordsParams,
+            "PERM_projects:view"
+        ));
+
+        // 96. 回滚到指定版本
+        Map<String, ParameterDef> rollbackParams = new HashMap<>();
+        rollbackParams.put("projectId", new ParameterDef("string", "项目ID", true));
+        rollbackParams.put("targetVersion", new ParameterDef("string", "目标版本号", true));
+        registerTool(new AiTool(
+            "rollback_version",
+            "回滚项目到指定版本",
+            rollbackParams,
+            "PERM_projects:manage"
+        ));
+
+        // 97. 获取可回滚版本
+        Map<String, ParameterDef> rollbackableParams = new HashMap<>();
+        rollbackableParams.put("projectId", new ParameterDef("string", "项目ID", true));
+        registerTool(new AiTool(
+            "get_rollbackable_versions",
+            "获取项目可回滚的版本列表",
+            rollbackableParams,
+            "PERM_projects:view"
+        ));
+
+        // ===== 督查报告 =====
+
+        // 98. 获取督查报告
+        Map<String, ParameterDef> supervisionParams = new HashMap<>();
+        supervisionParams.put("projectId", new ParameterDef("string", "项目ID", true));
+        registerTool(new AiTool(
+            "get_supervision_report",
+            "获取项目督查报告（综合评估）",
+            supervisionParams,
+            "PERM_projects:view"
+        ));
+
+        // 99. 获取玩家体验评分
+        Map<String, ParameterDef> playerExpParams = new HashMap<>();
+        playerExpParams.put("projectId", new ParameterDef("string", "项目ID", true));
+        registerTool(new AiTool(
+            "get_player_experience",
+            "获取项目玩家体验评分（5维度）",
+            playerExpParams,
+            "PERM_projects:view"
+        ));
+
+        // 100. 获取协作效率度量
+        Map<String, ParameterDef> collabParams = new HashMap<>();
+        collabParams.put("projectId", new ParameterDef("string", "项目ID", true));
+        registerTool(new AiTool(
+            "get_collaboration_metrics",
+            "获取项目协作效率度量（交接延迟、返工率等）",
+            collabParams,
+            "PERM_projects:view"
+        ));
+
+        // 101. 获取风险预测
+        Map<String, ParameterDef> riskParams = new HashMap<>();
+        riskParams.put("projectId", new ParameterDef("string", "项目ID", true));
+        registerTool(new AiTool(
+            "get_risk_prediction",
+            "获取项目风险预测（进度/质量/团队/阻塞/技术）",
+            riskParams,
+            "PERM_projects:view"
+        ));
+
+        // ===== 全局搜索 =====
+
+        // 102. 全局搜索
+        Map<String, ParameterDef> globalSearchParams = new HashMap<>();
+        globalSearchParams.put("keyword", new ParameterDef("string", "搜索关键词", true));
+        registerTool(new AiTool(
+            "global_search",
+            "全局搜索（跨项目、Agent、技能、配置等）",
+            globalSearchParams,
+            "PERM_dashboard:view"
+        ));
+
+        // ===== 系统常量 =====
+
+        // 103. 获取系统常量列表
+        registerTool(new AiTool(
+            "list_system_constants",
+            "获取所有系统常量及其当前值",
+            Map.of(),
+            "PERM_admin:manage"
+        ));
+
+        // 104. 更新系统常量
+        Map<String, ParameterDef> updateConstantParams = new HashMap<>();
+        updateConstantParams.put("key", new ParameterDef("string", "常量键", true));
+        updateConstantParams.put("value", new ParameterDef("string", "新值", true));
+        registerTool(new AiTool(
+            "update_system_constant",
+            "更新系统常量的值",
+            updateConstantParams,
+            "PERM_admin:manage"
+        ));
+
+        // ===== Agent 绩效 =====
+
+        // 105. 获取Agent绩效数据
+        registerTool(new AiTool(
+            "get_agent_performance",
+            "获取所有Agent的绩效数据",
+            Map.of(),
+            "PERM_agents:view"
+        ));
+
+        // 106. 获取绩效汇总
+        registerTool(new AiTool(
+            "get_performance_summary",
+            "获取Agent绩效汇总统计",
+            Map.of(),
+            "PERM_agents:view"
+        ));
+
+        // ===== 代码质量 =====
+
+        // 107. 检查代码质量
+        Map<String, ParameterDef> checkCodeParams = new HashMap<>();
+        checkCodeParams.put("projectId", new ParameterDef("string", "项目ID", true));
+        registerTool(new AiTool(
+            "check_code_quality",
+            "检查项目代码质量",
+            checkCodeParams,
+            "PERM_code:review"
+        ));
+
+        // 108. 获取代码质量报告
+        Map<String, ParameterDef> codeReportParams = new HashMap<>();
+        codeReportParams.put("projectId", new ParameterDef("string", "项目ID", true));
+        registerTool(new AiTool(
+            "get_code_quality_report",
+            "获取项目代码质量报告",
+            codeReportParams,
+            "PERM_code:review"
+        ));
+
+        // ===== 流水线操作 =====
+
+        // 109. 取消流水线
+        Map<String, ParameterDef> cancelPipelineParams = new HashMap<>();
+        cancelPipelineParams.put("pipelineId", new ParameterDef("number", "流水线ID", true));
+        registerTool(new AiTool(
+            "cancel_pipeline",
+            "取消正在执行的流水线",
+            cancelPipelineParams,
+            "PERM_pipeline:manage"
+        ));
+
+        // 110. 暂停流水线
+        Map<String, ParameterDef> pausePipelineParams = new HashMap<>();
+        pausePipelineParams.put("pipelineId", new ParameterDef("number", "流水线ID", true));
+        registerTool(new AiTool(
+            "pause_pipeline",
+            "暂停正在执行的流水线",
+            pausePipelineParams,
+            "PERM_pipeline:manage"
+        ));
+
+        // 111. 恢复流水线
+        Map<String, ParameterDef> resumePipelineParams = new HashMap<>();
+        resumePipelineParams.put("pipelineId", new ParameterDef("number", "流水线ID", true));
+        registerTool(new AiTool(
+            "resume_pipeline",
+            "恢复暂停的流水线",
+            resumePipelineParams,
+            "PERM_pipeline:manage"
+        ));
+
+        // ===== Agent 健康 =====
+
+        // 112. 获取详细Agent健康状态
+        registerTool(new AiTool(
+            "get_detailed_agent_health",
+            "获取所有Agent的详细健康状态和历史",
+            Map.of(),
+            "PERM_agent:view"
+        ));
+
+        // 113. 重启Agent
+        Map<String, ParameterDef> restartAgentParams = new HashMap<>();
+        restartAgentParams.put("agentId", new ParameterDef("string", "Agent ID", true));
+        registerTool(new AiTool(
+            "restart_agent",
+            "重启指定Agent（清除上下文并重新初始化）",
+            restartAgentParams,
+            "PERM_agent:manage"
+        ));
+
+        // ===== 导出 =====
+
+        // 114. 导出数据
+        Map<String, ParameterDef> exportParams = new HashMap<>();
+        exportParams.put("type", new ParameterDef("string", "导出类型（agents/logs）", true));
+        registerTool(new AiTool(
+            "export_data",
+            "导出系统数据（Agent列表、日志等）",
+            exportParams,
+            "PERM_admin:manage"
+        ));
+
+        // ===== 通知偏好 =====
+
+        // 115. 获取通知偏好
+        registerTool(new AiTool(
+            "get_notification_preferences",
+            "获取当前用户的通知接收偏好配置",
+            Map.of(),
+            null
+        ));
+
+        // ===== 项目看板 =====
+
+        // 116. 获取项目看板
+        Map<String, ParameterDef> boardParams = new HashMap<>();
+        boardParams.put("projectId", new ParameterDef("string", "项目ID", true));
+        registerTool(new AiTool(
+            "get_project_board",
+            "获取项目看板（任务状态、进行中的工作）",
+            boardParams,
+            "PERM_projects:view"
+        ));
+
+        // 117. 获取项目事件
+        Map<String, ParameterDef> eventsParams = new HashMap<>();
+        eventsParams.put("projectId", new ParameterDef("string", "项目ID", true));
+        registerTool(new AiTool(
+            "get_project_events",
+            "获取项目事件时间线",
+            eventsParams,
+            "PERM_projects:view"
+        ));
+
+        // ===== 知识进化 =====
+
+        // 118. 获取知识进化统计
+        registerTool(new AiTool(
+            "get_knowledge_evolution_stats",
+            "获取知识进化系统的统计信息",
+            Map.of(),
+            null
+        ));
+
+        // 119. 获取已学习模式
+        registerTool(new AiTool(
+            "get_learned_patterns",
+            "获取系统从项目中学习到的模式",
+            Map.of(),
+            null
+        ));
+
+        // 120. 获取已学习技能
+        registerTool(new AiTool(
+            "get_learned_skills",
+            "获取系统从项目中学习到的技能",
+            Map.of(),
+            null
+        ));
     }
 
     /**
@@ -1011,16 +1407,68 @@ public class AiToolRegistry {
         sb.append("- 查询 MCP 服务器：`curl -s http://127.0.0.1:19922/api/mcp/servers`\n");
         sb.append("- 添加 MCP 服务器：`curl -X POST http://127.0.0.1:19922/api/mcp/servers -H 'Content-Type: application/json' -d '{...}'`\n");
         sb.append("- 测试 MCP 服务器：`curl -X POST http://127.0.0.1:19922/api/mcp/servers/{id}/test`\n");
-        sb.append("- 从模板安装 MCP：`curl -X POST http://127.0.0.1:19922/api/mcp/servers/install -H 'Content-Type: application/json' -d '{\"templateKey\":\"unity-mcp\",\"projectId\":\"...\"}'`\n");
+        sb.append("- 从模板安装 MCP：`curl -X POST http://127.0.0.1:19922/api/mcp/servers/install -H 'Content-Type: application/json' -d '{\"templateKey\":\"unity\",\"projectId\":\"...\"}'`\n");
         sb.append("- 绑定 MCP 到 Agent：`curl -X POST http://127.0.0.1:19922/api/mcp/bindings -H 'Content-Type: application/json' -d '{...}'`\n\n");
-        sb.append("可用 MCP 模板：unity-mcp（Unity编辑器）、godot-mcp（Godot引擎）、redis-mcp（Redis缓存）、");
-        sb.append("steam-mcp（Steam平台）、playfab-mcp（PlayFab后端）、firebase-mcp（Firebase服务）、jira-mcp（Jira项目管理）\n\n");
+        sb.append("可用 MCP 模板（27个）：\n");
+        sb.append("- 文件/开发：filesystem（本地文件）、github（GitHub）、gitlab（GitLab）\n");
+        sb.append("- 数据库：postgres（PostgreSQL）、mysql（MySQL）、redis（Redis缓存）、mongodb（MongoDB）\n");
+        sb.append("- 协作：feishu-doc（飞书文档）、feishu-bitable（飞书多维表格）、slack（Slack）、jira（Jira）、linear（Linear）、notion（Notion）\n");
+        sb.append("- 搜索/网络：brave-search（Brave搜索）、fetch（HTTP请求）\n");
+        sb.append("- 自动化：puppeteer（浏览器自动化）\n");
+        sb.append("- AI/推理：memory（知识图谱记忆）、sequential-thinking（结构化推理）\n");
+        sb.append("- 监控：sentry（错误监控）、grafana（Grafana面板）、sonarqube（代码质量）\n");
+        sb.append("- 游戏开发：unity（Unity编辑器）、godot（Godot引擎）、unreal（虚幻引擎）、playfab（PlayFab后端）、firebase（Firebase服务）、steam（Steam平台）\n\n");
         appendToolByNames(sb, userPermissions, "list_mcp_servers", "get_mcp_server", "add_mcp_server",
             "test_mcp_server", "toggle_mcp_server", "delete_mcp_server", "list_mcp_tools",
             "bind_mcp_to_agent", "install_mcp_from_template");
 
         sb.append("### 知识库\n");
-        appendToolByNames(sb, userPermissions, "get_knowledge_stats", "get_solutions");
+        appendToolByNames(sb, userPermissions, "get_knowledge_stats", "get_solutions",
+            "search_knowledge", "get_best_practices", "record_knowledge");
+
+        sb.append("### 审批管理\n");
+        appendToolByNames(sb, userPermissions, "list_approvals", "list_pending_approvals",
+            "approve_request", "reject_request");
+
+        sb.append("### 权限管理\n");
+        appendToolByNames(sb, userPermissions, "list_permission_definitions", "list_pending_permissions",
+            "grant_permission", "revoke_permission");
+
+        sb.append("### 版本迭代\n");
+        appendToolByNames(sb, userPermissions, "get_iteration_stats", "get_iteration_records",
+            "rollback_version", "get_rollbackable_versions");
+
+        sb.append("### 督查报告\n");
+        appendToolByNames(sb, userPermissions, "get_supervision_report", "get_player_experience",
+            "get_collaboration_metrics", "get_risk_prediction");
+
+        sb.append("### 全局搜索\n");
+        appendToolByNames(sb, userPermissions, "global_search");
+
+        sb.append("### 系统常量\n");
+        appendToolByNames(sb, userPermissions, "list_system_constants", "update_system_constant");
+
+        sb.append("### Agent 绩效\n");
+        appendToolByNames(sb, userPermissions, "get_agent_performance", "get_performance_summary");
+
+        sb.append("### 代码质量\n");
+        appendToolByNames(sb, userPermissions, "check_code_quality", "get_code_quality_report");
+
+        sb.append("### 流水线操作\n");
+        appendToolByNames(sb, userPermissions, "cancel_pipeline", "pause_pipeline", "resume_pipeline");
+
+        sb.append("### Agent 健康\n");
+        appendToolByNames(sb, userPermissions, "get_detailed_agent_health", "restart_agent");
+
+        sb.append("### 项目看板 & 事件\n");
+        appendToolByNames(sb, userPermissions, "get_project_board", "get_project_events");
+
+        sb.append("### 知识进化\n");
+        appendToolByNames(sb, userPermissions, "get_knowledge_evolution_stats",
+            "get_learned_patterns", "get_learned_skills");
+
+        sb.append("### 导出 & 通知偏好\n");
+        appendToolByNames(sb, userPermissions, "export_data", "get_notification_preferences");
 
         return sb.toString();
     }

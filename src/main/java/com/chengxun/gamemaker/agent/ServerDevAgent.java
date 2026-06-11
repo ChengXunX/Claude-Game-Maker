@@ -43,6 +43,63 @@ public class ServerDevAgent extends BaseAgent {
         if (!pendingTasks.isEmpty()) {
             TaskAssignment task = pendingTasks.get(0);
             workOnTask(task);
+        } else {
+            // 【增强】没有分配任务时，主动检查和改进项目
+            proactivelyImproveProject();
+        }
+    }
+
+    /**
+     * 主动改进项目
+     * 当没有分配的任务时，Agent 主动检查项目状态并做有意义的工作
+     * 避免空转浪费资源，同时确保项目质量持续提升
+     */
+    private void proactivelyImproveProject() {
+        if (currentProject == null || currentProject.getWorkDir() == null) return;
+
+        String projectDir = currentProject.getWorkDir();
+        java.io.File dir = new java.io.File(projectDir);
+        if (!dir.exists()) return;
+
+        // 检查是否有代码文件
+        boolean hasCode = false;
+        java.io.File[] files = dir.listFiles();
+        if (files != null) {
+            for (java.io.File f : files) {
+                if (f.getName().endsWith(".js") || f.getName().endsWith(".html") ||
+                    f.getName().endsWith(".css") || f.getName().endsWith(".json")) {
+                    hasCode = true;
+                    break;
+                }
+            }
+        }
+
+        if (!hasCode) {
+            // 项目还没有代码，不需要主动改进
+            log.debug("项目无代码文件，跳过主动改进");
+            return;
+        }
+
+        // 主动检查：运行项目验证 + 修复发现的问题
+        String proactivePrompt = String.format(
+            "你目前没有分配的任务。请主动检查项目 [%s] 的代码质量：\n\n" +
+            "1. 读取项目目录中的代码文件\n" +
+            "2. 检查是否有语法错误、逻辑问题、缺失的依赖\n" +
+            "3. 尝试运行项目（如果有 package.json 就 npm install && npm start）\n" +
+            "4. 修复发现的任何问题\n" +
+            "5. 如果发现可以改进的地方（代码质量、性能、功能完善），直接改进\n\n" +
+            "工作目录: %s\n" +
+            "请汇报你做了什么改进。",
+            currentProject.getName(), projectDir);
+
+        log.info("主动检查项目: {}", currentProject.getName());
+        logInfo("PROACTIVE_CHECK", "空闲期间主动检查项目代码质量");
+
+        String result = sendMessage(proactivePrompt);
+        if (result != null && !result.isEmpty()) {
+            saveExperience("proactive_check_" + System.currentTimeMillis(),
+                String.format("主动检查 [%s]: %s", currentProject.getName(),
+                    result.length() > 300 ? result.substring(0, 300) + "..." : result));
         }
     }
 
@@ -221,7 +278,13 @@ public class ServerDevAgent extends BaseAgent {
             sb.append("## 上次工作结果\n\n").append(lastWork).append("\n\n");
         }
 
-        sb.append("请在工作目录 ").append(definition.getWorkDir()).append(" 中执行以上任务，并报告完成情况。");
+        sb.append("## 工作要求\n\n");
+        sb.append("1. **先看再写**：先读取项目目录中已有的代码，理解现有架构\n");
+        sb.append("2. **做完就验**：写完代码后立即运行验证，确保能正常工作\n");
+        sb.append("3. **发现问题就修**：看到任何问题立即修复，不要只做分配的任务\n");
+        sb.append("4. **能做就多做**：发现可以改进的地方直接去做\n\n");
+        sb.append("工作目录: ").append(definition.getWorkDir()).append("\n");
+        sb.append("请执行以上任务，同时主动检查和改进项目代码质量。完成后汇报做了什么、验证结果、发现的问题。");
 
         return sb.toString();
     }

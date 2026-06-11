@@ -74,6 +74,7 @@ public class StartupInitializer {
         log.info("Game Maker starting up...");
 
         createDataDirectories();
+        restorePersistentData();  // 从持久化目录恢复知识库和技能
         initSystemPresets();
         restoreExistingProjectAgents();
         restoreTokenBindings();
@@ -101,6 +102,60 @@ public class StartupInitializer {
     }
 
     /**
+     * 从持久化目录恢复知识库和技能数据
+     * 持久化目录 (data-persist/) 被 git 追踪，系统重置后可自动恢复
+     */
+    private void restorePersistentData() {
+        Path persistDir = Path.of("data-persist");
+        if (!Files.exists(persistDir)) {
+            log.debug("No persistent data directory found, skipping restore");
+            return;
+        }
+
+        try {
+            // 恢复知识库
+            Path kbSource = persistDir.resolve("knowledge-base");
+            Path kbTarget = Path.of(appConfig.getDataDir(), "knowledge-base");
+            if (Files.exists(kbSource)) {
+                copyDirectory(kbSource, kbTarget);
+                log.info("Restored knowledge-base from persistent storage");
+            }
+
+            // 恢复技能
+            Path skillSource = persistDir.resolve("skills");
+            Path skillTarget = Path.of(appConfig.getDataDir(), "skills");
+            if (Files.exists(skillSource)) {
+                copyDirectory(skillSource, skillTarget);
+                log.info("Restored skills from persistent storage");
+            }
+        } catch (Exception e) {
+            log.error("Failed to restore persistent data", e);
+        }
+    }
+
+    /**
+     * 递归复制目录
+     */
+    private void copyDirectory(Path source, Path target) throws Exception {
+        Files.createDirectories(target);
+        try (var stream = Files.walk(source)) {
+            stream.forEach(srcPath -> {
+                try {
+                    Path destPath = target.resolve(source.relativize(srcPath));
+                    if (Files.isDirectory(srcPath)) {
+                        Files.createDirectories(destPath);
+                    } else {
+                        Files.createDirectories(destPath.getParent());
+                        Files.copy(srcPath, destPath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                    }
+                } catch (Exception e) {
+                    log.warn("Failed to copy {}: {}", srcPath, e.getMessage());
+                }
+            });
+        }
+    }
+
+    /**
      * 初始化系统内置 Agent 预设
      */
     private void initSystemPresets() {
@@ -124,6 +179,12 @@ public class StartupInitializer {
             int restoredCount = 0;
 
             for (GameProject project : projects) {
+                // 跳过已归档的项目，不恢复其 Agent
+                if (project.getStatus() == GameProject.ProjectStatus.ARCHIVED) {
+                    log.debug("Skipping archived project: {}", project.getName());
+                    continue;
+                }
+
                 java.util.List<String> agentIds = project.getAgentIds();
                 if (agentIds == null || agentIds.isEmpty()) {
                     continue;

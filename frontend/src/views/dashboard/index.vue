@@ -67,6 +67,9 @@
               <div class="stat-label">待审批</div>
             </div>
           </div>
+          <div class="stat-extra">
+            <span class="stat-muted">&nbsp;</span>
+          </div>
         </el-card>
       </el-col>
 
@@ -80,6 +83,9 @@
               <div class="stat-value">{{ stats.unresolvedAlerts }}</div>
               <div class="stat-label">未解决告警</div>
             </div>
+          </div>
+          <div class="stat-extra">
+            <span class="stat-muted">&nbsp;</span>
           </div>
         </el-card>
       </el-col>
@@ -95,19 +101,28 @@
               <div class="stat-label">已完成任务</div>
             </div>
           </div>
+          <div class="stat-extra">
+            <span class="stat-muted">&nbsp;</span>
+          </div>
         </el-card>
       </el-col>
 
       <el-col :xs="12" :sm="12" :md="6" :lg="4">
         <el-card class="stat-card" shadow="hover" @click="$router.push('/health')">
           <div class="stat-content">
-            <div class="stat-icon" style="background: linear-gradient(135deg, #a18cd1 0%, #fbc2eb 100%)">
-              <el-icon :size="28"><CircleCheck /></el-icon>
+            <div class="stat-icon" :style="{ background: systemHealthIcon === 'CircleCheck' ? 'linear-gradient(135deg, #43e97b 0%, #38f9d7 100%)' : 'linear-gradient(135deg, #f5576c 0%, #ff6b6b 100%)' }">
+              <el-icon :size="28">
+                <CircleCheck v-if="systemHealthIcon === 'CircleCheck'" />
+                <Warning v-else />
+              </el-icon>
             </div>
             <div class="stat-info">
-              <div class="stat-value">{{ stats.systemHealth }}</div>
+              <div class="stat-value" :class="{ 'text-danger': systemHealthIcon !== 'CircleCheck' }">{{ stats.systemHealth }}</div>
               <div class="stat-label">系统状态</div>
             </div>
+          </div>
+          <div class="stat-extra">
+            <span class="stat-muted">&nbsp;</span>
           </div>
         </el-card>
       </el-col>
@@ -252,7 +267,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { agentApi, alertApi, approvalApi, logApi, healthApi, projectApi } from '@/api'
@@ -283,6 +298,11 @@ const pendingApprovals = ref([])
 
 // 最近活动日志
 const recentLogs = ref([])
+
+// 系统健康状态图标
+const systemHealthIcon = computed(() => {
+  return stats.value.systemHealth === '正常' ? 'CircleCheck' : 'Warning'
+})
 
 // 获取Agent列表
 const fetchAgents = async () => {
@@ -480,6 +500,8 @@ onMounted(() => {
 
 .stat-running { color: #67c23a; }
 .stat-busy { color: #e6a23c; }
+.stat-muted { color: transparent; }
+.text-danger { color: #f56c6c; }
 
 .content-row {
   margin-top: 0;

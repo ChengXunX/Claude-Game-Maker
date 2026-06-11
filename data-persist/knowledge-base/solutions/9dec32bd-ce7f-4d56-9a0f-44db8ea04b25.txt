@@ -1,0 +1,17 @@
+问题类型: tech_stack
+问题描述: 游戏项目目录规范
+解决方案: 推荐目录结构：
+project/
+  src/           # 源代码
+    game/        # 游戏核心逻辑
+    scenes/      # 场景/关卡
+    entities/    # 游戏对象
+    systems/     # 系统（输入、物理、渲染）
+    utils/       # 工具函数
+  assets/        # 资源文件
+    images/      # 图片
+    sounds/      # 音效
+    data/        # 配置数据
+  index.html     # 入口
+  package.json   # 依赖配置
+时间: 2026-06-10T10:07:24.201221767

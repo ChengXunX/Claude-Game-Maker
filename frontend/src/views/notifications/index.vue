@@ -113,7 +113,8 @@ const getIcon = (type) => {
     'success': 'SuccessFilled',
     'task': 'Finished',
     'agent': 'UserFilled',
-    'system': 'Setting'
+    'system': 'Setting',
+    'approval': 'Stamp'
   }
   return iconMap[type?.toLowerCase()] || 'Bell'
 }
@@ -127,7 +128,8 @@ const getIconColor = (type) => {
     'success': '#67c23a',
     'task': '#409eff',
     'agent': '#67c23a',
-    'system': '#909399'
+    'system': '#909399',
+    'approval': '#e6a23c'
   }
   return colorMap[type?.toLowerCase()] || '#909399'
 }

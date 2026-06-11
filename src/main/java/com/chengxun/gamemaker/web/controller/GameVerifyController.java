@@ -3,6 +3,7 @@ package com.chengxun.gamemaker.web.controller;
 import com.chengxun.gamemaker.manager.ProjectManager;
 import com.chengxun.gamemaker.model.GameProject;
 import com.chengxun.gamemaker.service.GameAnalysisTaskService;
+import com.chengxun.gamemaker.service.GameDesignReviewService;
 import com.chengxun.gamemaker.service.GameRuntimeVerifier;
 import com.chengxun.gamemaker.web.entity.GameVerifyResult;
 import com.chengxun.gamemaker.web.repository.GameVerifyResultRepository;
@@ -53,6 +54,9 @@ public class GameVerifyController {
 
     @Autowired(required = false)
     private com.chengxun.gamemaker.service.VerificationFeedbackService verificationFeedbackService;
+
+    @Autowired(required = false)
+    private com.chengxun.gamemaker.service.GameDesignReviewService gameDesignReviewService;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -387,6 +391,105 @@ public class GameVerifyController {
             "tasks", taskList,
             "total", taskList.size()
         ));
+    }
+
+    /**
+     * 游戏设计审查
+     * 对项目的设计文档进行 AI 审查，检查核心循环、有趣度、差异化等
+     *
+     * @param projectId 项目ID
+     * @return 审查结果
+     */
+    @PostMapping("/{projectId}/design-review")
+    public ResponseEntity<Map<String, Object>> reviewDesign(@PathVariable String projectId) {
+        if (gameDesignReviewService == null) {
+            return ResponseEntity.ok(Map.of(
+                "success", false,
+                "error", "设计审查服务未启用"
+            ));
+        }
+
+        GameProject project = projectManager.getProject(projectId);
+        if (project == null) {
+            return ResponseEntity.ok(Map.of(
+                "success", false,
+                "error", "项目不存在: " + projectId
+            ));
+        }
+
+        String goal = project.getGoal();
+        if (goal == null || goal.isEmpty()) {
+            return ResponseEntity.ok(Map.of(
+                "success", false,
+                "error", "项目未设置目标描述"
+            ));
+        }
+
+        // 收集项目中的设计文档
+        String designDocuments = collectDesignDocuments(project);
+
+        log.info("触发游戏设计审查: projectId={}", projectId);
+
+        GameDesignReviewService.DesignReviewResult result =
+            gameDesignReviewService.reviewDesign(goal, designDocuments, null);
+
+        Map<String, Object> response = new HashMap<>();
+        response.put("success", true);
+        response.put("reviewed", result.reviewed);
+        response.put("passed", result.passed);
+        response.put("score", result.score);
+        response.put("issues", result.issues.stream().map(issue -> {
+            Map<String, String> issueMap = new HashMap<>();
+            issueMap.put("severity", issue.severity);
+            issueMap.put("description", issue.description);
+            issueMap.put("suggestion", issue.suggestion);
+            return issueMap;
+        }).toList());
+        response.put("strengths", result.strengths);
+        response.put("summary", result.summary);
+        response.put("report", result.toReport());
+
+        return ResponseEntity.ok(response);
+    }
+
+    /**
+     * 收集项目中的设计文档内容
+     */
+    private String collectDesignDocuments(GameProject project) {
+        StringBuilder docs = new StringBuilder();
+        String workDir = project.getWorkDir();
+
+        if (workDir != null && !workDir.isEmpty()) {
+            java.io.File dir = new java.io.File(workDir);
+            if (dir.exists() && dir.isDirectory()) {
+                // 查找 .md 和 .txt 文件作为设计文档
+                java.io.File[] files = dir.listFiles((d, name) ->
+                    name.endsWith(".md") || name.endsWith(".txt") ||
+                    name.contains("design") || name.contains("plan") ||
+                    name.contains("GDD"));
+                if (files != null) {
+                    for (java.io.File file : files) {
+                        try {
+                            String content = java.nio.file.Files.readString(file.toPath());
+                            if (content.length() > 3000) {
+                                content = content.substring(0, 3000) + "\n...(截断)";
+                            }
+                            docs.append("### ").append(file.getName()).append("\n");
+                            docs.append(content).append("\n\n");
+                        } catch (Exception e) {
+                            // 忽略读取失败的文件
+                        }
+                    }
+                }
+            }
+        }
+
+        // 如果没有找到设计文档，使用项目目标作为设计输入
+        if (docs.isEmpty() && project.getGoal() != null) {
+            docs.append("项目目标：\n").append(project.getGoal());
+        }
+
+        return docs.toString();
     }
 
     /**

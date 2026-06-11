@@ -1107,9 +1107,30 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 -- Agent 预设表
 CREATE TABLE IF NOT EXISTS agent_presets (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    preset_name VARCHAR(100) NOT NULL,
+    name VARCHAR(100) NOT NULL,
+    role VARCHAR(50) NOT NULL,
     description TEXT,
-    agent_role VARCHAR(50) NOT NULL,
+    reasoning_depth INT DEFAULT 3,
+    capabilities TEXT,
+    tags TEXT,
+    supported_file_types TEXT,
+    unsupported_features TEXT,
+    max_context_size INT DEFAULT 100000,
+    supports_image_generation BOOLEAN DEFAULT FALSE,
+    supports_code_execution BOOLEAN DEFAULT TRUE,
+    supports_file_operations BOOLEAN DEFAULT TRUE,
+    api_provider VARCHAR(50) DEFAULT 'anthropic',
+    prompt TEXT,
+    notify_targets VARCHAR(500),
+    reviewer VARCHAR(50),
+    role_name VARCHAR(100),
+    prompt_version INT DEFAULT 0,
+    last_evolution_source VARCHAR(50),
+    last_evolution_at TIMESTAMP NULL,
+    is_system BOOLEAN DEFAULT FALSE,
+    source_agent_id VARCHAR(200),
+    source_project_id VARCHAR(100),
     config TEXT,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

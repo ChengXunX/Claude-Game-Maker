@@ -139,27 +139,34 @@ public class EmailService {
         }
 
         try {
-            // 检测内容是否包含 HTML 标签
+            // 【修复】统一使用 MimeMessage + UTF-8 编码，避免中文乱码
+            // SimpleMailMessage 不支持显式设置 charset，中文内容会乱码
             boolean isHtml = content != null && (content.contains("<div") || content.contains("<h") ||
-                content.contains("<p") || content.contains("<table") || content.contains("<span"));
+                content.contains("<p") || content.contains("<table") || content.contains("<span") ||
+                content.contains("<br") || content.contains("<li") || content.contains("<ul"));
 
-            if (isHtml) {
-                // 发送 HTML 邮件
-                sendHtmlEmail(toEmail, subject, content);
-            } else {
-                // 发送纯文本邮件
-                SimpleMailMessage message = new SimpleMailMessage();
-                message.setFrom(getFromAddress());
-                message.setTo(toEmail);
-                message.setSubject(subject);
-                message.setText(content);
-                mailSender.send(message);
-            }
+            sendHtmlOrTextEmail(toEmail, subject, content, isHtml);
             log.info("General email sent to: {}", toEmail);
         } catch (Exception e) {
             log.error("Failed to send general email to: {}", toEmail, e);
             throw new RuntimeException("邮件发送失败: " + e.getMessage());
         }
+    }
+
+    /**
+     * 发送邮件（统一使用 MimeMessage + UTF-8）
+     * 解决 SimpleMailMessage 中文乱码问题
+     */
+    private void sendHtmlOrTextEmail(String toEmail, String subject, String content, boolean isHtml) throws MessagingException {
+        MimeMessage message = mailSender.createMimeMessage();
+        MimeMessageHelper helper = new MimeMessageHelper(message, true, StandardCharsets.UTF_8.name());
+
+        helper.setFrom(getFromAddress());
+        helper.setTo(toEmail);
+        helper.setSubject(subject);
+        helper.setText(content != null ? content : "", isHtml);
+
+        mailSender.send(message);
     }
 
     /**

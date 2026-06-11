@@ -122,6 +122,35 @@
             <span v-else class="text-muted">-</span>
           </template>
         </el-table-column>
+        <el-table-column label="设计审查" width="120">
+          <template #default="{ row }">
+            <template v-if="designReviewResults[row.id]">
+              <el-tag
+                :type="designReviewResults[row.id].passed ? 'success' : 'danger'"
+                size="small"
+                class="clickable-tag"
+                @click="showDesignReviewResult(row.id)"
+              >
+                {{ designReviewResults[row.id].score }}分
+              </el-tag>
+            </template>
+            <template v-else-if="designReviewing[row.id]">
+              <el-tag type="warning" size="small">审查中...</el-tag>
+            </template>
+            <span v-else class="text-muted">-</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="运行状态" width="140">
+          <template #default="{ row }">
+            <div v-if="row.running" class="running-status">
+              <el-tag type="success" size="small">运行中</el-tag>
+              <el-button v-if="getPreviewUrl(row)" type="primary" link size="small" @click="openProjectPreview(row)">
+                预览
+              </el-button>
+            </div>
+            <el-tag v-else type="info" size="small">未运行</el-tag>
+          </template>
+        </el-table-column>
         <el-table-column label="验证时间" width="170">
           <template #default="{ row }">
             <span v-if="verifyResults[row.id]">
@@ -130,7 +159,7 @@
             <span v-else class="text-muted">-</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="260" fixed="right">
+        <el-table-column label="操作" width="320" fixed="right">
           <template #default="{ row }">
             <el-button
               type="primary"
@@ -148,6 +177,14 @@
               @click="handleAnalyze(row)"
             >
               {{ getAnalyzeButtonText(row.id) }}
+            </el-button>
+            <el-button
+              type="warning"
+              size="small"
+              :loading="designReviewing[row.id]"
+              @click="handleDesignReview(row)"
+            >
+              设计审查
             </el-button>
             <el-button
               v-if="analysisResults[row.id]"
@@ -301,13 +338,79 @@
         </el-table-column>
       </el-table>
     </el-dialog>
+
+    <!-- 设计审查结果弹窗 -->
+    <el-dialog
+      v-model="designReviewDialogVisible"
+      title="游戏设计审查报告"
+      width="800px"
+      top="5vh"
+    >
+      <template v-if="designReviewResult">
+        <!-- 审查概览 -->
+        <div class="analysis-overview">
+          <div class="overall-score">
+            <div class="score-circle" :class="getScoreClass(designReviewResult.score)">
+              {{ designReviewResult.score }}
+            </div>
+            <div class="score-label">设计评分</div>
+          </div>
+          <div class="summary-text">
+            <el-tag :type="designReviewResult.passed ? 'success' : 'danger'" size="large" style="margin-bottom: 8px;">
+              {{ designReviewResult.passed ? '审查通过' : '需改进' }}
+            </el-tag>
+            <p>{{ designReviewResult.summary }}</p>
+          </div>
+        </div>
+
+        <!-- 设计亮点 -->
+        <div v-if="designReviewResult.strengths && designReviewResult.strengths.length > 0" style="margin-top: 16px;">
+          <el-divider>设计亮点</el-divider>
+          <ul class="analysis-list strengths">
+            <li v-for="(s, idx) in designReviewResult.strengths" :key="idx">{{ s }}</li>
+          </ul>
+        </div>
+
+        <!-- 发现的问题 -->
+        <div v-if="designReviewResult.issues && designReviewResult.issues.length > 0" style="margin-top: 16px;">
+          <el-divider>发现的问题</el-divider>
+          <div v-for="(issue, idx) in designReviewResult.issues" :key="idx" class="design-issue">
+            <el-tag
+              :type="issue.severity === 'HIGH' ? 'danger' : issue.severity === 'MEDIUM' ? 'warning' : 'info'"
+              size="small"
+              style="margin-right: 8px;"
+            >
+              {{ issue.severity }}
+            </el-tag>
+            <span class="issue-desc">{{ issue.description }}</span>
+            <div v-if="issue.suggestion" class="issue-suggestion">
+              <el-icon><Promotion /></el-icon> 建议: {{ issue.suggestion }}
+            </div>
+          </div>
+        </div>
+
+        <!-- 完整报告 -->
+        <div v-if="designReviewResult.report" style="margin-top: 16px;">
+          <el-divider>完整报告</el-divider>
+          <div class="analysis-report">
+            <MarkdownRenderer :content="designReviewResult.report" />
+          </div>
+        </div>
+      </template>
+      <template v-else-if="designReviewLoading">
+        <div class="analysis-loading">
+          <el-icon :size="40" class="is-loading"><Loading /></el-icon>
+          <p>AI 正在审查游戏设计...</p>
+        </div>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Refresh, CircleCheck, CircleClose, WarningFilled, QuestionFilled, Loading } from '@element-plus/icons-vue'
+import { Refresh, CircleCheck, CircleClose, WarningFilled, QuestionFilled, Loading, Promotion } from '@element-plus/icons-vue'
 import { gameVerifyApi, projectApi } from '@/api'
 
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
@@ -334,6 +437,13 @@ const analysisResults = reactive({})
 // 分析历史
 const historyDialogVisible = ref(false)
 const analysisHistory = ref([])
+
+// 设计审查
+const designReviewDialogVisible = ref(false)
+const designReviewResult = ref(null)
+const designReviewLoading = ref(false)
+const designReviewing = reactive({})
+const designReviewResults = reactive({})
 
 // 检查项目是否正在分析中
 const isAnalyzing = (projectId) => {
@@ -650,6 +760,41 @@ const viewHistoryDetail = (task) => {
   }
 }
 
+// 执行设计审查
+const handleDesignReview = async (project) => {
+  designReviewing[project.id] = true
+  designReviewResult.value = null
+  designReviewLoading.value = true
+  designReviewDialogVisible.value = true
+
+  try {
+    const data = await gameVerifyApi.designReview(project.id)
+
+    if (data.success && data.reviewed) {
+      designReviewResult.value = data
+      designReviewResults[project.id] = data
+      ElMessage.success(`[${project.name}] 设计审查完成`)
+    } else {
+      ElMessage.warning(data.error || '设计审查未返回结果')
+      designReviewDialogVisible.value = false
+    }
+  } catch (e) {
+    ElMessage.error(`设计审查失败: ${e.message || '未知错误'}`)
+    designReviewDialogVisible.value = false
+  } finally {
+    designReviewing[project.id] = false
+    designReviewLoading.value = false
+  }
+}
+
+// 显示设计审查结果（从缓存中）
+const showDesignReviewResult = (projectId) => {
+  if (designReviewResults[projectId]) {
+    designReviewResult.value = designReviewResults[projectId]
+    designReviewDialogVisible.value = true
+  }
+}
+
 // 进度条状态
 const getProgressStatus = (score) => {
   if (score >= 80) return 'success'
@@ -684,6 +829,19 @@ const getProjectTypeTag = (goal) => {
   if (lower.includes('rpg')) return 'warning'
   if (lower.includes('塔防')) return 'danger'
   return 'info'
+}
+
+// 从项目概况中提取预览 URL
+const getPreviewUrl = (project) => {
+  const overview = project.projectOverview
+  if (!overview) return null
+  const match = overview.match(/预览地址[:：]\s*(https?:\/\/[^\s\n]+)/)
+  return match ? match[1] : null
+}
+
+const openProjectPreview = (project) => {
+  const url = getPreviewUrl(project)
+  if (url) window.open(url, '_blank')
 }
 
 onMounted(() => {
@@ -783,6 +941,13 @@ onUnmounted(() => {
   align-items: center;
   gap: 4px;
   font-size: 12px;
+}
+.running-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.warning-text {
   color: var(--el-color-warning);
   margin-bottom: 2px;
 }
@@ -928,5 +1093,27 @@ onUnmounted(() => {
 
 .clickable-tag:hover {
   opacity: 0.8;
+}
+
+.design-issue {
+  padding: 12px;
+  margin-bottom: 8px;
+  background: var(--el-fill-color-lighter);
+  border-radius: 6px;
+  border-left: 3px solid var(--el-color-warning);
+}
+
+.design-issue .issue-desc {
+  font-size: 14px;
+  color: var(--el-text-color-primary);
+}
+
+.design-issue .issue-suggestion {
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--el-color-primary);
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
 }
 </style>

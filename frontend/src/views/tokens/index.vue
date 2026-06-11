@@ -97,6 +97,13 @@
             </el-tag>
           </template>
         </el-table-column>
+        <el-table-column label="用途" width="90">
+          <template #default="{ row }">
+            <el-tag :type="getPurposeType(row.purpose)" size="small">
+              {{ getPurposeLabel(row.purpose) }}
+            </el-tag>
+          </template>
+        </el-table-column>
         <el-table-column label="绑定 Agent" width="130">
           <template #default="{ row }">
             <span v-if="row.assignedAgentName">{{ row.assignedAgentName }}</span>
@@ -177,6 +184,14 @@
           <el-input-number v-model="tokenForm.priority" :min="1" :max="100" />
           <div class="form-tip">数值越小优先级越高，自动分配时优先使用</div>
         </el-form-item>
+        <el-form-item label="用途">
+          <el-radio-group v-model="tokenForm.purpose">
+            <el-radio value="AGENT">Agent 专用</el-radio>
+            <el-radio value="AI_ASSISTANT">AI 助手专用</el-radio>
+            <el-radio value="SHARED">共享</el-radio>
+          </el-radio-group>
+          <div class="form-tip">Agent 专用 Token 不会分配给 AI 助手，AI 助手专用 Token 不会分配给 Agent</div>
+        </el-form-item>
         <el-form-item label="描述">
           <el-input v-model="tokenForm.description" type="textarea" :rows="2" placeholder="备注信息" />
         </el-form-item>
@@ -247,7 +262,7 @@ const activePlatform = ref('')
 
 const tokenForm = ref({
   name: '', apiKey: '', apiUrl: '', model: '', maxTokens: 4096, contextWindow: 200000,
-  agentTagsArray: [], priority: 10, description: ''
+  agentTagsArray: [], priority: 10, description: '', purpose: 'AGENT'
 })
 
 // 分配对话框
@@ -419,6 +434,16 @@ const getPriorityType = (p) => {
   return 'success'
 }
 
+const getPurposeLabel = (purpose) => {
+  const map = { 'AGENT': 'Agent', 'AI_ASSISTANT': 'AI助手', 'SHARED': '共享' }
+  return map[purpose] || 'Agent'
+}
+
+const getPurposeType = (purpose) => {
+  const map = { 'AGENT': 'primary', 'AI_ASSISTANT': 'warning', 'SHARED': 'info' }
+  return map[purpose] || 'primary'
+}
+
 const parseTags = (tags) => tags ? tags.split(',').map(t => t.trim()).filter(t => t) : []
 
 const formatTokens = (n) => {
@@ -467,7 +492,7 @@ const openCreateDialog = () => {
   activePlatform.value = ''
   tokenForm.value = {
     name: '', apiKey: '', apiUrl: '', model: '', maxTokens: 4096, contextWindow: 200000,
-    agentTagsArray: [], priority: 10, description: ''
+    agentTagsArray: [], priority: 10, description: '', purpose: 'AGENT'
   }
   dialogVisible.value = true
 }
@@ -486,7 +511,8 @@ const openEditDialog = (token) => {
     contextWindow: token.contextWindow || 200000,
     agentTagsArray: parseTags(token.agentTags),
     priority: token.priority || 10,
-    description: token.description || ''
+    description: token.description || '',
+    purpose: token.purpose || 'AGENT'
   }
   dialogVisible.value = true
 }

@@ -247,21 +247,27 @@ public class AuthController {
 
     /**
      * 获取管理员联系信息
-     * 优先返回自定义联系链接，其次返回管理员邮箱
+     * 支持三种类型：link（链接）、email（邮箱）、image（图片）
+     * 优先返回自定义配置，其次返回管理员邮箱
      */
     @GetMapping("/api/auth/admin-contact")
     @ResponseBody
     public ResponseEntity<?> getAdminContact() {
         Map<String, Object> result = new HashMap<>();
 
-        // 优先检查自定义联系链接
-        String contactLink = configRepository.findByConfigKey("system.contact.link")
+        // 读取联系类型和联系值
+        String contactType = configRepository.findByConfigKey("system.contact.type")
             .map(SystemConfig::getConfigValue)
             .orElse(null);
-        if (contactLink != null && !contactLink.isEmpty()) {
+        String contactValue = configRepository.findByConfigKey("system.contact.link")
+            .map(SystemConfig::getConfigValue)
+            .orElse(null);
+
+        // 如果有自定义配置，根据类型返回
+        if (contactValue != null && !contactValue.isEmpty()) {
             result.put("success", true);
-            result.put("link", contactLink);
-            result.put("type", "link");
+            result.put("type", contactType != null ? contactType : detectContactType(contactValue));
+            result.put("value", contactValue);
             return ResponseEntity.ok(result);
         }
 
@@ -277,6 +283,16 @@ public class AuthController {
             result.put("message", "管理员未配置联系方式");
         }
         return ResponseEntity.ok(result);
+    }
+
+    /**
+     * 自动检测联系值的类型
+     * 包含 @ 符号且不是 URL 的视为邮箱，否则视为链接
+     */
+    private String detectContactType(String value) {
+        if (value == null || value.isEmpty()) return "link";
+        if (value.contains("@") && !value.startsWith("http")) return "email";
+        return "link";
     }
 
     /**

@@ -164,6 +164,9 @@
             <el-button type="warning" size="small" text @click.stop="handleViewWorkflow(project)">
               工作流
             </el-button>
+            <el-button type="info" size="small" text @click.stop="openProjectChat(project)">
+              对话
+            </el-button>
           </div>
         </el-card>
 
@@ -282,10 +285,176 @@
           <el-button @click="handleViewWorkflow(currentProject)">
             <el-icon><Connection /></el-icon> 工作流
           </el-button>
+          <el-button
+            type="warning"
+            @click="handleVersionIteration(currentProject)"
+            v-permission="'agents:manage'"
+          >
+            <el-icon><Promotion /></el-icon> 版本迭代
+          </el-button>
         </div>
 
+        <!-- 版本迭代状态 -->
+        <el-divider>
+          <div class="divider-title">
+            <span>版本迭代</span>
+            <el-tag size="small" :type="getGoalTagType(currentProject.goalStatus)">
+              {{ getGoalStatusText(currentProject.goalStatus) }}
+            </el-tag>
+          </div>
+        </el-divider>
+        <div class="version-iteration-info">
+          <el-alert type="info" :closable="false" show-icon>
+            <template #title>
+              <span>制作人会自动发起版本迭代，直到项目目标完成</span>
+            </template>
+            <template #default>
+              <div class="iteration-flow">
+                <span>当前版本: <strong>{{ currentProject.version || 'v1.0' }}</strong></span>
+                <span class="flow-separator">→</span>
+                <span>里程碑进度: <strong>{{ completedMilestonesCount }}/{{ milestones.length }}</strong></span>
+                <span class="flow-separator">→</span>
+                <span>目标进度: <strong>{{ currentProject.goalProgress || 0 }}%</strong></span>
+              </div>
+            </template>
+          </el-alert>
+          <!-- 迭代统计 -->
+          <div v-if="iterationStats.totalIterations > 0" class="iteration-stats">
+            <el-row :gutter="16">
+              <el-col :span="6">
+                <el-statistic title="迭代次数" :value="iterationStats.totalIterations" suffix="次" />
+              </el-col>
+              <el-col :span="6">
+                <el-statistic title="通过次数" :value="iterationStats.passedIterations" suffix="次" />
+              </el-col>
+              <el-col :span="6">
+                <el-statistic title="通过率" :value="iterationStats.passRate" :precision="1" suffix="%" />
+              </el-col>
+              <el-col :span="6">
+                <el-statistic title="平均评分" :value="iterationStats.averageScore" :precision="1" suffix="/10" />
+              </el-col>
+            </el-row>
+          </div>
+          <!-- 回滚按钮 -->
+          <div class="iteration-actions" v-if="versionHistory.length > 1">
+            <el-button size="small" type="warning" @click="handleRollback">
+              <el-icon><RefreshLeft /></el-icon> 版本回滚
+            </el-button>
+          </div>
+        </div>
+
+        <!-- 版本迭代记录 -->
+        <el-collapse v-if="iterationRecords.length > 0" class="iteration-records-collapse">
+          <el-collapse-item>
+            <template #title>
+              <span class="collapse-title">版本迭代记录（共 {{ iterationRecords.length }} 条）</span>
+            </template>
+            <!-- 筛选和操作栏 -->
+            <div class="iteration-toolbar">
+              <div class="toolbar-left">
+                <el-select v-model="iterationFilter.result" placeholder="筛选结果" clearable size="small" style="width: 120px">
+                  <el-option label="目标完成" value="COMPLETED" />
+                  <el-option label="继续迭代" value="ITERATED" />
+                  <el-option label="需要改进" value="IMPROVED" />
+                  <el-option label="版本回滚" value="ROLLBACK" />
+                </el-select>
+                <el-select v-model="iterationSort" placeholder="排序方式" size="small" style="width: 120px">
+                  <el-option label="时间倒序" value="time_desc" />
+                  <el-option label="时间正序" value="time_asc" />
+                  <el-option label="评分高到低" value="score_desc" />
+                  <el-option label="评分低到高" value="score_asc" />
+                </el-select>
+              </div>
+              <div class="toolbar-right">
+                <el-button size="small" @click="handleExportReport">
+                  <el-icon><Download /></el-icon> 导出报告
+                </el-button>
+                <el-button size="small" @click="handleVersionComparison">
+                  <el-icon><DataAnalysis /></el-icon> 版本对比
+                </el-button>
+              </div>
+            </div>
+            <!-- 趋势图 -->
+            <div v-if="filteredIterationRecords.length > 1" class="iteration-chart">
+              <div class="chart-title">评估分数趋势</div>
+              <div class="chart-container">
+                <div class="trend-chart">
+                  <div v-for="(record, index) in filteredIterationRecords" :key="record.id" class="chart-bar-wrapper">
+                    <div class="chart-bar" :style="{ height: (record.evaluationScore * 10) + '%', backgroundColor: getScoreColor(record.evaluationScore) }">
+                      <span class="bar-value">{{ record.evaluationScore }}</span>
+                    </div>
+                    <div class="bar-label">{{ record.version }}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <!-- 记录列表 -->
+            <div class="iteration-records-list">
+              <div v-for="record in filteredIterationRecords" :key="record.id" class="iteration-record-item" @click="handleViewIterationDetail(record)">
+                <div class="record-header">
+                  <el-tag :type="getRecordResultType(record.result)" size="small">
+                    {{ getRecordResultText(record.result) }}
+                  </el-tag>
+                  <span class="record-version">{{ record.version }}</span>
+                  <span class="record-time">{{ formatTime(record.createdAt) }}</span>
+                </div>
+                <div class="record-body">
+                  <div class="record-score">
+                    <span class="label">评分：</span>
+                    <el-rate v-model="record.evaluationScore" disabled :max="10" :colors="['#99A9BF', '#F7BA2A', '#FF9900']" />
+                    <span class="score-value">{{ record.evaluationScore }}/10</span>
+                  </div>
+                  <div v-if="record.evaluationDetails" class="record-details">{{ record.evaluationDetails }}</div>
+                  <div v-if="record.planReason" class="record-reason">
+                    <span class="label">原因：</span>{{ record.planReason }}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </el-collapse-item>
+        </el-collapse>
+
+        <!-- 版本历史 -->
+        <el-divider>
+          <div class="divider-title">
+            <span>版本历史</span>
+            <el-tag size="small" type="info">共 {{ versionHistory.length }} 个版本</el-tag>
+          </div>
+        </el-divider>
+        <div v-if="versionHistory.length > 0" class="version-history-list">
+          <el-timeline>
+            <el-timeline-item
+              v-for="(history, index) in versionHistory"
+              :key="index"
+              :timestamp="formatTime(history.createdAt)"
+              placement="top"
+              :type="index === 0 ? 'primary' : ''"
+            >
+              <el-card shadow="never" class="version-card">
+                <div class="version-header">
+                  <el-tag :type="index === 0 ? 'success' : 'info'" size="small">
+                    {{ history.version }}
+                  </el-tag>
+                  <span class="version-creator">{{ history.createdBy || '系统' }}</span>
+                </div>
+                <div class="version-desc">{{ history.description || '版本迭代' }}</div>
+              </el-card>
+            </el-timeline-item>
+          </el-timeline>
+        </div>
+        <el-empty v-else description="暂无版本历史" :image-size="60">
+          <div class="version-tip">项目创建后将自动记录版本变更</div>
+        </el-empty>
+
         <!-- 里程碑列表 -->
-        <el-divider>项目里程碑</el-divider>
+        <el-divider>
+          <div class="divider-title">
+            <span>项目里程碑</span>
+            <el-tag size="small" :type="allMilestonesCompleted ? 'success' : 'primary'">
+              {{ allMilestonesCompleted ? '全部完成' : '进行中' }}
+            </el-tag>
+          </div>
+        </el-divider>
         <div v-if="milestones.length > 0" class="milestones-list">
           <div v-for="(milestone, index) in milestones" :key="milestone.id" class="milestone-item">
             <div class="milestone-header">
@@ -315,6 +484,7 @@
                   <Clock v-else />
                 </el-icon>
                 <span :class="{ 'task-done-text': task.status === 'COMPLETED' }">{{ task.description }}</span>
+                <el-tag v-if="task.assignedRole" size="small" type="info" class="task-role-tag">{{ task.assignedRole }}</el-tag>
               </div>
             </div>
             <!-- 验证信息 -->
@@ -327,6 +497,9 @@
             <div v-if="milestone.verificationResult" class="verification-result">
               <el-tag :type="milestone.verificationResult.includes('通过') ? 'success' : 'warning'" size="small">
                 {{ milestone.verificationResult }}
+              </el-tag>
+              <el-tag v-if="milestone.verificationResult.includes('构建')" :type="milestone.verificationResult.includes('构建失败') ? 'danger' : 'success'" size="small" style="margin-left: 4px;">
+                {{ milestone.verificationResult.includes('构建失败') ? '构建失败' : '构建通过' }}
               </el-tag>
             </div>
             <!-- 人工验证按钮（未完成的里程碑都可以验证） -->
@@ -344,6 +517,389 @@
           </div>
         </div>
         <el-empty v-else description="暂无里程碑" :image-size="60" />
+
+        <!-- 督查报告（完整面板） -->
+        <el-divider>
+          <div class="divider-title">
+            <span>督查报告</span>
+            <div>
+              <el-button size="small" text @click="handleExportIterationReport">
+                <el-icon><Download /></el-icon> 导出报告
+              </el-button>
+              <el-button size="small" text @click="supervisionRulesVisible = true">
+                <el-icon><Setting /></el-icon> 督查规则
+              </el-button>
+            </div>
+          </div>
+        </el-divider>
+        <div v-if="loadingSupervision" class="supervision-loading">
+          <el-skeleton :rows="3" animated />
+        </div>
+        <div v-else-if="supervisionReport" class="supervision-report">
+          <!-- 督查概览统计 -->
+          <el-row :gutter="16" class="supervision-stats">
+            <el-col :span="4">
+              <div class="stat-mini" :class="supervisionReport.overdueTasks > 0 ? 'stat-danger' : 'stat-success'">
+                <div class="stat-mini-value">{{ supervisionReport.overdueTasks }}</div>
+                <div class="stat-mini-label">逾期任务</div>
+              </div>
+            </el-col>
+            <el-col :span="4">
+              <div class="stat-mini">
+                <div class="stat-mini-value">{{ supervisionReport.totalTasks }}</div>
+                <div class="stat-mini-label">总任务</div>
+              </div>
+            </el-col>
+            <el-col :span="4">
+              <div class="stat-mini">
+                <div class="stat-mini-value">{{ supervisionReport.completedTasks }}</div>
+                <div class="stat-mini-label">已完成</div>
+              </div>
+            </el-col>
+            <el-col :span="4">
+              <div class="stat-mini">
+                <div class="stat-mini-value">{{ supervisionReport.taskCompletionRate?.toFixed(1) }}%</div>
+                <div class="stat-mini-label">完成率</div>
+              </div>
+            </el-col>
+            <el-col :span="4">
+              <div class="stat-mini">
+                <div class="stat-mini-value">{{ supervisionReport.completedMilestones }}/{{ supervisionReport.totalMilestones }}</div>
+                <div class="stat-mini-label">里程碑</div>
+              </div>
+            </el-col>
+            <el-col :span="4">
+              <div class="stat-mini">
+                <div class="stat-mini-value">{{ supervisionReport.versionCount }}</div>
+                <div class="stat-mini-label">迭代次数</div>
+              </div>
+            </el-col>
+          </el-row>
+
+          <!-- Tab 切换 -->
+          <el-tabs v-model="supervisionTab" class="supervision-tabs">
+            <!-- 甘特图视图 -->
+            <el-tab-pane label="甘特图" name="gantt">
+              <div class="gantt-view">
+                <div v-for="(milestone, mi) in supervisionReport.milestones" :key="milestone.id" class="gantt-milestone">
+                  <div class="gantt-milestone-header">
+                    <el-tag :type="getMilestoneTagType(milestone.status)" size="small">{{ getMilestoneStatusText(milestone.status) }}</el-tag>
+                    <span class="gantt-milestone-title">{{ milestone.title }}</span>
+                    <span class="gantt-milestone-role">{{ milestone.assignedRole }}</span>
+                    <el-progress :percentage="milestone.progress || 0" :stroke-width="6" style="width: 120px;" />
+                  </div>
+                  <div class="gantt-tasks">
+                    <div v-for="task in milestone.tasks" :key="task.id" class="gantt-task-row">
+                      <div class="gantt-task-label">
+                        <el-icon :size="12" :style="{ color: task.status === 'COMPLETED' ? '#67c23a' : '#909399' }">
+                          <CircleCheck v-if="task.status === 'COMPLETED'" />
+                          <Clock v-else />
+                        </el-icon>
+                        <span :class="{ 'text-done': task.status === 'COMPLETED' }">{{ task.title }}</span>
+                      </div>
+                      <div class="gantt-task-bar-area">
+                        <div
+                          class="gantt-task-bar"
+                          :style="{
+                            width: getGanttBarWidth(task) + '%',
+                            left: getGanttBarLeft(mi, task) + '%',
+                            backgroundColor: getGanttBarColor(task)
+                          }"
+                        >
+                          <span class="gantt-bar-text">{{ task.estimatedHours }}h</span>
+                        </div>
+                      </div>
+                      <div class="gantt-task-status">
+                        <el-tag :type="getTaskStatusType(task.status)" size="small">{{ getTaskStatusText(task.status) }}</el-tag>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </el-tab-pane>
+
+            <!-- Agent效率分析 -->
+            <el-tab-pane label="Agent效率" name="efficiency">
+              <div v-if="supervisionReport.agentEfficiency && supervisionReport.agentEfficiency.length > 0">
+                <div v-for="agent in supervisionReport.agentEfficiency" :key="agent.role" class="efficiency-card">
+                  <div class="efficiency-header">
+                    <span class="efficiency-role">{{ agent.role }}</span>
+                    <el-tag :type="agent.overdueTasks > 0 ? 'danger' : 'success'" size="small">
+                      {{ agent.overdueTasks > 0 ? agent.overdueTasks + '个逾期' : '正常' }}
+                    </el-tag>
+                  </div>
+                  <el-row :gutter="16">
+                    <el-col :span="6">
+                      <el-statistic title="总任务" :value="agent.totalTasks" />
+                    </el-col>
+                    <el-col :span="6">
+                      <el-statistic title="已完成" :value="agent.completedTasks" />
+                    </el-col>
+                    <el-col :span="6">
+                      <el-statistic title="完成率" :value="agent.completionRate" :precision="1" suffix="%" />
+                    </el-col>
+                    <el-col :span="6">
+                      <el-statistic title="逾期" :value="agent.overdueTasks" />
+                    </el-col>
+                  </el-row>
+                  <el-progress :percentage="agent.completionRate" :status="agent.completionRate >= 80 ? 'success' : agent.completionRate >= 50 ? '' : 'exception'" style="margin-top: 8px;" />
+                </div>
+              </div>
+              <el-empty v-else description="暂无效率数据" :image-size="60" />
+            </el-tab-pane>
+
+            <!-- 协作效率 -->
+            <el-tab-pane label="协作效率" name="collaboration">
+              <div v-if="collaborationMetrics" class="collaboration-metrics">
+                <el-row :gutter="16" style="margin-bottom: 16px;">
+                  <el-col :span="6">
+                    <el-statistic title="总任务数" :value="collaborationMetrics.totalTasks" />
+                  </el-col>
+                  <el-col :span="6">
+                    <el-statistic title="已完成" :value="collaborationMetrics.completedTasks" />
+                  </el-col>
+                  <el-col :span="6">
+                    <el-statistic title="返工任务" :value="collaborationMetrics.reworkedTasks" />
+                  </el-col>
+                  <el-col :span="6">
+                    <el-statistic title="返工率" :value="collaborationMetrics.reworkRate" :precision="1" suffix="%" />
+                  </el-col>
+                </el-row>
+                <el-row :gutter="16">
+                  <el-col :span="12">
+                    <el-card shadow="hover" class="metric-card">
+                      <div class="metric-title">返工率</div>
+                      <el-progress :percentage="collaborationMetrics.reworkRate" :precision="1"
+                        :status="collaborationMetrics.reworkRate > 20 ? 'exception' : collaborationMetrics.reworkRate < 5 ? 'success' : ''" />
+                      <div class="metric-hint">
+                        {{ collaborationMetrics.reworkRate > 20 ? '返工率偏高，建议检查质量标准' : collaborationMetrics.reworkRate < 5 ? '返工率良好' : '返工率正常' }}
+                      </div>
+                    </el-card>
+                  </el-col>
+                  <el-col :span="12">
+                    <el-card shadow="hover" class="metric-card">
+                      <div class="metric-title">预估工时</div>
+                      <div class="metric-value">{{ collaborationMetrics.totalEstimatedHours }} 小时</div>
+                      <div class="metric-hint">所有任务的预估工时总和</div>
+                    </el-card>
+                  </el-col>
+                </el-row>
+                <div v-if="collaborationMetrics.collaborationData" style="margin-top: 16px;">
+                  <el-alert :title="'协作数据: ' + collaborationMetrics.collaborationData" type="info" show-icon :closable="false" />
+                </div>
+              </div>
+              <el-empty v-else description="暂无协作效率数据" :image-size="60" />
+            </el-tab-pane>
+
+            <!-- 迭代趋势 -->
+            <el-tab-pane label="迭代趋势" name="trends">
+              <div v-if="iterationTrends" class="trends-view">
+                <!-- 版本评分趋势 -->
+                <div v-if="iterationTrends.versionTrend && iterationTrends.versionTrend.length > 0" class="trend-chart-section">
+                  <div class="section-title">版本评分趋势</div>
+                  <div class="trend-bars">
+                    <div v-for="v in iterationTrends.versionTrend" :key="v.version" class="trend-bar-item">
+                      <div class="trend-bar-wrapper">
+                        <div class="trend-bar" :style="{ height: (v.score * 10) + '%', backgroundColor: getScoreColor(v.score) }">
+                          <span class="trend-bar-value">{{ v.score }}</span>
+                        </div>
+                      </div>
+                      <div class="trend-bar-label">{{ v.version }}</div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 迭代周期分析 -->
+                <div v-if="iterationEfficiency" class="efficiency-summary">
+                  <el-row :gutter="16">
+                    <el-col :span="8">
+                      <el-statistic title="平均迭代周期" :value="iterationEfficiency.averageCycleHours" :precision="0" suffix="小时" />
+                    </el-col>
+                    <el-col :span="8">
+                      <el-statistic title="预估总工时" :value="iterationEfficiency.totalEstimatedHours" suffix="小时" />
+                    </el-col>
+                    <el-col :span="8">
+                      <el-statistic title="实际总工时" :value="iterationEfficiency.totalActualHours" suffix="小时" />
+                    </el-col>
+                  </el-row>
+                  <el-row :gutter="16" style="margin-top: 16px;">
+                    <el-col :span="8">
+                      <el-statistic title="预估准确率" :value="iterationEfficiency.estimationAccuracy" :precision="1" suffix="%" />
+                    </el-col>
+                    <el-col :span="8">
+                      <el-statistic title="总任务数" :value="iterationEfficiency.totalTasks" />
+                    </el-col>
+                    <el-col :span="8">
+                      <el-statistic title="已完成任务" :value="iterationEfficiency.completedTasks" />
+                    </el-col>
+                  </el-row>
+                </div>
+              </div>
+              <el-empty v-else description="暂无趋势数据" :image-size="60" />
+            </el-tab-pane>
+
+            <!-- 逾期任务 -->
+            <el-tab-pane name="overdue">
+              <template #label>
+                逾期任务
+                <el-badge v-if="supervisionReport.overdueTasks > 0" :value="supervisionReport.overdueTasks" :max="99" class="overdue-badge" />
+              </template>
+              <div v-if="supervisionReport.overdueTasks > 0">
+                <div v-for="milestone in supervisionReport.milestones" :key="milestone.id">
+                  <div v-for="task in milestone.tasks" :key="task.id">
+                    <div v-if="task.status === 'IN_PROGRESS' && isTaskOverdue(task)" class="overdue-task-item">
+                      <el-tag type="danger" size="small">逾期</el-tag>
+                      <span class="task-name">{{ task.title }}</span>
+                      <span class="task-milestone">{{ milestone.title }}</span>
+                      <span class="task-role">{{ task.assignedRole }}</span>
+                      <span class="task-hours">预估 {{ task.estimatedHours }}h</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <el-empty v-else description="暂无逾期任务" :image-size="60" />
+            </el-tab-pane>
+
+            <!-- 迭代回顾 -->
+            <el-tab-pane label="迭代回顾" name="retrospective">
+              <div v-if="iterationStats.totalIterations > 0" class="retrospective-view">
+                <el-row :gutter="16" class="retro-stats">
+                  <el-col :span="6">
+                    <el-statistic title="迭代次数" :value="iterationStats.totalIterations" suffix="次" />
+                  </el-col>
+                  <el-col :span="6">
+                    <el-statistic title="通过次数" :value="iterationStats.passedIterations" suffix="次" />
+                  </el-col>
+                  <el-col :span="6">
+                    <el-statistic title="通过率" :value="iterationStats.passRate" :precision="1" suffix="%" />
+                  </el-col>
+                  <el-col :span="6">
+                    <el-statistic title="平均评分" :value="iterationStats.averageScore" :precision="1" suffix="/10" />
+                  </el-col>
+                </el-row>
+                <!-- 最近迭代记录 -->
+                <div class="recent-iterations" v-if="iterationRecords.length > 0">
+                  <div class="section-title">最近迭代</div>
+                  <div v-for="record in iterationRecords.slice(0, 5)" :key="record.id" class="retro-record">
+                    <el-tag :type="getRecordResultType(record.result)" size="small">{{ getRecordResultText(record.result) }}</el-tag>
+                    <span class="retro-version">{{ record.version }}</span>
+                    <el-rate v-model="record.evaluationScore" disabled :max="10" size="small" />
+                    <span class="retro-time">{{ formatTime(record.createdAt) }}</span>
+                  </div>
+                </div>
+              </div>
+              <el-empty v-else description="暂无迭代数据" :image-size="60" />
+            </el-tab-pane>
+
+            <!-- 玩家体验 -->
+            <el-tab-pane label="玩家体验" name="playerExperience">
+              <div v-if="playerExperience" class="player-experience-view">
+                <!-- 综合趣味度 -->
+                <div class="fun-score-header">
+                  <div class="fun-score-circle" :class="getFunScoreClass(playerExperience.overallScore)">
+                    <span class="fun-score-value">{{ playerExperience.overallScore }}</span>
+                    <span class="fun-score-label">趣味度</span>
+                  </div>
+                  <div class="fun-score-status">
+                    {{ playerExperience.overallScore >= 70 ? '游戏体验良好' : playerExperience.overallScore >= 50 ? '有改进空间' : '需要重点优化' }}
+                  </div>
+                </div>
+
+                <!-- 五维评分 -->
+                <el-row :gutter="16" style="margin-top: 16px;">
+                  <el-col :span="4" v-for="(score, key) in playerExperience.dimensionScores" :key="key">
+                    <div class="dimension-score">
+                      <el-progress type="circle" :percentage="score" :width="80"
+                        :color="getDimensionColor(score)" :stroke-width="8" />
+                      <div class="dimension-label">{{ getDimensionName(key) }}</div>
+                    </div>
+                  </el-col>
+                </el-row>
+
+                <!-- 功能完整度 -->
+                <el-card shadow="hover" style="margin-top: 16px;">
+                  <div class="metric-title">功能完整度</div>
+                  <el-progress :percentage="playerExperience.featureCompleteness" :precision="1"
+                    :status="playerExperience.featureCompleteness >= 80 ? 'success' : ''" />
+                  <div class="metric-hint">已完成 {{ playerExperience.completedFeatures }}/{{ playerExperience.totalFeatures }} 个功能</div>
+                </el-card>
+
+                <!-- 改进建议 -->
+                <div v-if="playerExperience.improvements && playerExperience.improvements.length > 0" style="margin-top: 16px;">
+                  <div class="section-title">改进建议</div>
+                  <div v-for="(item, idx) in playerExperience.improvements" :key="idx" class="improvement-item">
+                    <el-icon color="#E6A23C"><Warning /></el-icon>
+                    <span>{{ item }}</span>
+                  </div>
+                </div>
+              </div>
+              <el-empty v-else description="暂无玩家体验数据" :image-size="60" />
+            </el-tab-pane>
+
+            <!-- 风险预测 -->
+            <el-tab-pane label="风险预测" name="riskPrediction">
+              <div v-if="riskPrediction" class="risk-prediction-view">
+                <!-- 风险概览 -->
+                <el-row :gutter="16" style="margin-bottom: 16px;">
+                  <el-col :span="8">
+                    <el-statistic title="风险数量" :value="riskPrediction.riskCount" />
+                  </el-col>
+                  <el-col :span="8">
+                    <el-tag :type="riskPrediction.hasCritical ? 'danger' : riskPrediction.riskCount > 0 ? 'warning' : 'success'" size="large">
+                      {{ riskPrediction.hasCritical ? '严重' : riskPrediction.riskCount > 0 ? '警告' : '安全' }}
+                    </el-tag>
+                  </el-col>
+                </el-row>
+
+                <!-- 风险列表 -->
+                <div v-if="riskPrediction.risks && riskPrediction.risks.length > 0">
+                  <div v-for="(risk, idx) in riskPrediction.risks" :key="idx" class="risk-card">
+                    <div class="risk-header">
+                      <el-tag :type="getRiskSeverityType(risk.severity)" size="small">{{ risk.severity }}</el-tag>
+                      <span class="risk-type">{{ risk.type }}</span>
+                    </div>
+                    <div class="risk-description">{{ risk.description }}</div>
+                    <div class="risk-suggestion">
+                      <el-icon color="#409EFF"><InfoFilled /></el-icon>
+                      <span>{{ risk.suggestion }}</span>
+                    </div>
+                  </div>
+                </div>
+                <el-empty v-else description="当前无显著风险" :image-size="60" />
+              </div>
+              <el-empty v-else description="暂无风险数据" :image-size="60" />
+            </el-tab-pane>
+
+            <!-- 质量基准 -->
+            <el-tab-pane label="质量基准" name="qualityBenchmark">
+              <div v-if="qualityBenchmark" class="quality-benchmark-view">
+                <!-- 完整度 -->
+                <el-card shadow="hover" style="margin-bottom: 16px;">
+                  <div class="benchmark-header">
+                    <span class="benchmark-title">功能完整度</span>
+                    <el-tag :type="qualityBenchmark.completeness >= 70 ? 'success' : qualityBenchmark.completeness >= 40 ? '' : 'warning'">
+                      {{ qualityBenchmark.developmentStatus }}
+                    </el-tag>
+                  </div>
+                  <el-progress :percentage="qualityBenchmark.completeness" :precision="1" :stroke-width="12"
+                    :status="qualityBenchmark.completeness >= 80 ? 'success' : ''" />
+                  <div class="metric-hint">{{ qualityBenchmark.completedMilestones }}/{{ qualityBenchmark.totalMilestones }} 里程碑已完成</div>
+                </el-card>
+
+                <!-- 发布Checklist -->
+                <div v-if="qualityBenchmark.checklist && qualityBenchmark.checklist.length > 0">
+                  <div class="section-title">发布前Checklist</div>
+                  <div v-for="(item, idx) in qualityBenchmark.checklist" :key="idx" class="checklist-item">
+                    <el-checkbox disabled />
+                    <span>{{ item.item }}</span>
+                  </div>
+                </div>
+              </div>
+              <el-empty v-else description="暂无基准数据" :image-size="60" />
+            </el-tab-pane>
+          </el-tabs>
+        </div>
+        <el-empty v-else description="暂无督查数据" :image-size="60" />
 
         <!-- 目录配置 -->
         <el-divider>
@@ -377,6 +933,20 @@
             </el-tag>
           </div>
         </el-divider>
+        <!-- 游戏预览入口 -->
+        <div v-if="previewUrl" class="preview-section">
+          <el-alert type="success" :closable="false" show-icon>
+            <template #title>
+              <span>游戏已可预览</span>
+              <el-button size="small" type="primary" link @click="openPreview" style="margin-left: 12px;">
+                <el-icon><Link /></el-icon> 在新窗口打开
+              </el-button>
+            </template>
+            <template #default>
+              <el-text type="info" size="small">{{ previewUrl }}</el-text>
+            </template>
+          </el-alert>
+        </div>
         <div v-if="currentProject.projectOverview" class="overview-content">
           <MarkdownRenderer :content="currentProject.projectOverview" />
         </div>
@@ -426,7 +996,7 @@
         </el-form-item>
 
         <el-divider v-if="!isEdit" content-position="left">
-          默认 Agent（{{ editForm.agents.length + 1 }} 个，制作人固定 + {{ editForm.agents.length }} 个可选）
+          默认 Agent（{{ editForm.agents.length + 2 }} 个，制作人+验证官固定 + {{ editForm.agents.length }} 个可选）
         </el-divider>
 
         <!-- 制作人（固定，不可取消） -->
@@ -436,6 +1006,14 @@
             <div class="agent-select-info">
               <div class="agent-select-name">制作人 <el-tag size="small" type="danger">必须</el-tag></div>
               <div class="agent-select-desc">协调团队、分配任务、审查工作</div>
+            </div>
+            <el-icon class="agent-check"><CircleCheck /></el-icon>
+          </div>
+          <div class="agent-select-item active fixed-agent">
+            <div class="agent-select-icon">🛡️</div>
+            <div class="agent-select-info">
+              <div class="agent-select-name">验证官 <el-tag size="small" type="danger">必须</el-tag></div>
+              <div class="agent-select-desc">约束检查、代码质量、设计审查、里程碑验收</div>
             </div>
             <el-icon class="agent-check"><CircleCheck /></el-icon>
           </div>
@@ -661,6 +1239,193 @@
         <el-button type="primary" @click="handleSaveRules" :loading="savingRules">保存</el-button>
       </template>
     </el-dialog>
+
+    <!-- 版本迭代对话框 -->
+    <el-dialog
+      v-model="versionIterationDialogVisible"
+      title="发起版本迭代"
+      width="600px"
+    >
+      <el-alert type="info" :closable="false" class="mb-4">
+        <template #title>
+          <div>
+            <p>对当前项目发起版本迭代，制作人将分析需求并启动新的开发流程。</p>
+            <p>版本迭代适用于：添加新功能、优化现有功能、修复重大Bug等场景。</p>
+          </div>
+        </template>
+      </el-alert>
+
+      <el-form :model="versionIterationForm" label-width="100px">
+        <el-form-item label="当前版本">
+          <el-tag type="info">{{ currentProject?.version || 'v1.0' }}</el-tag>
+        </el-form-item>
+        <el-form-item label="迭代需求" required>
+          <el-input
+            v-model="versionIterationForm.requirements"
+            type="textarea"
+            :rows="5"
+            placeholder="请描述本次迭代的需求，如：&#10;1. 添加用户登录功能&#10;2. 优化游戏性能&#10;3. 修复已知Bug"
+          />
+        </el-form-item>
+        <el-form-item label="优先级">
+          <el-select v-model="versionIterationForm.priority" style="width: 100%">
+            <el-option label="紧急" value="URGENT" />
+            <el-option label="高" value="HIGH" />
+            <el-option label="普通" value="NORMAL" />
+            <el-option label="低" value="LOW" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+
+      <template #footer>
+        <el-button @click="versionIterationDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="handleVersionIterationSubmit" :loading="versionIterationLoading">
+          发起迭代
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 迭代详情抽屉 -->
+    <el-drawer v-model="iterationDetailVisible" title="迭代详情" size="500px">
+      <div v-if="currentIterationRecord" class="iteration-detail">
+        <el-descriptions :column="1" border>
+          <el-descriptions-item label="版本">{{ currentIterationRecord.version }}</el-descriptions-item>
+          <el-descriptions-item label="评估分数">
+            <el-rate v-model="currentIterationRecord.evaluationScore" disabled :max="10" />
+            <span class="ml-2">{{ currentIterationRecord.evaluationScore }}/10</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="是否通过">
+            <el-tag :type="currentIterationRecord.passed ? 'success' : 'danger'" size="small">
+              {{ currentIterationRecord.passed ? '通过' : '未通过' }}
+            </el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="迭代结果">
+            <el-tag :type="getRecordResultType(currentIterationRecord.result)" size="small">
+              {{ getRecordResultText(currentIterationRecord.result) }}
+            </el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="里程碑完成">
+            {{ currentIterationRecord.completedMilestones }}/{{ currentIterationRecord.totalMilestones }}
+          </el-descriptions-item>
+          <el-descriptions-item label="创建时间">{{ formatTime(currentIterationRecord.createdAt) }}</el-descriptions-item>
+        </el-descriptions>
+
+        <div v-if="currentIterationRecord.evaluationDetails" class="detail-section">
+          <h4>评估详情</h4>
+          <p>{{ currentIterationRecord.evaluationDetails }}</p>
+        </div>
+
+        <div v-if="currentIterationRecord.strengths" class="detail-section">
+          <h4>优点</h4>
+          <ul>
+            <li v-for="(item, index) in parseJsonArray(currentIterationRecord.strengths)" :key="index">{{ item }}</li>
+          </ul>
+        </div>
+
+        <div v-if="currentIterationRecord.improvements" class="detail-section">
+          <h4>待改进</h4>
+          <ul>
+            <li v-for="(item, index) in parseJsonArray(currentIterationRecord.improvements)" :key="index">{{ item }}</li>
+          </ul>
+        </div>
+
+        <div v-if="currentIterationRecord.recommendation" class="detail-section">
+          <h4>建议</h4>
+          <p>{{ currentIterationRecord.recommendation }}</p>
+        </div>
+
+        <div v-if="currentIterationRecord.planReason" class="detail-section">
+          <h4>规划理由</h4>
+          <p>{{ currentIterationRecord.planReason }}</p>
+        </div>
+
+        <div v-if="currentIterationRecord.nextGoal" class="detail-section">
+          <h4>下一版本目标</h4>
+          <p>{{ currentIterationRecord.nextGoal }}</p>
+        </div>
+      </div>
+    </el-drawer>
+
+    <!-- 版本对比对话框 -->
+    <el-dialog v-model="versionComparisonVisible" title="版本对比" width="700px">
+      <div v-if="versionComparisonData" class="version-comparison">
+        <el-row :gutter="20">
+          <el-col :span="12">
+            <el-card shadow="never">
+              <template #header>{{ versionComparisonData.version1 }}</template>
+              <div v-if="versionComparisonData.description1" class="comparison-desc">{{ versionComparisonData.description1 }}</div>
+              <div v-if="versionComparisonData.evaluation" class="comparison-score">
+                评分：{{ versionComparisonData.evaluation.score1 }}/10
+              </div>
+            </el-card>
+          </el-col>
+          <el-col :span="12">
+            <el-card shadow="never">
+              <template #header>{{ versionComparisonData.version2 }}</template>
+              <div v-if="versionComparisonData.description2" class="comparison-desc">{{ versionComparisonData.description2 }}</div>
+              <div v-if="versionComparisonData.evaluation" class="comparison-score">
+                评分：{{ versionComparisonData.evaluation.score2 }}/10
+              </div>
+            </el-card>
+          </el-col>
+        </el-row>
+        <div v-if="versionComparisonData.evaluation" class="comparison-diff">
+          <el-tag :type="versionComparisonData.evaluation.scoreDiff > 0 ? 'success' : versionComparisonData.evaluation.scoreDiff < 0 ? 'danger' : 'info'">
+            评分变化：{{ versionComparisonData.evaluation.scoreDiff > 0 ? '+' : '' }}{{ versionComparisonData.evaluation.scoreDiff }}
+          </el-tag>
+        </div>
+      </div>
+      <div v-else class="comparison-empty">
+        <el-empty description="请选择要对比的版本" />
+      </div>
+      <template #footer>
+        <el-button @click="versionComparisonVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 督查规则配置对话框 -->
+    <el-dialog v-model="supervisionRulesVisible" title="督查规则配置" width="550px" @open="loadSupervisionRules">
+      <el-form label-width="160px" v-if="supervisionRules">
+        <el-form-item label="迭代超时阈值">
+          <el-input-number v-model="supervisionRules.iterationTimeoutHours" :min="12" :max="336" :step="12" />
+          <span style="margin-left: 8px; color: #909399;">小时</span>
+        </el-form-item>
+        <el-form-item label="任务逾期阈值">
+          <el-input-number v-model="supervisionRules.taskOverdueThresholdHours" :min="1" :max="168" :step="1" />
+          <span style="margin-left: 8px; color: #909399;">小时</span>
+        </el-form-item>
+        <el-form-item label="质量评分阈值">
+          <el-input-number v-model="supervisionRules.qualityScoreThreshold" :min="1" :max="10" :step="1" />
+          <span style="margin-left: 8px; color: #909399;">分（低于此值预警）</span>
+        </el-form-item>
+        <el-form-item label="回滚率阈值">
+          <el-input-number v-model="supervisionRules.rollbackRateThreshold" :min="5" :max="100" :step="5" />
+          <span style="margin-left: 8px; color: #909399;">%（超过此值预警）</span>
+        </el-form-item>
+        <el-form-item label="Agent空闲阈值">
+          <el-input-number v-model="supervisionRules.agentIdleThresholdHours" :min="1" :max="48" :step="1" />
+          <span style="margin-left: 8px; color: #909399;">小时</span>
+        </el-form-item>
+        <el-divider>预警通知渠道</el-divider>
+        <el-form-item label="邮件通知">
+          <el-switch v-model="supervisionRules.enableEmailAlert" />
+        </el-form-item>
+        <el-form-item label="飞书通知">
+          <el-switch v-model="supervisionRules.enableFeishuAlert" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="supervisionRulesVisible = false">取消</el-button>
+        <el-button type="primary" @click="handleSaveSupervisionRules" :loading="savingRules">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 项目讨论抽屉 -->
+    <ProjectChatDrawer
+      v-model="chatDrawerVisible"
+      :project-id="chatProjectId"
+      :project-name="chatProjectName"
+    />
   </div>
 </template>
 
@@ -679,14 +1444,15 @@
  */
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { projectApi, gameTemplateApi } from '@/api'
+import { projectApi, gameTemplateApi, interventionApi } from '@/api'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Search, Grid, List, Folder, CircleCheck, User, Aim,
   MoreFilled, Document, Edit, Delete, Box, Connection,
-  FolderOpened, Upload, Plus, Clock, Warning, CircleClose
+  FolderOpened, Upload, Plus, Clock, Warning, CircleClose, Promotion
 } from '@element-plus/icons-vue'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
+import ProjectChatDrawer from '@/components/ProjectChatDrawer.vue'
 
 const router = useRouter()
 const loading = ref(false)
@@ -787,6 +1553,22 @@ const importForm = ref({
 const activeProjectsCount = computed(() => projects.value.filter(p => p.status === 'ACTIVE').length)
 const totalAgentsCount = computed(() => projects.value.reduce((sum, p) => sum + (p.agentIds?.length || 0), 0))
 const projectsWithGoalCount = computed(() => projects.value.filter(p => p.goal).length)
+
+// 里程碑统计
+const completedMilestonesCount = computed(() => milestones.value.filter(m => m.status === 'COMPLETED').length)
+const allMilestonesCompleted = computed(() => milestones.value.length > 0 && completedMilestonesCount.value === milestones.value.length)
+
+// 预览 URL — 从项目概况中提取
+const previewUrl = computed(() => {
+  const overview = currentProject.value?.projectOverview
+  if (!overview) return null
+  const match = overview.match(/预览地址[:：]\s*(https?:\/\/[^\s\n]+)/)
+  return match ? match[1] : null
+})
+
+const openPreview = () => {
+  if (previewUrl.value) window.open(previewUrl.value, '_blank')
+}
 
 // 监听模板选择，自动更新 Agent 列表
 watch(() => editForm.value.templateId, (newTemplateId) => {
@@ -938,10 +1720,14 @@ const handleCreate = () => {
 const handleViewDetail = async (project) => {
   currentProject.value = project
   drawerVisible.value = true
-  // 加载里程碑、目录配置和项目规则
+  // 加载里程碑、目录配置、项目规则和版本历史
   await loadMilestones(project.id)
   await loadDirectoryConfigs(project.id)
   await loadProjectRules(project.id)
+  await loadVersionHistory(project.id)
+  await loadIterationStats(project.id)
+  await loadIterationRecords(project.id)
+  await loadSupervisionReport(project.id)
 }
 
 /** 加载里程碑列表 */
@@ -1088,6 +1874,445 @@ const handleViewAgents = (project) => {
 const handleViewWorkflow = (project) => {
   router.push({ path: '/workflow', query: { projectId: project.id } })
   drawerVisible.value = false
+}
+
+// 版本迭代相关
+const versionIterationDialogVisible = ref(false)
+const versionIterationLoading = ref(false)
+const versionHistory = ref([])
+const versionIterationForm = ref({
+  requirements: '',
+  priority: 'NORMAL'
+})
+
+// 版本迭代统计和记录
+const iterationStats = ref({ totalIterations: 0, passedIterations: 0, passRate: 0, averageScore: 0 })
+const iterationRecords = ref([])
+
+// 迭代筛选和排序
+const iterationFilter = ref({ result: '' })
+const iterationSort = ref('time_desc')
+
+// 迭代详情抽屉
+const iterationDetailVisible = ref(false)
+const currentIterationRecord = ref(null)
+
+// 版本对比
+const versionComparisonVisible = ref(false)
+const versionComparisonData = ref(null)
+
+// 督查报告
+const supervisionReport = ref(null)
+const loadingSupervision = ref(false)
+const supervisionTab = ref('gantt')
+const iterationTrends = ref(null)
+const iterationEfficiency = ref(null)
+const supervisionRulesVisible = ref(false)
+const supervisionRules = ref({})
+const collaborationMetrics = ref(null)
+const playerExperience = ref(null)
+const riskPrediction = ref(null)
+const qualityBenchmark = ref(null)
+
+// 项目讨论
+const chatDrawerVisible = ref(false)
+const chatProjectId = ref('')
+const chatProjectName = ref('')
+
+const openProjectChat = (project) => {
+  chatProjectId.value = project.id
+  chatProjectName.value = project.name
+  chatDrawerVisible.value = true
+}
+
+// 计算属性：筛选和排序后的迭代记录
+const filteredIterationRecords = computed(() => {
+  let records = [...iterationRecords.value]
+
+  // 筛选
+  if (iterationFilter.value.result) {
+    records = records.filter(r => r.result === iterationFilter.value.result)
+  }
+
+  // 排序
+  switch (iterationSort.value) {
+    case 'time_desc':
+      records.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+      break
+    case 'time_asc':
+      records.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
+      break
+    case 'score_desc':
+      records.sort((a, b) => b.evaluationScore - a.evaluationScore)
+      break
+    case 'score_asc':
+      records.sort((a, b) => a.evaluationScore - b.evaluationScore)
+      break
+  }
+
+  return records
+})
+
+/** 加载版本历史 */
+const loadVersionHistory = async (projectId) => {
+  try {
+    const data = await projectApi.get(projectId)
+    versionHistory.value = data?.versionHistory || []
+  } catch (error) {
+    console.error('加载版本历史失败:', error)
+    versionHistory.value = []
+  }
+}
+
+/** 加载版本迭代统计 */
+const loadIterationStats = async (projectId) => {
+  try {
+    const data = await projectApi.getIterationStats(projectId)
+    iterationStats.value = data || { totalIterations: 0, passedIterations: 0, passRate: 0, averageScore: 0 }
+  } catch (error) {
+    console.error('加载迭代统计失败:', error)
+    iterationStats.value = { totalIterations: 0, passedIterations: 0, passRate: 0, averageScore: 0 }
+  }
+}
+
+/** 加载版本迭代记录 */
+const loadIterationRecords = async (projectId) => {
+  try {
+    const data = await projectApi.getIterationRecords(projectId)
+    iterationRecords.value = data || []
+  } catch (error) {
+    console.error('加载迭代记录失败:', error)
+    iterationRecords.value = []
+  }
+}
+
+/** 加载督查报告 */
+const loadSupervisionReport = async (projectId) => {
+  loadingSupervision.value = true
+  try {
+    const [reportRes, trendsRes, efficiencyRes, collaborationRes, experienceRes, riskRes, benchmarkRes] = await Promise.all([
+      fetch(`/api/projects/${projectId}/supervision-report`, {
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+      }),
+      fetch(`/api/projects/${projectId}/supervision-trends`, {
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+      }),
+      fetch(`/api/projects/${projectId}/iteration-efficiency`, {
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+      }),
+      fetch(`/api/projects/${projectId}/collaboration-metrics`, {
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+      }),
+      fetch(`/api/projects/${projectId}/player-experience`, {
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+      }),
+      fetch(`/api/projects/${projectId}/risk-prediction`, {
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+      }),
+      fetch(`/api/projects/${projectId}/quality-benchmark`, {
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+      })
+    ])
+    if (reportRes.ok) supervisionReport.value = await reportRes.json()
+    if (trendsRes.ok) iterationTrends.value = await trendsRes.json()
+    if (efficiencyRes.ok) iterationEfficiency.value = await efficiencyRes.json()
+    if (collaborationRes.ok) collaborationMetrics.value = await collaborationRes.json()
+    if (experienceRes.ok) playerExperience.value = await experienceRes.json()
+    if (riskRes.ok) riskPrediction.value = await riskRes.json()
+    if (benchmarkRes.ok) qualityBenchmark.value = await benchmarkRes.json()
+  } catch (error) {
+    console.error('加载督查报告失败:', error)
+  } finally {
+    loadingSupervision.value = false
+  }
+}
+
+/** 加载督查规则 */
+const loadSupervisionRules = async () => {
+  try {
+    const response = await fetch('/api/supervision-rules', {
+      headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+    })
+    if (response.ok) {
+      supervisionRules.value = await response.json()
+    }
+  } catch (error) {
+    console.error('加载督查规则失败:', error)
+  }
+}
+
+/** 保存督查规则 */
+const handleSaveSupervisionRules = async () => {
+  savingRules.value = true
+  try {
+    const response = await fetch('/api/supervision-rules', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${localStorage.getItem('token')}`
+      },
+      body: JSON.stringify(supervisionRules.value)
+    })
+    if (response.ok) {
+      const result = await response.json()
+      if (result.success) {
+        ElMessage.success('督查规则已保存')
+        supervisionRulesVisible.value = false
+      } else {
+        ElMessage.error(result.message || '保存失败')
+      }
+    }
+  } catch (error) {
+    ElMessage.error('保存失败')
+  } finally {
+    savingRules.value = false
+  }
+}
+
+/** 导出迭代报告 */
+const handleExportIterationReport = async () => {
+  try {
+    const response = await fetch(`/api/projects/${currentProject.value.id}/export-iteration-text`, {
+      headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+    })
+    if (response.ok) {
+      const result = await response.json()
+      const blob = new Blob([result.content], { type: 'text/markdown;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = result.fileName
+      a.click()
+      URL.revokeObjectURL(url)
+      ElMessage.success('报告已导出')
+    }
+  } catch (error) {
+    ElMessage.error('导出失败')
+  }
+}
+
+/** 获取任务状态类型 */
+const getTaskStatusType = (status) => {
+  const typeMap = {
+    'PENDING': 'info',
+    'IN_PROGRESS': 'primary',
+    'COMPLETED': 'success',
+    'BLOCKED': 'warning'
+  }
+  return typeMap[status] || 'info'
+}
+
+/** 获取任务状态文本 */
+const getTaskStatusText = (status) => {
+  const textMap = {
+    'PENDING': '待开始',
+    'IN_PROGRESS': '进行中',
+    'COMPLETED': '已完成',
+    'BLOCKED': '已阻塞'
+  }
+  return textMap[status] || status
+}
+
+/** 检查任务是否逾期 */
+const isTaskOverdue = (task) => {
+  if (!task.startedAt || !task.estimatedHours || task.estimatedHours <= 0) return false
+  const startedAt = new Date(task.startedAt)
+  const expectedCompletion = new Date(startedAt.getTime() + task.estimatedHours * 60 * 60 * 1000)
+  return new Date() > expectedCompletion
+}
+
+/** 甘特图：获取任务条宽度（基于预估工时） */
+const getGanttBarWidth = (task) => {
+  if (!task.estimatedHours) return 10
+  return Math.min(100, Math.max(10, task.estimatedHours * 5))
+}
+
+/** 甘特图：获取任务条左边距 */
+const getGanttBarLeft = (milestoneIndex, task) => {
+  return 0
+}
+
+/** 甘特图：获取任务条颜色 */
+const getGanttBarColor = (task) => {
+  if (task.status === 'COMPLETED') return '#67c23a'
+  if (task.status === 'IN_PROGRESS' && isTaskOverdue(task)) return '#f56c6c'
+  if (task.status === 'IN_PROGRESS') return '#409eff'
+  return '#c0c4cc'
+}
+
+/** 格式化时间 */
+const formatTime = (time) => {
+  if (!time) return '-'
+  try {
+    const date = new Date(time)
+    return `${date.getMonth() + 1}/${date.getDate()} ${date.getHours()}:${String(date.getMinutes()).padStart(2, '0')}`
+  } catch { return time }
+}
+
+/** 获取迭代记录结果类型 */
+const getRecordResultType = (result) => {
+  const typeMap = { 'COMPLETED': 'success', 'ITERATED': 'primary', 'IMPROVED': 'warning', 'ROLLBACK': 'info' }
+  return typeMap[result] || 'info'
+}
+
+/** 获取迭代记录结果文本 */
+const getRecordResultText = (result) => {
+  const textMap = { 'COMPLETED': '目标完成', 'ITERATED': '继续迭代', 'IMPROVED': '需要改进', 'ROLLBACK': '版本回滚' }
+  return textMap[result] || result
+}
+
+/** 版本回滚 */
+const handleRollback = async () => {
+  try {
+    const { value: targetVersion } = await ElMessageBox.prompt(
+      '请选择要回滚到的版本（留空则回滚到上一个版本）',
+      '版本回滚',
+      {
+        confirmButtonText: '确认回滚',
+        cancelButtonText: '取消',
+        inputPlaceholder: '留空则回滚到上一个版本'
+      }
+    )
+
+    await ElMessageBox.confirm(
+      '版本回滚将重置所有里程碑状态，确定要继续吗？',
+      '确认回滚',
+      { type: 'warning' }
+    )
+
+    const result = await projectApi.rollbackVersion(currentProject.value.id, targetVersion || null)
+    if (result.success) {
+      ElMessage.success(result.message)
+      await loadVersionHistory(currentProject.value.id)
+      await loadIterationStats(currentProject.value.id)
+      await loadIterationRecords(currentProject.value.id)
+      await loadMilestones(currentProject.value.id)
+    } else {
+      ElMessage.error(result.message)
+    }
+  } catch (error) {
+    if (error !== 'cancel') {
+      ElMessage.error('版本回滚失败')
+    }
+  }
+}
+
+/** 查看迭代详情 */
+const handleViewIterationDetail = (record) => {
+  currentIterationRecord.value = record
+  iterationDetailVisible.value = true
+}
+
+/** 解析 JSON 数组 */
+const parseJsonArray = (jsonStr) => {
+  try {
+    return JSON.parse(jsonStr)
+  } catch {
+    return []
+  }
+}
+
+/** 获取评分颜色 */
+const getScoreColor = (score) => {
+  if (score >= 8) return '#67c23a'
+  if (score >= 6) return '#e6a23c'
+  return '#f56c6c'
+}
+
+// 玩家体验相关
+const getFunScoreClass = (score) => {
+  if (score >= 70) return 'fun-score-good'
+  if (score >= 50) return 'fun-score-medium'
+  return 'fun-score-low'
+}
+
+const getDimensionColor = (score) => {
+  if (score >= 70) return '#67c23a'
+  if (score >= 50) return '#e6a23c'
+  return '#f56c6c'
+}
+
+const getDimensionName = (key) => {
+  const names = { coreLoop: '核心循环', challenge: '挑战感', reward: '奖励反馈', progression: '进度感', novelty: '新颖度' }
+  return names[key] || key
+}
+
+// 风险预测相关
+const getRiskSeverityType = (severity) => {
+  const types = { CRITICAL: 'danger', HIGH: 'warning', MEDIUM: '', LOW: 'info' }
+  return types[severity] || ''
+}
+
+/** 导出迭代报告 */
+const handleExportReport = async () => {
+  try {
+    const blob = await projectApi.exportIterationReport(currentProject.value.id)
+    const url = window.URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `迭代报告_${currentProject.value.name}_${new Date().toISOString().slice(0, 10)}.csv`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    window.URL.revokeObjectURL(url)
+    ElMessage.success('报告导出成功')
+  } catch (error) {
+    ElMessage.error('导出失败')
+  }
+}
+
+/** 版本对比 */
+const handleVersionComparison = async () => {
+  if (versionHistory.value.length < 2) {
+    ElMessage.warning('至少需要两个版本才能进行对比')
+    return
+  }
+
+  const version1 = versionHistory.value[versionHistory.value.length - 1]?.version
+  const version2 = versionHistory.value[0]?.version
+
+  try {
+    const data = await projectApi.getVersionComparison(currentProject.value.id, version1, version2)
+    versionComparisonData.value = data
+    versionComparisonVisible.value = true
+  } catch (error) {
+    ElMessage.error('获取版本对比数据失败')
+  }
+}
+
+/** 打开版本迭代对话框 */
+const handleVersionIteration = (project) => {
+  versionIterationForm.value = {
+    requirements: '',
+    priority: 'NORMAL'
+  }
+  versionIterationDialogVisible.value = true
+}
+
+/** 提交版本迭代 */
+const handleVersionIterationSubmit = async () => {
+  if (!versionIterationForm.value.requirements) {
+    ElMessage.warning('请输入迭代需求')
+    return
+  }
+
+  versionIterationLoading.value = true
+  try {
+    const result = await interventionApi.startVersionIteration({
+      projectId: currentProject.value.id,
+      requirements: versionIterationForm.value.requirements,
+      priority: versionIterationForm.value.priority
+    })
+    ElMessage.success('版本迭代已发起，制作人将分析需求并启动迭代')
+    versionIterationDialogVisible.value = false
+    // 刷新项目数据
+    await loadProjects()
+    await loadVersionHistory(currentProject.value.id)
+  } catch (error) {
+    ElMessage.error('发起版本迭代失败: ' + (error.message || '未知错误'))
+  } finally {
+    versionIterationLoading.value = false
+  }
 }
 
 /** 设置目标 */
@@ -1752,6 +2977,15 @@ onMounted(() => {
   padding-left: 40px;
 }
 
+.preview-section {
+  margin-bottom: 12px;
+}
+
+.task-role-tag {
+  margin-left: 8px;
+  font-size: 11px;
+}
+
 .milestone-actions {
   margin-top: 12px;
   padding-left: 40px;
@@ -1882,6 +3116,760 @@ onMounted(() => {
   font-size: 12px;
   color: var(--el-text-color-placeholder);
   margin-top: 2px;
+}
+
+/* 版本历史样式 */
+.version-history-list {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.version-card {
+  margin-bottom: 0;
+}
+
+.version-card :deep(.el-card__body) {
+  padding: 10px 12px;
+}
+
+.version-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.version-creator {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.version-desc {
+  font-size: 13px;
+  color: var(--el-text-color-regular);
+}
+
+.version-tip {
+  font-size: 12px;
+  color: var(--el-text-color-placeholder);
+  margin-top: 8px;
+}
+
+/* 版本迭代信息样式 */
+.version-iteration-info {
+  margin-bottom: 16px;
+}
+
+.iteration-flow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.flow-separator {
+  color: var(--el-text-color-placeholder);
+  font-weight: bold;
+}
+
+.iteration-stats {
+  margin-top: 16px;
+  padding: 16px;
+  background: var(--el-fill-color-lighter);
+  border-radius: 8px;
+}
+
+.iteration-actions {
+  margin-top: 12px;
+  text-align: right;
+}
+
+/* 版本迭代记录样式 */
+.iteration-records-collapse {
+  margin-top: 16px;
+  margin-bottom: 16px;
+}
+
+.collapse-title {
+  font-weight: 500;
+  color: var(--el-text-color-primary);
+}
+
+.iteration-records-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.iteration-record-item {
+  padding: 12px;
+  background: var(--el-fill-color-lighter);
+  border-radius: 8px;
+  border-left: 3px solid var(--el-color-primary);
+}
+
+.iteration-record-item:has(.record-header .el-tag--success) {
+  border-left-color: var(--el-color-success);
+}
+
+.iteration-record-item:has(.record-header .el-tag--warning) {
+  border-left-color: var(--el-color-warning);
+}
+
+.record-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.record-version {
+  font-weight: 500;
+  color: var(--el-text-color-primary);
+}
+
+.record-time {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--el-text-color-placeholder);
+}
+
+.record-body {
+  font-size: 13px;
+  color: var(--el-text-color-regular);
+}
+
+.record-score {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.record-score .label {
+  color: var(--el-text-color-secondary);
+}
+
+.score-value {
+  font-weight: 500;
+  color: var(--el-color-primary);
+}
+
+.record-details {
+  margin-bottom: 4px;
+  line-height: 1.5;
+}
+
+.record-reason {
+  color: var(--el-text-color-secondary);
+}
+
+.record-reason .label {
+  font-weight: 500;
+}
+
+/* 迭代工具栏样式 */
+.iteration-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+  padding: 8px 0;
+}
+
+.toolbar-left {
+  display: flex;
+  gap: 8px;
+}
+
+.toolbar-right {
+  display: flex;
+  gap: 8px;
+}
+
+/* 趋势图样式 */
+.iteration-chart {
+  margin-bottom: 16px;
+  padding: 16px;
+  background: var(--el-fill-color-lighter);
+  border-radius: 8px;
+}
+
+.chart-title {
+  font-weight: 500;
+  margin-bottom: 12px;
+  color: var(--el-text-color-primary);
+}
+
+.chart-container {
+  overflow-x: auto;
+}
+
+.trend-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  height: 200px;
+  min-width: 300px;
+}
+
+.chart-bar-wrapper {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  height: 100%;
+}
+
+.chart-bar {
+  width: 100%;
+  min-width: 30px;
+  max-width: 60px;
+  border-radius: 4px 4px 0 0;
+  position: relative;
+  transition: height 0.3s;
+}
+
+.bar-value {
+  position: absolute;
+  top: -20px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--el-text-color-primary);
+}
+
+.bar-label {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--el-text-color-secondary);
+  white-space: nowrap;
+}
+
+/* 迭代详情样式 */
+.iteration-detail {
+  padding: 16px;
+}
+
+.detail-section {
+  margin-top: 20px;
+}
+
+.detail-section h4 {
+  margin: 0 0 8px 0;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--el-text-color-primary);
+}
+
+.detail-section p {
+  margin: 0;
+  color: var(--el-text-color-regular);
+  line-height: 1.6;
+}
+
+.detail-section ul {
+  margin: 0;
+  padding-left: 20px;
+  color: var(--el-text-color-regular);
+}
+
+.detail-section li {
+  margin-bottom: 4px;
+}
+
+/* 版本对比样式 */
+.version-comparison {
+  padding: 16px;
+}
+
+.comparison-desc {
+  color: var(--el-text-color-regular);
+  margin-bottom: 8px;
+}
+
+.comparison-score {
+  font-size: 18px;
+  font-weight: 500;
+  color: var(--el-color-primary);
+}
+
+.comparison-diff {
+  margin-top: 16px;
+  text-align: center;
+}
+
+.comparison-empty {
+  padding: 40px 0;
+}
+
+/* 督查报告样式 */
+.supervision-loading {
+  padding: 16px;
+}
+
+.supervision-report {
+  padding: 16px 0;
+}
+
+.supervision-stats {
+  margin-bottom: 20px;
+}
+
+.stat-mini {
+  text-align: center;
+  padding: 12px 8px;
+  background: var(--el-fill-color-lighter);
+  border-radius: 8px;
+}
+
+.stat-mini.stat-danger {
+  background: #fef0f0;
+  border: 1px solid #fbc4c4;
+}
+
+.stat-mini.stat-success {
+  background: #f0f9eb;
+  border: 1px solid #c2e7b0;
+}
+
+.stat-mini-value {
+  font-size: 20px;
+  font-weight: bold;
+  color: var(--el-text-color-primary);
+}
+
+.stat-mini-label {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  margin-top: 4px;
+}
+
+.supervision-tabs {
+  margin-top: 16px;
+}
+
+.section-title {
+  font-weight: 500;
+  margin-bottom: 12px;
+  color: var(--el-text-color-primary);
+  font-size: 14px;
+}
+
+/* 甘特图样式 */
+.gantt-view {
+  padding: 8px 0;
+}
+
+.gantt-milestone {
+  margin-bottom: 16px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.gantt-milestone-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: var(--el-fill-color-lighter);
+  font-size: 13px;
+}
+
+.gantt-milestone-title {
+  flex: 1;
+  font-weight: 500;
+}
+
+.gantt-milestone-role {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
+.gantt-tasks {
+  padding: 8px 16px;
+}
+
+.gantt-task-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px dashed var(--el-border-color-lighter);
+}
+
+.gantt-task-row:last-child {
+  border-bottom: none;
+}
+
+.gantt-task-label {
+  width: 180px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.text-done {
+  text-decoration: line-through;
+  color: var(--el-text-color-secondary);
+}
+
+.gantt-task-bar-area {
+  flex: 1;
+  height: 20px;
+  background: var(--el-fill-color-lighter);
+  border-radius: 4px;
+  position: relative;
+  overflow: hidden;
+}
+
+.gantt-task-bar {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  border-radius: 4px;
+  min-width: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.gantt-bar-text {
+  font-size: 10px;
+  color: #fff;
+  font-weight: 500;
+}
+
+.gantt-task-status {
+  width: 70px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+/* Agent效率样式 */
+.efficiency-card {
+  padding: 16px;
+  margin-bottom: 12px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+}
+
+.efficiency-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.efficiency-role {
+  font-weight: 500;
+  font-size: 14px;
+}
+
+/* 协作效率样式 */
+.collaboration-metrics {
+  padding: 8px 0;
+}
+
+.metric-card {
+  margin-bottom: 12px;
+}
+
+.metric-title {
+  font-size: 14px;
+  color: var(--el-text-color-secondary);
+  margin-bottom: 8px;
+}
+
+.metric-value {
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+  margin-bottom: 4px;
+}
+
+.metric-hint {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  margin-top: 4px;
+}
+
+/* 玩家体验样式 */
+.player-experience-view {
+  padding: 8px 0;
+}
+
+.fun-score-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.fun-score-circle {
+  width: 100px;
+  height: 100px;
+  border-radius: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border: 3px solid;
+}
+
+.fun-score-good { border-color: #67c23a; background: #f0f9eb; }
+.fun-score-medium { border-color: #e6a23c; background: #fdf6ec; }
+.fun-score-low { border-color: #f56c6c; background: #fef0f0; }
+
+.fun-score-value {
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.fun-score-label {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  margin-top: 4px;
+}
+
+.dimension-score {
+  text-align: center;
+  padding: 8px 0;
+}
+
+.dimension-label {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  margin-top: 8px;
+}
+
+.improvement-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+}
+
+.improvement-item:last-child {
+  border-bottom: none;
+}
+
+/* 风险预测样式 */
+.risk-prediction-view {
+  padding: 8px 0;
+}
+
+.risk-card {
+  padding: 16px;
+  margin-bottom: 12px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+  border-left: 4px solid;
+}
+
+.risk-card:has(.el-tag--danger) { border-left-color: #f56c6c; }
+.risk-card:has(.el-tag--warning) { border-left-color: #e6a23c; }
+
+.risk-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.risk-type {
+  font-weight: 500;
+  font-size: 14px;
+}
+
+.risk-description {
+  font-size: 13px;
+  color: var(--el-text-color-regular);
+  margin-bottom: 8px;
+}
+
+.risk-suggestion {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  background: #f4f4f5;
+  padding: 8px;
+  border-radius: 4px;
+}
+
+/* 质量基准样式 */
+.quality-benchmark-view {
+  padding: 8px 0;
+}
+
+.benchmark-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.benchmark-title {
+  font-weight: 500;
+  font-size: 14px;
+}
+
+.checklist-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+  font-size: 13px;
+}
+
+.checklist-item:last-child {
+  border-bottom: none;
+}
+
+.section-title {
+  font-weight: 500;
+  font-size: 14px;
+  margin-bottom: 12px;
+  color: var(--el-text-color-primary);
+}
+
+/* 趋势样式 */
+.trends-view {
+  padding: 8px 0;
+}
+
+.trend-chart-section {
+  margin-bottom: 24px;
+}
+
+.trend-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  height: 160px;
+  padding: 0 16px;
+}
+
+.trend-bar-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.trend-bar-wrapper {
+  width: 100%;
+  height: 120px;
+  display: flex;
+  align-items: flex-end;
+}
+
+.trend-bar {
+  width: 100%;
+  border-radius: 4px 4px 0 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  transition: height 0.3s;
+}
+
+.trend-bar-value {
+  font-size: 11px;
+  color: #fff;
+  font-weight: 500;
+  padding-top: 4px;
+}
+
+.trend-bar-label {
+  font-size: 11px;
+  color: var(--el-text-color-secondary);
+  margin-top: 6px;
+  text-align: center;
+}
+
+.efficiency-summary {
+  padding: 16px;
+  background: var(--el-fill-color-lighter);
+  border-radius: 8px;
+  margin-top: 16px;
+}
+
+/* 逾期任务样式 */
+.overdue-badge {
+  margin-left: 4px;
+}
+
+.overdue-task-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  background: #fef0f0;
+  border-radius: 6px;
+  border: 1px solid #fbc4c4;
+}
+
+.overdue-task-item .task-name {
+  flex: 1;
+  color: var(--el-text-color-primary);
+  font-weight: 500;
+}
+
+.overdue-task-item .task-milestone {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
+.overdue-task-item .task-role {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
+.overdue-task-item .task-hours {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
+/* 迭代回顾样式 */
+.retrospective-view {
+  padding: 8px 0;
+}
+
+.retro-stats {
+  margin-bottom: 24px;
+}
+
+.recent-iterations {
+  margin-top: 16px;
+}
+
+.retro-record {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px dashed var(--el-border-color-lighter);
+}
+
+.retro-version {
+  font-weight: 500;
+  min-width: 60px;
+}
+
+.retro-time {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  margin-left: auto;
 }
 
 /* 响应式 */

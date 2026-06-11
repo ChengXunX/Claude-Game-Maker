@@ -68,7 +68,8 @@ public class Notification {
         SUCCESS,    // 成功
         TASK,       // 任务相关
         AGENT,      // Agent相关
-        SYSTEM      // 系统通知
+        SYSTEM,     // 系统通知
+        APPROVAL    // 审批相关
     }
 
     public enum NotificationChannel {

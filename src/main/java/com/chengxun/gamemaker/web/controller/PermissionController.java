@@ -18,6 +18,8 @@ import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.Map;
+
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -304,13 +306,30 @@ public class PermissionController {
     }
 
     /**
-     * 获取用户的权限列表
+     * 获取用户的权限申请列表
+     * 普通用户可以查看自己的申请，管理员可以查看所有用户的申请
      */
     @GetMapping("/api/user/{userId}")
     @ResponseBody
-    @PreAuthorize("hasAuthority('PERM_admin:manage')")
-    public List<UserPermission> getUserPermissions(@PathVariable Long userId) {
-        return permissionService.getUserPermissions(userId);
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<?> getUserPermissionRequests(@PathVariable Long userId,
+                                                        Authentication authentication) {
+        try {
+            User currentUser = userService.getUserByUsername(authentication.getName());
+            if (currentUser == null) {
+                return ResponseEntity.badRequest().body(Map.of("error", "用户不存在"));
+            }
+
+            // 普通用户只能查看自己的申请
+            if (!currentUser.isAdmin() && !currentUser.getId().equals(userId)) {
+                return ResponseEntity.status(403).body(Map.of("error", "无权查看其他用户的权限申请"));
+            }
+
+            var requests = permissionService.getUserRequests(userId, PageRequest.of(0, 100));
+            return ResponseEntity.ok(requests.getContent());
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
+        }
     }
 
     /**
