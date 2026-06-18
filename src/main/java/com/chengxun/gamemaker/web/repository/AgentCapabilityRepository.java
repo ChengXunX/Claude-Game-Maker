@@ -61,9 +61,9 @@ public interface AgentCapabilityRepository extends JpaRepository<AgentCapability
     Optional<AgentCapability> findByCapabilityNameAndAgentRoleAndProjectId(String capabilityName, String agentRole, String projectId);
 
     /**
-     * 查找全局默认能力
+     * 查找全局默认能力（可能存在重复记录，返回第一条）
      */
-    Optional<AgentCapability> findByCapabilityNameAndAgentRoleAndProjectIdIsNull(String capabilityName, String agentRole);
+    List<AgentCapability> findByCapabilityNameAndAgentRoleAndProjectIdIsNull(String capabilityName, String agentRole);
 
     /**
      * 检查能力是否存在且启用

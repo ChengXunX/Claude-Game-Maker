@@ -13,6 +13,9 @@
           <el-button type="warning" @click="recoverAllUnhealthy" :loading="recoveringAll" :disabled="unhealthyCount === 0">
             <el-icon><MagicStick /></el-icon> 批量恢复 ({{ unhealthyCount }})
           </el-button>
+          <el-button type="info" @click="showMemorySearch = true">
+            <el-icon><Search /></el-icon> 记忆搜索
+          </el-button>
           <el-divider direction="vertical" />
           <el-switch
             v-model="autoRefresh"
@@ -268,6 +271,31 @@
         <el-button @click="detailDialogVisible = false">关闭</el-button>
       </template>
     </el-dialog>
+
+    <!-- 记忆搜索对话框 -->
+    <el-dialog v-model="showMemorySearch" title="Agent 记忆搜索" width="800px">
+      <div style="margin-bottom: 12px; display: flex; gap: 8px;">
+        <el-select v-model="memoryAgentId" placeholder="选择 Agent" style="width: 180px">
+          <el-option label="全局搜索" value="" />
+          <el-option v-for="agent in agentList" :key="agent.agentId" :label="agent.agentId" :value="agent.agentId" />
+        </el-select>
+        <el-input v-model="memoryQuery" placeholder="输入搜索关键词..." @keyup.enter="handleMemorySearch" style="flex: 1">
+          <template #append>
+            <el-button @click="handleMemorySearch" :loading="memorySearching">搜索</el-button>
+          </template>
+        </el-input>
+      </div>
+      <el-table :data="memoryResults" stripe v-loading="memorySearching" empty-text="输入关键词搜索 Agent 记忆" max-height="400">
+        <el-table-column prop="category" label="分类" width="100" />
+        <el-table-column prop="agentId" label="Agent" width="120" />
+        <el-table-column prop="memoryKey" label="键" width="180" show-overflow-tooltip />
+        <el-table-column prop="content" label="内容" show-overflow-tooltip />
+        <el-table-column prop="score" label="相关性" width="80" sortable />
+      </el-table>
+      <template #footer>
+        <el-button @click="showMemorySearch = false">关闭</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -283,16 +311,32 @@
  * - 自动刷新
  * - 详情查看
  */
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Refresh, CircleCheck, MagicStick, Search, Clock, RefreshRight,
   MoreFilled, View, Document, RefreshLeft, SwitchButton,
   User, Cpu, Monitor, Setting
 } from '@element-plus/icons-vue'
-import api from '@/api'
+import api, { memorySearchApi, agentApi } from '@/api'
 
 const loading = ref(false)
+
+// 记忆搜索
+const showMemorySearch = ref(false)
+const memoryQuery = ref('')
+const memorySearching = ref(false)
+const memoryResults = ref([])
+const memoryAgentId = ref('')
+
+// 从健康状态中提取 Agent 列表，为空时 fallback 到全量 Agent
+const allAgents = ref([])
+const agentList = computed(() => {
+  if (healthStatuses.value.length > 0) {
+    return healthStatuses.value.map(s => ({ agentId: s.agentId }))
+  }
+  return allAgents.value.map(a => ({ agentId: a.id || a.role || a.agentId }))
+})
 const checkingAll = ref(false)
 const recoveringAll = ref(false)
 const summary = ref({})
@@ -611,8 +655,31 @@ const stopAutoRefresh = () => {
   }
 }
 
+/** 记忆搜索 */
+const handleMemorySearch = async () => {
+  if (!memoryQuery.value.trim()) return
+  memorySearching.value = true
+  memoryResults.value = []
+  try {
+    const agentId = memoryAgentId.value || 'producer'
+    const res = memoryAgentId.value
+      ? await memorySearchApi.search('', agentId, memoryQuery.value)
+      : await memorySearchApi.searchGlobal(agentId, memoryQuery.value)
+    if (res.data?.success) memoryResults.value = res.data.results || []
+    ElMessage.success(`找到 ${memoryResults.value.length} 条结果`)
+  } catch (e) {
+    ElMessage.error('搜索失败')
+  } finally {
+    memorySearching.value = false
+  }
+}
+
 onMounted(() => {
   loadHealthStatus()
+  // 预加载全量 Agent 列表，用于健康状态为空时的 fallback
+  agentApi.getAll().then(res => {
+    allAgents.value = res.data || res || []
+  }).catch(() => {})
   if (autoRefresh.value) {
     startAutoRefresh()
   }

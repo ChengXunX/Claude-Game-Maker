@@ -27,6 +27,17 @@ public class GameProject {
     /** 版本历史列表 */
     private List<VersionHistory> versionHistory = new ArrayList<>();
 
+    // ===== 管理员版本迭代指令 =====
+
+    /** 管理员对下一版本的迭代指令（可选，为空时系统自动决策） */
+    private String versionIterationInstruction;
+
+    /** 指令提交时间 */
+    private LocalDateTime instructionSubmittedAt;
+
+    /** 指令是否已消费（版本迭代后自动重置为 false） */
+    private boolean instructionConsumed = false;
+
     // ===== 项目目标 =====
 
     /** 项目目标描述 */
@@ -43,6 +54,9 @@ public class GameProject {
 
     /** 目标截止时间（可选） */
     private LocalDateTime goalDeadline;
+
+    /** 目标分解开始时间（用于超时检测，防止 DECOMPOSING 状态卡死） */
+    private long goalDecomposeStartedAt = 0;
 
     /** 里程碑列表 */
     private List<GoalMilestone> milestones = new ArrayList<>();
@@ -266,10 +280,10 @@ public class GameProject {
          * 检查是否所有前置依赖都已完成
          */
         public boolean areDependenciesMet(List<GoalMilestone> allMilestones) {
-            if (dependencies.isEmpty()) return true;
+            if (dependencies == null || dependencies.isEmpty()) return true;
             for (String depId : dependencies) {
                 boolean met = allMilestones.stream()
-                    .anyMatch(m -> m.getId().equals(depId) && m.getStatus() == MilestoneStatus.COMPLETED);
+                    .anyMatch(m -> m.getId() != null && m.getId().equals(depId) && m.getStatus() == MilestoneStatus.COMPLETED);
                 if (!met) return false;
             }
             return true;
@@ -398,9 +412,18 @@ public class GameProject {
         public String getPriority() { return priority; }
         public void setPriority(String priority) { this.priority = priority; }
         public int getEstimatedMinutes() { return estimatedMinutes; }
-        public void setEstimatedMinutes(int minutes) { this.estimatedMinutes = minutes; }
+        public void setEstimatedMinutes(int minutes) { this.estimatedMinutes = Math.max(0, Math.min(minutes, 10000)); }
         public int getEstimatedHours() { return estimatedHours; }
-        public void setEstimatedHours(int hours) { this.estimatedHours = hours; }
+        /** 单个任务最大工时上限：168小时（约2周全职工作） */
+        private static final int MAX_ESTIMATED_HOURS = 168;
+        public void setEstimatedHours(int hours) {
+            // 合理性检查：单个任务不应超过2周（168小时），超过则截断
+            if (hours > MAX_ESTIMATED_HOURS) {
+                this.estimatedHours = MAX_ESTIMATED_HOURS;
+            } else {
+                this.estimatedHours = Math.max(0, hours);
+            }
+        }
         public String getInputRequirements() { return inputRequirements; }
         public void setInputRequirements(String inputRequirements) { this.inputRequirements = inputRequirements; }
         public String getOutputDeliverables() { return outputDeliverables; }
@@ -548,6 +571,9 @@ public class GameProject {
 
     public LocalDateTime getGoalDeadline() { return goalDeadline; }
     public void setGoalDeadline(LocalDateTime goalDeadline) { this.goalDeadline = goalDeadline; }
+
+    public long getGoalDecomposeStartedAt() { return goalDecomposeStartedAt; }
+    public void setGoalDecomposeStartedAt(long goalDecomposeStartedAt) { this.goalDecomposeStartedAt = goalDecomposeStartedAt; }
 
     public List<GoalMilestone> getMilestones() { return milestones; }
     public void setMilestones(List<GoalMilestone> milestones) { this.milestones = milestones; }
@@ -761,5 +787,56 @@ public class GameProject {
         history.setCreatedAt(LocalDateTime.now());
         history.setDescription("版本迭代");
         this.versionHistory.add(history);
+    }
+
+    // ===== 管理员指令相关 =====
+
+    public String getVersionIterationInstruction() {
+        return versionIterationInstruction;
+    }
+
+    public void setVersionIterationInstruction(String versionIterationInstruction) {
+        this.versionIterationInstruction = versionIterationInstruction;
+    }
+
+    public LocalDateTime getInstructionSubmittedAt() {
+        return instructionSubmittedAt;
+    }
+
+    public void setInstructionSubmittedAt(LocalDateTime instructionSubmittedAt) {
+        this.instructionSubmittedAt = instructionSubmittedAt;
+    }
+
+    public boolean isInstructionConsumed() {
+        return instructionConsumed;
+    }
+
+    public void setInstructionConsumed(boolean instructionConsumed) {
+        this.instructionConsumed = instructionConsumed;
+    }
+
+    /**
+     * 检查是否有未消费的管理员指令
+     *
+     * @return true 如果有未消费的指令
+     */
+    @JsonIgnore
+    public boolean hasPendingInstruction() {
+        return versionIterationInstruction != null
+            && !versionIterationInstruction.isEmpty()
+            && !instructionConsumed;
+    }
+
+    /**
+     * 消费管理员指令（标记为已消费）
+     *
+     * @return 指令内容，如果没有指令返回 null
+     */
+    public String consumeInstruction() {
+        if (!hasPendingInstruction()) {
+            return null;
+        }
+        this.instructionConsumed = true;
+        return this.versionIterationInstruction;
     }
 }

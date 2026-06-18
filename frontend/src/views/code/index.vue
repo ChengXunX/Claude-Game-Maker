@@ -59,6 +59,8 @@
                 <span class="tree-node" :title="data.path">
                   <el-icon v-if="data.isDirectory"><Folder /></el-icon>
                   <el-icon v-else-if="isImage(data.extension)"><Picture /></el-icon>
+                  <el-icon v-else-if="isVideo(data.extension)"><VideoPlay /></el-icon>
+                  <el-icon v-else-if="isAudio(data.extension)"><Headset /></el-icon>
                   <el-icon v-else><Document /></el-icon>
                   <span class="node-label">{{ data.name }}</span>
                   <span v-if="!data.isDirectory && data.size" class="node-size">
@@ -120,6 +122,33 @@
               </div>
             </div>
 
+            <!-- 图片预览 -->
+            <div v-else-if="isImageFile && currentFileUrl" class="file-content media-container">
+              <div class="media-preview">
+                <img :src="currentFileUrl" :alt="displayFileName" class="media-image" @error="handleMediaError" />
+              </div>
+            </div>
+
+            <!-- 视频播放 -->
+            <div v-else-if="isVideoFile && currentFileUrl" class="file-content media-container">
+              <div class="media-preview">
+                <video :src="currentFileUrl" controls class="media-video" @error="handleMediaError">
+                  您的浏览器不支持视频播放
+                </video>
+              </div>
+            </div>
+
+            <!-- 音频播放 -->
+            <div v-else-if="isAudioFile && currentFileUrl" class="file-content media-container">
+              <div class="media-preview audio-preview">
+                <el-icon :size="64" color="#409EFF"><Headset /></el-icon>
+                <p class="audio-filename">{{ displayFileName }}</p>
+                <audio :src="currentFileUrl" controls class="media-audio" @error="handleMediaError">
+                  您的浏览器不支持音频播放
+                </audio>
+              </div>
+            </div>
+
             <!-- 空状态 -->
             <el-empty v-else-if="!loadingContent" description="请选择文件查看内容">
               <template #image>
@@ -156,7 +185,7 @@ import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 import { codeBrowserApi } from '@/api'
 import {
   FolderOpened, Back, Refresh, Search, Folder, Document, Picture,
-  CopyDocument, Download, Operation, View, FullScreen
+  CopyDocument, Download, Operation, View, FullScreen, VideoPlay, Headset
 } from '@element-plus/icons-vue'
 
 // 导入highlight.js样式（IntelliJ IDEA风格）
@@ -194,8 +223,8 @@ const treeProps = {
 
 // 计算右侧宽度
 function calcRightWidth() {
-  const containerWidth = typeof window !== 'undefined' ? window.innerWidth - 100 : 1000
-  return containerWidth - 280 - 10
+  const containerWidth = (typeof window !== 'undefined' && window.innerWidth > 0) ? window.innerWidth - 100 : 1000
+  return Math.max(400, containerWidth - 280 - 10)
 }
 
 // 显示的文件名（仅文件名）
@@ -224,6 +253,29 @@ const isMarkdown = computed(() => {
   if (!currentFile.value) return false
   const name = currentFile.value.toLowerCase()
   return name.endsWith('.md') || name.endsWith('.markdown') || currentLanguage.value === 'markdown'
+})
+
+// 媒体文件类型检测
+const imageExtensions = ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'bmp', 'ico', 'avif']
+const videoExtensions = ['mp4', 'webm', 'ogg', 'ogv', 'avi', 'mov', 'mkv']
+const audioExtensions = ['mp3', 'wav', 'oga', 'flac', 'aac', 'm4a']
+
+const currentExtension = computed(() => {
+  if (!currentFile.value) return ''
+  const parts = currentFile.value.split('.')
+  return parts.length > 1 ? parts[parts.length - 1].toLowerCase() : ''
+})
+
+const isImageFile = computed(() => imageExtensions.includes(currentExtension.value))
+const isVideoFile = computed(() => videoExtensions.includes(currentExtension.value))
+const isAudioFile = computed(() => audioExtensions.includes(currentExtension.value))
+const isMediaFile = computed(() => isImageFile.value || isVideoFile.value || isAudioFile.value)
+
+// 文件原始内容URL（用于媒体预览）
+const currentFileUrl = computed(() => {
+  const projectId = route.params.projectId
+  if (!projectId || !currentFile.value) return ''
+  return `/api/code-browser/raw/${projectId}?path=${encodeURIComponent(currentFile.value)}`
 })
 
 // 切换Markdown视图
@@ -278,7 +330,17 @@ watch(filterText, (val) => {
 
 // 判断是否是图片
 const isImage = (ext) => {
-  return ['png', 'jpg', 'jpeg', 'gif', 'svg', 'ico', 'webp'].includes(ext)
+  return imageExtensions.includes(ext)
+}
+
+// 判断是否是视频
+const isVideo = (ext) => {
+  return videoExtensions.includes(ext)
+}
+
+// 判断是否是音频
+const isAudio = (ext) => {
+  return audioExtensions.includes(ext)
 }
 
 // 格式化文件大小
@@ -356,6 +418,13 @@ const handleFileClick = async (data) => {
   fileContent.value = ''
   loadingContent.value = true
 
+  // 媒体文件（图片/视频/音频）不需要加载文本内容，直接用 raw URL 渲染
+  const ext = data.path.split('.').pop()?.toLowerCase() || ''
+  if (imageExtensions.includes(ext) || videoExtensions.includes(ext) || audioExtensions.includes(ext)) {
+    loadingContent.value = false
+    return
+  }
+
   try {
     const result = await codeBrowserApi.getFileContent(projectId, data.path)
     if (result.success) {
@@ -429,6 +498,12 @@ const handleCopy = async () => {
   }
 }
 
+/** 媒体加载失败 */
+const handleMediaError = (e) => {
+  console.error('媒体加载失败:', e)
+  ElMessage.error('媒体文件加载失败，可能文件不存在或格式不支持')
+}
+
 /** 下载文件 */
 const handleDownload = async () => {
   const projectId = route.params.projectId
@@ -457,6 +532,8 @@ onMounted(() => {
     if (route.params.projectId) {
       loadFileTree()
     }
+    // 【修复】挂载后重新计算面板宽度，避免初始 window.innerWidth 不准确
+    rightPanelWidth.value = calcRightWidth() - leftPanelWidth.value + 280
   })
   window.addEventListener('resize', handleWindowResize)
   document.addEventListener('fullscreenchange', handleFullscreenChange)
@@ -645,6 +722,55 @@ onUnmounted(() => {
 .file-content {
   height: calc(100vh - 280px);
   overflow: auto;
+}
+
+/* 媒体预览容器 */
+.media-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--el-fill-color-lighter);
+  padding: 20px;
+}
+
+.media-preview {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  max-width: 100%;
+  max-height: 100%;
+}
+
+.media-image {
+  max-width: 100%;
+  max-height: calc(100vh - 320px);
+  object-fit: contain;
+  border-radius: 4px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+}
+
+.media-video {
+  max-width: 100%;
+  max-height: calc(100vh - 320px);
+  border-radius: 4px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+}
+
+.audio-preview {
+  gap: 16px;
+  padding: 40px;
+}
+
+.audio-filename {
+  color: var(--el-text-color-primary);
+  font-size: 14px;
+  margin: 0;
+}
+
+.media-audio {
+  width: 400px;
+  max-width: 100%;
 }
 
 .code-wrapper {

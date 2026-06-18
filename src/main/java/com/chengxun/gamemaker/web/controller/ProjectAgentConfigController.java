@@ -53,9 +53,7 @@ public class ProjectAgentConfigController {
             @PathVariable String projectId,
             @PathVariable String agentRole) {
         ProjectAgentConfig config = configService.getConfig(projectId, agentRole);
-        if (config == null) {
-            return ResponseEntity.notFound().build();
-        }
+        // 没有配置时返回200+null，而非404
         return ResponseEntity.ok(config);
     }
 

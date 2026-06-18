@@ -26,4 +26,9 @@ public interface ChatSessionRepository extends JpaRepository<ChatSession, Long> 
      * 删除用户的所有会话
      */
     void deleteByUserId(Long userId);
+
+    /**
+     * 查找用户指定来源的最新会话
+     */
+    ChatSession findFirstByUserIdAndSourceOrderByUpdatedAtDesc(Long userId, String source);
 }

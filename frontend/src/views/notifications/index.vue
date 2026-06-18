@@ -95,9 +95,10 @@ const filterRead = ref('')
 const LINK_MAP = {
   'TASK': '/agents',
   'AGENT': '/agents',
-  'SYSTEM': '/admin/settings',
+  'SYSTEM': '/admin/system/settings',
   'APPROVAL': '/approvals',
   'EMAIL_CHANGE': '/profile',
+  'WORKFLOW': '/workflow',
   'INFO': null,
   'WARNING': null,
   'ERROR': null,

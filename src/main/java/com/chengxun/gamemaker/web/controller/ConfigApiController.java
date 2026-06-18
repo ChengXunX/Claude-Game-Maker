@@ -416,6 +416,51 @@ public class ConfigApiController {
                     log.warn("Invalid device trust days value: {}", value);
                 }
                 break;
+            // 飞书配置同步
+            case "feishu.enabled":
+                appConfig.getFeishu().setEnabled(Boolean.parseBoolean(value));
+                log.info("AppConfig 已同步: feishu.enabled = {}", value);
+                break;
+            case "feishu.webhook.url":
+                appConfig.getFeishu().setWebhookUrl(value);
+                log.info("AppConfig 已同步: feishu.webhook.url");
+                break;
+            case "feishu.app.id":
+                appConfig.getFeishu().setAppId(value);
+                log.info("AppConfig 已同步: feishu.app.id");
+                break;
+            case "feishu.app.secret":
+                appConfig.getFeishu().setAppSecret(value);
+                log.info("AppConfig 已同步: feishu.app.secret");
+                break;
+            case "feishu.chat.id":
+                appConfig.getFeishu().setChatId(value);
+                log.info("AppConfig 已同步: feishu.chat.id");
+                break;
+            case "feishu.encrypt.key":
+                appConfig.getFeishu().setEncryptKey(value);
+                log.info("AppConfig 已同步: feishu.encrypt.key");
+                break;
+            case "feishu.verify.token":
+                appConfig.getFeishu().setVerifyToken(value);
+                log.info("AppConfig 已同步: feishu.verify.token");
+                break;
+            case "feishu.callback.token":
+                appConfig.getFeishu().setCallbackToken(value);
+                log.info("AppConfig 已同步: feishu.callback.token");
+                break;
+            case "feishu.callback.expire.minutes":
+                try {
+                    appConfig.getFeishu().setCallbackExpireMinutes(Integer.parseInt(value));
+                    log.info("AppConfig 已同步: feishu.callback.expire.minutes");
+                } catch (NumberFormatException e) {
+                    log.warn("Invalid callback expire minutes: {}", value);
+                }
+                break;
+            case "feishu.approval.notify.user.ids":
+                appConfig.getFeishu().setApprovalNotifyUserIds(value);
+                log.info("AppConfig 已同步: feishu.approval.notify.user.ids");
+                break;
             default:
                 break;
         }

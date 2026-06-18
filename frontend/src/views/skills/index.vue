@@ -5,6 +5,9 @@
         <div class="card-header">
           <span>技能管理</span>
           <div class="header-actions">
+            <el-button type="info" @click="handleDiscoverSkills" v-permission="'skills:view'">
+              <el-icon><Search /></el-icon> 扫描项目Skill
+            </el-button>
             <el-button @click="handleExport" v-permission="'skills:manage'" :disabled="selectedSkills.length === 0">
               <el-icon><Download /></el-icon> 导出{{ selectedSkills.length > 0 ? `(${selectedSkills.length})` : '' }}
             </el-button>
@@ -338,6 +341,23 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <!-- Skill 发现对话框 -->
+    <el-dialog v-model="discoverDialogVisible" title="项目 Skill 扫描结果" width="700px">
+      <el-table :data="discoveredSkills" stripe v-loading="discoverLoading" empty-text="未发现文件系统 Skill">
+        <el-table-column prop="name" label="名称" width="180" />
+        <el-table-column prop="description" label="描述" show-overflow-tooltip />
+        <el-table-column prop="filePath" label="文件路径" show-overflow-tooltip />
+        <el-table-column label="操作" width="80" fixed="right">
+          <template #default="{ row }">
+            <el-button type="primary" link size="small" @click="handleImportDiscovered(row)">导入</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <template #footer>
+        <el-button @click="discoverDialogVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -356,7 +376,7 @@
  */
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { skillApi } from '@/api'
+import { skillApi, skillDiscoveryApi } from '@/api'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   MagicStick, Check, Refresh, Search, Grid, List,
@@ -505,6 +525,49 @@ const handleCreate = () => {
   editingId.value = null
   createForm.value = { name: '', description: '', triggerPattern: '', content: '', category: 'custom' }
   createDialogVisible.value = true
+}
+
+// ===== Skill 发现 =====
+const discoverDialogVisible = ref(false)
+const discoverLoading = ref(false)
+const discoveredSkills = ref([])
+
+const handleDiscoverSkills = async () => {
+  if (!selectedProjectId.value) {
+    ElMessage.warning('请先选择项目')
+    return
+  }
+  discoverLoading.value = true
+  discoverDialogVisible.value = true
+  discoveredSkills.value = []
+  try {
+    const res = await skillDiscoveryApi.discover(selectedProjectId.value)
+    if (res.data?.success) {
+      discoveredSkills.value = res.data.skills || []
+      ElMessage.success(`发现 ${discoveredSkills.value.length} 个 Skill`)
+    }
+  } catch (e) {
+    ElMessage.error('扫描失败')
+  } finally {
+    discoverLoading.value = false
+  }
+}
+
+/** 导入发现的 Skill 为正式技能 */
+const handleImportDiscovered = async (skill) => {
+  try {
+    await skillApi.create({
+      name: skill.name,
+      description: skill.description || `从文件 ${skill.filePath} 导入`,
+      content: skill.content || '',
+      category: skill.category || 'custom',
+      triggerPattern: skill.triggerPattern || ''
+    })
+    ElMessage.success(`技能 "${skill.name}" 导入成功`)
+    loadSkills()
+  } catch (e) {
+    ElMessage.error('导入失败')
+  }
 }
 
 /** 打开编辑对话框 */

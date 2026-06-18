@@ -141,9 +141,15 @@ public class DynamicCapabilityService {
 
     private void initProducerTemplates() {
         List<CapabilityTemplate> templates = roleTemplates.get("producer");
-        templates.add(new CapabilityTemplate("reviewGameDesign", "审查游戏设计", "审查游戏设计方案的完整性和可行性", "design_review", 1,
+        // 资源调度能力（制作人可以协调资源生成）
+        templates.add(new CapabilityTemplate("generateMusic", "协调生成音乐", "协调 audio-dev 生成背景音乐", "resource_coordination", 1,
+            "{\"prompt\":\"string|required\",\"targetAgent\":\"string\",\"priority\":\"enum:HIGH,MEDIUM,LOW\"}"));
+        templates.add(new CapabilityTemplate("generateSprite", "协调生成图片", "协调 tech-artist/ui-dev 生成美术资源", "resource_coordination", 2,
+            "{\"prompt\":\"string|required\",\"targetAgent\":\"string\",\"priority\":\"enum:HIGH,MEDIUM,LOW\"}"));
+        // 项目管理能力
+        templates.add(new CapabilityTemplate("reviewGameDesign", "审查游戏设计", "审查游戏设计方案的完整性和可行性", "design_review", 3,
             "{\"designType\":\"enum:system,level,numerical,ui,narrative|required\",\"designName\":\"string|required\"}"));
-        templates.add(new CapabilityTemplate("monitorTeamHealth", "监控团队健康", "分析团队成员工作负载和协作效率", "team_management", 2,
+        templates.add(new CapabilityTemplate("monitorTeamHealth", "监控团队健康", "分析团队成员工作负载和协作效率", "team_management", 4,
             "{\"metrics\":\"enum:workload,idle_rate,blockers,collaboration\"}"));
         templates.add(new CapabilityTemplate("conductRetrospective", "回顾分析", "对已完成的里程碑进行回顾分析", "team_management", 3,
             "{\"milestoneId\":\"string|required\",\"scope\":\"enum:process,technical,team\"}"));
@@ -217,6 +223,12 @@ public class DynamicCapabilityService {
 
     private void initUiDevTemplates() {
         List<CapabilityTemplate> templates = roleTemplates.get("ui-dev");
+        // 资源生成能力（优先级最高）
+        templates.add(new CapabilityTemplate("generateSprite", "生成图标素材", "使用 AI 生成游戏图标和装饰素材", "resource_generation", 1,
+            "{\"prompt\":\"string|required\",\"size\":\"string\",\"style\":\"string\"}"));
+        templates.add(new CapabilityTemplate("generateUIAsset", "生成UI素材", "使用 AI 生成按钮、面板、背景等 UI 素材", "resource_generation", 2,
+            "{\"prompt\":\"string|required\",\"assetType\":\"enum:icon,button,background,panel\",\"size\":\"string\"}"));
+        // UI 开发能力
         templates.add(new CapabilityTemplate("manageDesignSystem", "设计系统管理", "管理和维护统一的设计系统", "task", 5,
             "{\"action\":\"enum:create,update,audit,export\",\"scope\":\"enum:colors,typography,spacing,components\"}"));
         templates.add(new CapabilityTemplate("manageAnimationLibrary", "动画库管理", "管理和优化 UI 动画库", "task", 6,
@@ -265,15 +277,21 @@ public class DynamicCapabilityService {
 
     private void initTechArtistTemplates() {
         List<CapabilityTemplate> templates = roleTemplates.get("tech-artist");
-        templates.add(new CapabilityTemplate("createShader", "创建 Shader", "创建或修改 Shader", "task", 1,
+        // 资源生成能力（优先级最高）
+        templates.add(new CapabilityTemplate("generateSprite", "生成精灵图", "使用 AI 生成 2D 精灵图/贴图", "resource_generation", 1,
+            "{\"prompt\":\"string|required\",\"size\":\"string\",\"style\":\"string\"}"));
+        templates.add(new CapabilityTemplate("generateUIAsset", "生成UI素材", "使用 AI 生成 UI 界面素材", "resource_generation", 2,
+            "{\"prompt\":\"string|required\",\"assetType\":\"enum:icon,button,background,panel\",\"size\":\"string\"}"));
+        // 技术美术能力
+        templates.add(new CapabilityTemplate("createShader", "创建 Shader", "创建或修改 Shader", "task", 3,
             "{\"shaderType\":\"enum:surface,post_process,particle,ui|required\",\"requirements\":\"string|required\"}"));
-        templates.add(new CapabilityTemplate("optimizeRendering", "优化渲染", "优化渲染性能", "task", 2,
+        templates.add(new CapabilityTemplate("optimizeRendering", "优化渲染", "优化渲染性能", "task", 4,
             "{\"targetPath\":\"string\",\"optimizationType\":\"enum:drawcall,shader,memory,overdraw\"}"));
-        templates.add(new CapabilityTemplate("createArtTool", "美术工具", "创建自动化工具", "task", 3,
+        templates.add(new CapabilityTemplate("createArtTool", "美术工具", "创建自动化工具", "task", 5,
             "{\"toolType\":\"enum:batch_convert,validation,preview,export|required\",\"requirements\":\"string\"}"));
-        templates.add(new CapabilityTemplate("optimizeAssetPipeline", "资产管线优化", "优化美术资产的导入和加载流程", "task", 4,
+        templates.add(new CapabilityTemplate("optimizeAssetPipeline", "资产管线优化", "优化美术资产的导入和加载流程", "task", 6,
             "{\"assetType\":\"enum:texture,mesh,animation,material\",\"optimization\":\"enum:size,load_time,quality\"}"));
-        templates.add(new CapabilityTemplate("generateLOD", "LOD 自动生成", "为 3D 模型自动生成多级细节层次", "task", 5,
+        templates.add(new CapabilityTemplate("generateLOD", "LOD 自动生成", "为 3D 模型自动生成多级细节层次", "task", 7,
             "{\"targetPath\":\"string\",\"lodLevels\":\"number\"}"));
     }
 
@@ -343,15 +361,21 @@ public class DynamicCapabilityService {
 
     private void initAudioDevTemplates() {
         List<CapabilityTemplate> templates = roleTemplates.get("audio-dev");
-        templates.add(new CapabilityTemplate("designSoundEffect", "音效设计", "设计游戏音效", "task", 1,
+        // 资源生成能力（优先级最高）
+        templates.add(new CapabilityTemplate("generateMusic", "生成音乐", "使用 AI 生成背景音乐", "resource_generation", 1,
+            "{\"prompt\":\"string|required\",\"style\":\"string\",\"instrumental\":\"boolean\",\"title\":\"string\"}"));
+        templates.add(new CapabilityTemplate("generateSoundEffect", "生成音效", "使用 AI 生成游戏音效", "resource_generation", 2,
+            "{\"prompt\":\"string|required\",\"sfxType\":\"enum:ui,combat,environment,character\",\"duration\":\"string\"}"));
+        // 设计能力
+        templates.add(new CapabilityTemplate("designSoundEffect", "音效设计", "设计游戏音效规格", "task", 3,
             "{\"sfxType\":\"enum:ui,combat,environment,character|required\",\"requirements\":\"string\"}"));
-        templates.add(new CapabilityTemplate("planMusic", "音乐规划", "规划背景音乐", "task", 2,
+        templates.add(new CapabilityTemplate("planMusic", "音乐规划", "规划背景音乐方案", "task", 4,
             "{\"scene\":\"string\",\"mood\":\"string\",\"style\":\"string\"}"));
-        templates.add(new CapabilityTemplate("designAudioSystem", "音频系统", "设计音频架构", "task", 3,
+        templates.add(new CapabilityTemplate("designAudioSystem", "音频系统", "设计音频架构", "task", 5,
             "{\"systemType\":\"enum:mixer,3d_audio,adaptive,events\",\"requirements\":\"string\"}"));
-        templates.add(new CapabilityTemplate("designAdaptiveMusic", "自适应音乐系统", "设计根据游戏状态动态切换的音乐系统", "task", 4,
+        templates.add(new CapabilityTemplate("designAdaptiveMusic", "自适应音乐系统", "设计根据游戏状态动态切换的音乐系统", "task", 6,
             "{\"scene\":\"string\",\"states\":\"string\",\"transitionType\":\"enum:crossfade,layer,switch\"}"));
-        templates.add(new CapabilityTemplate("designSpatialAudio", "空间音频设计", "设计 3D 空间音频方案", "task", 5,
+        templates.add(new CapabilityTemplate("designSpatialAudio", "空间音频设计", "设计 3D 空间音频方案", "task", 7,
             "{\"environment\":\"enum:indoor,outdoor,underwater,urban\",\"features\":\"enum:reverb,occlusion,doppler\"}"));
     }
 

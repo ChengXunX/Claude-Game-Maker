@@ -89,11 +89,38 @@ public class TokenApiController {
             }
         }
 
+        // 配额参数
+        String quotaTypeStr = (String) request.get("quotaType");
+        ApiToken.QuotaType quotaType = ApiToken.QuotaType.UNLIMITED;
+        if (quotaTypeStr != null && !quotaTypeStr.isEmpty()) {
+            try {
+                quotaType = ApiToken.QuotaType.valueOf(quotaTypeStr);
+            } catch (IllegalArgumentException ignored) {}
+        }
+        Long quotaTotal = request.get("quotaTotal") != null ?
+            Long.parseLong(String.valueOf(request.get("quotaTotal"))) : 0L;
+        Integer windowSeconds = request.get("windowSeconds") != null ?
+            Integer.parseInt(String.valueOf(request.get("windowSeconds"))) : 0;
+        Integer maxConcurrentAgents = request.get("maxConcurrentAgents") != null ?
+            Integer.parseInt(String.valueOf(request.get("maxConcurrentAgents"))) : 0;
+
         if (name == null || name.isBlank()) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "message", "Token 名称不能为空"));
         }
         if (apiKey == null || apiKey.isBlank()) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "message", "API Key 不能为空"));
+        }
+
+        // 提供商类型和资源类型
+        String providerTypeStr = (String) request.get("providerType");
+        ApiToken.ProviderType providerType = ApiToken.ProviderType.ANTHROPIC;
+        if (providerTypeStr != null && !providerTypeStr.isEmpty()) {
+            try { providerType = ApiToken.ProviderType.valueOf(providerTypeStr); } catch (IllegalArgumentException ignored) {}
+        }
+        String resourceTypeStr = (String) request.get("resourceType");
+        ApiToken.ResourceType resourceType = ApiToken.ResourceType.TEXT;
+        if (resourceTypeStr != null && !resourceTypeStr.isEmpty()) {
+            try { resourceType = ApiToken.ResourceType.valueOf(resourceTypeStr); } catch (IllegalArgumentException ignored) {}
         }
 
         try {
@@ -103,6 +130,12 @@ public class TokenApiController {
             token.setUserId(userId);
             token.setAgentTags(agentTags);
             token.setPriority(priority);
+            token.setQuotaType(quotaType);
+            token.setQuotaTotal(quotaTotal);
+            token.setWindowSeconds(windowSeconds);
+            token.setMaxConcurrentAgents(maxConcurrentAgents);
+            token.setProviderType(providerType);
+            token.setResourceType(resourceType);
             tokenService.saveToken(token);
 
             logService.log(userId, username, "CREATE_TOKEN", name, "Created API token (contextWindow=" + contextWindow + ")", null);
@@ -147,6 +180,29 @@ public class TokenApiController {
             if (purposeStr != null) {
                 try { updated.setPurpose(ApiToken.TokenPurpose.valueOf(purposeStr)); } catch (IllegalArgumentException ignored) {}
             }
+            // 配额参数
+            String quotaTypeStr = (String) request.get("quotaType");
+            if (quotaTypeStr != null) {
+                try { updated.setQuotaType(ApiToken.QuotaType.valueOf(quotaTypeStr)); } catch (IllegalArgumentException ignored) {}
+            }
+            if (request.get("quotaTotal") != null) {
+                updated.setQuotaTotal(Long.parseLong(String.valueOf(request.get("quotaTotal"))));
+            }
+            if (request.get("windowSeconds") != null) {
+                updated.setWindowSeconds(Integer.parseInt(String.valueOf(request.get("windowSeconds"))));
+            }
+            if (request.get("maxConcurrentAgents") != null) {
+                updated.setMaxConcurrentAgents(Integer.parseInt(String.valueOf(request.get("maxConcurrentAgents"))));
+            }
+            // 提供商类型和资源类型
+            String providerTypeStr = (String) request.get("providerType");
+            if (providerTypeStr != null && !providerTypeStr.isEmpty()) {
+                try { updated.setProviderType(ApiToken.ProviderType.valueOf(providerTypeStr)); } catch (IllegalArgumentException ignored) {}
+            }
+            String resourceTypeStr = (String) request.get("resourceType");
+            if (resourceTypeStr != null && !resourceTypeStr.isEmpty()) {
+                try { updated.setResourceType(ApiToken.ResourceType.valueOf(resourceTypeStr)); } catch (IllegalArgumentException ignored) {}
+            }
             tokenService.saveToken(updated);
 
             logService.log(getUserId(authentication), authentication.getName(), "UPDATE_TOKEN", name, "Updated API token (contextWindow=" + contextWindow + ")", null);
@@ -173,7 +229,7 @@ public class TokenApiController {
     }
 
     @PostMapping("/{id}/assign")
-    @Operation(summary = "分配Token给Agent")
+    @Operation(summary = "应用Token到Agent（池化模式，不影响其他Agent）")
     @PreAuthorize("hasAuthority('PERM_agents:manage')")
     public ResponseEntity<?> assign(@PathVariable Long id, @RequestBody Map<String, String> request,
                                     Authentication authentication) {
@@ -187,23 +243,9 @@ public class TokenApiController {
         try {
             ApiToken token = tokenService.assignToken(id, agentId, activation);
             String activationLabel = "pending".equals(activation) ? "等待任务完成" : "立即";
-            logService.log(getUserId(authentication), authentication.getName(), "ASSIGN_TOKEN",
-                token.getName(), "Assigned to agent: " + agentId + " (" + activationLabel + ")", null);
-            return ResponseEntity.ok(Map.of("success", true, "message", "Token 已分配（" + activationLabel + "生效）"));
-        } catch (Exception e) {
-            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "分配失败: " + e.getMessage()));
-        }
-    }
-
-    @PostMapping("/{id}/unassign")
-    @Operation(summary = "取消Token分配")
-    @PreAuthorize("hasAuthority('PERM_agents:manage')")
-    public ResponseEntity<?> unassign(@PathVariable Long id, Authentication authentication) {
-        try {
-            ApiToken token = tokenService.unassignToken(id);
-            logService.log(getUserId(authentication), authentication.getName(), "UNASSIGN_TOKEN",
-                token.getName(), "Unassigned from agent", null);
-            return ResponseEntity.ok(Map.of("success", true, "message", "Token 已取消分配"));
+            logService.log(getUserId(authentication), authentication.getName(), "APPLY_TOKEN",
+                token.getName(), "Applied to agent: " + agentId + " (" + activationLabel + ")", null);
+            return ResponseEntity.ok(Map.of("success", true, "message", "Token 已应用到 Agent（" + activationLabel + "生效）"));
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "message", "操作失败: " + e.getMessage()));
         }
@@ -218,6 +260,32 @@ public class TokenApiController {
         stats.put("active", tokenService.getActiveTokenCount());
         stats.put("assigned", tokenService.getAssignedTokenCount());
         return ResponseEntity.ok(stats);
+    }
+
+    @GetMapping("/{id}/quota")
+    @Operation(summary = "获取Token配额信息")
+    @PreAuthorize("hasAnyAuthority('PERM_agents:manage', 'PERM_agents:task')")
+    public ResponseEntity<Map<String, Object>> getQuota(@PathVariable Long id) {
+        ApiToken token = tokenService.getTokenById(id);
+        if (token == null) return ResponseEntity.notFound().build();
+
+        Map<String, Object> quota = new HashMap<>();
+        quota.put("tokenId", id);
+        quota.put("tokenName", token.getName());
+        quota.put("quotaType", token.getQuotaType().name());
+        quota.put("quotaTotal", token.getQuotaTotal());
+        quota.put("windowSeconds", token.getWindowSeconds());
+        quota.put("maxConcurrentAgents", token.getMaxConcurrentAgents());
+
+        // 余量信息
+        long remaining = tokenService.getRemainingQuota(id);
+        quota.put("remaining", remaining == Long.MAX_VALUE ? -1 : remaining);
+        quota.put("windowUsage", tokenService.getWindowUsage(id));
+        quota.put("usagePercent", tokenService.getQuotaUsagePercent(id));
+        quota.put("concurrentAgents", tokenService.getCurrentConcurrentAgents(id));
+        quota.put("available", tokenService.isTokenAvailable(id));
+
+        return ResponseEntity.ok(quota);
     }
 
     @GetMapping("/agents")
@@ -235,6 +303,76 @@ public class TokenApiController {
             })
             .toList();
         return ResponseEntity.ok(agents);
+    }
+
+    /**
+     * 批量为所有 Agent 自动分配 Token
+     * 检查所有没有 Token 的 Agent，从 Token 池中自动分配最佳 Token
+     *
+     * @return 分配结果
+     */
+    @PostMapping("/auto-assign-all")
+    @Operation(summary = "批量自动分配Token给所有Agent")
+    @PreAuthorize("hasAuthority('PERM_agents:manage')")
+    public ResponseEntity<Map<String, Object>> autoAssignAllTokens(Authentication authentication) {
+        List<Agent> allAgents = agentManager.getAllAgents();
+        int assignedCount = 0;
+        int skippedCount = 0;
+        int failedCount = 0;
+        List<String> details = new java.util.ArrayList<>();
+
+        for (Agent agent : allAgents) {
+            String agentId = agent.getId();
+            String role = agent.getDefinition().getRole();
+
+            // 【修复】检查是否已有完整的 Token 配置（apiKey 不为空才算真正配置好了）
+            if (agent.getDefinition().getApiKey() != null && !agent.getDefinition().getApiKey().isEmpty()) {
+                skippedCount++;
+                details.add(agentId + ": 已有Token配置，跳过");
+                continue;
+            }
+
+            // 查找最佳 Token
+            ApiToken bestToken = tokenService.findBestTokenForRole(role);
+            if (bestToken == null) {
+                failedCount++;
+                details.add(agentId + ": 没有可用Token");
+                continue;
+            }
+
+            // 分配 Token
+            try {
+                agent.getDefinition().setApiKey(bestToken.getApiKey());
+                agent.getDefinition().setApiUrl(bestToken.getApiUrl());
+                agent.getDefinition().setModel(bestToken.getModel());
+                agent.getDefinition().setAssignedTokenId(bestToken.getId());
+                // 【修复】使用 saveApiConfigToContext 保存 API 配置到 context.json
+                if (agent instanceof com.chengxun.gamemaker.agent.BaseAgent baseAgent) {
+                    baseAgent.saveApiConfigToContext(bestToken.getApiKey(), bestToken.getApiUrl(), bestToken.getModel());
+                } else {
+                    agent.saveContext();
+                }
+                assignedCount++;
+                details.add(agentId + ": 已分配Token " + bestToken.getName());
+                log.info("Auto-assigned token {} to agent {}", bestToken.getName(), agentId);
+            } catch (Exception e) {
+                failedCount++;
+                details.add(agentId + ": 分配失败 - " + e.getMessage());
+                log.warn("Failed to auto-assign token to agent {}: {}", agentId, e.getMessage());
+            }
+        }
+
+        String message = String.format("自动分配完成：分配 %d，跳过 %d，失败 %d", assignedCount, skippedCount, failedCount);
+        log.info("Token auto-assign all: {}", message);
+
+        return ResponseEntity.ok(Map.of(
+            "success", true,
+            "message", message,
+            "assigned", assignedCount,
+            "skipped", skippedCount,
+            "failed", failedCount,
+            "details", details
+        ));
     }
 
     private Long getUserId(Authentication authentication) {

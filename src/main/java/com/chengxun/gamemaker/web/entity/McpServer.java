@@ -70,6 +70,22 @@ public class McpServer {
     @Column(columnDefinition = "TEXT")
     private String headers;
 
+    /** 模板分类：resource-image/resource-audio/resource-video/resource-3d/dev/data/collaboration/monitoring/gamedev */
+    @Column(length = 50)
+    private String category;
+
+    /** 认证模式：header（请求头）/ body（请求体）/ env（环境变量） */
+    @Column(length = 20)
+    private String authMode = "env";
+
+    /** 自定义认证头名（authMode=header 时生效），默认 Authorization */
+    @Column(length = 100)
+    private String authHeaderName = "Authorization";
+
+    /** 必填参数定义（JSON 数组格式）：[{"key":"API_KEY","label":"API Key","placeholder":"sk-xxx"}] */
+    @Column(columnDefinition = "TEXT")
+    private String requiredParams;
+
     /** 是否启用 */
     @Column(nullable = false)
     private boolean enabled = true;
@@ -146,6 +162,18 @@ public class McpServer {
 
     public String getHeaders() { return headers; }
     public void setHeaders(String headers) { this.headers = headers; }
+
+    public String getCategory() { return category; }
+    public void setCategory(String category) { this.category = category; }
+
+    public String getAuthMode() { return authMode; }
+    public void setAuthMode(String authMode) { this.authMode = authMode; }
+
+    public String getAuthHeaderName() { return authHeaderName; }
+    public void setAuthHeaderName(String authHeaderName) { this.authHeaderName = authHeaderName; }
+
+    public String getRequiredParams() { return requiredParams; }
+    public void setRequiredParams(String requiredParams) { this.requiredParams = requiredParams; }
 
     public boolean isEnabled() { return enabled; }
     public void setEnabled(boolean enabled) { this.enabled = enabled; }

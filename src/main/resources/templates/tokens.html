@@ -201,11 +201,8 @@
                                     </span>
                                 </td>
                                 <td>
-                                    <span th:if="${token.assigned}" class="badge bg-info">
-                                        <i class="bi bi-robot"></i>
-                                        <span th:text="${token.assignedAgentName ?: token.assignedAgentId}"></span>
-                                    </span>
-                                    <span th:unless="${token.assigned}" class="text-muted">未分配</span>
+                                    <span th:if="${token.usageCount > 0}" class="badge bg-info">使用中</span>
+                                    <span th:unless="${token.usageCount > 0}" class="text-muted">空闲</span>
                                 </td>
                                 <td th:text="${token.usageCount}"></td>
                                 <td>

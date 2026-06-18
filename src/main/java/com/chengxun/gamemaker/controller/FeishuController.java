@@ -2,41 +2,147 @@ package com.chengxun.gamemaker.controller;
 
 import com.chengxun.gamemaker.agent.Agent;
 import com.chengxun.gamemaker.agent.ProducerAgent;
+import com.chengxun.gamemaker.config.AppConfig;
+import com.chengxun.gamemaker.feishu.FeishuAiBridgeService;
 import com.chengxun.gamemaker.feishu.FeishuBotService;
 import com.chengxun.gamemaker.manager.AgentManager;
 import com.chengxun.gamemaker.manager.ProjectManager;
 import com.chengxun.gamemaker.model.GameProject;
+import com.chengxun.gamemaker.web.entity.ApprovalRequest;
 import com.chengxun.gamemaker.web.entity.Pipeline;
+import com.chengxun.gamemaker.web.entity.User;
+import com.chengxun.gamemaker.web.service.ApprovalService;
 import com.chengxun.gamemaker.web.service.PipelineService;
+import com.chengxun.gamemaker.web.service.UserService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.Map;
 
 @RestController
-@RequestMapping("/feishu")
+@RequestMapping("/api/feishu")
 public class FeishuController {
 
     private static final Logger log = LoggerFactory.getLogger(FeishuController.class);
 
     private final FeishuBotService feishuService;
+    private final FeishuAiBridgeService aiBridgeService;
     private final AgentManager agentManager;
     private final ProjectManager projectManager;
     private final PipelineService pipelineService;
+    private final ApprovalService approvalService;
+    private final UserService userService;
+    private final AppConfig appConfig;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public FeishuController(FeishuBotService feishuService, AgentManager agentManager,
-                            ProjectManager projectManager, PipelineService pipelineService) {
+    /** 飞书卡片回调的管理员用户ID，用于以管理员身份执行审批 */
+    private static final Long FEISHU_SYSTEM_ADMIN_ID = 1L;
+
+    public FeishuController(FeishuBotService feishuService, FeishuAiBridgeService aiBridgeService,
+                            AgentManager agentManager, ProjectManager projectManager,
+                            PipelineService pipelineService, ApprovalService approvalService,
+                            UserService userService, AppConfig appConfig) {
         this.feishuService = feishuService;
+        this.aiBridgeService = aiBridgeService;
         this.agentManager = agentManager;
         this.projectManager = projectManager;
         this.pipelineService = pipelineService;
+        this.approvalService = approvalService;
+        this.userService = userService;
+        this.appConfig = appConfig;
+    }
+
+    // ===== 飞书 AI 助手绑定 =====
+
+    /**
+     * 生成飞书绑定验证码
+     * 用户在个人资料页面点击"生成验证码"后调用
+     *
+     * @param authentication 认证信息
+     * @return 绑定验证码
+     */
+    @PostMapping("/bind-code")
+    public Map<String, Object> generateBindCode(Authentication authentication) {
+        if (authentication == null) {
+            return Map.of("success", false, "message", "未登录");
+        }
+        try {
+            User user = userService.getUserByUsername(authentication.getName());
+            if (user == null) {
+                return Map.of("success", false, "message", "用户不存在");
+            }
+            String code = aiBridgeService.generateBindCode(user.getId());
+            return Map.of("success", true, "code", code, "message", "验证码已生成，有效期30分钟");
+        } catch (Exception e) {
+            log.error("Failed to generate bind code", e);
+            return Map.of("success", false, "message", "生成验证码失败");
+        }
+    }
+
+    /**
+     * 查询飞书绑定状态
+     *
+     * @param authentication 认证信息
+     * @return 绑定状态
+     */
+    @GetMapping("/bind-status")
+    public Map<String, Object> getBindStatus(Authentication authentication) {
+        if (authentication == null) {
+            return Map.of("success", false, "message", "未登录");
+        }
+        try {
+            User user = userService.getUserByUsername(authentication.getName());
+            if (user == null) {
+                return Map.of("success", false, "message", "用户不存在");
+            }
+            // 查询该用户是否有已绑定的飞书账号
+            boolean bound = aiBridgeService.isUserBound(user.getId());
+            if (bound) {
+                String bindTime = aiBridgeService.getUserBindTime(user.getId());
+                return Map.of("success", true, "bound", true, "bindTime", bindTime != null ? bindTime : "");
+            }
+            return Map.of("success", true, "bound", false);
+        } catch (Exception e) {
+            return Map.of("success", false, "message", "查询失败");
+        }
+    }
+
+    /**
+     * 解绑飞书账号
+     *
+     * @param authentication 认证信息
+     * @return 解绑结果
+     */
+    @PostMapping("/unbind")
+    public Map<String, Object> unbindFeishu(Authentication authentication) {
+        if (authentication == null) {
+            return Map.of("success", false, "message", "未登录");
+        }
+        try {
+            User user = userService.getUserByUsername(authentication.getName());
+            if (user == null) {
+                return Map.of("success", false, "message", "用户不存在");
+            }
+            boolean result = aiBridgeService.unbindUserByUserId(user.getId());
+            if (result) {
+                return Map.of("success", true, "message", "已解绑");
+            }
+            return Map.of("success", false, "message", "未绑定或解绑失败");
+        } catch (Exception e) {
+            return Map.of("success", false, "message", "解绑失败");
+        }
     }
 
     // ===== 飞书事件订阅回调 =====
@@ -45,6 +151,21 @@ public class FeishuController {
     public ResponseEntity<Map<String, Object>> handleEvent(@RequestBody String body) {
         try {
             JsonNode node = objectMapper.readTree(body);
+
+            // 处理加密请求
+            if (node.has("encrypt")) {
+                String encryptKey = appConfig.getFeishu().getEncryptKey();
+                if (encryptKey == null || encryptKey.isEmpty()) {
+                    log.warn("Feishu encrypt key not configured, cannot decrypt event");
+                    Map<String, Object> errResp = new HashMap<>();
+                    errResp.put("code", -1);
+                    errResp.put("msg", "encrypt key not configured");
+                    return ResponseEntity.ok(errResp);
+                }
+                String decrypted = decryptFeishuEncrypt(node.get("encrypt").asText(), encryptKey);
+                log.info("Feishu event decrypted: {}", decrypted);
+                node = objectMapper.readTree(decrypted);
+            }
 
             // 处理 URL 验证请求
             if (node.has("type") && "url_verification".equals(node.get("type").asText())) {
@@ -79,24 +200,314 @@ public class FeishuController {
         }
     }
 
+    // ===== 飞书卡片交互回调 =====
+
+    /**
+     * 处理飞书卡片按钮点击回调
+     * 当用户点击审批卡片上的「同意」或「拒绝」按钮时，飞书会调用此接口
+     *
+     * 回调数据格式：
+     * {
+     *   "action": {
+     *     "value": { "action": "approve", "requestId": 123 },
+     *     "tag": "button"
+     *   },
+     *   "open_id": "ou_xxx",
+     *   "tenant_key": "xxx"
+     * }
+     */
+    @PostMapping("/card/callback")
+    public ResponseEntity<Map<String, Object>> handleCardCallback(@RequestBody String body) {
+        try {
+            JsonNode node = objectMapper.readTree(body);
+            log.info("Feishu card callback received: {}", body);
+
+            // 处理加密请求（飞书开启数据加密后，所有回调都是加密的）
+            if (node.has("encrypt")) {
+                String encryptKey = appConfig.getFeishu().getEncryptKey();
+                if (encryptKey == null || encryptKey.isEmpty()) {
+                    log.warn("Feishu encrypt key not configured, cannot decrypt callback");
+                    return buildCardCallbackResponse("❌ 系统未配置飞书加密密钥");
+                }
+                String decrypted = decryptFeishuEncrypt(node.get("encrypt").asText(), encryptKey);
+                log.info("Feishu card callback decrypted: {}", decrypted);
+                node = objectMapper.readTree(decrypted);
+            }
+
+            // 处理 URL 验证请求（飞书配置回调地址时的验证）
+            if (node.has("type") && "url_verification".equals(node.get("type").asText())) {
+                Map<String, Object> response = new HashMap<>();
+                response.put("challenge", node.get("challenge").asText());
+                log.info("Card callback URL verification challenge responded");
+                return ResponseEntity.ok(response);
+            }
+
+            // 提取按钮的 value 信息
+            // 【修复】加密回调结构为 event.action.value，非加密回调为 action.value
+            JsonNode actionNode = node.path("action");
+            JsonNode valueNode = actionNode.path("value");
+            String openId = node.path("open_id").asText("");
+            // 如果是加密回调（schema 2.0），从 event.action.value 获取
+            if (valueNode.isMissingNode() && node.has("event")) {
+                JsonNode eventNode = node.path("event");
+                actionNode = eventNode.path("action");
+                valueNode = actionNode.path("value");
+                // 从 event.operator.open_id 获取用户ID
+                JsonNode operatorNode = eventNode.path("operator");
+                if (operatorNode.has("open_id")) {
+                    openId = operatorNode.path("open_id").asText("");
+                }
+            }
+
+            String action = valueNode.path("action").asText();
+            // 【修复】requestId 可能是数字或字符串类型，需要兼容处理
+            long requestId = parseLong(valueNode.path("requestId"));
+            long expireTime = parseLong(valueNode.path("expire"));
+            String sig = valueNode.path("sig").asText(null);
+            String actionId = valueNode.path("actionId").asText(null);
+
+            // 如果没有 requestId 但有 actionId，跳转到审批页面
+            if (requestId == 0 && actionId != null && !actionId.isEmpty()) {
+                boolean approved = "approve".equals(action);
+                String resultMsg = approved
+                    ? "✅ 已确认同意，请前往审批页面完成最终审批"
+                    : "❌ 已确认拒绝，请前往审批页面完成最终审批";
+                log.info("Feishu card action without requestId: actionId={}, action={}", actionId, action);
+                return buildCardCallbackResponse(resultMsg);
+            }
+
+            if (requestId == 0) {
+                log.warn("Card callback missing requestId");
+                return buildCardCallbackResponse("❌ 无效的审批请求");
+            }
+
+            // 1. 检查过期时间
+            if (expireTime > 0 && System.currentTimeMillis() > expireTime) {
+                log.warn("Approval card expired: requestId={}, expireTime={}, now={}", requestId, expireTime, System.currentTimeMillis());
+                return buildCardCallbackResponse("⏰ 审批已过期\n\n该审批卡片已失效，请前往系统管理页面处理。");
+            }
+
+            // 2. 验证签名
+            String callbackToken = appConfig.getFeishu().getCallbackToken();
+            if (callbackToken != null && !callbackToken.isEmpty()) {
+                if (sig == null || sig.isEmpty()) {
+                    log.warn("Approval card missing signature: requestId={}", requestId);
+                    return buildCardCallbackResponse("❌ 签名缺失，无法验证审批卡片合法性");
+                }
+                String expectedSig = signCallback(requestId, expireTime, callbackToken);
+                if (!sig.equals(expectedSig)) {
+                    log.warn("Approval card signature mismatch: requestId={}", requestId);
+                    return buildCardCallbackResponse("❌ 签名验证失败，审批卡片可能被篡改");
+                }
+            }
+
+            // 3. 获取飞书用户 open_id，记录到审批意见中
+            // 【修复】避免从 Redis 缓存获取 User 对象导致懒加载异常
+            String approverName = "飞书审批(" + openId + ")";
+
+            // 使用系统管理员身份执行审批
+            Long approverId = FEISHU_SYSTEM_ADMIN_ID;
+
+            boolean approved = "approve".equals(action);
+
+            try {
+                ApprovalRequest approvalRequest = approvalService.approve(
+                    requestId,
+                    approverId.toString(),
+                    approverName,
+                    approved,
+                    approved ? "飞书卡片快速审批通过" : "飞书卡片快速审批拒绝"
+                );
+
+                String resultMsg = approved
+                    ? "✅ 审批已通过！请求ID: " + requestId
+                    : "❌ 审批已拒绝！请求ID: " + requestId;
+
+                log.info("Feishu card approval processed: requestId={}, action={}, approver={}", requestId, action, approverName);
+
+                // 返回更新后的卡片内容
+                return buildCardCallbackResponse(resultMsg);
+            } catch (Exception e) {
+                log.error("Failed to process approval from Feishu card", e);
+                return buildCardCallbackResponse("❌ 审批处理失败: " + e.getMessage());
+            }
+        } catch (Exception e) {
+            log.error("Failed to handle Feishu card callback", e);
+            return buildCardCallbackResponse("❌ 系统错误");
+        }
+    }
+
+    /**
+     * 生成审批回调签名
+     * 使用 HMAC-SHA256 对 requestId:expire 进行签名
+     */
+    private String signCallback(Long requestId, long expireTime, String callbackToken) {
+        if (callbackToken == null || callbackToken.isEmpty()) {
+            return null;
+        }
+        try {
+            String data = requestId + ":" + expireTime;
+            Mac mac = Mac.getInstance("HmacSHA256");
+            mac.init(new SecretKeySpec(callbackToken.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+            byte[] signData = mac.doFinal(data.getBytes(StandardCharsets.UTF_8));
+            return Base64.getEncoder().encodeToString(signData);
+        } catch (Exception e) {
+            log.error("Failed to sign callback", e);
+            return null;
+        }
+    }
+
+    /**
+     * 解密飞书加密回调数据
+     * 飞书开启数据加密后，回调请求体中的 encrypt 字段是 Base64 编码的 AES-256-CBC 加密数据
+     * 解密过程：Base64 解码 → 前 16 字节为 IV → 剩余为密文 → AES-256-CBC 解密
+     *
+     * @param encryptData Base64 编码的加密数据
+     * @param encryptKey 飞书配置的加密密钥
+     * @return 解密后的 JSON 字符串
+     */
+    private String decryptFeishuEncrypt(String encryptData, String encryptKey) {
+        try {
+            byte[] decoded = Base64.getDecoder().decode(encryptData);
+            // 前 16 字节是 IV
+            byte[] iv = new byte[16];
+            byte[] encrypted = new byte[decoded.length - 16];
+            System.arraycopy(decoded, 0, iv, 0, 16);
+            System.arraycopy(decoded, 16, encrypted, 0, encrypted.length);
+
+            // 密钥是 encryptKey 的 SHA-256 哈希
+            java.security.MessageDigest sha = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] keyBytes = sha.digest(encryptKey.getBytes(StandardCharsets.UTF_8));
+
+            javax.crypto.Cipher cipher = javax.crypto.Cipher.getInstance("AES/CBC/PKCS5Padding");
+            cipher.init(javax.crypto.Cipher.DECRYPT_MODE,
+                new javax.crypto.spec.SecretKeySpec(keyBytes, "AES"),
+                new javax.crypto.spec.IvParameterSpec(iv));
+
+            byte[] decrypted = cipher.doFinal(encrypted);
+            return new String(decrypted, StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            log.error("Failed to decrypt Feishu encrypt data: {}", e.getMessage(), e);
+            throw new RuntimeException("解密飞书回调数据失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 构建卡片回调响应
+     * 飞书卡片回调响应格式：
+     * 1. {"toast": {"type": "success", "content": "提示内容"}} - 显示toast提示
+     * 2. 返回新的卡片JSON - 更新卡片内容
+     *
+     * 【重要】必须返回toast格式，否则飞书会一直转圈等待响应
+     */
+    private ResponseEntity<Map<String, Object>> buildCardCallbackResponse(String message) {
+        // 【修复】返回toast格式响应
+        Map<String, Object> toast = new HashMap<>();
+        toast.put("type", message.startsWith("✅") ? "success" : "info");
+        toast.put("content", message);
+
+        Map<String, Object> response = new HashMap<>();
+        response.put("toast", toast);
+        return ResponseEntity.ok(response);
+    }
+
+    /**
+     * 安全解析 JsonNode 为 long
+     * 兼容数字和字符串两种类型
+     *
+     * @param node JSON 节点
+     * @return 解析后的 long 值，解析失败返回 0
+     */
+    private long parseLong(JsonNode node) {
+        if (node == null || node.isMissingNode() || node.isNull()) {
+            return 0;
+        }
+        if (node.isLong() || node.isInt()) {
+            return node.asLong();
+        }
+        if (node.isTextual()) {
+            try {
+                return Long.parseLong(node.asText());
+            } catch (NumberFormatException e) {
+                return 0;
+            }
+        }
+        return node.asLong(0);
+    }
+
     private void handleMessageEvent(JsonNode event) {
         try {
             JsonNode message = event.get("message");
             String chatId = message.get("chat_id").asText();
             String messageId = message.get("message_id").asText();
             String msgType = message.get("message_type").asText();
+            String chatType = message.has("chat_type") ? message.get("chat_type").asText() : "unknown";
+
+            log.info("handleMessageEvent: chatId={}, msgType={}, chatType={}", chatId, msgType, chatType);
 
             if (!"text".equals(msgType)) {
                 log.info("Ignoring non-text message: {}", msgType);
                 return;
             }
 
+            // 提取发送者 open_id
+            String openId = null;
+            if (event.has("sender")) {
+                openId = event.get("sender").path("sender_id").path("open_id").asText(null);
+            }
+
             JsonNode content = objectMapper.readTree(message.get("content").asText());
             String text = content.get("text").asText().trim();
 
-            log.info("Received message from Feishu chat {}: {}", chatId, text);
+            // 移除 @机器人 的 mention 标记
+            text = text.replaceAll("@_user_\\d+", "").trim();
 
-            // 处理命令
+            log.info("Received message from Feishu chat {} (openId={}, chatType={}): {}", chatId, openId, chatType, text);
+
+            // 处理绑定/解绑命令
+            if (openId != null && text.startsWith("绑定")) {
+                String code = text.substring(2).trim();
+                log.info("Processing bind command: openId={}, code={}", openId, code);
+                String result = aiBridgeService.bindUser(openId, code);
+                feishuService.sendMessage(chatId, result);
+                return;
+            }
+            if (openId != null && "解绑".equals(text)) {
+                String result = aiBridgeService.unbindUser(openId);
+                feishuService.sendMessage(chatId, result);
+                return;
+            }
+
+            // 处理帮助命令
+            if ("帮助".equals(text) || "help".equalsIgnoreCase(text)) {
+                handleHelp(chatId);
+                return;
+            }
+
+            // 检查是否已绑定（群聊和私聊都支持）
+            if (openId != null && aiBridgeService.isBound(openId)) {
+                log.info("User is bound, forwarding to AI assistant: openId={}, text={}", openId, text);
+                // 异步处理 AI 请求，立即返回响应给飞书（避免飞书重试）
+                String capturedChatId = chatId;
+                String capturedOpenId = openId;
+                String capturedText = text;
+                String capturedMessageId = messageId;
+                CompletableFuture.runAsync(() -> {
+                    try {
+                        String aiResponse = aiBridgeService.processMessage(capturedOpenId, capturedText, capturedMessageId);
+                        log.info("AI response received, length={}", aiResponse != null ? aiResponse.length() : 0);
+                        // 使用回复消息形式发送，@提问者
+                        feishuService.sendReplyCardMessage(capturedMessageId, capturedOpenId, "🤖 AI 助手", "blue", aiResponse);
+                    } catch (Exception e) {
+                        log.error("Failed to process AI message: {}", e.getMessage(), e);
+                        feishuService.sendCardMessageWithMention(capturedChatId, capturedOpenId, "🤖 AI 助手", "red", "处理消息时出错：" + e.getMessage());
+                    }
+                });
+                return;
+            }
+
+            log.info("User not bound or openId null, processing as command: openId={}, text={}", openId, text);
+            // 处理原有命令
             processCommand(chatId, text);
         } catch (Exception e) {
             log.error("Failed to handle message event", e);
@@ -112,7 +523,10 @@ public class FeishuController {
             feishuService.setDefaultChatId(chatId);
 
             feishuService.sendMessage(chatId, "👋 你好！我是 ChengXun Game Maker 的智能助手。\n\n" +
-                "我可以帮助你管理游戏开发团队，支持以下命令：\n\n" +
+                "**🤖 AI 助手**\n" +
+                "- 绑定账号后可直接向我提问\n" +
+                "- 发送「绑定 <验证码>」绑定账号\n" +
+                "- 发送「帮助」查看所有功能\n\n" +
                 "**项目管理**\n" +
                 "- `创建项目 <名称> <目录>` - 创建新游戏项目\n" +
                 "- `项目列表` - 查看所有项目\n\n" +
@@ -163,6 +577,10 @@ public class FeishuController {
 
     private void handleHelp(String chatId) {
         feishuService.sendMessage(chatId, "📖 **可用命令**\n\n" +
+            "**🤖 AI 助手**\n" +
+            "- `绑定 <验证码>` - 绑定系统账号\n" +
+            "- `解绑` - 解除绑定\n" +
+            "- 绑定后直接发消息即可使用 AI 助手\n\n" +
             "**项目管理**\n" +
             "- `创建项目 <名称> <目录>` - 创建新游戏项目\n" +
             "- `项目列表` - 查看所有项目\n\n" +

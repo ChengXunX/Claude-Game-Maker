@@ -301,6 +301,98 @@ public final class PermissionConstants {
     /** 管理技能（复数） */
     public static final String SKILLS_MANAGE = "skills:manage";
 
+    // ===== 检查点权限 =====
+
+    /** 查看检查点 */
+    public static final String CHECKPOINT_VIEW = "checkpoint:view";
+
+    /** 管理检查点（创建、恢复、删除） */
+    public static final String CHECKPOINT_MANAGE = "checkpoint:manage";
+
+    // ===== 目标/裁判权限 =====
+
+    /** 查看目标 */
+    public static final String GOAL_VIEW = "goal:view";
+
+    /** 管理目标（设置、评估、完成） */
+    public static final String GOAL_MANAGE = "goal:manage";
+
+    // ===== 知识提取权限 =====
+
+    /** 执行 Dream 知识提取 */
+    public static final String DREAM_EXECUTE = "dream:execute";
+
+    // ===== 子代理权限 =====
+
+    /** 查看子代理 */
+    public static final String SUBAGENT_VIEW = "subagent:view";
+
+    /** 创建子代理 */
+    public static final String SUBAGENT_CREATE = "subagent:create";
+
+    /** 管理子代理（终止、清理） */
+    public static final String SUBAGENT_MANAGE = "subagent:manage";
+
+    // ===== Skill 发现权限 =====
+
+    /** 发现文件系统 Skill */
+    public static final String SKILL_DISCOVER = "skill:discover";
+
+    // ===== Distill 工作流发现权限 =====
+
+    /** 执行 Distill 工作流发现 */
+    public static final String DISTILL_EXECUTE = "distill:execute";
+
+    // ===== 快照回滚权限 =====
+
+    /** 查看快照 */
+    public static final String SNAPSHOT_VIEW = "snapshot:view";
+
+    /** 管理快照（创建、恢复、删除、undo） */
+    public static final String SNAPSHOT_MANAGE = "snapshot:manage";
+
+    // ===== 会话分叉权限 =====
+
+    /** 查看会话分叉 */
+    public static final String FORK_VIEW = "fork:view";
+
+    /** 创建会话分叉 */
+    public static final String FORK_CREATE = "fork:create";
+
+    /** 管理会话分叉（合并、丢弃） */
+    public static final String FORK_MANAGE = "fork:manage";
+
+    // ===== 工具权限管理 =====
+
+    /** 管理 Agent 工具权限 */
+    public static final String TOOL_PERMISSION_MANAGE = "tool:permission:manage";
+
+    // ===== 多轮推理权限 =====
+
+    /** 查看多轮推理记录 */
+    public static final String REASONING_VIEW = "reasoning:view";
+
+    /** 管理多轮推理（触发、配置） */
+    public static final String REASONING_MANAGE = "reasoning:manage";
+
+    // ===== 质量预测权限 =====
+
+    /** 查看质量预测 */
+    public static final String QUALITY_VIEW = "quality:view";
+
+    /** 执行质量预测 */
+    public static final String QUALITY_PREDICT = "quality:predict";
+
+    // ===== 迭代适应权限 =====
+
+    /** 应用迭代策略建议 */
+    public static final String ITERATION_ADAPT = "iteration:adapt";
+
+    // ===== 知识图谱权限 =====
+
+    /** 查看和构建知识图谱 */
+    public static final String KNOWLEDGE_GRAPH = "knowledge:graph";
+
     // ===== 特殊权限 =====
 
     /** 超级管理员权限（包含所有权限） */
@@ -414,6 +506,22 @@ public final class PermissionConstants {
             case PROJECTS_MANAGE -> "管理项目";
             case SKILLS_MANAGE -> "管理技能";
             case ROLES_MANAGE -> "管理角色";
+            case CHECKPOINT_VIEW -> "查看检查点";
+            case CHECKPOINT_MANAGE -> "管理检查点";
+            case GOAL_VIEW -> "查看目标";
+            case GOAL_MANAGE -> "管理目标";
+            case DREAM_EXECUTE -> "执行知识提取";
+            case SUBAGENT_VIEW -> "查看子代理";
+            case SUBAGENT_CREATE -> "创建子代理";
+            case SUBAGENT_MANAGE -> "管理子代理";
+            case SKILL_DISCOVER -> "发现Skill";
+            case DISTILL_EXECUTE -> "执行工作流发现";
+            case SNAPSHOT_VIEW -> "查看快照";
+            case SNAPSHOT_MANAGE -> "管理快照";
+            case FORK_VIEW -> "查看会话分叉";
+            case FORK_CREATE -> "创建会话分叉";
+            case FORK_MANAGE -> "管理会话分叉";
+            case TOOL_PERMISSION_MANAGE -> "管理工具权限";
             default -> permission;
         };
     }
@@ -458,6 +566,14 @@ public final class PermissionConstants {
                 case "resource" -> "资源管理";
                 case "review" -> "代码审查";
                 case "search" -> "搜索";
+                case "checkpoint" -> "检查点管理";
+                case "goal" -> "目标管理";
+                case "dream" -> "知识提取";
+                case "subagent" -> "子代理管理";
+                case "distill" -> "工作流发现";
+                case "snapshot" -> "快照管理";
+                case "fork" -> "会话分叉";
+                case "tool" -> "工具权限";
                 default -> module;
             };
         }

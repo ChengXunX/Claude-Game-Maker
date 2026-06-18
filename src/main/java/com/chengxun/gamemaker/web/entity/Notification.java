@@ -69,7 +69,8 @@ public class Notification {
         TASK,       // 任务相关
         AGENT,      // Agent相关
         SYSTEM,     // 系统通知
-        APPROVAL    // 审批相关
+        APPROVAL,   // 审批相关
+        WORKFLOW    // 工作流相关
     }
 
     public enum NotificationChannel {

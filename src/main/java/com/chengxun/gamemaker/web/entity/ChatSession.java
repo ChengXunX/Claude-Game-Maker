@@ -32,6 +32,10 @@ public class ChatSession {
     @Column(name = "title", length = 200, nullable = false)
     private String title = "新对话";
 
+    /** 会话来源：web=网页端, feishu=飞书端 */
+    @Column(name = "source", length = 20)
+    private String source = "web";
+
     /** 创建时间 */
     @Column(name = "created_at")
     private LocalDateTime createdAt = LocalDateTime.now();
@@ -60,6 +64,9 @@ public class ChatSession {
 
     public String getTitle() { return title; }
     public void setTitle(String title) { this.title = title; }
+
+    public String getSource() { return source; }
+    public void setSource(String source) { this.source = source; }
 
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }

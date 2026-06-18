@@ -98,7 +98,7 @@ CREATE TABLE IF NOT EXISTS agent_logs (
     agent_name VARCHAR(100),
     log_level VARCHAR(20) DEFAULT 'INFO',
     action VARCHAR(100),
-    summary VARCHAR(500),
+    summary TEXT,
     message TEXT,
     details TEXT,
     project_id VARCHAR(100),
@@ -575,24 +575,47 @@ CREATE INDEX IF NOT EXISTS idx_enabled ON notification_templates(enabled);
 -- API Token 表
 CREATE TABLE IF NOT EXISTS api_tokens (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    user_id BIGINT NOT NULL,
-    token VARCHAR(255) NOT NULL UNIQUE,
-    name VARCHAR(100),
-    api_key TEXT,
+    user_id BIGINT,
+    token VARCHAR(255) DEFAULT '',
+    token_name VARCHAR(100) NOT NULL DEFAULT '',
+    api_key VARCHAR(255) NOT NULL DEFAULT '',
     api_url VARCHAR(500),
     model VARCHAR(100),
-    max_tokens INT DEFAULT 4096,
+    max_tokens INT,
     context_window INT DEFAULT 200000,
-    agent_id VARCHAR(50),
-    permissions TEXT,
+    priority INT,
+    agent_tags VARCHAR(500),
+    usage_count BIGINT,
+    total_tokens_used BIGINT DEFAULT 0,
+    quota_type VARCHAR(20) DEFAULT 'UNLIMITED',
+    quota_total BIGINT DEFAULT 0,
+    window_seconds INT DEFAULT 0,
+    max_concurrent_agents INT DEFAULT 0,
+    provider_type VARCHAR(30) DEFAULT 'ANTHROPIC',
+    resource_type VARCHAR(20) DEFAULT 'TEXT',
+    description VARCHAR(500),
     status VARCHAR(20) DEFAULT 'ACTIVE',
+    created_by VARCHAR(50),
+    name VARCHAR(100),
+    permissions TEXT,
     expires_at TIMESTAMP NULL,
     last_used_at TIMESTAMP NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NULL
 );
 CREATE INDEX IF NOT EXISTS idx_api_tokens_user_id ON api_tokens(user_id);
 CREATE INDEX IF NOT EXISTS idx_api_tokens_token ON api_tokens(token);
 CREATE INDEX IF NOT EXISTS idx_api_tokens_expires_at ON api_tokens(expires_at);
+CREATE UNIQUE INDEX IF NOT EXISTS uk_token ON api_tokens(token);
+
+-- Token 使用记录表（滑动窗口配额计算）
+CREATE TABLE IF NOT EXISTS token_usage_records (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    token_id BIGINT NOT NULL,
+    tokens_used BIGINT NOT NULL,
+    used_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_usage_token_time ON token_usage_records(token_id, used_at);
 
 -- Token 使用统计表
 CREATE TABLE IF NOT EXISTS token_usage (
@@ -663,6 +686,7 @@ CREATE TABLE IF NOT EXISTS agent_presets (
     role VARCHAR(50) NOT NULL,
     description VARCHAR(500),
     reasoning_depth INT DEFAULT 3,
+    thinking_mode INT DEFAULT NULL,
     capabilities TEXT,
     tags TEXT,
     supported_file_types TEXT,
@@ -672,7 +696,7 @@ CREATE TABLE IF NOT EXISTS agent_presets (
     supports_code_execution BOOLEAN DEFAULT TRUE,
     supports_file_operations BOOLEAN DEFAULT TRUE,
     api_provider VARCHAR(50) DEFAULT 'anthropic',
-    prompt TEXT,
+    prompt CLOB,
     notify_targets VARCHAR(500) DEFAULT 'producer',
     reviewer VARCHAR(50),
     role_name VARCHAR(100),
@@ -786,6 +810,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     user_id BIGINT NOT NULL,
     title VARCHAR(200) NOT NULL DEFAULT '新对话',
+    source VARCHAR(20) DEFAULT 'web',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -802,6 +827,8 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     role VARCHAR(20) NOT NULL,
     content TEXT,
     thinking TEXT,
+    feishu_message_id VARCHAR(50),
+    feishu_open_id VARCHAR(100),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE
 );
@@ -1015,3 +1042,232 @@ CREATE TABLE IF NOT EXISTS knowledge_base (
 CREATE INDEX IF NOT EXISTS idx_kb_category ON knowledge_base(category);
 CREATE INDEX IF NOT EXISTS idx_kb_source ON knowledge_base(source);
 CREATE INDEX IF NOT EXISTS idx_kb_enabled ON knowledge_base(enabled);
+
+-- ===== 项目讨论系统 =====
+
+CREATE TABLE IF NOT EXISTS project_discussions (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    project_id VARCHAR(100) NOT NULL,
+    user_id BIGINT NOT NULL,
+    username VARCHAR(50),
+    title VARCHAR(200),
+    status VARCHAR(30) NOT NULL DEFAULT 'ACTIVE',
+    meeting_minutes TEXT,
+    synced_to_producer BOOLEAN DEFAULT FALSE,
+    synced_at TIMESTAMP NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_pd_project ON project_discussions(project_id);
+CREATE INDEX IF NOT EXISTS idx_pd_user ON project_discussions(user_id);
+CREATE INDEX IF NOT EXISTS idx_pd_status ON project_discussions(status);
+CREATE INDEX IF NOT EXISTS idx_pd_updated ON project_discussions(updated_at);
+
+CREATE TABLE IF NOT EXISTS project_discussion_messages (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    discussion_id BIGINT NOT NULL,
+    role VARCHAR(20) NOT NULL,
+    content TEXT NOT NULL,
+    sender VARCHAR(50),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_pdm_discussion ON project_discussion_messages(discussion_id);
+CREATE INDEX IF NOT EXISTS idx_pdm_created ON project_discussion_messages(created_at);
+
+CREATE TABLE IF NOT EXISTS feishu_user_bindings (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    open_id VARCHAR(100),
+    user_id BIGINT NOT NULL,
+    binding_code VARCHAR(10),
+    status VARCHAR(20) DEFAULT 'PENDING',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uk_fub_open_id ON feishu_user_bindings(open_id);
+CREATE INDEX IF NOT EXISTS idx_fub_user_id ON feishu_user_bindings(user_id);
+CREATE INDEX IF NOT EXISTS idx_fub_binding_code ON feishu_user_bindings(binding_code);
+
+-- 多轮推理记录表
+CREATE TABLE IF NOT EXISTS multi_turn_records (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    agent_id VARCHAR(200) NOT NULL,
+    project_id VARCHAR(200),
+    task_id VARCHAR(200),
+    task_description TEXT,
+    turn_number INT DEFAULT 1,
+    max_turns INT DEFAULT 3,
+    think_result TEXT,
+    plan_result TEXT,
+    act_result TEXT,
+    verify_result TEXT,
+    verify_passed BOOLEAN,
+    status VARCHAR(20) DEFAULT 'THINKING',
+    duration_ms BIGINT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_mtr_agent ON multi_turn_records(agent_id);
+CREATE INDEX IF NOT EXISTS idx_mtr_project ON multi_turn_records(project_id);
+CREATE INDEX IF NOT EXISTS idx_mtr_status ON multi_turn_records(status);
+CREATE INDEX IF NOT EXISTS idx_mtr_time ON multi_turn_records(created_at);
+
+-- 迭代适应记录表
+CREATE TABLE IF NOT EXISTS iteration_adapt_records (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    project_id VARCHAR(200) NOT NULL,
+    phase VARCHAR(20),
+    version VARCHAR(50),
+    iteration_count INT,
+    old_strategy VARCHAR(50),
+    new_strategy VARCHAR(50),
+    old_pass_score INT,
+    new_pass_score INT,
+    reason VARCHAR(500),
+    applied BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_iar_project ON iteration_adapt_records(project_id);
+CREATE INDEX IF NOT EXISTS idx_iar_phase ON iteration_adapt_records(phase);
+CREATE INDEX IF NOT EXISTS idx_iar_time ON iteration_adapt_records(created_at);
+
+-- 质量预测记录表
+CREATE TABLE IF NOT EXISTS quality_predictions (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    project_id VARCHAR(200) NOT NULL,
+    project_name VARCHAR(200),
+    version VARCHAR(50),
+    pass_probability INT,
+    risk_level VARCHAR(20),
+    risk_factors TEXT,
+    improvement_suggestions TEXT,
+    factors_detail TEXT,
+    historical_pass_rate DOUBLE,
+    milestone_completion_rate DOUBLE,
+    verification_fail_count INT,
+    avg_agent_error_rate DOUBLE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_qp_project ON quality_predictions(project_id);
+CREATE INDEX IF NOT EXISTS idx_qp_version ON quality_predictions(version);
+CREATE INDEX IF NOT EXISTS idx_qp_time ON quality_predictions(created_at);
+
+-- 知识图谱节点表
+CREATE TABLE IF NOT EXISTS knowledge_graph_nodes (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    project_id VARCHAR(200) NOT NULL,
+    node_type VARCHAR(30) NOT NULL,
+    node_ref_id VARCHAR(200),
+    display_name VARCHAR(200),
+    properties TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_kgn_project ON knowledge_graph_nodes(project_id);
+CREATE INDEX IF NOT EXISTS idx_kgn_type ON knowledge_graph_nodes(node_type);
+CREATE INDEX IF NOT EXISTS idx_kgn_ref ON knowledge_graph_nodes(node_ref_id);
+
+-- 知识图谱边表
+CREATE TABLE IF NOT EXISTS knowledge_graph_edges (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    project_id VARCHAR(200) NOT NULL,
+    from_node_id BIGINT NOT NULL,
+    to_node_id BIGINT NOT NULL,
+    relation_type VARCHAR(30) NOT NULL,
+    properties TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_kge_project ON knowledge_graph_edges(project_id);
+CREATE INDEX IF NOT EXISTS idx_kge_from ON knowledge_graph_edges(from_node_id);
+CREATE INDEX IF NOT EXISTS idx_kge_to ON knowledge_graph_edges(to_node_id);
+CREATE INDEX IF NOT EXISTS idx_kge_type ON knowledge_graph_edges(relation_type);
+
+-- 设计审查记录表
+CREATE TABLE IF NOT EXISTS design_review_records (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    project_id VARCHAR(200) NOT NULL,
+    project_name VARCHAR(200),
+    score INT,
+    passed BOOLEAN,
+    summary TEXT,
+    strengths TEXT,
+    issues TEXT,
+    report TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_drr_project ON design_review_records(project_id);
+CREATE INDEX IF NOT EXISTS idx_drr_time ON design_review_records(created_at);
+
+-- ============================================
+-- MCP (Model Context Protocol) 表
+-- ============================================
+
+-- MCP 服务器配置表
+CREATE TABLE IF NOT EXISTS mcp_servers (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    description TEXT,
+    transport_type VARCHAR(20) NOT NULL,
+    command VARCHAR(500),
+    args TEXT,
+    env TEXT,
+    url VARCHAR(500),
+    headers TEXT,
+    ai_api_key VARCHAR(500),
+    ai_api_url VARCHAR(500),
+    ai_model VARCHAR(100),
+    category VARCHAR(50),
+    auth_mode VARCHAR(20) DEFAULT 'env',
+    auth_header_name VARCHAR(100) DEFAULT 'Authorization',
+    required_params TEXT,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    `template` BOOLEAN NOT NULL DEFAULT FALSE,
+    template_key VARCHAR(50),
+    project_id VARCHAR(100),
+    tool_count INT NOT NULL DEFAULT 0,
+    last_test_at TIMESTAMP NULL,
+    last_test_result VARCHAR(500),
+    connected BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mcp_server_template_key ON mcp_servers(template_key);
+CREATE INDEX IF NOT EXISTS idx_mcp_server_project ON mcp_servers(project_id);
+CREATE INDEX IF NOT EXISTS idx_mcp_server_enabled ON mcp_servers(enabled);
+CREATE INDEX IF NOT EXISTS idx_mcp_server_name ON mcp_servers(name);
+
+-- MCP 工具表
+CREATE TABLE IF NOT EXISTS mcp_tools (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    server_id BIGINT NOT NULL,
+    tool_name VARCHAR(100) NOT NULL,
+    display_name VARCHAR(100),
+    description TEXT,
+    input_schema TEXT,
+    default_params TEXT,
+    param_hints TEXT,
+    category VARCHAR(50),
+    requires_approval BOOLEAN NOT NULL DEFAULT FALSE,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    call_count BIGINT NOT NULL DEFAULT 0,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_tool_server ON mcp_tools(server_id);
+CREATE INDEX IF NOT EXISTS idx_mcp_tool_name ON mcp_tools(tool_name);
+CREATE INDEX IF NOT EXISTS idx_mcp_tool_enabled ON mcp_tools(enabled);
+
+-- Agent MCP 绑定表
+CREATE TABLE IF NOT EXISTS agent_mcp_bindings (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    agent_role VARCHAR(50) NOT NULL,
+    project_id VARCHAR(100) NOT NULL,
+    server_id BIGINT NOT NULL,
+    tool_id BIGINT,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    priority INT NOT NULL DEFAULT 5,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_amb_agent ON agent_mcp_bindings(agent_role, project_id);
+CREATE INDEX IF NOT EXISTS idx_amb_server ON agent_mcp_bindings(server_id);
+CREATE INDEX IF NOT EXISTS idx_amb_tool ON agent_mcp_bindings(tool_id);

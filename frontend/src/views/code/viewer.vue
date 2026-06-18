@@ -36,6 +36,35 @@
           <pre class="code-block"><code v-html="highlightedCode"></code></pre>
         </div>
 
+        <!-- 图片预览 -->
+        <div v-else-if="isImageFile && fileRawUrl" class="media-preview">
+          <img :src="fileRawUrl" :alt="fileName" class="media-image" @error="handleMediaError" />
+        </div>
+
+        <!-- 视频播放 -->
+        <div v-else-if="isVideoFile && fileRawUrl" class="media-preview">
+          <video :src="fileRawUrl" controls class="media-video" @error="handleMediaError">
+            您的浏览器不支持视频播放
+          </video>
+        </div>
+
+        <!-- 音频播放 -->
+        <div v-else-if="isAudioFile && fileRawUrl" class="media-preview audio-preview">
+          <el-icon :size="64" color="#409EFF"><Headset /></el-icon>
+          <p class="audio-filename">{{ fileName }}</p>
+          <audio :src="fileRawUrl" controls class="media-audio" @error="handleMediaError">
+            您的浏览器不支持音频播放
+          </audio>
+        </div>
+
+        <!-- 媒体加载失败 -->
+        <div v-else-if="(isImageFile || isVideoFile || isAudioFile) && mediaError" class="media-preview">
+          <el-icon :size="64" color="#F56C6C"><WarningFilled /></el-icon>
+          <p class="media-error-text">媒体文件加载失败</p>
+          <p class="media-error-hint">可能原因：文件不存在、路径错误或格式不支持</p>
+          <el-button size="small" @click="handleDownloadRaw">下载文件</el-button>
+        </div>
+
         <el-empty v-else-if="!loading" description="无法加载文件内容" />
       </div>
     </el-card>
@@ -51,7 +80,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { codeBrowserApi } from '@/api'
 import { ElMessage } from 'element-plus'
-import { View } from '@element-plus/icons-vue'
+import { View, VideoPlay, Headset, WarningFilled } from '@element-plus/icons-vue'
 import hljs from 'highlight.js'
 import 'highlight.js/styles/github.css'
 import 'highlight.js/styles/github-dark.css'
@@ -64,6 +93,7 @@ const loading = ref(false)
 const content = ref('')
 const language = ref('')
 const showSource = ref(false)
+const mediaError = ref(false)
 
 const fileName = computed(() => {
   const path = route.query.path || ''
@@ -74,6 +104,29 @@ const fileName = computed(() => {
 const isMarkdown = computed(() => {
   const name = fileName.value.toLowerCase()
   return name.endsWith('.md') || name.endsWith('.markdown') || language.value === 'markdown'
+})
+
+// 媒体文件类型检测
+const imageExtensions = ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'bmp', 'ico', 'avif']
+const videoExtensions = ['mp4', 'webm', 'ogg', 'ogv', 'avi', 'mov', 'mkv']
+const audioExtensions = ['mp3', 'wav', 'oga', 'flac', 'aac', 'm4a']
+
+const currentExtension = computed(() => {
+  const name = fileName.value.toLowerCase()
+  const parts = name.split('.')
+  return parts.length > 1 ? parts[parts.length - 1] : ''
+})
+
+const isImageFile = computed(() => imageExtensions.includes(currentExtension.value))
+const isVideoFile = computed(() => videoExtensions.includes(currentExtension.value))
+const isAudioFile = computed(() => audioExtensions.includes(currentExtension.value))
+
+// 文件原始内容URL
+const fileRawUrl = computed(() => {
+  const projectId = route.query.projectId
+  const path = route.query.path
+  if (!projectId || !path) return ''
+  return `/api/code-browser/raw/${projectId}?path=${encodeURIComponent(path)}`
 })
 
 /** 计算行数 */
@@ -115,6 +168,13 @@ const loadContent = async () => {
     return
   }
 
+  // 媒体文件不需要加载文本内容
+  const ext = path.split('.').pop()?.toLowerCase() || ''
+  if (imageExtensions.includes(ext) || videoExtensions.includes(ext) || audioExtensions.includes(ext)) {
+    loading.value = false
+    return
+  }
+
   loading.value = true
   try {
     const result = await codeBrowserApi.getFileContent(projectId, path)
@@ -129,6 +189,19 @@ const loadContent = async () => {
     ElMessage.error('加载文件内容失败')
   } finally {
     loading.value = false
+  }
+}
+
+/** 媒体文件加载错误处理 */
+const handleMediaError = (e) => {
+  console.error('媒体文件加载失败:', e)
+  mediaError.value = true
+}
+
+/** 下载原始媒体文件 */
+const handleDownloadRaw = () => {
+  if (fileRawUrl.value) {
+    window.open(fileRawUrl.value, '_blank')
   }
 }
 
@@ -186,6 +259,61 @@ onMounted(() => {
 
 .code-content {
   min-height: 400px;
+}
+
+/* 媒体预览 */
+.media-preview {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: var(--el-fill-color-lighter);
+  border-radius: 8px;
+  min-height: 400px;
+}
+
+.media-image {
+  max-width: 100%;
+  max-height: 70vh;
+  object-fit: contain;
+  border-radius: 4px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+}
+
+.media-video {
+  max-width: 100%;
+  max-height: 70vh;
+  border-radius: 4px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+}
+
+.audio-preview {
+  gap: 16px;
+}
+
+.audio-filename {
+  color: var(--el-text-color-primary);
+  font-size: 14px;
+  margin: 0;
+}
+
+.media-audio {
+  width: 400px;
+  max-width: 100%;
+}
+
+.media-error-text {
+  color: var(--el-color-danger);
+  font-size: 16px;
+  font-weight: 500;
+  margin: 16px 0 8px;
+}
+
+.media-error-hint {
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+  margin: 0 0 16px;
 }
 
 /* 代码视图样式 */

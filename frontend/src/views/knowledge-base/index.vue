@@ -51,11 +51,18 @@
         <!-- 使用记录 -->
         <el-tab-pane label="使用记录" name="usageRecords">
           <el-table :data="usageRecords" v-loading="loading" stripe>
-            <el-table-column prop="templateId" label="模板 ID" width="150" show-overflow-tooltip />
-            <el-table-column label="游戏描述" min-width="200" show-overflow-tooltip>
+            <el-table-column label="类型" width="120">
               <template #default="{ row }">
-                <span class="clickable-text" @click="showContentDetail('游戏描述', row.gameDescription)">
-                  {{ row.gameDescription || '-' }}
+                <el-tag :type="getUsageTypeTag(row.type)" size="small">
+                  {{ getUsageTypeLabel(row.type) }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="resourceName" label="资源名称" width="150" show-overflow-tooltip />
+            <el-table-column label="描述" min-width="250" show-overflow-tooltip>
+              <template #default="{ row }">
+                <span class="clickable-text" @click="showContentDetail('使用描述', row.description)">
+                  {{ row.description || '-' }}
                 </span>
               </template>
             </el-table-column>
@@ -64,11 +71,6 @@
                 <el-tag :type="row.success ? 'success' : 'danger'" size="small">
                   {{ row.success ? '成功' : '失败' }}
                 </el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column label="耗时" width="100">
-              <template #default="{ row }">
-                {{ formatDuration(row.durationMs) }}
               </template>
             </el-table-column>
             <el-table-column label="使用时间" width="180">
@@ -264,6 +266,32 @@ const getSuccessRateColor = (rate) => {
   if (rate >= 80) return '#67c23a'
   if (rate >= 60) return '#e6a23c'
   return '#f56c6c'
+}
+
+/** 获取使用记录类型标签 */
+const getUsageTypeTag = (type) => {
+  const map = {
+    'TEMPLATE': 'primary',
+    'SOLUTION': 'success',
+    'BEST_PRACTICE': 'warning',
+    'KNOWLEDGE_EXTRACTION': 'info',
+    'EVOLUTION': 'danger',
+    'GAME_LEARNING': ''
+  }
+  return map[type] || 'info'
+}
+
+/** 获取使用记录类型文本 */
+const getUsageTypeLabel = (type) => {
+  const map = {
+    'TEMPLATE': '模板',
+    'SOLUTION': '方案',
+    'BEST_PRACTICE': '实践',
+    'KNOWLEDGE_EXTRACTION': '提取',
+    'EVOLUTION': '进化',
+    'GAME_LEARNING': '学习'
+  }
+  return map[type] || type
 }
 
 /** 格式化时长 */

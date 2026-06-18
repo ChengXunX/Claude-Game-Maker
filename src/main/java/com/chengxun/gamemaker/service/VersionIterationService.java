@@ -2,6 +2,7 @@ package com.chengxun.gamemaker.service;
 
 import com.chengxun.gamemaker.agent.Agent;
 import com.chengxun.gamemaker.agent.BaseAgent;
+import com.chengxun.gamemaker.model.AgentMessage;
 import com.chengxun.gamemaker.config.SystemConstants;
 import com.chengxun.gamemaker.manager.AgentManager;
 import com.chengxun.gamemaker.manager.ProjectManager;
@@ -11,6 +12,7 @@ import com.chengxun.gamemaker.model.GameProject.MilestoneStatus;
 import com.chengxun.gamemaker.model.GameProject.VersionHistory;
 import com.chengxun.gamemaker.web.entity.VersionEvaluationDimension;
 import com.chengxun.gamemaker.web.entity.VersionIterationRecord;
+import com.chengxun.gamemaker.web.entity.QualityPrediction;
 import com.chengxun.gamemaker.web.repository.VersionEvaluationDimensionRepository;
 import com.chengxun.gamemaker.web.repository.VersionIterationRecordRepository;
 import com.chengxun.gamemaker.web.service.AlertService;
@@ -79,11 +81,47 @@ public class VersionIterationService {
     @Autowired(required = false)
     private com.chengxun.gamemaker.web.service.ClaudeAiService aiService;
 
+    /** 质量预测服务（延迟注入）—— 版本评估前自动预测 */
+    @Autowired(required = false)
+    private QualityPredictionService qualityPredictionService;
+
+    /** 迭代适应服务（延迟注入）—— 自动检测阶段调整策略 */
+    @Autowired(required = false)
+    private IterationAdaptService iterationAdaptService;
+
+    /** 文档归档服务（延迟注入）—— 版本迭代时自动归档文档 */
+    @Autowired(required = false)
+    private DocumentArchiveService documentArchiveService;
+
     /**
      * 版本迭代开始时间缓存
      * key: projectId, value: 当前版本迭代开始时间
      */
     private final java.util.concurrent.ConcurrentHashMap<String, java.time.LocalDateTime> iterationStartTimes = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * 自动版本迭代冷却追踪
+     * key: projectId, value: 上次自动触发时间
+     * 防止在 ProducerAgent 工作周期和定时任务之间重复触发
+     */
+    private final java.util.concurrent.ConcurrentHashMap<String, java.time.LocalDateTime> autoIterationCooldown = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * 设置版本迭代冷却（供 ProducerAgent 调用，避免自动触发重复执行）
+     */
+    public void setCooldown(String projectId) {
+        autoIterationCooldown.put(projectId, java.time.LocalDateTime.now());
+    }
+
+    /**
+     * 版本迭代执行锁
+     * key: projectId, value: 是否正在执行
+     * 防止 ProducerAgent 和自动触发并发执行 checkVersionIteration
+     */
+    private final java.util.concurrent.ConcurrentHashMap<String, Boolean> iterationLocks = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** 自动版本迭代冷却时间（分钟）：同一项目在此时间内不会重复触发 */
+    private static final int AUTO_ITERATION_COOLDOWN_MINUTES = 30;
 
     /**
      * 定时检查迭代超时
@@ -106,6 +144,171 @@ public class VersionIterationService {
                 // 超时告警
                 sendTimeoutAlert(projectId, elapsed.toHours());
             }
+        }
+    }
+
+    /**
+     * 自动检查所有项目的版本迭代状态
+     * 每 5 分钟扫描一次所有活跃项目，当发现某项目所有里程碑已完成时，
+     * 自动触发版本迭代流程（评估→规划→升级），无需等待 ProducerAgent 工作周期。
+     *
+     * 与 ProducerAgent.checkGoalProgress() 互补：
+     * - ProducerAgent 在工作周期中主动检查（事件驱动）
+     * - 此定时任务兜底检查（时间驱动）
+     * 通过冷却机制避免重复触发
+     */
+    @Scheduled(cron = "0 */5 * * * ?")
+    public void autoCheckVersionIteration() {
+        try {
+            List<GameProject> allProjects = projectManager.getAllProjects();
+            if (allProjects == null || allProjects.isEmpty()) return;
+
+            java.time.LocalDateTime now = java.time.LocalDateTime.now();
+
+            for (GameProject project : allProjects) {
+                String projectId = project.getId();
+                if (projectId == null) continue;
+
+                // 跳过已完成、归档或已交付的项目
+                if (project.getStatus() == GameProject.ProjectStatus.COMPLETED
+                    || project.getStatus() == GameProject.ProjectStatus.ARCHIVED
+                    || project.getStatus() == GameProject.ProjectStatus.DELIVERED) {
+                    continue;
+                }
+
+                // 跳过没有目标的项目
+                if (!project.hasGoal()) continue;
+
+                // 冷却检查：避免与 ProducerAgent 重复触发
+                java.time.LocalDateTime lastTrigger = autoIterationCooldown.get(projectId);
+                if (lastTrigger != null
+                    && java.time.Duration.between(lastTrigger, now).toMinutes() < AUTO_ITERATION_COOLDOWN_MINUTES) {
+                    continue;
+                }
+
+                // 检查是否有活跃的 Agent（没有活跃 Agent 的项目不自动触发，避免无人执行后续流程）
+                List<Agent> agents = agentManager.getAgentsByProject(projectId);
+                boolean hasActiveAgent = agents.stream().anyMatch(Agent::isAlive);
+                if (!hasActiveAgent) continue;
+
+                // 迭代适应集成：自动检测项目阶段并调整策略
+                if (iterationAdaptService != null) {
+                    try {
+                        var recommendation = iterationAdaptService.getRecommendation(projectId);
+                        if (Boolean.TRUE.equals(recommendation.get("needsChange"))) {
+                            log.info("迭代适应: 项目 [{}] 阶段={}, 策略需要调整 {} -> {}",
+                                project.getName(), recommendation.get("phase"),
+                                recommendation.get("currentStrategy"), recommendation.get("recommendedStrategy"));
+                            iterationAdaptService.applyRecommendation(projectId);
+                        }
+                    } catch (Exception e) {
+                        log.debug("迭代适应检查失败: {}", e.getMessage());
+                    }
+                }
+
+                // 检查里程碑是否全部完成
+                if (!isCurrentVersionCompleted(projectId)) continue;
+
+                // 记录冷却时间
+                autoIterationCooldown.put(projectId, now);
+                log.info("自动版本迭代检查：项目 [{}] 里程碑全部完成，触发版本迭代", project.getName());
+
+                // 触发版本迭代
+                int result = checkVersionIteration(projectId);
+                handleAutoIterationResult(project, result);
+            }
+        } catch (Exception e) {
+            log.error("自动版本迭代检查异常: {}", e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 处理自动版本迭代结果
+     * 根据迭代结果通知 ProducerAgent 并执行后续操作
+     *
+     * @param project 项目
+     * @param iterationResult 迭代结果：0=未完成, 1=已迭代, 2=目标完成
+     */
+    private void handleAutoIterationResult(GameProject project, int iterationResult) {
+        String projectId = project.getId();
+
+        switch (iterationResult) {
+            case 1 -> {
+                // 版本已迭代，通知 ProducerAgent 继续工作
+                GameProject updated = projectManager.getProject(projectId);
+                String newVersion = updated != null ? updated.getVersion() : "?";
+                log.info("项目 [{}] 自动版本迭代完成，新版本: {}", project.getName(), newVersion);
+                notifyProducerAgent(projectId, String.format(
+                    "版本迭代已自动触发完成，项目已升级到新版本 [%s]，请重新规划里程碑并继续迭代开发。",
+                    newVersion));
+
+                // 通过飞书通知
+                if (feishuService != null && feishuService.isEnabled()) {
+                    try {
+                        feishuService.sendMessage(String.format(
+                            "项目 [%s] 版本自动迭代完成！\n\n新版本: %s\n\n继续迭代开发。",
+                            project.getName(), newVersion));
+                    } catch (Exception e) {
+                        log.debug("飞书通知失败: {}", e.getMessage());
+                    }
+                }
+            }
+            case 2 -> {
+                // 目标完成，停止所有 Agent
+                log.info("项目 [{}] 目标已完成，自动停止所有 Agent", project.getName());
+                int stoppedCount = stopAllProjectAgents(projectId);
+
+                // 标记目标完成
+                project.setGoalStatus(GameProject.GoalStatus.COMPLETED);
+                projectManager.saveProjectConfig(project);
+
+                // 通知 ProducerAgent
+                notifyProducerAgent(projectId, String.format(
+                    "项目目标已完成！版本迭代结束，已停止 %d 个 Agent。", stoppedCount));
+
+                // 通过飞书通知
+                if (feishuService != null && feishuService.isEnabled()) {
+                    try {
+                        feishuService.sendMessage(String.format(
+                            "项目 [%s] 目标已完成！\n\n版本: %s\n已停止 %d 个 Agent。",
+                            project.getName(), project.getVersion(), stoppedCount));
+                    } catch (Exception e) {
+                        log.debug("飞书通知失败: {}", e.getMessage());
+                    }
+                }
+            }
+            default -> {
+                // 未完成或验收未通过，不处理
+                log.debug("项目 [{}] 自动版本迭代检查：版本未完成或验收未通过", project.getName());
+            }
+        }
+    }
+
+    /**
+     * 通知 ProducerAgent 版本迭代结果
+     * 通过消息总线发送系统消息，ProducerAgent 在下一个工作周期中会看到并响应
+     *
+     * @param projectId 项目 ID
+     * @param message 通知内容
+     */
+    private void notifyProducerAgent(String projectId, String message) {
+        try {
+            Agent producer = agentManager.getAgent(projectId + ":producer");
+            if (producer != null) {
+                AgentMessage notify = AgentMessage.builder()
+                    .fromAgentId("system")
+                    .toAgentId(projectId + ":producer")
+                    .type(AgentMessage.MessageType.SYSTEM)
+                    .content("[版本迭代通知] " + message)
+                    .priority(8) // 高优先级
+                    .build();
+                producer.receiveMessage(notify);
+                log.info("已通知 ProducerAgent 版本迭代结果: {}", projectId);
+            } else {
+                log.debug("未找到项目 {} 的 ProducerAgent，跳过通知", projectId);
+            }
+        } catch (Exception e) {
+            log.warn("通知 ProducerAgent 失败: {}", e.getMessage());
         }
     }
 
@@ -322,8 +525,15 @@ public class VersionIterationService {
             }
         }
 
+        // 【新增】注入管理员指令
+        String adminInstruction = project.hasPendingInstruction() ? project.getVersionIterationInstruction() : null;
+        if (adminInstruction != null && !adminInstruction.isEmpty()) {
+            context.append("\n## ⚠️ 管理员迭代指令（重要！评估时必须参考）\n");
+            context.append(adminInstruction).append("\n");
+        }
+
         // 使用AI评估
-        String prompt = buildEvaluationPrompt(context.toString());
+        String prompt = buildEvaluationPrompt(context.toString(), adminInstruction);
         String response = callAiForEvaluation(prompt, project);
 
         // 解析评估结果
@@ -382,8 +592,18 @@ public class VersionIterationService {
             context.append("- 待改进: ").append(String.join(", ", currentEvaluation.getImprovements())).append("\n");
         }
 
+        // 【新增】注入管理员指令
+        String adminInstruction = project.hasPendingInstruction() ? project.consumeInstruction() : null;
+        if (adminInstruction != null && !adminInstruction.isEmpty()) {
+            context.append("\n## ⚠️ 管理员迭代指令（重要！规划时必须参考）\n");
+            context.append(adminInstruction).append("\n");
+            // 消费指令后保存项目
+            projectManager.saveProjectConfig(project);
+            log.info("版本规划已消费管理员指令: projectId={}", projectId);
+        }
+
         // 使用AI规划
-        String prompt = buildPlanningPrompt(context.toString());
+        String prompt = buildPlanningPrompt(context.toString(), adminInstruction);
         String response = callAiForPlanning(prompt);
 
         // 解析规划结果
@@ -407,14 +627,43 @@ public class VersionIterationService {
         String newVersion = plan.getNextVersion();
         project.createVersion(newVersion, "版本迭代: " + plan.getReason(), "ProducerAgent");
 
-        // 根据迭代策略重置里程碑
-        String strategy = getIterationStrategy();
-        resetMilestonesByStrategy(project, strategy, plan);
+        // 【新增】版本升级前归档当前版本的文档
+        if (documentArchiveService != null) {
+            try {
+                documentArchiveService.archiveVersionDocuments(projectId, oldVersion);
+                log.info("版本升级前已归档版本 [{}] 的文档", oldVersion);
+            } catch (Exception e) {
+                log.debug("归档版本文档失败: {}", e.getMessage());
+            }
+        }
 
-        // 更新目标
-        if (plan.getNextGoal() != null && !plan.getNextGoal().isEmpty()) {
+        // 清空旧里程碑
+        project.getMilestones().clear();
+
+        // 不从 AI 规划创建具体里程碑（AI 缺乏项目上下文，容易返回通用标题）
+        // 改为创建占位里程碑，让 ProducerAgent 用 decomposeGoal() 重新分解
+        // ProducerAgent 拥有完整项目上下文，能生成高质量的里程碑和任务
+        GameProject.GoalMilestone placeholder = new GameProject.GoalMilestone();
+        placeholder.setTitle(newVersion + " 版本规划中");
+        placeholder.setDescription("版本已升级，请等待制作人重新规划里程碑");
+        placeholder.setStatus(GameProject.MilestoneStatus.PENDING);
+        placeholder.setProgress(0);
+        project.getMilestones().add(placeholder);
+        log.info("版本升级：创建占位里程碑，等待 ProducerAgent 重新分解目标");
+
+        // 更新目标（保留原目标，ProducerAgent 会在 decomposeGoal 中更新）
+        if (plan.getNextGoal() != null && !plan.getNextGoal().isEmpty()
+            && !plan.getNextGoal().contains("AI服务不可用")) {
             project.setGoal(plan.getNextGoal());
         }
+
+        // 重置目标状态为 IN_PROGRESS，让制作人继续工作
+        project.setGoalStatus(GameProject.GoalStatus.IN_PROGRESS);
+
+        // 【新增】版本迭代完成后，重置管理员指令状态，允许管理员为下一版本提交新指令
+        project.setVersionIterationInstruction(null);
+        project.setInstructionSubmittedAt(null);
+        project.setInstructionConsumed(false);
 
         // 保存项目
         projectManager.saveProjectConfig(project);
@@ -422,7 +671,10 @@ public class VersionIterationService {
         // 通知项目内所有Agent版本升级
         notifyVersionUpgrade(projectId, oldVersion, newVersion, plan);
 
-        log.info("版本升级完成: {} -> {} (策略: {}) for project {}", oldVersion, newVersion, strategy, projectId);
+        log.info("版本升级完成: {} -> {} (新里程碑: {} 个) for project {}",
+            oldVersion, newVersion,
+            plan.getNextMilestones() != null ? plan.getNextMilestones().size() : 0,
+            projectId);
         return true;
     }
 
@@ -523,6 +775,10 @@ public class VersionIterationService {
                 } catch (Exception e) {
                     log.debug("通知Agent版本升级失败: {}", agent.getId());
                 }
+            }
+            // 清理 ProducerAgent 的里程碑内存状态，防止旧里程碑 ID 残留
+            if (agent instanceof com.chengxun.gamemaker.agent.ProducerAgent producer) {
+                producer.clearMilestoneState();
             }
         }
     }
@@ -966,6 +1222,25 @@ public class VersionIterationService {
      * @return 0=未完成, 1=需要迭代, 2=目标完成
      */
     public int checkVersionIteration(String projectId) {
+        // 项目级锁：防止 ProducerAgent 和自动触发并发执行
+        if (iterationLocks.putIfAbsent(projectId, Boolean.TRUE) != null) {
+            log.debug("版本迭代正在执行中，跳过: {}", projectId);
+            return 0;
+        }
+        try {
+            return doCheckVersionIteration(projectId);
+        } finally {
+            iterationLocks.remove(projectId);
+        }
+    }
+
+    /**
+     * 执行版本迭代检查（内部方法，受锁保护）
+     *
+     * @param projectId 项目ID
+     * @return 0=未完成, 1=需要迭代, 2=目标完成
+     */
+    private int doCheckVersionIteration(String projectId) {
         // 检查当前版本是否完成
         if (!isCurrentVersionCompleted(projectId)) {
             // 记录迭代开始时间（如果还没有记录）
@@ -976,6 +1251,19 @@ public class VersionIterationService {
         // 评估当前版本
         VersionEvaluationResult evaluation = evaluateVersion(projectId);
         log.info("版本评估结果: score={}, passed={}", evaluation.getScore(), evaluation.isPassed());
+
+        // 质量预测集成：版本评估后自动执行质量预测并保存结果
+        if (qualityPredictionService != null) {
+            try {
+                QualityPrediction prediction = qualityPredictionService.predict(projectId);
+                if (prediction != null) {
+                    log.info("质量预测集成: project={}, probability={}, risk={}",
+                        projectId, prediction.getPassProbability(), prediction.getRiskLevel());
+                }
+            } catch (Exception e) {
+                log.debug("质量预测集成失败: {}", e.getMessage());
+            }
+        }
 
         if (!evaluation.isPassed()) {
             // 版本未通过验收，需要改进
@@ -1068,10 +1356,20 @@ public class VersionIterationService {
     /**
      * 构建评估Prompt
      * 使用可配置的评估维度
+     *
+     * @param context 项目上下文
+     * @param adminInstruction 管理员指令（可选）
+     * @return 完整的评估 prompt
      */
-    private String buildEvaluationPrompt(String context) {
+    private String buildEvaluationPrompt(String context, String adminInstruction) {
         StringBuilder prompt = new StringBuilder();
         prompt.append("你是一个游戏项目评估专家。请评估以下游戏项目的当前版本完成质量。\n\n");
+
+        // 如果有管理员指令，强调需要参考
+        if (adminInstruction != null && !adminInstruction.isEmpty()) {
+            prompt.append("**重要提示**：管理员已提交了版本迭代指令，请在评估时充分考虑这些指令的要求和方向。\n\n");
+        }
+
         prompt.append(context).append("\n");
         prompt.append("## 评估要求\n");
         prompt.append("请从以下维度评估（1-10分）：\n");
@@ -1127,22 +1425,42 @@ public class VersionIterationService {
 
     /**
      * 构建规划Prompt
+     *
+     * @param context 项目上下文
+     * @param adminInstruction 管理员指令（可选）
+     * @return 完整的规划 prompt
      */
-    private String buildPlanningPrompt(String context) {
-        return "你是一个游戏项目规划专家。请根据以下信息判断是否需要下一版本迭代。\n\n" +
-               context + "\n" +
-               "## 规划要求\n" +
-               "1. 如果当前版本质量优秀（8分以上）且目标基本达成，可以结束项目\n" +
-               "2. 如果有明显的改进空间或未完成的重要功能，建议迭代\n" +
-               "3. 版本号格式：X.Y.Z（主版本.次版本.修订号）\n\n" +
-               "## 输出格式（JSON）\n" +
-               "{\n" +
-               "  \"needNextVersion\": true,\n" +
-               "  \"nextVersion\": \"1.1.0\",\n" +
-               "  \"nextGoal\": \"下一版本目标...\",\n" +
-               "  \"nextMilestones\": [\"里程碑1\", \"里程碑2\"],\n" +
-               "  \"reason\": \"规划理由...\"\n" +
-               "}";
+    private String buildPlanningPrompt(String context, String adminInstruction) {
+        StringBuilder prompt = new StringBuilder();
+        prompt.append("你是一个游戏项目规划专家。请根据以下信息判断是否需要下一版本迭代。\n\n");
+
+        // 如果有管理员指令，强调需要参考
+        if (adminInstruction != null && !adminInstruction.isEmpty()) {
+            prompt.append("**重要提示**：管理员已提交了版本迭代指令，这是管理员对下一版本的期望和方向。\n");
+            prompt.append("请在规划时充分考虑这些指令，将其作为规划的重要依据之一。\n");
+            prompt.append("如果管理员指令与自动评估结果冲突，优先参考管理员指令。\n\n");
+        }
+
+        prompt.append(context).append("\n");
+        prompt.append("## 规划要求\n");
+        prompt.append("1. 如果当前版本质量优秀（8分以上）且目标基本达成，可以结束项目\n");
+        prompt.append("2. 如果有明显的改进空间或未完成的重要功能，建议迭代\n");
+        prompt.append("3. 版本号格式：X.Y.Z（主版本.次版本.修订号）\n\n");
+
+        if (adminInstruction != null && !adminInstruction.isEmpty()) {
+            prompt.append("4. **必须参考管理员指令**：管理员的指令是规划的重要输入，请据此调整下一版本的目标和里程碑\n\n");
+        }
+
+        prompt.append("## 输出格式（JSON）\n");
+        prompt.append("{\n");
+        prompt.append("  \"needNextVersion\": true,\n");
+        prompt.append("  \"nextVersion\": \"1.1.0\",\n");
+        prompt.append("  \"nextGoal\": \"下一版本目标...\",\n");
+        prompt.append("  \"nextMilestones\": [\"里程碑1\", \"里程碑2\"],\n");
+        prompt.append("  \"reason\": \"规划理由...\"\n");
+        prompt.append("}");
+
+        return prompt.toString();
     }
 
     /**

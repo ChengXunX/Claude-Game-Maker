@@ -471,12 +471,12 @@ const getResponseTimePercent = (time) => {
   return Math.min(100, (time / 5000) * 100)
 }
 
-/** 获取响应时间颜色 */
+/** 获取响应时间颜色（AI任务阈值：2分钟内正常，5分钟内警告，超过5分钟危险） */
 const getResponseTimeColor = (time) => {
   if (!time) return '#67c23a'
-  if (time < 1000) return '#67c23a'
-  if (time < 3000) return '#e6a23c'
-  return '#f56c6c'
+  if (time < 120000) return '#67c23a'  // < 2分钟：绿色
+  if (time < 300000) return '#e6a23c'  // < 5分钟：黄色
+  return '#f56c6c'                     // >= 5分钟：红色
 }
 
 /** 获取错误率百分比（直接使用 errorRate 百分比值） */
@@ -498,7 +498,9 @@ const getWarningReason = (agent) => {
   const reasons = []
   if (agent.consecutiveErrors >= 3) reasons.push(`连续 ${agent.consecutiveErrors} 次错误`)
   if (agent.errorRate > 20) reasons.push(`错误率 ${agent.errorRate.toFixed(1)}%`)
-  if ((agent.avgResponseTimeMs || agent.avgResponseTime) > 5000) reasons.push('响应缓慢')
+  const avgMs = agent.avgResponseTimeMs || agent.avgResponseTime || 0
+  if (avgMs > 600000) reasons.push(`响应极慢(${Math.round(avgMs/60000)}分钟)`)
+  else if (avgMs > 300000) reasons.push(`响应较慢(${Math.round(avgMs/60000)}分钟)`)
   if (agent.lastErrorMessage) reasons.push(agent.lastErrorMessage.substring(0, 50))
   return reasons.length > 0 ? reasons.join('；') : '需关注'
 }

@@ -48,11 +48,17 @@
                 <div class="steps-label">流程步骤：</div>
                 <div class="steps-flow">
                   <template v-for="(step, idx) in template.steps" :key="step.id">
-                    <div class="step-node">
+                    <div class="step-node" :class="{ 'step-loop': step.loopUntilSuccess }">
                       <el-tag :type="getStepTagType(step.agentRole)" size="small">
                         {{ step.name }}
                       </el-tag>
                       <span class="step-role">{{ getRoleLabel(step.agentRole) }}</span>
+                      <el-tag v-if="step.loopUntilSuccess" type="warning" size="small" effect="plain" class="loop-tag">
+                        循环{{ step.maxLoopIterations || 5 }}次
+                      </el-tag>
+                      <el-tag v-if="step.requiresApproval" type="info" size="small" effect="plain" class="approval-tag">
+                        审批
+                      </el-tag>
                     </div>
                     <el-icon v-if="idx < template.steps.length - 1" class="step-arrow"><Right /></el-icon>
                   </template>
@@ -168,6 +174,38 @@
           </el-table>
           <el-empty v-if="!loading && pendingApprovals.length === 0" description="暂无待审批项" />
         </el-tab-pane>
+
+        <!-- 工作流发现 -->
+        <el-tab-pane label="工作流发现" name="discover">
+          <div class="discover-section">
+            <el-alert type="info" :closable="false" show-icon class="mb-4">
+              <template #title>工作流发现</template>
+              <template #default>
+                <p style="margin: 0">扫描 Agent 近期会话中的重复工作模式，自动发现并生成可复用的工作流模板和 Skill。</p>
+              </template>
+            </el-alert>
+            <div style="display: flex; gap: 12px; align-items: center; margin-bottom: 16px;">
+              <el-select v-model="distillAgentId" placeholder="选择 Agent" style="width: 200px">
+                <el-option v-for="agent in agentList" :key="agent.id" :label="agent.name || agent.id" :value="agent.id" />
+              </el-select>
+              <el-button type="primary" @click="handleDistill" :loading="distillLoading">
+                <el-icon><MagicStick /></el-icon> 执行工作流发现
+              </el-button>
+            </div>
+            <div v-if="distillResult" class="distill-result">
+              <el-descriptions :column="2" border>
+                <el-descriptions-item label="发现状态">
+                  <el-tag :type="distillResult.success ? 'success' : 'danger'">
+                    {{ distillResult.success ? '成功' : '失败' }}
+                  </el-tag>
+                </el-descriptions-item>
+                <el-descriptions-item label="发现模式数">{{ distillResult.patternCount || 0 }}</el-descriptions-item>
+                <el-descriptions-item label="生成 Skill 数">{{ distillResult.skillCount || 0 }}</el-descriptions-item>
+              </el-descriptions>
+            </div>
+            <el-empty v-if="!distillResult" description="选择 Agent 后执行工作流发现" />
+          </div>
+        </el-tab-pane>
       </el-tabs>
     </el-card>
 
@@ -209,9 +247,14 @@
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="重试" width="80">
+          <el-table-column label="重试/循环" width="100">
             <template #default="{ row }">
-              {{ row.retryCount || 0 }}/{{ row.maxRetries || 3 }}
+              <span v-if="isLoopStep(row)">
+                <el-tag type="warning" size="small">循环 {{ row.retryCount || 0 }}/{{ getMaxIterations(row) }}</el-tag>
+              </span>
+              <span v-else>
+                {{ row.retryCount || 0 }}/{{ row.maxRetries || 3 }}
+              </span>
             </template>
           </el-table-column>
           <el-table-column label="开始时间" width="160">
@@ -346,15 +389,36 @@
         </el-form-item>
         <el-form-item label="流程步骤">
           <div class="steps-editor">
-            <div v-for="(step, idx) in createForm.steps" :key="idx" class="step-edit-row">
-              <el-input v-model="step.name" placeholder="步骤名称" style="width: 140px" />
-              <el-select v-model="step.agentRole" placeholder="执行角色" style="width: 140px">
-                <el-option v-for="role in agentRoles" :key="role.value" :label="role.label" :value="role.value" />
-              </el-select>
-              <el-input v-model="step.taskDescription" placeholder="任务描述" style="flex: 1" />
-              <el-button type="danger" text @click="removeStep(idx)">
-                <el-icon><Delete /></el-icon>
-              </el-button>
+            <div v-for="(step, idx) in createForm.steps" :key="idx" class="step-edit-item">
+              <div class="step-edit-row">
+                <el-input v-model="step.name" placeholder="步骤名称" style="width: 140px" />
+                <el-select v-model="step.agentRole" placeholder="执行角色" style="width: 140px">
+                  <el-option v-for="role in agentRoles" :key="role.value" :label="role.label" :value="role.value" />
+                </el-select>
+                <el-input v-model="step.taskDescription" placeholder="任务描述" style="flex: 1" />
+                <el-button type="danger" text @click="removeStep(idx)">
+                  <el-icon><Delete /></el-icon>
+                </el-button>
+              </div>
+              <!-- 循环步骤配置 -->
+              <div class="step-loop-config">
+                <el-checkbox v-model="step.loopUntilSuccess" label="循环执行" size="small" />
+                <template v-if="step.loopUntilSuccess">
+                  <el-input-number v-model="step.maxLoopIterations" :min="1" :max="10" size="small" style="width: 100px" placeholder="最大次数" />
+                  <el-input v-model="step.loopCondition" placeholder="循环条件（如：所有测试通过）" size="small" style="flex: 1" />
+                  <el-input v-model="step.feedbackOnFailure" placeholder="失败反馈（如：测试失败，请修复）" size="small" style="flex: 1" />
+                </template>
+              </div>
+              <!-- 审批配置 -->
+              <div class="step-approval-config">
+                <el-checkbox v-model="step.requiresApproval" label="需要审批" size="small" />
+                <el-select v-if="step.requiresApproval" v-model="step.importance" placeholder="重要程度" size="small" style="width: 100px">
+                  <el-option label="低" value="LOW" />
+                  <el-option label="中" value="MEDIUM" />
+                  <el-option label="高" value="HIGH" />
+                  <el-option label="关键" value="CRITICAL" />
+                </el-select>
+              </div>
             </div>
             <el-button type="primary" text @click="addStep" style="margin-top: 8px">
               <el-icon><Plus /></el-icon> 添加步骤
@@ -404,7 +468,8 @@
           <div v-for="(step, idx) in aiResult.steps" :key="step.id" class="preview-step">
             <el-tag :type="getStepTagType(step.agentRole)" size="small">{{ step.name }}</el-tag>
             <span class="step-detail">{{ getRoleLabel(step.agentRole) }} - {{ step.taskDescription }}</span>
-            <el-tag v-if="step.requiresApproval" type="warning" size="small" effect="plain">需审批</el-tag>
+            <el-tag v-if="step.loopUntilSuccess" type="warning" size="small" effect="plain">循环{{ step.maxLoopIterations || 5 }}次</el-tag>
+            <el-tag v-if="step.requiresApproval" type="info" size="small" effect="plain">需审批</el-tag>
           </div>
         </div>
       </div>
@@ -456,7 +521,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { workflowApi } from '@/api'
+import { workflowApi, distillApi, agentApi } from '@/api'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Bottom } from '@element-plus/icons-vue'
 import ProjectSelector from '@/components/ProjectSelector.vue'
@@ -467,6 +532,12 @@ const activeTab = ref('templates')
 const templates = ref([])
 const instances = ref([])
 const pendingApprovals = ref([])
+
+// 工作流发现
+const distillLoading = ref(false)
+const distillResult = ref(null)
+const distillAgentId = ref('producer')
+const agentList = ref([])
 const instanceFilter = ref('all')
 
 // AI 生成
@@ -599,7 +670,17 @@ const createRules = {
 }
 
 const addStep = () => {
-  createForm.value.steps.push({ name: '', agentRole: '', taskDescription: '' })
+  createForm.value.steps.push({
+    name: '',
+    agentRole: '',
+    taskDescription: '',
+    loopUntilSuccess: false,
+    maxLoopIterations: 5,
+    loopCondition: '',
+    feedbackOnFailure: '',
+    requiresApproval: false,
+    importance: 'MEDIUM'
+  })
 }
 
 const removeStep = (idx) => {
@@ -629,6 +710,25 @@ const getStepStatusType = (status) => {
 
 const getStepStatusLabel = (status) => {
   return { PENDING: '待执行', WAITING_DEPENDENCIES: '等待依赖', READY: '就绪', RUNNING: '运行中', COMPLETED: '已完成', FAILED: '失败', SKIPPED: '已跳过' }[status] || status
+}
+
+/** 判断是否为循环步骤 */
+const isLoopStep = (step) => {
+  // 从当前实例的模板中查找步骤配置
+  if (!currentInstance.value?.instance?.templateId) return false
+  const template = templates.value.find(t => t.id === currentInstance.value.instance.templateId)
+  if (!template) return false
+  const stepConfig = template.steps?.find(s => s.id === step.stepId)
+  return stepConfig?.loopUntilSuccess || false
+}
+
+/** 获取循环步骤的最大迭代次数 */
+const getMaxIterations = (step) => {
+  if (!currentInstance.value?.instance?.templateId) return 5
+  const template = templates.value.find(t => t.id === currentInstance.value.instance.templateId)
+  if (!template) return 5
+  const stepConfig = template.steps?.find(s => s.id === step.stepId)
+  return stepConfig?.maxLoopIterations || 5
 }
 
 const getAuditLogType = (action) => {
@@ -959,7 +1059,34 @@ const handleAiSave = async () => {
   }
 }
 
-onMounted(() => { loadData() })
+/** 工作流发现 */
+const handleDistill = async () => {
+  distillLoading.value = true
+  distillResult.value = null
+  try {
+    const res = await distillApi.trigger({ projectId: '', agentId: distillAgentId.value })
+    distillResult.value = res.data
+    if (res.data?.success) {
+      ElMessage.success(`工作流发现完成：发现 ${res.data.patternCount || 0} 个模式，生成 ${res.data.skillCount || 0} 个 Skill`)
+    } else {
+      ElMessage.warning('未发现可自动化的工作流模式')
+    }
+  } catch (e) {
+    ElMessage.error('工作流发现失败')
+  } finally {
+    distillLoading.value = false
+  }
+}
+
+onMounted(() => {
+  loadData()
+  agentApi.getAll().then(res => {
+    agentList.value = res.data || res || []
+    if (agentList.value.length > 0 && !agentList.value.find(a => a.id === distillAgentId.value)) {
+      distillAgentId.value = agentList.value[0].id
+    }
+  }).catch(() => {})
+})
 </script>
 
 <style scoped>
@@ -1055,6 +1182,43 @@ onMounted(() => { loadData() })
   gap: 8px;
   margin-bottom: 8px;
   align-items: center;
+}
+
+.step-edit-item {
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 4px;
+  padding: 8px;
+  margin-bottom: 8px;
+  background: var(--el-fill-color-lighter);
+}
+
+.step-loop-config {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 4px;
+  padding: 4px 0;
+}
+
+.step-approval-config {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 4px;
+}
+
+.step-loop {
+  border: 1px dashed var(--el-color-warning);
+  border-radius: 4px;
+  padding: 2px 4px;
+}
+
+.loop-tag {
+  margin-left: 4px;
+}
+
+.approval-tag {
+  margin-left: 4px;
 }
 
 .instance-toolbar {

@@ -106,6 +106,52 @@ public class VerificationAgent extends BaseAgent {
     /** 协作效率度量服务 */
     private com.chengxun.gamemaker.service.CollaborationMetricsService collaborationMetricsService;
 
+    // ===== 持续测试循环相关 =====
+
+    /** 持续测试循环是否激活 */
+    private volatile boolean continuousTestActive = false;
+
+    /** 持续测试循环的最大迭代次数（防止无限循环） */
+    private static final int MAX_CONTINUOUS_TEST_ITERATIONS = 50;
+
+    /** 持续测试循环的当前迭代次数 */
+    private int continuousTestIteration = 0;
+
+    /** 持续测试循环的期望结果（验收标准） */
+    private String continuousTestExpectedResult = null;
+
+    /** 持续测试循环发现的问题列表 */
+    private final List<ContinuousTestIssue> continuousTestIssues = new ArrayList<>();
+
+    /** 持续测试循环状态 */
+    public static class ContinuousTestIssue {
+        private final String issueId;
+        private final String category; // SERVER, CLIENT, DESIGN, OTHER
+        private final String description;
+        private final String assignedAgentId;
+        private final LocalDateTime detectedAt;
+        private boolean fixed = false;
+        private LocalDateTime fixedAt = null;
+
+        public ContinuousTestIssue(String issueId, String category, String description, String assignedAgentId) {
+            this.issueId = issueId;
+            this.category = category;
+            this.description = description;
+            this.assignedAgentId = assignedAgentId;
+            this.detectedAt = LocalDateTime.now();
+        }
+
+        // Getters
+        public String getIssueId() { return issueId; }
+        public String getCategory() { return category; }
+        public String getDescription() { return description; }
+        public String getAssignedAgentId() { return assignedAgentId; }
+        public LocalDateTime getDetectedAt() { return detectedAt; }
+        public boolean isFixed() { return fixed; }
+        public void markFixed() { this.fixed = true; this.fixedAt = LocalDateTime.now(); }
+        public LocalDateTime getFixedAt() { return fixedAt; }
+    }
+
     /** 设置任务重平衡服务 */
     public void setTaskRebalanceService(com.chengxun.gamemaker.service.TaskRebalanceService service) {
         this.taskRebalanceService = service;
@@ -360,6 +406,12 @@ public class VerificationAgent extends BaseAgent {
         }
 
         try {
+            // ===== 持续测试循环 =====
+            if (continuousTestActive) {
+                runContinuousTestLoop();
+                return; // 持续测试循环期间不执行其他工作
+            }
+
             // ===== 第一部分：验证工作 =====
 
             // 执行完整验证
@@ -628,12 +680,48 @@ public class VerificationAgent extends BaseAgent {
         log.info("已发送验证摘要给ProducerAgent");
     }
 
+    /** 验证通知发送时间戳队列，用于滑动窗口限流 */
+    private final java.util.LinkedList<Long> verificationNotificationTimestamps = new java.util.LinkedList<>();
+
+    /** 问题通知发送时间戳队列，用于滑动窗口限流 */
+    private final java.util.LinkedList<Long> issueNotificationTimestamps = new java.util.LinkedList<>();
+
+    /** 限流窗口：1小时（毫秒） */
+    private static final long THROTTLE_WINDOW_MS = 60 * 60 * 1000L;
+
+    /**
+     * 检查是否允许发送通知（滑动窗口限流）
+     *
+     * @param timestamps 时间戳队列
+     * @return 是否允许发送
+     */
+    private boolean canSendNotification(java.util.LinkedList<Long> timestamps) {
+        int maxPerHour = 2; // 默认值
+        if (systemConfigService != null) {
+            maxPerHour = systemConfigService.getInt(
+                com.chengxun.gamemaker.config.SystemConstants.NOTIFICATION_VERIFY_THROTTLE_PER_HOUR, 2);
+        }
+        long now = System.currentTimeMillis();
+        // 清理窗口外的旧时间戳
+        while (!timestamps.isEmpty() && timestamps.peek() < now - THROTTLE_WINDOW_MS) {
+            timestamps.poll();
+        }
+        return timestamps.size() < maxPerHour;
+    }
+
     /**
      * 发送验证通知
      * 使用通知模板发送验证结果给项目成员
+     * 限流：每小时最多发送 N 次（由 notification.verify-throttle-per-hour 配置）
      */
     private void sendVerificationNotification() {
         if (notificationService == null || currentProject == null) return;
+
+        // 限流检查
+        if (!canSendNotification(verificationNotificationTimestamps)) {
+            log.debug("验证通知限流，跳过发送（本小时已发送 {} 次）", verificationNotificationTimestamps.size());
+            return;
+        }
 
         try {
             // 计算验证结果
@@ -672,6 +760,7 @@ public class VerificationAgent extends BaseAgent {
                 com.chengxun.gamemaker.web.entity.Notification.NotificationType.SYSTEM
             );
 
+            verificationNotificationTimestamps.add(System.currentTimeMillis());
             log.info("已发送验证通知: project={}, result={}", currentProject.getName(), resultSummary);
         } catch (Exception e) {
             log.warn("发送验证通知失败: {}", e.getMessage());
@@ -1640,18 +1729,63 @@ public class VerificationAgent extends BaseAgent {
 
     /**
      * 处理待上报的问题
-     * 将严重问题通知ProducerAgent
+     * 将严重问题通知ProducerAgent，聚合为单条通知避免刷屏
      */
     private void processPendingIssues() {
+        List<VerificationIssue> criticalIssues = new ArrayList<>();
         while (!pendingIssues.isEmpty()) {
             VerificationIssue issue = pendingIssues.poll();
-
             // 只上报HIGH和CRITICAL级别问题
             if ("CRITICAL".equals(issue.getSeverity()) || "HIGH".equals(issue.getSeverity())) {
+                criticalIssues.add(issue);
                 notifyProducerAgent(issue);
-                // 发送通知
-                sendVerificationIssueNotification(issue);
             }
+        }
+        // 聚合为单条通知，避免每个问题单独发送
+        if (!criticalIssues.isEmpty()) {
+            sendAggregatedIssueNotification(criticalIssues);
+        }
+    }
+
+    /**
+     * 发送聚合的问题通知
+     * 将多个问题合并为一条通知，减少通知数量
+     * 限流：每小时最多发送 N 次（由 notification.verify-throttle-per-hour 配置）
+     */
+    private void sendAggregatedIssueNotification(List<VerificationIssue> issues) {
+        if (notificationService == null || currentProject == null || issues.isEmpty()) return;
+
+        // 限流检查
+        if (!canSendNotification(issueNotificationTimestamps)) {
+            log.debug("问题通知限流，跳过发送（本小时已发送 {} 次）", issueNotificationTimestamps.size());
+            return;
+        }
+
+        try {
+            StringBuilder issuesText = new StringBuilder();
+            for (int i = 0; i < issues.size(); i++) {
+                VerificationIssue issue = issues.get(i);
+                issuesText.append(String.format("%d. [%s] %s: %s\n",
+                    i + 1, issue.getSeverity(), issue.getCategory(), issue.getDescription()));
+            }
+
+            Map<String, String> variables = Map.of(
+                "projectName", currentProject.getName(),
+                "issues", issuesText.toString(),
+                "time", java.time.LocalDateTime.now().toString()
+            );
+
+            notificationService.sendNotificationByTemplate(
+                null,
+                "VERIFICATION_ISSUE_SYSTEM",
+                variables,
+                com.chengxun.gamemaker.web.entity.Notification.NotificationType.WARNING
+            );
+
+            issueNotificationTimestamps.add(System.currentTimeMillis());
+            log.info("已发送聚合验证问题通知: 问题数={}", issues.size());
+        } catch (Exception e) {
+            log.warn("发送聚合验证问题通知失败: {}", e.getMessage());
         }
     }
 
@@ -1904,5 +2038,575 @@ public class VerificationAgent extends BaseAgent {
         return String.format("验证摘要: %d项通过, %d项未通过, 上次验证: %s",
             passed, failed,
             lastFullVerificationTime != null ? lastFullVerificationTime.toString() : "未验证");
+    }
+
+    // ===== 持续测试循环 =====
+
+    /** 期望结果缓存：projectId -> 期望结果 */
+    private final Map<String, ExpectedResult> expectedResultCache = new HashMap<>();
+
+    /**
+     * 期望结果
+     */
+    public static class ExpectedResult {
+        private String gameId;
+        private String gameType;
+        private String description;
+        private List<String> acceptanceCriteria;
+        private List<String> gameplayExpectations;
+        private List<String> technicalRequirements;
+        private LocalDateTime generatedAt;
+
+        public ExpectedResult(String gameId, String gameType) {
+            this.gameId = gameId;
+            this.gameType = gameType;
+            this.acceptanceCriteria = new ArrayList<>();
+            this.gameplayExpectations = new ArrayList<>();
+            this.technicalRequirements = new ArrayList<>();
+            this.generatedAt = LocalDateTime.now();
+        }
+
+        // Getters and Setters
+        public String getGameId() { return gameId; }
+        public String getGameType() { return gameType; }
+        public void setGameType(String gameType) { this.gameType = gameType; }
+        public String getDescription() { return description; }
+        public void setDescription(String description) { this.description = description; }
+        public List<String> getAcceptanceCriteria() { return acceptanceCriteria; }
+        public void setAcceptanceCriteria(List<String> criteria) { this.acceptanceCriteria = criteria; }
+        public List<String> getGameplayExpectations() { return gameplayExpectations; }
+        public void setGameplayExpectations(List<String> expectations) { this.gameplayExpectations = expectations; }
+        public List<String> getTechnicalRequirements() { return technicalRequirements; }
+        public void setTechnicalRequirements(List<String> requirements) { this.technicalRequirements = requirements; }
+        public LocalDateTime getGeneratedAt() { return generatedAt; }
+    }
+
+    /**
+     * 启动持续测试循环
+     * 测试 Agent 会先通过 AI 分析期望结果，然后循环执行测试，发现问题后通知对应的开发 Agent，直到没有问题为止
+     *
+     * @param gameId 游戏项目ID
+     */
+    public void startContinuousTestLoop(String gameId) {
+        if (continuousTestActive) {
+            log.warn("持续测试循环已在运行中");
+            return;
+        }
+
+        this.continuousTestActive = true;
+        this.continuousTestIteration = 0;
+        this.continuousTestIssues.clear();
+
+        log.info("启动持续测试循环: gameId={}", gameId);
+        logInfo("CONTINUOUS_TEST_STARTED", "持续测试循环已启动，正在分析期望结果...");
+
+        // 异步分析期望结果
+        Thread analysisThread = new Thread(() -> analyzeExpectedResult(gameId));
+        analysisThread.setDaemon(true);
+        analysisThread.setName("expectation-analysis-" + gameId);
+        analysisThread.start();
+    }
+
+    /**
+     * 停止持续测试循环
+     */
+    public void stopContinuousTestLoop() {
+        this.continuousTestActive = false;
+        log.info("停止持续测试循环: 迭代次数={}, 发现问题数={}", continuousTestIteration, continuousTestIssues.size());
+        logInfo("CONTINUOUS_TEST_STOPPED", String.format("持续测试循环已停止，迭代次数: %d，发现问题: %d",
+            continuousTestIteration, continuousTestIssues.size()));
+    }
+
+    /**
+     * 通过 AI 分析游戏设计文档，生成期望结果
+     */
+    private void analyzeExpectedResult(String gameId) {
+        try {
+            log.info("开始分析期望结果: gameId={}", gameId);
+
+            // 获取项目信息
+            GameProject project = projectManager.getProject(gameId);
+            if (project == null) {
+                log.error("项目不存在: {}", gameId);
+                stopContinuousTestLoop();
+                return;
+            }
+
+            // 构建分析 prompt
+            String prompt = buildExpectationAnalysisPrompt(project);
+
+            // 调用 AI 分析
+            String aiResponse = sendMessage(prompt);
+
+            // 解析期望结果
+            ExpectedResult expectedResult = parseExpectedResult(gameId, aiResponse);
+
+            // 缓存期望结果
+            expectedResultCache.put(gameId, expectedResult);
+
+            log.info("期望结果分析完成: gameId={}, criteria={}, expectations={}, requirements={}",
+                gameId,
+                expectedResult.getAcceptanceCriteria().size(),
+                expectedResult.getGameplayExpectations().size(),
+                expectedResult.getTechnicalRequirements().size());
+
+            logInfo("EXPECTATION_ANALYZED", String.format("期望结果分析完成\n\n验收标准: %d 项\n玩法期望: %d 项\n技术要求: %d 项",
+                expectedResult.getAcceptanceCriteria().size(),
+                expectedResult.getGameplayExpectations().size(),
+                expectedResult.getTechnicalRequirements().size()));
+
+        } catch (Exception e) {
+            log.error("分析期望结果失败: {}", e.getMessage(), e);
+            logInfo("EXPECTATION_ANALYSIS_FAILED", "期望结果分析失败: " + e.getMessage());
+            stopContinuousTestLoop();
+        }
+    }
+
+    /**
+     * 构建期望结果分析 prompt
+     */
+    private String buildExpectationAnalysisPrompt(GameProject project) {
+        StringBuilder prompt = new StringBuilder();
+
+        prompt.append("你是一个游戏测试专家。请分析以下游戏项目，生成详细的验收标准和期望结果。\n\n");
+
+        prompt.append("## 项目信息\n");
+        prompt.append("- 项目名称: ").append(project.getName()).append("\n");
+        prompt.append("- 项目描述: ").append(project.getDescription()).append("\n");
+        prompt.append("- 游戏类型: ").append(project.getGoalType()).append("\n");
+        prompt.append("- 当前目标: ").append(project.getGoal()).append("\n\n");
+
+        prompt.append("## 里程碑信息\n");
+        for (GameProject.GoalMilestone milestone : project.getMilestones()) {
+            prompt.append("- ").append(milestone.getTitle()).append(": ").append(milestone.getDescription()).append("\n");
+        }
+
+        prompt.append("\n## 请分析并输出\n");
+        prompt.append("1. **验收标准**: 游戏应该满足的基本功能要求（列表形式）\n");
+        prompt.append("2. **玩法期望**: 玩家应该能体验到的玩法（列表形式）\n");
+        prompt.append("3. **技术要求**: 技术层面应该达到的指标（列表形式）\n");
+        prompt.append("4. **整体描述**: 这个游戏应该是什么样的\n\n");
+
+        prompt.append("请用以下 JSON 格式输出：\n");
+        prompt.append("```json\n");
+        prompt.append("{\n");
+        prompt.append("  \"acceptanceCriteria\": [\"标准1\", \"标准2\", ...],\n");
+        prompt.append("  \"gameplayExpectations\": [\"期望1\", \"期望2\", ...],\n");
+        prompt.append("  \"technicalRequirements\": [\"要求1\", \"要求2\", ...],\n");
+        prompt.append("  \"description\": \"整体描述\"\n");
+        prompt.append("}\n");
+        prompt.append("```\n");
+
+        return prompt.toString();
+    }
+
+    /**
+     * 解析 AI 返回的期望结果
+     */
+    private ExpectedResult parseExpectedResult(String gameId, String aiResponse) {
+        ExpectedResult result = new ExpectedResult(gameId, "unknown");
+
+        try {
+            // 尝试从 AI 响应中提取 JSON
+            String jsonStr = extractJsonFromResponse(aiResponse);
+            if (jsonStr != null) {
+                com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                com.fasterxml.jackson.databind.JsonNode root = mapper.readTree(jsonStr);
+
+                // 解析验收标准
+                if (root.has("acceptanceCriteria")) {
+                    for (com.fasterxml.jackson.databind.JsonNode node : root.get("acceptanceCriteria")) {
+                        result.getAcceptanceCriteria().add(node.asText());
+                    }
+                }
+
+                // 解析玩法期望
+                if (root.has("gameplayExpectations")) {
+                    for (com.fasterxml.jackson.databind.JsonNode node : root.get("gameplayExpectations")) {
+                        result.getGameplayExpectations().add(node.asText());
+                    }
+                }
+
+                // 解析技术要求
+                if (root.has("technicalRequirements")) {
+                    for (com.fasterxml.jackson.databind.JsonNode node : root.get("technicalRequirements")) {
+                        result.getTechnicalRequirements().add(node.asText());
+                    }
+                }
+
+                // 解析描述
+                if (root.has("description")) {
+                    result.setDescription(root.get("description").asText());
+                }
+            }
+        } catch (Exception e) {
+            log.warn("解析期望结果 JSON 失败，使用原始文本: {}", e.getMessage());
+            result.setDescription(aiResponse);
+        }
+
+        return result;
+    }
+
+    /**
+     * 从 AI 响应中提取 JSON
+     */
+    private String extractJsonFromResponse(String response) {
+        if (response == null) return null;
+
+        // 查找 ```json ... ``` 代码块
+        int start = response.indexOf("```json");
+        if (start >= 0) {
+            start = response.indexOf("\n", start) + 1;
+            int end = response.indexOf("```", start);
+            if (end > start) {
+                return response.substring(start, end).trim();
+            }
+        }
+
+        // 查找 { ... } JSON 对象
+        start = response.indexOf("{");
+        if (start >= 0) {
+            int end = response.lastIndexOf("}");
+            if (end > start) {
+                return response.substring(start, end + 1);
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * 执行持续测试循环
+     */
+    private void runContinuousTestLoop() {
+        continuousTestIteration++;
+
+        // 检查是否超过最大迭代次数
+        if (continuousTestIteration > MAX_CONTINUOUS_TEST_ITERATIONS) {
+            log.warn("持续测试循环超过最大迭代次数，停止循环");
+            logInfo("CONTINUOUS_TEST_MAX_ITERATIONS", "持续测试循环超过最大迭代次数，停止循环");
+            stopContinuousTestLoop();
+            return;
+        }
+
+        log.info("持续测试循环第 {} 次迭代", continuousTestIteration);
+        logInfo("CONTINUOUS_TEST_ITERATION", "持续测试循环第 " + continuousTestIteration + " 次迭代");
+
+        // 检查期望结果是否已分析完成
+        ExpectedResult expectedResult = expectedResultCache.get(getProjectId());
+        if (expectedResult == null) {
+            log.info("期望结果尚未分析完成，等待中...");
+            return;
+        }
+
+        // 1. 执行验证
+        performFullVerification();
+
+        // 2. 基于期望结果进行验证
+        List<ContinuousTestIssue> expectationIssues = verifyAgainstExpectations(expectedResult);
+
+        // 3. 分析验证结果，识别问题
+        List<ContinuousTestIssue> verificationIssues = analyzeVerificationResults();
+
+        // 4. 合并问题
+        List<ContinuousTestIssue> allIssues = new ArrayList<>();
+        allIssues.addAll(expectationIssues);
+        allIssues.addAll(verificationIssues);
+
+        // 5. 如果没有新问题，测试通过
+        if (allIssues.isEmpty()) {
+            log.info("持续测试循环：所有测试通过！");
+            logInfo("CONTINUOUS_TEST_PASSED", String.format(
+                "持续测试循环：所有测试通过！\n\n迭代次数: %d\n验收标准: %d 项\n玩法期望: %d 项\n技术要求: %d 项",
+                continuousTestIteration,
+                expectedResult.getAcceptanceCriteria().size(),
+                expectedResult.getGameplayExpectations().size(),
+                expectedResult.getTechnicalRequirements().size()));
+            stopContinuousTestLoop();
+            return;
+        }
+
+        // 6. 通知对应的开发 Agent
+        notifyDevelopersOfIssues(allIssues);
+
+        // 7. 记录问题
+        continuousTestIssues.addAll(allIssues);
+
+        // 8. 等待下一个工作周期继续测试
+        log.info("持续测试循环：发现 {} 个问题，已通知开发 Agent，等待修复后继续测试", allIssues.size());
+        logInfo("CONTINUOUS_TEST_ISSUES_FOUND", String.format(
+            "持续测试循环：发现 %d 个问题\n\n迭代次数: %d\n已通知开发 Agent 修复",
+            allIssues.size(), continuousTestIteration));
+    }
+
+    /**
+     * 基于期望结果进行验证
+     */
+    private List<ContinuousTestIssue> verifyAgainstExpectations(ExpectedResult expectedResult) {
+        List<ContinuousTestIssue> issues = new ArrayList<>();
+
+        if (currentProject == null) return issues;
+
+        String workDir = currentProject.getWorkDir();
+        if (workDir == null || workDir.isEmpty()) return issues;
+
+        // 使用 AI 验证当前实现是否符合期望
+        try {
+            String verificationPrompt = buildVerificationPrompt(expectedResult, workDir);
+            String aiResponse = sendMessage(verificationPrompt);
+
+            // 解析验证结果
+            issues = parseVerificationResult(aiResponse, expectedResult);
+
+        } catch (Exception e) {
+            log.error("基于期望结果验证失败: {}", e.getMessage(), e);
+        }
+
+        return issues;
+    }
+
+    /**
+     * 构建验证 prompt
+     */
+    private String buildVerificationPrompt(ExpectedResult expectedResult, String workDir) {
+        StringBuilder prompt = new StringBuilder();
+
+        prompt.append("你是一个游戏测试专家。请验证当前游戏实现是否符合期望结果。\n\n");
+
+        prompt.append("## 期望结果\n");
+        prompt.append("### 验收标准\n");
+        for (String criteria : expectedResult.getAcceptanceCriteria()) {
+            prompt.append("- ").append(criteria).append("\n");
+        }
+
+        prompt.append("\n### 玩法期望\n");
+        for (String expectation : expectedResult.getGameplayExpectations()) {
+            prompt.append("- ").append(expectation).append("\n");
+        }
+
+        prompt.append("\n### 技术要求\n");
+        for (String requirement : expectedResult.getTechnicalRequirements()) {
+            prompt.append("- ").append(requirement).append("\n");
+        }
+
+        prompt.append("\n## 验证任务\n");
+        prompt.append("请检查游戏代码和资源，验证是否满足以上期望结果。\n\n");
+        prompt.append("输出格式：\n");
+        prompt.append("- 如果全部满足：输出 \"ALL_PASSED\"\n");
+        prompt.append("- 如果有不满足的：输出 JSON 格式的问题列表\n");
+        prompt.append("```json\n");
+        prompt.append("{\n");
+        prompt.append("  \"passed\": false,\n");
+        prompt.append("  \"issues\": [\n");
+        prompt.append("    {\"category\": \"SERVER/CLIENT/DESIGN\", \"description\": \"问题描述\", \"severity\": \"HIGH/MEDIUM/LOW\"},\n");
+        prompt.append("    ...\n");
+        prompt.append("  ]\n");
+        prompt.append("}\n");
+        prompt.append("```\n");
+
+        return prompt.toString();
+    }
+
+    /**
+     * 解析验证结果
+     */
+    private List<ContinuousTestIssue> parseVerificationResult(String aiResponse, ExpectedResult expectedResult) {
+        List<ContinuousTestIssue> issues = new ArrayList<>();
+
+        if (aiResponse == null || aiResponse.contains("ALL_PASSED")) {
+            return issues;
+        }
+
+        try {
+            String jsonStr = extractJsonFromResponse(aiResponse);
+            if (jsonStr != null) {
+                com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                com.fasterxml.jackson.databind.JsonNode root = mapper.readTree(jsonStr);
+
+                if (root.has("issues")) {
+                    for (com.fasterxml.jackson.databind.JsonNode issueNode : root.get("issues")) {
+                        String category = issueNode.has("category") ? issueNode.get("category").asText() : "OTHER";
+                        String description = issueNode.has("description") ? issueNode.get("description").asText() : "未知问题";
+                        String severity = issueNode.has("severity") ? issueNode.get("severity").asText() : "MEDIUM";
+
+                        String assignedAgentId = findResponsibleAgent(category);
+
+                        ContinuousTestIssue issue = new ContinuousTestIssue(
+                            "EXPECT-" + System.currentTimeMillis() + "-" + issues.size(),
+                            category,
+                            "[" + severity + "] " + description,
+                            assignedAgentId
+                        );
+                        issues.add(issue);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("解析验证结果失败: {}", e.getMessage());
+        }
+
+        return issues;
+    }
+
+    /**
+     * 分析验证结果，识别问题
+     *
+     * @return 新发现的问题列表
+     */
+    private List<ContinuousTestIssue> analyzeVerificationResults() {
+        List<ContinuousTestIssue> newIssues = new ArrayList<>();
+
+        for (Map.Entry<String, VerificationResult> entry : verificationResults.entrySet()) {
+            VerificationResult result = entry.getValue();
+            if (!result.isPassed()) {
+                // 根据验证类型分类问题
+                String category = categorizeIssue(result.getType());
+                String assignedAgentId = findResponsibleAgent(category);
+
+                ContinuousTestIssue issue = new ContinuousTestIssue(
+                    "ISSUE-" + System.currentTimeMillis() + "-" + newIssues.size(),
+                    category,
+                    result.getMessage(),
+                    assignedAgentId
+                );
+                newIssues.add(issue);
+            }
+        }
+
+        return newIssues;
+    }
+
+    /**
+     * 根据验证类型分类问题
+     *
+     * @param verificationType 验证类型
+     * @return 问题类别：SERVER, CLIENT, DESIGN, OTHER
+     */
+    private String categorizeIssue(String verificationType) {
+        if (verificationType == null) return "OTHER";
+
+        return switch (verificationType) {
+            case "STRUCTURE", "CONSTRAINTS" -> "CLIENT";
+            case "CODE_QUALITY" -> "CLIENT";
+            case "DESIGN_REVIEW" -> "DESIGN";
+            case "MILESTONE" -> "CLIENT";
+            default -> "OTHER";
+        };
+    }
+
+    /**
+     * 查找负责的开发 Agent
+     *
+     * @param category 问题类别
+     * @return Agent ID
+     */
+    private String findResponsibleAgent(String category) {
+        if (currentProject == null) return null;
+
+        String projectId = currentProject.getId();
+
+        return switch (category) {
+            case "SERVER" -> projectId + ":server-dev";
+            case "CLIENT" -> projectId + ":client-dev";
+            case "DESIGN" -> projectId + ":system-planner";
+            default -> projectId + ":producer"; // 默认通知制作人
+        };
+    }
+
+    /**
+     * 通知开发 Agent 修复问题
+     *
+     * @param issues 问题列表
+     */
+    private void notifyDevelopersOfIssues(List<ContinuousTestIssue> issues) {
+        // 按 Agent 分组问题
+        Map<String, List<ContinuousTestIssue>> issuesByAgent = new HashMap<>();
+        for (ContinuousTestIssue issue : issues) {
+            String agentId = issue.getAssignedAgentId();
+            if (agentId != null) {
+                issuesByAgent.computeIfAbsent(agentId, k -> new ArrayList<>()).add(issue);
+            }
+        }
+
+        // 通知每个 Agent
+        for (Map.Entry<String, List<ContinuousTestIssue>> entry : issuesByAgent.entrySet()) {
+            String agentId = entry.getKey();
+            List<ContinuousTestIssue> agentIssues = entry.getValue();
+
+            StringBuilder content = new StringBuilder();
+            content.append("【持续测试发现问题】\n\n");
+            content.append("迭代次数: ").append(continuousTestIteration).append("\n");
+            content.append("发现问题数: ").append(agentIssues.size()).append("\n\n");
+
+            for (int i = 0; i < agentIssues.size(); i++) {
+                ContinuousTestIssue issue = agentIssues.get(i);
+                content.append(i + 1).append(". ").append(issue.getDescription()).append("\n");
+            }
+
+            content.append("\n请修复后通知测试 Agent 继续测试。");
+
+            // 发送消息给开发 Agent
+            AgentMessage message = AgentMessage.builder()
+                .fromAgentId(getId())
+                .toAgentId(agentId)
+                .type(AgentMessage.MessageType.TASK)
+                .content(content.toString())
+                .build();
+            sendMessage(message);
+
+            log.info("已通知 Agent {} 修复 {} 个问题", agentId, agentIssues.size());
+        }
+    }
+
+    /**
+     * 标记问题为已修复
+     *
+     * @param issueId 问题ID
+     */
+    public void markIssueFixed(String issueId) {
+        for (ContinuousTestIssue issue : continuousTestIssues) {
+            if (issue.getIssueId().equals(issueId)) {
+                issue.markFixed();
+                log.info("问题已标记为已修复: {}", issueId);
+                break;
+            }
+        }
+    }
+
+    /**
+     * 获取持续测试循环状态
+     */
+    public String getContinuousTestStatus() {
+        if (!continuousTestActive) {
+            return "持续测试循环未启动";
+        }
+
+        long unfixedCount = continuousTestIssues.stream().filter(i -> !i.isFixed()).count();
+
+        ExpectedResult expectedResult = expectedResultCache.get(getProjectId());
+        String expectationStatus = expectedResult != null
+            ? String.format("已分析\n  验收标准: %d 项\n  玩法期望: %d 项\n  技术要求: %d 项",
+                expectedResult.getAcceptanceCriteria().size(),
+                expectedResult.getGameplayExpectations().size(),
+                expectedResult.getTechnicalRequirements().size())
+            : "分析中...";
+
+        return String.format(
+            "持续测试循环运行中\n\n迭代次数: %d\n发现问题: %d\n未修复: %d\n\n期望结果: %s",
+            continuousTestIteration, continuousTestIssues.size(), unfixedCount, expectationStatus);
+    }
+
+    /**
+     * 获取期望结果详情
+     */
+    public ExpectedResult getExpectedResult() {
+        return expectedResultCache.get(getProjectId());
+    }
+
+    /**
+     * 持续测试循环是否激活
+     */
+    public boolean isContinuousTestActive() {
+        return continuousTestActive;
     }
 }

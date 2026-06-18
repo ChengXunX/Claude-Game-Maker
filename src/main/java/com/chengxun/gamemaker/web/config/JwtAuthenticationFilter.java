@@ -80,6 +80,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             if (tokenParam != null && !tokenParam.isEmpty()) {
                 authHeader = JwtUtils.TOKEN_PREFIX + tokenParam;
             } else {
+                log.info("JWT 未找到token: uri={}", request.getRequestURI());
                 filterChain.doFilter(request, response);
                 return;
             }
@@ -173,7 +174,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             // 设置认证信息到 SecurityContext
             SecurityContextHolder.getContext().setAuthentication(authentication);
 
-            log.debug("JWT 认证成功: username={}, userId={}, role={}", username, userId, role);
+            log.info("JWT 认证成功: username={}, userId={}, role={}, uri={}", username, userId, role, request.getRequestURI());
 
         } catch (Exception e) {
             log.error("JWT 认证异常: {}", e.getMessage());
@@ -193,7 +194,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private void addAllPermissions(List<SimpleGrantedAuthority> authorities) {
         String[] allPermissions = {
             "PERM_agents:manage", "PERM_agents:view", "PERM_agents:task",
-            "PERM_skills:view", "PERM_skills:manage",
+            "PERM_skills:view", "PERM_skills:manage", "PERM_skill:discover",
             "PERM_tokens:view", "PERM_tokens:manage",
             "PERM_projects:view", "PERM_projects:manage",
             "PERM_system:monitor", "PERM_system:manage", "PERM_system:view",
@@ -212,7 +213,17 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             "PERM_dashboard:view",
             "PERM_terminal:use",
             "PERM_knowledge:manage",
-            "PERM_agent:view", "PERM_agent:manage"
+            "PERM_agent:view", "PERM_agent:manage",
+            "PERM_checkpoint:view", "PERM_checkpoint:manage",
+            "PERM_goal:view", "PERM_goal:manage",
+            "PERM_dream:execute",
+            "PERM_subagent:view", "PERM_subagent:create", "PERM_subagent:manage",
+            "PERM_iteration:view", "PERM_iteration:manage",
+            "PERM_supervision:view",
+            "PERM_distill:execute",
+            "PERM_snapshot:view", "PERM_snapshot:manage",
+            "PERM_fork:view", "PERM_fork:create", "PERM_fork:manage",
+            "PERM_tool:permission:manage"
         };
         for (String perm : allPermissions) {
             if (!authorities.contains(new SimpleGrantedAuthority(perm))) {

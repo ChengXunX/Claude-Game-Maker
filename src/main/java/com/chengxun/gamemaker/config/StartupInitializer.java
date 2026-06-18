@@ -327,46 +327,40 @@ public class StartupInitializer {
     }
 
     /**
-     * 恢复 Token-Agent 绑定
-     * 从数据库中读取已绑定的 Token，将 API 配置应用到对应的 Agent
-     *
-     * 这样即使 Agent 重启，也能使用绑定的 Token 的 API 配置
+     * 恢复 Token 分配
+     * 池化模式下，启动时主动为每个活跃 Agent 从 Token 池中获取最佳可用 Token
+     * 避免重启后 Agent 使用系统默认配置直到第一次任务完成
      */
     private void restoreTokenBindings() {
         try {
             List<ApiToken> allTokens = tokenService.getAllTokens();
-            int restoredCount = 0;
+            long activeCount = allTokens.stream().filter(ApiToken::isActive).count();
+            log.info("Token pool ready: {} active tokens available", activeCount);
 
-            for (ApiToken token : allTokens) {
-                if (token.getAssignedAgentId() != null && !token.getAssignedAgentId().isEmpty()
-                    && token.isActive()) {
+            if (activeCount == 0) return;
 
-                    Agent agent = agentManager.getAgent(token.getAssignedAgentId());
-                    if (agent != null) {
-                        // 恢复 Token 的 API 配置到 Agent
-                        agent.getDefinition().setApiKey(token.getApiKey());
-                        agent.getDefinition().setApiUrl(token.getApiUrl());
-                        agent.getDefinition().setModel(token.getModel());
+            // 为每个活跃 Agent 主动分配最佳 Token
+            int assigned = 0;
+            for (Agent agent : agentManager.getAllAgents()) {
+                if (!agent.isAlive()) continue;
 
-                        // 同时恢复到 AgentContext（持久化）
-                        if (agent instanceof com.chengxun.gamemaker.agent.BaseAgent baseAgent) {
-                            baseAgent.saveApiConfigToContext(token.getApiKey(), token.getApiUrl(), token.getModel());
-                        }
+                ApiToken token = tokenService.findBestTokenForRole(agent.getRole());
+                if (token == null) continue;
 
-                        restoredCount++;
+                // 将 Token 配置应用到 Agent Definition
+                if (token.getApiKey() != null) agent.getDefinition().setApiKey(token.getApiKey());
+                if (token.getApiUrl() != null) agent.getDefinition().setApiUrl(token.getApiUrl());
+                if (token.getModel() != null) agent.getDefinition().setModel(token.getModel());
+                if (token.getContextWindow() != null) agent.getDefinition().setMaxContextSize(token.getContextWindow());
+                agent.getDefinition().setAssignedTokenId(token.getId());
+                assigned++;
 
-                        log.info("Restored token binding: {} -> agent {} (apiUrl={}, model={})",
-                            token.getName(), token.getAssignedAgentId(),
-                            token.getApiUrl(), token.getModel());
-                    } else {
-                        log.warn("Agent not found for token binding: {} -> agent {}",
-                            token.getName(), token.getAssignedAgentId());
-                    }
-                }
+                log.info("Restored token '{}' to agent {} (role: {})",
+                    token.getName(), agent.getId(), agent.getRole());
             }
 
-            if (restoredCount > 0) {
-                log.info("Restored {} token bindings", restoredCount);
+            if (assigned > 0) {
+                log.info("Restored token allocation for {} agents", assigned);
             }
         } catch (Exception e) {
             log.error("Failed to restore token bindings", e);

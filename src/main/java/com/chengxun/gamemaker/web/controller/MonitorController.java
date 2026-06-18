@@ -98,7 +98,7 @@ public class MonitorController {
             long activeTokenCount = allTokens.stream().filter(t -> t.getStatus() == ApiToken.TokenStatus.ACTIVE).count();
             long exhaustedTokenCount = allTokens.stream().filter(t -> t.getStatus() == ApiToken.TokenStatus.EXHAUSTED).count();
             long disabledTokenCount = allTokens.stream().filter(t -> t.getStatus() == ApiToken.TokenStatus.DISABLED).count();
-            long assignedTokenCount = allTokens.stream().filter(ApiToken::isAssigned).count();
+            long assignedTokenCount = allTokens.stream().filter(ApiToken::isInUse).count();
             long totalUsage = allTokens.stream().mapToLong(ApiToken::getUsageCount).sum();
             long totalTokensUsed = allTokens.stream().mapToLong(ApiToken::getTotalTokensUsed).sum();
 

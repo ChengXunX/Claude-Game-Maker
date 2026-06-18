@@ -149,7 +149,21 @@ public class PermissionService {
         // 督查报告相关
         saveDefinition("PERM_supervision:view", "督查查看", "查看督查报告", "项目", true, 14);
 
-        log.info("Default permission definitions initialized: 41");
+        // 多轮推理相关
+        saveDefinition("PERM_reasoning:view", "推理查看", "查看多轮推理记录", "Agent", true, 6);
+        saveDefinition("PERM_reasoning:manage", "推理管理", "触发和管理多轮推理", "Agent", true, 7);
+
+        // 质量预测相关
+        saveDefinition("PERM_quality:view", "质量预测查看", "查看质量预测结果", "项目", true, 15);
+        saveDefinition("PERM_quality:predict", "质量预测执行", "执行质量预测", "项目", true, 16);
+
+        // 迭代适应相关
+        saveDefinition("PERM_iteration:adapt", "迭代适应", "应用迭代策略建议", "项目", true, 17);
+
+        // 知识图谱相关
+        saveDefinition("PERM_knowledge:graph", "知识图谱", "查看和构建知识图谱", "项目", true, 18);
+
+        log.info("Default permission definitions initialized: 47");
     }
 
     private void saveDefinition(String key, String name, String description,

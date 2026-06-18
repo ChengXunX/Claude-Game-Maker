@@ -529,6 +529,7 @@ public class ProjectManager {
 
     /**
      * 保存项目配置
+     * 同时更新内存中的项目对象，确保下次读取时能获取最新数据
      */
     @CacheEvict(value = CacheConfig.CACHE_PROJECTS, allEntries = true)
     public void saveProjectConfig(GameProject project) {
@@ -540,6 +541,8 @@ public class ProjectManager {
                 Files.createDirectories(configPath.getParent());
                 objectMapper.writerWithDefaultPrettyPrinter()
                     .writeValue(configPath.toFile(), project);
+                // 【修复】同步更新内存中的项目对象
+                projects.put(project.getId(), project);
                 log.debug("Project config saved: {}", project.getId());
             } catch (IOException e) {
                 log.error("Failed to save project config: {}", project.getId(), e);

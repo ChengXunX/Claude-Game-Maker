@@ -399,6 +399,36 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * 处理 Session 失效异常
+     * 当用户的 Redis Session 被失效时，记录日志但不返回 401（避免误踢用户）
+     * JWT 认证的 API 不依赖 Session，Session 失效不应影响 API 访问
+     *
+     * @param e 异常对象
+     * @param request HTTP 请求
+     * @return 500 错误响应（而不是 401）
+     */
+    @ExceptionHandler(IllegalStateException.class)
+    public ResponseEntity<ErrorResponse> handleIllegalState(IllegalStateException e, HttpServletRequest request) {
+        if (e.getMessage() != null && e.getMessage().contains("Session was invalidated")) {
+            // Session 失效不影响 JWT 认证的 API，记录日志即可
+            log.debug("Session 已失效（不影响API访问）: {}", request.getRequestURI());
+            // 返回 200 而不是 401，避免前端误判为未登录
+            // 前端使用 JWT 认证，Session 失效不应该导致重新登录
+            return ResponseEntity.ok().build();
+        }
+        // 其他 IllegalStateException 按通用异常处理
+        log.error("系统异常: {} - {}", request.getRequestURI(), e.getMessage(), e);
+        ErrorResponse error = new ErrorResponse(
+            HttpStatus.INTERNAL_SERVER_ERROR.value(),
+            "INTERNAL_ERROR",
+            "系统内部错误，请稍后重试",
+            request.getRequestURI(),
+            LocalDateTime.now()
+        );
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(error);
+    }
+
+    /**
      * 处理所有其他未捕获的异常（兜底）
      * 确保任何异常都不会返回裸的 500 错误
      *

@@ -156,9 +156,7 @@ public class IntelligentSchedulerController {
             @PathVariable String projectId) {
         com.chengxun.gamemaker.web.entity.QualityGateAssessment assessment =
             qualityGateService.getLatestAssessment(projectId);
-        if (assessment == null) {
-            return ResponseEntity.notFound().build();
-        }
+        // 没有评估数据时返回200+null，而非404
         return ResponseEntity.ok(assessment);
     }
 }

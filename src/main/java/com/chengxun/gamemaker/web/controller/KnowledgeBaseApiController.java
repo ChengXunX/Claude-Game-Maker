@@ -55,12 +55,13 @@ public class KnowledgeBaseApiController {
 
     /**
      * 获取使用记录列表
+     * 返回所有类型的使用记录（模板、解决方案、最佳实践、知识提取、进化等）
      */
     @GetMapping("/usage-records")
     @Operation(summary = "获取使用记录列表")
     @PreAuthorize("isAuthenticated()")
-    public ResponseEntity<List<GameKnowledgeBase.TemplateUsageRecord>> getUsageRecords() {
-        return ResponseEntity.ok(knowledgeBase.getAllUsageRecords());
+    public ResponseEntity<List<GameKnowledgeBase.UsageRecord>> getUsageRecords() {
+        return ResponseEntity.ok(knowledgeBase.getAllGeneralUsageRecords());
     }
 
     /**

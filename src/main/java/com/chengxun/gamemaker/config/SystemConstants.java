@@ -242,6 +242,15 @@ public final class SystemConstants {
     )
     public static final String NOTIFICATION_BATCH_SIZE = "notification.batch-size";
 
+    @SystemConstantDef(
+        key = "notification.verify-throttle-per-hour",
+        name = "验证通知每小时上限",
+        description = "游戏验证相关通知每小时最大发送次数",
+        defaultValue = "2", valueType = "int", group = "notification",
+        unit = "次/小时", min = 1, max = 10
+    )
+    public static final String NOTIFICATION_VERIFY_THROTTLE_PER_HOUR = "notification.verify-throttle-per-hour";
+
     // ===== MCP 相关 =====
 
     @SystemConstantDef(
@@ -381,4 +390,316 @@ public final class SystemConstants {
         defaultValue = "true", valueType = "boolean", group = "supervision"
     )
     public static final String SUPERVISION_ALERT_FEISHU_ENABLED = "supervision.alert.feishu.enabled";
+
+    // ===== 上下文/Token 优化相关 =====
+
+    @SystemConstantDef(
+        key = "agent.context-window-size",
+        name = "对话窗口大小",
+        description = "保留的最大对话消息数，超出部分自动压缩为摘要",
+        defaultValue = "50", valueType = "int", group = "agent",
+        unit = "条", min = 10, max = 500
+    )
+    public static final String AGENT_CONTEXT_WINDOW_SIZE = "agent.context-window-size";
+
+    @SystemConstantDef(
+        key = "agent.token-budget-daily",
+        name = "每日Token预算",
+        description = "每个Agent每日Token消耗上限，0表示不限制",
+        defaultValue = "0", valueType = "long", group = "agent",
+        unit = "tokens", min = 0, max = 100000000
+    )
+    public static final String AGENT_TOKEN_BUDGET_DAILY = "agent.token-budget-daily";
+
+    @SystemConstantDef(
+        key = "agent.token-budget-alert-threshold",
+        name = "Token预算告警阈值",
+        description = "Token消耗达到预算的此百分比时触发告警",
+        defaultValue = "80", valueType = "int", group = "agent",
+        unit = "%", min = 10, max = 100
+    )
+    public static final String AGENT_TOKEN_BUDGET_ALERT_THRESHOLD = "agent.token-budget-alert-threshold";
+
+    @SystemConstantDef(
+        key = "agent.capability-prompt-cache-ttl",
+        name = "能力Prompt缓存时间",
+        description = "能力列表Prompt缓存有效期，避免每次调用都重建",
+        defaultValue = "300", valueType = "int", group = "agent",
+        unit = "秒", min = 10, max = 3600
+    )
+    public static final String AGENT_CAPABILITY_PROMPT_CACHE_TTL = "agent.capability-prompt-cache-ttl";
+
+    @SystemConstantDef(
+        key = "agent.collaboration-context-cache-ttl",
+        name = "协作上下文缓存时间",
+        description = "协作上下文缓存有效期，避免每次调用都重建",
+        defaultValue = "60", valueType = "int", group = "agent",
+        unit = "秒", min = 10, max = 300
+    )
+    public static final String AGENT_COLLABORATION_CONTEXT_CACHE_TTL = "agent.collaboration-context-cache-ttl";
+
+    @SystemConstantDef(
+        key = "agent.message-dedup-window-seconds",
+        name = "消息去重窗口",
+        description = "相同来源和类型的连续消息在此时间窗口内合并",
+        defaultValue = "30", valueType = "int", group = "agent",
+        unit = "秒", min = 5, max = 300
+    )
+    public static final String AGENT_MESSAGE_DEDUP_WINDOW_SECONDS = "agent.message-dedup-window-seconds";
+
+    @SystemConstantDef(
+        key = "agent.collaboration-context-inject",
+        name = "协作上下文注入开关",
+        description = "是否在Agent发送消息时自动注入团队协作上下文",
+        defaultValue = "true", valueType = "boolean", group = "agent"
+    )
+    public static final String AGENT_COLLABORATION_CONTEXT_INJECT = "agent.collaboration-context-inject";
+
+    @SystemConstantDef(
+        key = "context.compact-token-threshold",
+        name = "Token压缩触发阈值",
+        description = "会话累计Token超过此值时自动触发上下文压缩",
+        defaultValue = "80000", valueType = "int", group = "performance",
+        unit = "tokens", min = 10000, max = 500000
+    )
+    public static final String CONTEXT_COMPACT_TOKEN_THRESHOLD = "context.compact-token-threshold";
+
+    @SystemConstantDef(
+        key = "agent.token-alert-per-call",
+        name = "单次调用Token告警阈值",
+        description = "单次AI调用Token超过此值时记录告警日志",
+        defaultValue = "10000", valueType = "int", group = "agent",
+        unit = "tokens", min = 1000, max = 500000
+    )
+    public static final String AGENT_TOKEN_ALERT_PER_CALL = "agent.token-alert-per-call";
+
+    @SystemConstantDef(
+        key = "context.recovery-max-length",
+        name = "上下文恢复最大长度",
+        description = "上下文恢复Prompt最大字符数，超出部分截断",
+        defaultValue = "3000", valueType = "int", group = "performance",
+        unit = "字符", min = 500, max = 10000
+    )
+    public static final String CONTEXT_RECOVERY_MAX_LENGTH = "context.recovery-max-length";
+
+    @SystemConstantDef(
+        key = "context.collaboration-max-length",
+        name = "协作上下文最大长度",
+        description = "注入到Agent Prompt中的协作上下文最大字符数",
+        defaultValue = "2000", valueType = "int", group = "performance",
+        unit = "字符", min = 500, max = 5000
+    )
+    public static final String CONTEXT_COLLABORATION_MAX_LENGTH = "context.collaboration-max-length";
+
+    // ===== 检查点相关 =====
+
+    @SystemConstantDef(
+        key = "checkpoint.auto-create-threshold",
+        name = "自动创建检查点阈值",
+        description = "对话消息数达到此值时自动创建检查点",
+        defaultValue = "30", valueType = "int", group = "checkpoint",
+        unit = "条", min = 5, max = 200
+    )
+    public static final String CHECKPOINT_AUTO_CREATE_THRESHOLD = "checkpoint.auto-create-threshold";
+
+    @SystemConstantDef(
+        key = "checkpoint.max-keep-count",
+        name = "最大检查点保留数",
+        description = "每个 Agent 最多保留的检查点数量",
+        defaultValue = "10", valueType = "int", group = "checkpoint",
+        unit = "个", min = 1, max = 50
+    )
+    public static final String CHECKPOINT_MAX_KEEP_COUNT = "checkpoint.max-keep-count";
+
+    @SystemConstantDef(
+        key = "checkpoint.token-budget",
+        name = "检查点注入Token预算",
+        description = "检查点内容注入到上下文的最大Token数",
+        defaultValue = "4000", valueType = "int", group = "checkpoint",
+        unit = "tokens", min = 500, max = 20000
+    )
+    public static final String CHECKPOINT_TOKEN_BUDGET = "checkpoint.token-budget";
+
+    // ===== 工具结果压缩相关 =====
+
+    @SystemConstantDef(
+        key = "compactor.enabled",
+        name = "工具结果压缩开关",
+        description = "是否启用工具结果微压缩",
+        defaultValue = "true", valueType = "boolean", group = "compactor"
+    )
+    public static final String COMPACTOR_ENABLED = "compactor.enabled";
+
+    @SystemConstantDef(
+        key = "compactor.read-max-chars",
+        name = "read结果最大字符数",
+        description = "文件读取结果超过此字符数时压缩",
+        defaultValue = "2000", valueType = "int", group = "compactor",
+        unit = "字符", min = 500, max = 10000
+    )
+    public static final String COMPACTOR_READ_MAX_CHARS = "compactor.read-max-chars";
+
+    // ===== Dream 知识提取相关 =====
+
+    @SystemConstantDef(
+        key = "dream.auto-trigger",
+        name = "Dream自动触发开关",
+        description = "里程碑完成时是否自动触发知识提取",
+        defaultValue = "true", valueType = "boolean", group = "dream"
+    )
+    public static final String DREAM_AUTO_TRIGGER = "dream.auto-trigger";
+
+    @SystemConstantDef(
+        key = "dream.max-extract-items",
+        name = "Dream最大提取条目",
+        description = "单次知识提取的最大条目数",
+        defaultValue = "20", valueType = "int", group = "dream",
+        unit = "条", min = 5, max = 100
+    )
+    public static final String DREAM_MAX_EXTRACT_ITEMS = "dream.max-extract-items";
+
+    // ===== 裁判评估相关 =====
+
+    @SystemConstantDef(
+        key = "goal.judge.enabled",
+        name = "裁判验证开关",
+        description = "是否启用独立裁判验证目标完成",
+        defaultValue = "true", valueType = "boolean", group = "goal"
+    )
+    public static final String GOAL_JUDGE_ENABLED = "goal.judge.enabled";
+
+    @SystemConstantDef(
+        key = "goal.judge.max-react",
+        name = "裁判最大重评估次数",
+        description = "裁判判定未通过后的最大重评估次数",
+        defaultValue = "3", valueType = "int", group = "goal",
+        unit = "次", min = 0, max = 10
+    )
+    public static final String GOAL_JUDGE_MAX_REACT = "goal.judge.max-react";
+
+    // ===== 子代理相关 =====
+
+    @SystemConstantDef(
+        key = "subagent.max-concurrent",
+        name = "最大并发子代理数",
+        description = "每个父代理最多同时运行的子代理数量",
+        defaultValue = "5", valueType = "int", group = "subagent",
+        unit = "个", min = 1, max = 20
+    )
+    public static final String SUBAGENT_MAX_CONCURRENT = "subagent.max-concurrent";
+
+    @SystemConstantDef(
+        key = "subagent.timeout-minutes",
+        name = "子代理超时时间",
+        description = "子代理运行超过此时间自动终止",
+        defaultValue = "30", valueType = "int", group = "subagent",
+        unit = "分钟", min = 5, max = 180
+    )
+    public static final String SUBAGENT_TIMEOUT_MINUTES = "subagent.timeout-minutes";
+
+    // ===== Distill 工作流发现相关 =====
+
+    @SystemConstantDef(
+        key = "distill.max-extract-items",
+        name = "Distill最大提取条目",
+        description = "单次工作流发现的最大 Skill 数量",
+        defaultValue = "10", valueType = "int", group = "distill",
+        unit = "条", min = 1, max = 50
+    )
+    public static final String DISTILL_MAX_EXTRACT_ITEMS = "distill.max-extract-items";
+
+    @SystemConstantDef(
+        key = "distill.min-repeat-count",
+        name = "Distill最小重复次数",
+        description = "工作流模式至少重复出现此次数才认为可自动化",
+        defaultValue = "2", valueType = "int", group = "distill",
+        unit = "次", min = 2, max = 10
+    )
+    public static final String DISTILL_MIN_REPEAT_COUNT = "distill.min-repeat-count";
+
+    // ===== 快照回滚相关 =====
+
+    @SystemConstantDef(
+        key = "snapshot.retention-days",
+        name = "快照保留天数",
+        description = "快照保留的最大天数，超过自动清理",
+        defaultValue = "7", valueType = "int", group = "snapshot",
+        unit = "天", min = 1, max = 30
+    )
+    public static final String SNAPSHOT_RETENTION_DAYS = "snapshot.retention-days";
+
+    @SystemConstantDef(
+        key = "snapshot.max-size-mb",
+        name = "快照最大总大小",
+        description = "每个 Agent 的快照最大总大小",
+        defaultValue = "2", valueType = "int", group = "snapshot",
+        unit = "MB", min = 1, max = 50
+    )
+    public static final String SNAPSHOT_MAX_SIZE_MB = "snapshot.max-size-mb";
+
+    // ===== 任务门禁相关 =====
+
+    @SystemConstantDef(
+        key = "task-gate.enabled",
+        name = "任务门禁开关",
+        description = "是否启用任务门禁检查",
+        defaultValue = "true", valueType = "boolean", group = "task-gate"
+    )
+    public static final String TASK_GATE_ENABLED = "task-gate.enabled";
+
+    @SystemConstantDef(
+        key = "task-gate.max-react-main",
+        name = "主会话最大门禁反应次数",
+        description = "主会话门禁最大拦截次数，超过放行",
+        defaultValue = "3", valueType = "int", group = "task-gate",
+        unit = "次", min = 0, max = 10
+    )
+    public static final String TASK_GATE_MAX_REACT_MAIN = "task-gate.max-react-main";
+
+    @SystemConstantDef(
+        key = "task-gate.max-react-subagent",
+        name = "子代理最大门禁反应次数",
+        description = "子代理门禁最大拦截次数，超过放行",
+        defaultValue = "2", valueType = "int", group = "task-gate",
+        unit = "次", min = 0, max = 5
+    )
+    public static final String TASK_GATE_MAX_REACT_SUBAGENT = "task-gate.max-react-subagent";
+
+    // ===== 预算上下文注入相关 =====
+
+    @SystemConstantDef(
+        key = "context.budgeted-injection",
+        name = "预算注入开关",
+        description = "是否启用预算上下文注入（替代固定截断）",
+        defaultValue = "true", valueType = "boolean", group = "context"
+    )
+    public static final String CONTEXT_BUDGETED_INJECTION = "context.budgeted-injection";
+
+    @SystemConstantDef(
+        key = "context.total-token-budget",
+        name = "上下文总Token预算",
+        description = "预算注入的总 Token 数",
+        defaultValue = "8000", valueType = "int", group = "context",
+        unit = "tokens", min = 2000, max = 50000
+    )
+    public static final String CONTEXT_TOTAL_TOKEN_BUDGET = "context.total-token-budget";
+
+    // ===== 会话分叉相关 =====
+
+    @SystemConstantDef(
+        key = "fork.max-per-agent",
+        name = "最大分叉数",
+        description = "每个 Agent 最多同时存在的分叉数",
+        defaultValue = "5", valueType = "int", group = "fork",
+        unit = "个", min = 1, max = 20
+    )
+    public static final String FORK_MAX_PER_AGENT = "fork.max-per-agent";
+
+    @SystemConstantDef(
+        key = "fork.default-strategy",
+        name = "默认合并策略",
+        description = "分叉合并时的默认策略：replace（替换）、append（追加）、merge（智能合并）",
+        defaultValue = "merge", valueType = "string", group = "fork"
+    )
+    public static final String FORK_DEFAULT_STRATEGY = "fork.default-strategy";
 }

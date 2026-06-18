@@ -171,6 +171,35 @@
             </el-form-item>
           </el-form>
         </el-tab-pane>
+
+        <!-- 督查规则 -->
+        <el-tab-pane label="督查规则" name="supervision">
+          <el-form :model="supervisionForm" label-width="160px" style="max-width: 600px">
+            <el-form-item label="迭代超时阈值">
+              <el-input-number v-model="supervisionForm.iterationTimeoutHours" :min="12" :max="336" :step="12" />
+              <span style="margin-left: 8px; color: #909399;">小时</span>
+            </el-form-item>
+            <el-form-item label="任务逾期阈值">
+              <el-input-number v-model="supervisionForm.taskOverdueThresholdHours" :min="1" :max="168" :step="1" />
+              <span style="margin-left: 8px; color: #909399;">小时</span>
+            </el-form-item>
+            <el-form-item label="质量评分阈值">
+              <el-input-number v-model="supervisionForm.qualityScoreThreshold" :min="1" :max="10" :step="1" />
+              <span style="margin-left: 8px; color: #909399;">分（低于此值预警）</span>
+            </el-form-item>
+            <el-form-item label="回滚率阈值">
+              <el-input-number v-model="supervisionForm.rollbackRateThreshold" :min="5" :max="100" :step="5" />
+              <span style="margin-left: 8px; color: #909399;">%（超过此值预警）</span>
+            </el-form-item>
+            <el-form-item label="Agent空闲阈值">
+              <el-input-number v-model="supervisionForm.agentIdleThresholdHours" :min="1" :max="48" :step="1" />
+              <span style="margin-left: 8px; color: #909399;">小时</span>
+            </el-form-item>
+            <el-form-item>
+              <el-button type="primary" @click="saveSupervision" :loading="saving">保存</el-button>
+            </el-form-item>
+          </el-form>
+        </el-tab-pane>
       </el-tabs>
     </el-card>
   </div>
@@ -185,10 +214,12 @@
  * 权限要求：系统管理员
  */
 import { ref, computed, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { configApi, emailApi } from '@/api'
+import api, { configApi, emailApi } from '@/api'
 
-const activeTab = ref('basic')
+const route = useRoute()
+const activeTab = ref(route.query.tab || 'basic')
 const activePlatform = ref('')
 const longContext = ref(false)
 const saving = ref(false)
@@ -228,6 +259,15 @@ const emailForm = ref({
   emailFrom: '',
   senderName: '',
   replyTo: ''
+})
+
+/** 督查规则表单 */
+const supervisionForm = ref({
+  iterationTimeoutHours: 168,
+  taskOverdueThresholdHours: 24,
+  qualityScoreThreshold: 6,
+  rollbackRateThreshold: 30,
+  agentIdleThresholdHours: 4
 })
 
 /** 平台列表 */
@@ -466,6 +506,19 @@ const saveEmail = async () => {
   }
 }
 
+/** 保存督查规则（使用已有的督查规则接口） */
+const saveSupervision = async () => {
+  saving.value = true
+  try {
+    await api.post('/projects/api/supervision-rules', supervisionForm.value)
+    ElMessage.success('督查规则已保存')
+  } catch (error) {
+    ElMessage.error('保存失败')
+  } finally {
+    saving.value = false
+  }
+}
+
 /** 测试邮件连接 */
 const testEmail = async () => {
   try {
@@ -586,6 +639,20 @@ const loadSettings = async () => {
             break
         }
       })
+
+      // 加载督查规则（使用专用接口）
+      try {
+        const rules = await api.get('/projects/api/supervision-rules')
+        if (rules) {
+          supervisionForm.value.iterationTimeoutHours = rules.iterationTimeoutHours ?? 168
+          supervisionForm.value.taskOverdueThresholdHours = rules.taskOverdueThresholdHours ?? 24
+          supervisionForm.value.qualityScoreThreshold = rules.qualityScoreThreshold ?? 6
+          supervisionForm.value.rollbackRateThreshold = rules.rollbackRateThreshold ?? 30
+          supervisionForm.value.agentIdleThresholdHours = rules.agentIdleThresholdHours ?? 4
+        }
+      } catch (e) {
+        // 督查规则加载失败不影响其他设置
+      }
       // 自动匹配当前平台
       detectPlatform()
     }

@@ -131,6 +131,34 @@
           </el-card>
         </el-col>
       </el-row>
+
+      <!-- 第二行：知识提取 -->
+      <el-row :gutter="16" class="mt-4">
+        <el-col :span="8">
+          <el-card shadow="hover" class="feature-card">
+            <div class="feature-icon">
+              <el-icon :size="40" color="#9b59b6"><MagicStick /></el-icon>
+            </div>
+            <h3>知识提取</h3>
+            <p class="feature-desc">从 Agent 近期会话中自动提取关键知识，识别重复模式并生成可复用的技能。让隐性知识显性化。</p>
+            <ul class="feature-list">
+              <li>扫描近期会话中的重复操作</li>
+              <li>自动提取关键知识点</li>
+              <li>生成可复用的 Skill</li>
+            </ul>
+            <el-select v-model="dreamProjectId" placeholder="选择项目" size="small" style="width: 100%; margin-bottom: 8px;">
+              <el-option v-for="p in projects" :key="p.id" :label="p.name" :value="p.id" />
+            </el-select>
+            <el-button type="primary" @click="handleDreamExtract" :loading="dreamLoading" class="feature-btn">
+              <el-icon><MagicStick /></el-icon> 执行提取
+            </el-button>
+            <div v-if="dreamResult" class="dream-result">
+              <el-tag type="success">提取 {{ dreamResult.extractedCount || 0 }} 条</el-tag>
+              <el-tag type="primary" class="ml-2">保存 {{ dreamResult.savedCount || 0 }} 条</el-tag>
+            </div>
+          </el-card>
+        </el-col>
+      </el-row>
     </el-card>
 
     <!-- 已学习的模式 -->
@@ -342,7 +370,7 @@
  * 3. 持续进化：定期自动优化知识库
  */
 import { ref, computed, onMounted } from 'vue'
-import { knowledgeEvolutionApi, knowledgeBaseApi, agentApi, gameTemplateApi, projectApi, codeBrowserApi } from '@/api'
+import { knowledgeEvolutionApi, knowledgeBaseApi, agentApi, gameTemplateApi, projectApi, codeBrowserApi, dreamApi } from '@/api'
 import { ElMessage } from 'element-plus'
 import {
   Document, Tools, TrendCharts, Timer, Refresh, MagicStick,
@@ -355,6 +383,11 @@ const processingDoc = ref(false)
 const learningGame = ref(false)
 const showLearningDialog = ref(false)
 const showDocSelectDialog = ref(false)
+
+// 知识提取
+const dreamLoading = ref(false)
+const dreamResult = ref(null)
+const dreamProjectId = ref('')
 const loadingFiles = ref(false)
 
 const stats = ref({
@@ -587,6 +620,30 @@ const handleEvolve = async () => {
   }
 }
 
+/** 知识提取（Dream） */
+const handleDreamExtract = async () => {
+  if (!dreamProjectId.value) {
+    ElMessage.warning('请先选择项目')
+    return
+  }
+  dreamLoading.value = true
+  dreamResult.value = null
+  try {
+    const res = await dreamApi.trigger({ projectId: dreamProjectId.value, agentId: 'producer' })
+    dreamResult.value = res.data
+    if (res.data?.success) {
+      ElMessage.success(`知识提取完成：提取 ${res.data.extractedCount || 0} 条，保存 ${res.data.savedCount || 0} 条`)
+    } else {
+      ElMessage.warning('未提取到新知识')
+    }
+    loadData()
+  } catch (e) {
+    ElMessage.error('知识提取失败')
+  } finally {
+    dreamLoading.value = false
+  }
+}
+
 /** 处理文档 */
 const handleProcessDoc = async () => {
   if (!docForm.value.agentId || !docForm.value.documentContent) {
@@ -777,6 +834,11 @@ onMounted(() => {
 .feature-btn {
   margin-top: auto;
   width: 100%;
+}
+
+.dream-result {
+  margin-top: 8px;
+  text-align: center;
 }
 
 .manual-card {

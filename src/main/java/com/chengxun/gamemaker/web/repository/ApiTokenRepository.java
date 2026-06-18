@@ -12,10 +12,6 @@ public interface ApiTokenRepository extends JpaRepository<ApiToken, Long> {
 
     List<ApiToken> findByStatus(ApiToken.TokenStatus status);
 
-    List<ApiToken> findByAssignedAgentId(String agentId);
-
-    Optional<ApiToken> findByAssignedAgentIdAndStatus(String agentId, ApiToken.TokenStatus status);
-
     long countByStatus(ApiToken.TokenStatus status);
 
     List<ApiToken> findByStatusOrderByCreatedAtDesc(ApiToken.TokenStatus status);

@@ -106,7 +106,14 @@ public class GenericAgent extends BaseAgent {
     private void processPendingTasks() {
         List<TaskAssignment> pendingTasks = tasks.stream()
             .filter(t -> t.getStatus() == TaskAssignment.TaskStatus.PENDING)
-            .sorted((a, b) -> b.getPriority().compareTo(a.getPriority()))
+            .sorted((a, b) -> {
+                    TaskAssignment.TaskPriority pa = b.getPriority();
+                    TaskAssignment.TaskPriority pb = a.getPriority();
+                    if (pa == null && pb == null) return 0;
+                    if (pa == null) return 1;
+                    if (pb == null) return -1;
+                    return pa.compareTo(pb);
+                })
             .toList();
 
         if (!pendingTasks.isEmpty()) {
@@ -129,6 +136,8 @@ public class GenericAgent extends BaseAgent {
         // 标记任务进行中
         task.setStatus(TaskAssignment.TaskStatus.IN_PROGRESS);
         task.setUpdatedAt(LocalDateTime.now());
+        // 【修复】设置任务开始时间
+        task.setStartedAt(System.currentTimeMillis());
         agentContext.setCurrentTaskId(task.getId());
 
         // 构建带上下文的 prompt
@@ -284,6 +293,11 @@ public class GenericAgent extends BaseAgent {
      * @param task 任务
      * @return 完整的 prompt
      */
+    /** 知识/经验注入最大长度（字符数） */
+    private static final int MAX_KNOWLEDGE_INJECT_LENGTH = 500;
+    /** 任务 prompt 总长度上限 */
+    private static final int MAX_TASK_PROMPT_LENGTH = 6000;
+
     private String buildTaskPrompt(TaskAssignment task) {
         StringBuilder sb = new StringBuilder();
 
@@ -291,7 +305,7 @@ public class GenericAgent extends BaseAgent {
         String rolePrompt = rolePromptLibrary.getPrompt(getRole());
         sb.append(rolePrompt).append("\n\n");
 
-        // 2. 项目上下文
+        // 2. 项目上下文（精简版，避免重复）
         if (currentProject != null) {
             sb.append("## 项目信息\n\n");
             sb.append("- 项目名称: ").append(currentProject.getName()).append("\n");
@@ -301,10 +315,10 @@ public class GenericAgent extends BaseAgent {
             }
             sb.append("\n");
 
-            // 加载项目规则
+            // 加载项目规则（截断保护）
             String projectRules = projectManager.loadProjectRules(currentProject.getId());
             if (projectRules != null) {
-                sb.append("## 项目规范\n\n").append(projectRules).append("\n\n");
+                sb.append("## 项目规范\n\n").append(truncate(projectRules, MAX_KNOWLEDGE_INJECT_LENGTH)).append("\n\n");
             }
         }
 
@@ -317,33 +331,41 @@ public class GenericAgent extends BaseAgent {
             }
         }
 
-        // 4. 工作约束（AGENTS.md）
+        // 4. 工作约束（AGENTS.md — 截断保护，只注入摘要）
         String agentsContent = loadKnowledge("agents_file");
         if (agentsContent != null) {
-            sb.append("## 工作约束\n\n").append(agentsContent).append("\n\n");
+            sb.append("## 工作约束\n\n").append(truncate(agentsContent, MAX_KNOWLEDGE_INJECT_LENGTH)).append("\n\n");
         }
 
-        // 5. 相关知识和经验
+        // 5. 相关知识和经验（截断保护）
         String knowledge = loadKnowledge("project_architecture");
         if (knowledge != null) {
-            sb.append("## 项目知识\n\n").append(knowledge).append("\n\n");
+            sb.append("## 项目知识\n\n").append(truncate(knowledge, MAX_KNOWLEDGE_INJECT_LENGTH)).append("\n\n");
         }
 
         String experience = loadExperience("similar_tasks");
         if (experience != null) {
-            sb.append("## 相关经验\n\n").append(experience).append("\n\n");
+            sb.append("## 相关经验\n\n").append(truncate(experience, MAX_KNOWLEDGE_INJECT_LENGTH)).append("\n\n");
         }
 
-        // 6. 知识库相关知识（从全局知识库中查询相关模式、解决方案和最佳实践）
+        // 6. 知识库相关知识（queryRelevantKnowledge 已自带截断）
         String relevantKnowledge = queryRelevantKnowledge(task.getTitle() + " " + task.getDescription());
         if (!relevantKnowledge.isEmpty()) {
             sb.append("## 知识库参考\n\n").append(relevantKnowledge).append("\n\n");
         }
 
-        // 7. 匹配技能
+        // 7. 匹配技能（截断保护）
         String skillPrompt = buildSkillPrompt(task.getTitle() + " " + task.getDescription());
         if (!skillPrompt.isEmpty()) {
-            sb.append(skillPrompt).append("\n\n");
+            sb.append(truncate(skillPrompt, MAX_KNOWLEDGE_INJECT_LENGTH)).append("\n\n");
+        }
+
+        // 7.5 MCP 工具（让 Agent 知道有哪些外部工具可用）
+        if (mcpService != null && currentProject != null) {
+            String mcpTools = mcpService.buildMcpToolPrompt(getRole(), currentProject.getId());
+            if (!mcpTools.isEmpty()) {
+                sb.append(truncate(mcpTools, MAX_KNOWLEDGE_INJECT_LENGTH)).append("\n\n");
+            }
         }
 
         // 8. 任务描述
@@ -352,29 +374,13 @@ public class GenericAgent extends BaseAgent {
         sb.append("- 描述: ").append(task.getDescription()).append("\n");
         sb.append("- 优先级: ").append(task.getPriority()).append("\n\n");
 
-        // 9. 上次工作结果（如果有）
+        // 9. 上次工作结果（截断保护）
         String lastWork = agentContext.getWorkingMemory("last_task_result");
         if (lastWork != null) {
-            sb.append("## 上次工作结果\n\n").append(lastWork).append("\n\n");
+            sb.append("## 上次工作结果\n\n").append(truncate(lastWork, MAX_KNOWLEDGE_INJECT_LENGTH)).append("\n\n");
         }
 
-        // 10. 工作思维
-        sb.append("## 工作思维\n\n");
-        sb.append("- 先做出能用的版本，再优化到好用\n");
-        sb.append("- 如果发现当前方案有问题，主动提出改进方案\n");
-        sb.append("- 不要盲目遵循模板或规范，以实际效果为准\n");
-        sb.append("- 遇到不确定的设计决策，先实现最简单的方案，后续迭代改进\n\n");
-
-        // 11. 质量自检清单
-        sb.append("## 质量自检清单\n\n");
-        sb.append("完成任务前，请逐项检查：\n");
-        sb.append("- [ ] 代码是否有完整的中文注释（类注释、方法注释、关键逻辑注释）\n");
-        sb.append("- [ ] 是否遵循项目代码规范\n");
-        sb.append("- [ ] 是否处理了边界条件和异常情况\n");
-        sb.append("- [ ] 是否与团队其他成员的代码兼容\n");
-        sb.append("- [ ] 输出文件路径是否正确\n\n");
-
-        // 11. 输出格式要求
+        // 10. 输出格式要求（精简版）
         sb.append("## 输出格式要求\n\n");
         sb.append("- 报告中列出所有创建/修改的文件路径\n");
         sb.append("- 说明每个变更的原因和作用\n");
@@ -382,7 +388,22 @@ public class GenericAgent extends BaseAgent {
 
         sb.append("请在工作目录 ").append(definition.getWorkDir()).append(" 中执行以上任务，并报告完成情况。");
 
-        return sb.toString();
+        // 总体截断保护
+        String result = sb.toString();
+        if (result.length() > MAX_TASK_PROMPT_LENGTH) {
+            result = result.substring(0, MAX_TASK_PROMPT_LENGTH) + "\n...(已截断)";
+        }
+        return result;
+    }
+
+    /**
+     * 截断超长内容
+     */
+    private String truncate(String content, int maxLength) {
+        if (content == null || content.length() <= maxLength) {
+            return content;
+        }
+        return content.substring(0, maxLength) + "...";
     }
 
     /**

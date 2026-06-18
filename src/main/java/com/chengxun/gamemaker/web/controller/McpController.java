@@ -101,8 +101,25 @@ public class McpController {
     @PutMapping("/api/servers/{id}")
     @ResponseBody
     public ResponseEntity<?> updateServer(@PathVariable Long id, @RequestBody McpServer server) {
-        server.setId(id);
-        McpServer saved = mcpService.saveServer(server);
+        McpServer existing = mcpService.getServer(id);
+        if (existing == null) {
+            return ResponseEntity.notFound().build();
+        }
+        // 更新已有实体的字段，避免 JPA 创建新记录
+        existing.setName(server.getName());
+        existing.setDescription(server.getDescription());
+        existing.setTransportType(server.getTransportType());
+        existing.setCommand(server.getCommand());
+        existing.setArgs(server.getArgs());
+        existing.setEnv(server.getEnv());
+        existing.setUrl(server.getUrl());
+        existing.setHeaders(server.getHeaders());
+        existing.setProjectId(server.getProjectId());
+        existing.setAuthMode(server.getAuthMode());
+        existing.setAuthHeaderName(server.getAuthHeaderName());
+        existing.setCategory(server.getCategory());
+        existing.setEnabled(server.isEnabled());
+        McpServer saved = mcpService.saveServer(existing);
         return ResponseEntity.ok(saved);
     }
 
@@ -155,6 +172,30 @@ public class McpController {
     public McpTool setToolApproval(@PathVariable Long toolId, @RequestBody Map<String, Boolean> body) {
         boolean requiresApproval = body.getOrDefault("requiresApproval", false);
         return mcpService.setToolApproval(toolId, requiresApproval);
+    }
+
+    /** 更新工具配置（默认参数、AI 提示等） */
+    @PutMapping("/api/tools/{toolId}")
+    @ResponseBody
+    public ResponseEntity<?> updateTool(@PathVariable Long toolId, @RequestBody Map<String, Object> body) {
+        try {
+            McpTool tool = mcpService.getTool(toolId);
+            if (tool == null) return ResponseEntity.notFound().build();
+
+            if (body.containsKey("defaultParams")) {
+                tool.setDefaultParams((String) body.get("defaultParams"));
+            }
+            if (body.containsKey("paramHints")) {
+                tool.setParamHints((String) body.get("paramHints"));
+            }
+            if (body.containsKey("displayName")) {
+                tool.setDisplayName((String) body.get("displayName"));
+            }
+            mcpService.saveTool(tool);
+            return ResponseEntity.ok(tool);
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
+        }
     }
 
     // ===== 绑定 API =====

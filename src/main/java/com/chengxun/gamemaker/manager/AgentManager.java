@@ -1,6 +1,8 @@
 package com.chengxun.gamemaker.manager;
 
 import com.chengxun.gamemaker.agent.Agent;
+import com.chengxun.gamemaker.agent.BaseAgent;
+import com.chengxun.gamemaker.agent.GenericAgent;
 import com.chengxun.gamemaker.agent.GitCommitAgent;
 import com.chengxun.gamemaker.agent.NumericalPlannerAgent;
 import com.chengxun.gamemaker.agent.ProducerAgent;
@@ -8,7 +10,6 @@ import com.chengxun.gamemaker.agent.ServerDevAgent;
 import com.chengxun.gamemaker.agent.SystemPlannerAgent;
 import com.chengxun.gamemaker.agent.UiDevAgent;
 import com.chengxun.gamemaker.agent.VerificationAgent;
-import com.chengxun.gamemaker.agent.BaseAgent;
 import com.chengxun.gamemaker.config.AppConfig;
 import org.springframework.context.annotation.Lazy;
 import com.chengxun.gamemaker.engine.ClaudeCliEngine;
@@ -118,6 +119,18 @@ public class AgentManager {
     private com.chengxun.gamemaker.service.EventBus eventBus;
 
     @Autowired(required = false)
+    private com.chengxun.gamemaker.service.TokenBudgetService tokenBudgetService;
+
+    @Autowired(required = false)
+    private com.chengxun.gamemaker.service.PromptCacheService promptCacheService;
+
+    @Autowired(required = false)
+    private com.chengxun.gamemaker.service.MessageDeduplicator messageDeduplicator;
+
+    @Autowired(required = false)
+    private com.chengxun.gamemaker.service.CollaborationEnhancer collaborationEnhancer;
+
+    @Autowired(required = false)
     private com.chengxun.gamemaker.service.VersionIterationService versionIterationService;
 
     @Autowired(required = false)
@@ -127,6 +140,9 @@ public class AgentManager {
     private com.chengxun.gamemaker.service.PlayerExperienceAnalyzer playerExperienceAnalyzer;
 
     @Autowired(required = false)
+    private com.chengxun.gamemaker.engine.OpenAiCompatibleEngine openAiEngine;
+
+    @Autowired(required = false)
     private com.chengxun.gamemaker.service.TaskRebalanceService taskRebalanceService;
 
     @Autowired(required = false)
@@ -134,6 +150,15 @@ public class AgentManager {
 
     @Autowired(required = false)
     private com.chengxun.gamemaker.service.ProjectDiscussionService projectDiscussionService;
+
+    @Autowired(required = false)
+    private com.chengxun.gamemaker.service.DynamicCapabilityService dynamicCapabilityService;
+
+    @Autowired(required = false)
+    private com.chengxun.gamemaker.service.ResourceAssetService resourceAssetService;
+
+    @Autowired
+    private com.chengxun.gamemaker.agent.RolePromptLibrary rolePromptLibrary;
 
     /** Agent 调度器（延迟注入，避免循环依赖）- 用于事件驱动的消息处理 */
     @Lazy
@@ -207,6 +232,10 @@ public class AgentManager {
 
         // 制作人使用最高推理深度（全面分析）
         definition.setReasoningDepth(4);
+        // 制作人思维模式：平衡（需要协调+规划+适度创新）
+        if (definition.getThinkingMode() == 3) { // 仅在未自定义时设置默认值
+            definition.setThinkingMode(AgentDefinition.getDefaultThinkingMode("producer"));
+        }
 
         ProducerAgent producer = new ProducerAgent(definition, cliEngine, messageBus,
                 contextManager, memoryManager, skillManager, projectManager, this, feishuService);
@@ -247,6 +276,15 @@ public class AgentManager {
         if (projectDiscussionService != null) {
             producer.setProjectDiscussionService(projectDiscussionService);
         }
+        if (dynamicCapabilityService != null) {
+            producer.setDynamicCapabilityService(dynamicCapabilityService);
+        }
+        if (resourceAssetService != null) {
+            producer.setResourceAssetService(resourceAssetService);
+        }
+        if (versionIterationService != null) {
+            producer.setVersionIterationService(versionIterationService);
+        }
         producer.initialize();
         producer.start();
         projectAgentMap.put(agentRole, producer);
@@ -283,8 +321,16 @@ public class AgentManager {
             return projectAgentMap.get(agentRole);
         }
 
+        // 设置角色默认思维模式（仅在未自定义时）
+        if (definition.getThinkingMode() == 3) {
+            definition.setThinkingMode(AgentDefinition.getDefaultThinkingMode(agentRole));
+        }
+
         Agent agent;
         switch (agentRole) {
+            case "server-dev" -> {
+                agent = new ServerDevAgent(definition, cliEngine, messageBus, contextManager, memoryManager, skillManager, projectManager);
+            }
             case "git-commit" -> {
                 agent = new GitCommitAgent(definition, cliEngine, messageBus, contextManager, memoryManager, skillManager, projectManager);
             }
@@ -304,8 +350,17 @@ public class AgentManager {
             case "verifier" -> {
                 agent = new VerificationAgent(definition, cliEngine, messageBus, contextManager, memoryManager, skillManager, projectManager);
             }
+            // 以下角色使用 GenericAgent，行为由角色提示词驱动
+            case "audio-dev", "tech-artist", "tester", "security-expert",
+                 "data-analyst", "product-manager", "localization",
+                 "ai-engineer", "performance-engineer", "narrative-planner",
+                 "level-design", "devops" -> {
+                agent = new GenericAgent(definition, cliEngine, messageBus, contextManager, memoryManager, skillManager, projectManager, rolePromptLibrary);
+            }
+            // 自定义角色：使用 GenericAgent，提示词来自数据库或文件
             default -> {
-                agent = new ServerDevAgent(definition, cliEngine, messageBus, contextManager, memoryManager, skillManager, projectManager);
+                log.info("未知角色 '{}'，使用 GenericAgent（提示词驱动）", agentRole);
+                agent = new GenericAgent(definition, cliEngine, messageBus, contextManager, memoryManager, skillManager, projectManager, rolePromptLibrary);
             }
         }
 
@@ -321,6 +376,9 @@ public class AgentManager {
             }
             if (agent instanceof VerificationAgent verificationAgent) {
                 verificationAgent.setGameRuntimeVerifier(gameRuntimeVerifier);
+            }
+            if (agent instanceof GenericAgent genericAgent) {
+                genericAgent.setGameRuntimeVerifier(gameRuntimeVerifier);
             }
         }
 
@@ -426,7 +484,7 @@ public class AgentManager {
         }
 
         // 兼容旧格式：遍历所有项目查找（多项目同角色时返回第一个找到的，不确定）
-        log.warn("Agent lookup by legacy ID '{}', consider using runtime ID format 'projectId:agentRole'", runtimeId);
+        log.debug("Agent lookup by legacy ID '{}', consider using runtime ID format 'projectId:agentRole'", runtimeId);
         for (Map<String, Agent> projectMap : projectAgents.values()) {
             Agent agent = projectMap.get(runtimeId);
             if (agent != null) return agent;
@@ -557,6 +615,14 @@ public class AgentManager {
         agent.setInterventionService(interventionService);
         agent.setProjectBoard(projectBoard);
         agent.setEventBus(eventBus);
+        agent.setTokenBudgetService(tokenBudgetService);
+        agent.setPromptCacheService(promptCacheService);
+        agent.setMessageDeduplicator(messageDeduplicator);
+        agent.setConfigService(systemConfigService);
+        if (openAiEngine != null) {
+            agent.setOpenAiEngine(openAiEngine);
+        }
+        agent.setCollaborationEnhancer(collaborationEnhancer);
     }
 
     /**
@@ -574,14 +640,6 @@ public class AgentManager {
             return;
         }
 
-        // 检查分配策略：producer 模式下不自动分配（由制作人手动分配）
-        String strategy = apiTokenService.getAllocationStrategy();
-        if ("producer".equals(strategy)) {
-            log.debug("Token allocation strategy is 'producer', skipping auto-assign for agent {} (role: {})",
-                agent.getId(), agentRole);
-            return;
-        }
-
         try {
             com.chengxun.gamemaker.web.entity.ApiToken token = apiTokenService.findBestTokenForRole(agentRole);
             if (token == null) {
@@ -589,20 +647,23 @@ public class AgentManager {
                 return;
             }
 
-            // 应用 Token 的 API 配置到 Agent
+            // 池化模式：将 Token 的 API 配置应用到 Agent，记录使用的 Token ID
             agent.getDefinition().setApiKey(token.getApiKey());
             agent.getDefinition().setApiUrl(token.getApiUrl());
             agent.getDefinition().setModel(token.getModel());
+            agent.getDefinition().setAssignedTokenId(token.getId());
 
-            // 标记 Token 已绑定
-            token.setAssignedAgentId(agent.getId());
-            token.setAssignedAgentName(agent.getName());
-            apiTokenService.saveToken(token);
+            // 【修复】使用 saveApiConfigToContext 保存 API 配置到 context.json
+            if (agent instanceof com.chengxun.gamemaker.agent.BaseAgent baseAgent) {
+                baseAgent.saveApiConfigToContext(token.getApiKey(), token.getApiUrl(), token.getModel());
+            } else {
+                agent.saveContext();
+            }
 
-            log.info("Auto-assigned token '{}' to agent {} (role: {}) [strategy=system]",
+            log.info("Auto-allocated token '{}' to agent {} (role: {}, pool mode)",
                 token.getName(), agent.getId(), agentRole);
         } catch (Exception e) {
-            log.warn("Failed to auto-assign token for agent {}: {}", agent.getId(), e.getMessage());
+            log.warn("Failed to auto-allocate token for agent {}: {}", agent.getId(), e.getMessage());
         }
     }
 
@@ -733,8 +794,14 @@ public class AgentManager {
         status.put("role", agent.getRole());
         status.put("busy", agent.isBusy());
         status.put("alive", agent.isAlive());
-        status.put("taskCount", agent.getTasks().size());
+        // 使用 try-catch 避免任务数据加载失败导致整个 API 失败
+        try {
+            status.put("taskCount", agent.getTasks() != null ? agent.getTasks().size() : 0);
+        } catch (Exception e) {
+            status.put("taskCount", 0);
+        }
         status.put("reasoningDepth", agent.getDefinition().getReasoningDepth());
+        status.put("thinkingMode", agent.getDefinition().getThinkingMode());
 
         if (agent instanceof BaseAgent baseAgent) {
             status.put("conversationId", baseAgent.getCurrentConversationId());
@@ -750,10 +817,20 @@ public class AgentManager {
             }
         }
 
-        // Token 信息：查询该 Agent 绑定的 Token
+        // Token 信息：根据 assignedTokenId 查询当前使用的 Token
         if (apiTokenService != null) {
             try {
-                com.chengxun.gamemaker.web.entity.ApiToken token = apiTokenService.getActiveTokenForAgent(agent.getId());
+                Long tokenId = agent.getDefinition().getAssignedTokenId();
+                com.chengxun.gamemaker.web.entity.ApiToken token = null;
+                if (tokenId != null) {
+                    token = apiTokenService.getTokenById(tokenId);
+                    // Token 可能已被删除或禁用，回退到按角色查找
+                    if (token == null || !token.isActive()) {
+                        token = apiTokenService.findBestTokenForRole(agent.getRole());
+                    }
+                } else {
+                    token = apiTokenService.findBestTokenForRole(agent.getRole());
+                }
                 if (token != null) {
                     status.put("tokenId", token.getId());
                     status.put("tokenName", token.getName());

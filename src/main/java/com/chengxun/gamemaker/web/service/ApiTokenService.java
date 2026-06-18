@@ -5,7 +5,9 @@ import com.chengxun.gamemaker.agent.ProducerAgent;
 import com.chengxun.gamemaker.engine.ClaudeCliEngine;
 import com.chengxun.gamemaker.manager.AgentManager;
 import com.chengxun.gamemaker.web.entity.ApiToken;
+import com.chengxun.gamemaker.web.entity.TokenUsageRecord;
 import com.chengxun.gamemaker.web.repository.ApiTokenRepository;
+import com.chengxun.gamemaker.web.repository.TokenUsageRecordRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -24,13 +26,15 @@ public class ApiTokenService {
     private static final Logger log = LoggerFactory.getLogger(ApiTokenService.class);
 
     private final ApiTokenRepository tokenRepository;
+    private final TokenUsageRecordRepository usageRecordRepository;
     private final AgentManager agentManager;
     private final ClaudeCliEngine cliEngine;
     private final SystemConfigService configService;
 
-    public ApiTokenService(ApiTokenRepository tokenRepository, AgentManager agentManager,
-                           ClaudeCliEngine cliEngine, SystemConfigService configService) {
+    public ApiTokenService(ApiTokenRepository tokenRepository, TokenUsageRecordRepository usageRecordRepository,
+                           AgentManager agentManager, ClaudeCliEngine cliEngine, SystemConfigService configService) {
         this.tokenRepository = tokenRepository;
+        this.usageRecordRepository = usageRecordRepository;
         this.agentManager = agentManager;
         this.cliEngine = cliEngine;
         this.configService = configService;
@@ -55,8 +59,11 @@ public class ApiTokenService {
         return tokenRepository.findByStatus(ApiToken.TokenStatus.ACTIVE);
     }
 
-    public List<ApiToken> getTokensByAgent(String agentId) {
-        return tokenRepository.findByAssignedAgentId(agentId);
+    /** 获取 Agent 当前使用的 Token（池化模式：按角色查找最佳 Token） */
+    public ApiToken getTokensByAgent(String agentId) {
+        Agent agent = agentManager.getAgent(agentId);
+        if (agent == null) return null;
+        return findBestTokenForRole(agent.getRole());
     }
 
     public ApiToken createToken(String name, String apiKey, String apiUrl, String model,
@@ -114,22 +121,18 @@ public class ApiTokenService {
         ApiToken token = tokenRepository.findById(id)
             .orElseThrow(() -> new RuntimeException("Token not found"));
 
-        // 如果已分配给 agent，先取消分配
-        if (token.isAssigned()) {
-            unassignToken(id);
-        }
-
         tokenRepository.delete(token);
         log.info("API token deleted: {}", id);
     }
 
     /**
-     * 绑定 Token 到 Agent
+     * 将 Token 应用到 Agent（池化模式，不做排他绑定）
+     * 多个 Agent 可以同时使用同一个 Token
      *
      * @param tokenId    Token ID
      * @param agentId    Agent ID
      * @param activation 生效方式: "immediate" 立即生效, "pending" 等待任务完成
-     * @return 更新后的 Token
+     * @return Token
      */
     public ApiToken assignToken(Long tokenId, String agentId, String activation) {
         ApiToken token = tokenRepository.findById(tokenId)
@@ -139,14 +142,7 @@ public class ApiTokenService {
             throw new RuntimeException("Token is not active");
         }
 
-        // 获取 agent 名称
         Agent agent = agentManager.getAgent(agentId);
-        String agentName = agent != null ? agent.getName() : agentId;
-
-        token.setAssignedAgentId(agentId);
-        token.setAssignedAgentName(agentName);
-
-        ApiToken saved = tokenRepository.save(token);
 
         // 更新 Agent 的上下文窗口大小
         if (agent != null && token.getContextWindow() != null) {
@@ -154,38 +150,35 @@ public class ApiTokenService {
             log.info("Updated agent {} contextWindow to {}", agentId, token.getContextWindow());
         }
 
-        // 如果是 ProducerAgent，调用分配 API 配置
+        // 将 Token 的 API 配置应用到 Agent（池化模式：记录使用的 Token ID）
         if (agent instanceof ProducerAgent producer) {
             producer.assignApiConfig(agentId, token.getApiKey(), token.getApiUrl(), token.getModel());
-            // 重启 Agent 的 CLI 进程，使新的 API 配置生效
+            producer.getDefinition().setAssignedTokenId(tokenId);
             if ("immediate".equals(activation)) {
                 restartAgentProcess(agentId);
             }
-            log.info("Token {} assigned to ProducerAgent {} ({} activation)", tokenId, agentId, activation);
+            log.info("Token {} applied to ProducerAgent {} ({} activation)", tokenId, agentId, activation);
         } else if (agent != null) {
             if ("pending".equals(activation)) {
-                // 等待任务完成：设置待生效配置
                 agent.getDefinition().setPendingApiConfig(
                     token.getApiKey(), token.getApiUrl(), token.getModel());
-                log.info("Token {} assigned to agent {} (pending activation)", tokenId, agentId);
+                log.info("Token {} applied to agent {} (pending activation)", tokenId, agentId);
             } else {
-                // 立即生效：直接更新配置并重启进程
                 agent.getDefinition().setApiKey(token.getApiKey());
                 agent.getDefinition().setApiUrl(token.getApiUrl());
                 agent.getDefinition().setModel(token.getModel());
+                agent.getDefinition().setAssignedTokenId(tokenId);
                 agent.saveContext();
-
-                // 重启 Agent 的 CLI 进程，使新的 API 配置生效
                 restartAgentProcess(agentId);
-                log.info("Token {} assigned to agent {} (immediate activation)", tokenId, agentId);
+                log.info("Token {} applied to agent {} (immediate activation)", tokenId, agentId);
             }
         }
 
-        return saved;
+        return token;
     }
 
     /**
-     * 绑定 Token 到 Agent（默认立即生效）
+     * 将 Token 应用到 Agent（默认立即生效）
      */
     public ApiToken assignToken(Long tokenId, String agentId) {
         return assignToken(tokenId, agentId, "immediate");
@@ -229,19 +222,6 @@ public class ApiTokenService {
         }
     }
 
-    public ApiToken unassignToken(Long tokenId) {
-        ApiToken token = tokenRepository.findById(tokenId)
-            .orElseThrow(() -> new RuntimeException("Token not found"));
-
-        String oldAgentId = token.getAssignedAgentId();
-        token.setAssignedAgentId(null);
-        token.setAssignedAgentName(null);
-
-        ApiToken saved = tokenRepository.save(token);
-        log.info("Token {} unassigned from agent {}", tokenId, oldAgentId);
-        return saved;
-    }
-
     public ApiToken updateTokenStatus(Long id, ApiToken.TokenStatus status) {
         ApiToken token = tokenRepository.findById(id)
             .orElseThrow(() -> new RuntimeException("Token not found"));
@@ -257,51 +237,249 @@ public class ApiTokenService {
             .orElseThrow(() -> new RuntimeException("Token not found"));
 
         token.recordUsage(tokensUsed);
-        return tokenRepository.save(token);
+        ApiToken saved = tokenRepository.save(token);
+
+        // 写入使用记录（用于滑动窗口配额计算）
+        if (token.getQuotaType() == ApiToken.QuotaType.SLIDING_WINDOW) {
+            usageRecordRepository.save(new TokenUsageRecord(tokenId, tokensUsed));
+        }
+
+        return saved;
     }
 
-    public ApiToken getActiveTokenForAgent(String agentId) {
-        return tokenRepository.findByAssignedAgentIdAndStatus(agentId, ApiToken.TokenStatus.ACTIVE)
-            .orElse(null);
+    // ===== 配额管理 =====
+
+    /**
+     * 获取 Token 滑动窗口内的已用量
+     * 查询窗口时间范围内的累计使用记录
+     *
+     * @param tokenId Token ID
+     * @return 窗口内已用 token 数
+     */
+    public long getWindowUsage(Long tokenId) {
+        ApiToken token = tokenRepository.findById(tokenId).orElse(null);
+        if (token == null || token.getQuotaType() != ApiToken.QuotaType.SLIDING_WINDOW) {
+            return 0;
+        }
+        int windowSec = token.getWindowSeconds() != null ? token.getWindowSeconds() : 0;
+        if (windowSec <= 0) return 0;
+        LocalDateTime windowStart = LocalDateTime.now().minusSeconds(windowSec);
+        return usageRecordRepository.sumUsageSince(tokenId, windowStart);
     }
 
     /**
-     * 根据 Agent 角色查找最佳可用 Token
+     * 获取 Token 剩余可用量
+     * 根据配额类型计算：
+     * - UNLIMITED: 返回 Long.MAX_VALUE
+     * - TOTAL: 总量 - 已用总量
+     * - SLIDING_WINDOW: 窗口总量 - 窗口内已用量
      *
-     * 选择规则：
+     * @param tokenId Token ID
+     * @return 剩余可用 token 数，-1 表示无限制
+     */
+    public long getRemainingQuota(Long tokenId) {
+        ApiToken token = tokenRepository.findById(tokenId).orElse(null);
+        if (token == null) return 0;
+
+        ApiToken.QuotaType qt = token.getQuotaType();
+        if (qt == null) return Long.MAX_VALUE; // 未设置配额类型视为无限制
+        switch (qt) {
+            case UNLIMITED:
+                return Long.MAX_VALUE;
+            case TOTAL:
+                long total = token.getQuotaTotal() != null ? token.getQuotaTotal() : 0;
+                long used = token.getTotalTokensUsed() != null ? token.getTotalTokensUsed() : 0;
+                return Math.max(0, total - used);
+            case SLIDING_WINDOW:
+                long quota = token.getQuotaTotal() != null ? token.getQuotaTotal() : 0;
+                long windowUsed = getWindowUsage(tokenId);
+                return Math.max(0, quota - windowUsed);
+            default:
+                return Long.MAX_VALUE;
+        }
+    }
+
+    /**
+     * 获取 Token 当前并发 Agent 数
+     * 通过 AgentManager 查询正在使用该 Token 的 Agent 数量
+     *
+     * @param tokenId Token ID
+     * @return 当前使用该 Token 的 Agent 数量
+     */
+    public int getCurrentConcurrentAgents(Long tokenId) {
+        ApiToken token = tokenRepository.findById(tokenId).orElse(null);
+        if (token == null) return 0;
+
+        int count = 0;
+        for (Agent agent : agentManager.getAllAgents()) {
+            if (!agent.isAlive()) continue;
+            // 检查 Agent 的 API Key 是否匹配该 Token
+            String agentKey = agent.getDefinition().getApiKey();
+            if (agentKey != null && agentKey.equals(token.getApiKey())) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /**
+     * 检查 Token 是否可用（有余量且未超并发限制）
+     *
+     * @param tokenId Token ID
+     * @return true 如果 Token 可用
+     */
+    public boolean isTokenAvailable(Long tokenId) {
+        ApiToken token = tokenRepository.findById(tokenId).orElse(null);
+        if (token == null || !token.isActive()) return false;
+
+        // 检查配额余量
+        if (token.getQuotaType() != ApiToken.QuotaType.UNLIMITED) {
+            long remaining = getRemainingQuota(tokenId);
+            if (remaining <= 0) {
+                log.debug("Token {} 配额已用尽 (quotaType={})", tokenId, token.getQuotaType());
+                return false;
+            }
+        }
+
+        // 检查并发限制
+        if (token.getMaxConcurrentAgents() != null && token.getMaxConcurrentAgents() > 0) {
+            int current = getCurrentConcurrentAgents(tokenId);
+            if (current >= token.getMaxConcurrentAgents()) {
+                log.debug("Token {} 并发已满 ({}/{})", tokenId, current, token.getMaxConcurrentAgents());
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * 获取 Token 余量百分比（0-100）
+     * 用于前端进度条展示
+     *
+     * @param tokenId Token ID
+     * @return 余量百分比，-1 表示无限制
+     */
+    public double getQuotaUsagePercent(Long tokenId) {
+        ApiToken token = tokenRepository.findById(tokenId).orElse(null);
+        if (token == null || token.getQuotaType() == ApiToken.QuotaType.UNLIMITED) {
+            return -1; // 无限制
+        }
+
+        long total = token.getQuotaTotal() != null ? token.getQuotaTotal() : 0;
+        if (total <= 0) return -1;
+
+        long remaining = getRemainingQuota(tokenId);
+        return (double) remaining / total * 100;
+    }
+
+    /**
+     * 清理过期的滑动窗口使用记录
+     * 应定期调用，删除超出最大窗口时长的记录
+     */
+    @Transactional
+    public void cleanupExpiredUsageRecords() {
+        // 保留最近 48 小时的记录（覆盖所有可能的窗口）
+        LocalDateTime cutoff = LocalDateTime.now().minusHours(48);
+        usageRecordRepository.deleteByUsedAtBefore(cutoff);
+        log.debug("Cleaned up token usage records before {}", cutoff);
+    }
+
+    /**
+     * 根据 Agent 角色查找最佳可用 Token（负载均衡分配）
+     *
+     * 分配规则：
      * 1. 必须是 ACTIVE 状态
-     * 2. 未分配给其他 Agent
-     * 3. 排除 AI_ASSISTANT 专用 Token（隔离）
-     * 4. agentTags 包含该角色（或为空表示通用）
-     * 5. 按分配策略排序：system 模式按优先级+使用量，producer 模式仅按优先级
+     * 2. 排除 AI_ASSISTANT 专用 Token（隔离）
+     * 3. agentTags 包含该角色（或为空表示通用）
+     * 4. 必须有余量（配额未耗尽）
+     * 5. 未超过并发限制
+     * 6. 负载均衡：优先级 → 当前并发数（少优先） → 余量% → maxTokens
      *
      * @param agentRole Agent 角色
      * @return 最佳 Token，如果没有合适的则返回 null
      */
     public ApiToken findBestTokenForRole(String agentRole) {
-        String strategy = getAllocationStrategy();
-
-        return tokenRepository.findAll().stream()
+        List<ApiToken> candidates = tokenRepository.findAll().stream()
             .filter(ApiToken::isActive)
-            .filter(t -> !t.isAssigned())
-            // 排除 AI 助手专用 Token，Agent 不可使用
             .filter(t -> t.getPurpose() != ApiToken.TokenPurpose.AI_ASSISTANT)
             .filter(t -> t.isSuitableForRole(agentRole))
-            .min((a, b) -> {
-                // 先按 priority 排序（数值越小优先级越高）
-                int pa = a.getPriority() != null ? a.getPriority() : 10;
-                int pb = b.getPriority() != null ? b.getPriority() : 10;
-                if (pa != pb) return Integer.compare(pa, pb);
+            .filter(t -> isTokenAvailable(t.getId()))
+            .collect(java.util.stream.Collectors.toList());
 
-                // system 策略下，同优先级时优先选使用量少的
-                if ("system".equals(strategy)) {
-                    long ua = a.getTotalTokensUsed() != null ? a.getTotalTokensUsed() : 0;
-                    long ub = b.getTotalTokensUsed() != null ? b.getTotalTokensUsed() : 0;
-                    return Long.compare(ua, ub);
+        if (candidates.isEmpty()) return null;
+
+        // 计算角色期望的资源类型
+        ApiToken.ResourceType expectedType = getExpectedResourceType(agentRole);
+
+        // 按优先级分组
+        Map<Integer, List<ApiToken>> byPriority = candidates.stream()
+            .collect(java.util.stream.Collectors.groupingBy(
+                t -> t.getPriority() != null ? t.getPriority() : 10));
+
+        // 取最高优先级组（数值最小）
+        int bestPriority = byPriority.keySet().stream().min(Integer::compareTo).orElse(10);
+        List<ApiToken> bestGroup = byPriority.get(bestPriority);
+
+        // 在同优先级组内，按负载均衡排序
+        return bestGroup.stream()
+            .sorted((a, b) -> {
+                // 1. 资源类型匹配的优先（精确匹配 > 通用 TEXT）
+                boolean aMatch = a.getResourceType() == expectedType;
+                boolean bMatch = b.getResourceType() == expectedType;
+                if (aMatch != bMatch) return aMatch ? -1 : 1;
+
+                // 2. 并发数少的优先（负载均衡核心）
+                int ca = getCurrentConcurrentAgents(a.getId());
+                int cb = getCurrentConcurrentAgents(b.getId());
+                if (ca != cb) return Integer.compare(ca, cb);
+
+                // 3. 余量百分比多的优先
+                double ra = getQuotaRemainingPercent(a);
+                double rb = getQuotaRemainingPercent(b);
+                if (Double.compare(ra, rb) != 0) {
+                    return Double.compare(rb, ra);
                 }
-                return 0;
+
+                // 4. maxTokens 大的优先
+                int ma = a.getMaxTokens() != null ? a.getMaxTokens() : 4096;
+                int mb = b.getMaxTokens() != null ? b.getMaxTokens() : 4096;
+                return Integer.compare(mb, ma);
             })
+            .findFirst()
             .orElse(null);
+    }
+
+    /**
+     * 根据 Agent 角色获取期望的资源类型
+     */
+    private ApiToken.ResourceType getExpectedResourceType(String agentRole) {
+        return switch (agentRole) {
+            case "audio-dev" -> ApiToken.ResourceType.AUDIO;
+            case "tech-artist", "ui-dev" -> ApiToken.ResourceType.IMAGE;
+            default -> ApiToken.ResourceType.TEXT;
+        };
+    }
+
+    /**
+     * 获取 Token 余量百分比（内部方法，直接使用实体避免重复查询）
+     */
+    private double getQuotaRemainingPercent(ApiToken token) {
+        if (token.getQuotaType() == ApiToken.QuotaType.UNLIMITED) return 100.0;
+        long total = token.getQuotaTotal() != null ? token.getQuotaTotal() : 0;
+        if (total <= 0) return 100.0;
+        long remaining = getRemainingQuota(token.getId());
+        return (double) remaining / total * 100;
+    }
+
+    /**
+     * 获取 Token 并发剩余容量（内部方法）
+     */
+    private int getConcurrentRemaining(ApiToken token) {
+        int max = token.getMaxConcurrentAgents() != null ? token.getMaxConcurrentAgents() : 0;
+        if (max <= 0) return Integer.MAX_VALUE; // 无限制
+        int current = getCurrentConcurrentAgents(token.getId());
+        return Math.max(0, max - current);
     }
 
     /**
@@ -337,7 +515,7 @@ public class ApiTokenService {
         List<ApiToken> allTokens = tokenRepository.findAll();
 
         for (ApiToken token : allTokens) {
-            if (!token.isActive() || token.isAssigned()) {
+            if (!token.isActive()) {
                 continue;
             }
             // 排除 AI 助手专用 Token
@@ -367,9 +545,10 @@ public class ApiTokenService {
         return tokenRepository.countByStatus(ApiToken.TokenStatus.ACTIVE);
     }
 
+    /** 获取使用中的 Token 数量（池化模式：有使用记录即为使用中） */
     public long getAssignedTokenCount() {
         return tokenRepository.findAll().stream()
-            .filter(ApiToken::isAssigned)
+            .filter(ApiToken::isInUse)
             .count();
     }
 }

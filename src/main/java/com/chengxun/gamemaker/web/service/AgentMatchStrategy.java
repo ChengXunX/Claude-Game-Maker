@@ -9,6 +9,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import com.chengxun.gamemaker.model.TaskAssignment;
+
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -87,6 +89,7 @@ public class AgentMatchStrategy {
 
     /**
      * 获取候选Agent列表（角色匹配且存活且未满载）
+     * 如果没有精确匹配的候选，放宽条件重试（允许满载的Agent）
      */
     private List<Agent> getCandidates(String requiredRole, String projectId) {
         List<Agent> agents;
@@ -96,19 +99,51 @@ public class AgentMatchStrategy {
             agents = agentManager.getAllAgents();
         }
 
-        return agents.stream()
+        // 第一轮：精确匹配（角色 + 存活 + 未满载）
+        List<Agent> candidates = agents.stream()
             .filter(a -> requiredRole.equals(a.getRole()))
             .filter(Agent::isAlive)
             .filter(a -> !isFullLoad(a))
             .collect(Collectors.toList());
+
+        if (!candidates.isEmpty()) {
+            return candidates;
+        }
+
+        // 第二轮：放宽负载限制（角色匹配 + 存活，不检查负载）
+        candidates = agents.stream()
+            .filter(a -> requiredRole.equals(a.getRole()))
+            .filter(Agent::isAlive)
+            .collect(Collectors.toList());
+
+        if (!candidates.isEmpty()) {
+            log.warn("角色 {} 无空闲Agent，放宽负载限制，找到 {} 个候选", requiredRole, candidates.size());
+            return candidates;
+        }
+
+        // 第三轮：记录诊断信息
+        long roleMatch = agents.stream().filter(a -> requiredRole.equals(a.getRole())).count();
+        long alive = agents.stream().filter(a -> requiredRole.equals(a.getRole()) && a.isAlive()).count();
+        log.warn("角色 {} 无可用Agent: 项目内总数={}, 角色匹配={}, 存活={}",
+            projectId, agents.size(), roleMatch, alive);
+
+        return candidates;
     }
 
     /**
      * 检查Agent是否满载
+     * 只统计未完成的任务（PENDING + IN_PROGRESS），已完成的任务不计入负载
      */
     private boolean isFullLoad(Agent agent) {
         List<?> tasks = agent.getTasks();
-        return tasks != null && tasks.size() >= MAX_TASKS_PER_AGENT;
+        if (tasks == null) return false;
+        long activeCount = tasks.stream()
+            .filter(t -> t instanceof TaskAssignment)
+            .map(t -> (TaskAssignment) t)
+            .filter(t -> t.getStatus() == TaskAssignment.TaskStatus.PENDING
+                      || t.getStatus() == TaskAssignment.TaskStatus.IN_PROGRESS)
+            .count();
+        return activeCount >= MAX_TASKS_PER_AGENT;
     }
 
     /**
@@ -149,11 +184,18 @@ public class AgentMatchStrategy {
     /**
      * 计算负载均衡分
      * 空闲=100分，满载=0分，线性递减
+     * 只统计未完成的任务
      */
     private double calculateLoadScore(Agent agent) {
         List<?> tasks = agent.getTasks();
-        int currentTasks = tasks != null ? tasks.size() : 0;
-        return Math.max(0, 100.0 * (1.0 - (double) currentTasks / MAX_TASKS_PER_AGENT));
+        if (tasks == null) return 100.0;
+        long activeCount = tasks.stream()
+            .filter(t -> t instanceof TaskAssignment)
+            .map(t -> (TaskAssignment) t)
+            .filter(t -> t.getStatus() == TaskAssignment.TaskStatus.PENDING
+                      || t.getStatus() == TaskAssignment.TaskStatus.IN_PROGRESS)
+            .count();
+        return Math.max(0, 100.0 * (1.0 - (double) activeCount / MAX_TASKS_PER_AGENT));
     }
 
     /**
@@ -196,7 +238,13 @@ public class AgentMatchStrategy {
             info.put("loadScore", Math.round(loadScore * 100.0) / 100.0);
             info.put("performanceScore", Math.round(perfScore * 100.0) / 100.0);
             info.put("totalScore", Math.round(totalScore * 100.0) / 100.0);
-            info.put("currentTasks", agent.getTasks() != null ? agent.getTasks().size() : 0);
+            long activeTasks = agent.getTasks() != null ? agent.getTasks().stream()
+                .filter(t -> t instanceof TaskAssignment)
+                .map(t -> (TaskAssignment) t)
+                .filter(t -> t.getStatus() == TaskAssignment.TaskStatus.PENDING
+                          || t.getStatus() == TaskAssignment.TaskStatus.IN_PROGRESS)
+                .count() : 0;
+            info.put("currentTasks", activeTasks);
             info.put("alive", agent.isAlive());
             info.put("busy", agent.isBusy());
             scores.add(info);

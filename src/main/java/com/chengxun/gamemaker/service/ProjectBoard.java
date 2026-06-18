@@ -1,9 +1,14 @@
 package com.chengxun.gamemaker.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -16,6 +21,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * - 阻塞项和风险
  * - 共享上下文信息
  *
+ * 支持持久化：看板数据自动保存到磁盘，重启后自动恢复
+ *
  * @author chengxun
  * @since 2.0.0
  */
@@ -24,8 +31,22 @@ public class ProjectBoard {
 
     private static final Logger log = LoggerFactory.getLogger(ProjectBoard.class);
 
+    @Autowired(required = false)
+    private com.chengxun.gamemaker.config.AppConfig appConfig;
+
+    @Autowired
+    private ObjectMapper objectMapper;
+
     /** 项目看板数据：projectId -> BoardData */
     private final Map<String, BoardData> boards = new ConcurrentHashMap<>();
+
+    /** 持久化目录 */
+    private static final String BOARD_STORAGE_DIR = "data/boards";
+
+    @jakarta.annotation.PostConstruct
+    public void init() {
+        loadAllBoards();
+    }
 
     /**
      * 看板数据
@@ -132,6 +153,7 @@ public class ProjectBoard {
         agentStatus.currentTask = currentTask;
         agentStatus.lastActiveAt = LocalDateTime.now();
         board.lastUpdated = LocalDateTime.now();
+        saveBoard(projectId);
     }
 
     /**
@@ -141,6 +163,7 @@ public class ProjectBoard {
         BoardData board = getOrCreateBoard(projectId);
         board.taskCards.add(taskCard);
         board.lastUpdated = LocalDateTime.now();
+        saveBoard(projectId);
     }
 
     /**
@@ -158,6 +181,7 @@ public class ProjectBoard {
                     card.completedAt = LocalDateTime.now();
                 }
                 board.lastUpdated = LocalDateTime.now();
+                saveBoard(projectId);
                 break;
             }
         }
@@ -171,6 +195,7 @@ public class ProjectBoard {
         Blocker blocker = new Blocker(description, affectedAgentId, severity);
         board.blockers.add(blocker);
         board.lastUpdated = LocalDateTime.now();
+        saveBoard(projectId);
         log.warn("Blocker added to project {}: {}", projectId, description);
     }
 
@@ -184,6 +209,7 @@ public class ProjectBoard {
                 blocker.resolved = true;
                 blocker.resolvedAt = LocalDateTime.now();
                 board.lastUpdated = LocalDateTime.now();
+                saveBoard(projectId);
                 log.info("Blocker resolved in project {}: {}", projectId, blocker.description);
                 break;
             }
@@ -223,6 +249,7 @@ public class ProjectBoard {
         }
 
         board.lastUpdated = LocalDateTime.now();
+        saveBoard(projectId);
         log.info("Code change recorded for project {}: {} files changed by {}", projectId, changedFiles.size(), agentId);
     }
 
@@ -251,6 +278,7 @@ public class ProjectBoard {
         BoardData board = getOrCreateBoard(projectId);
         board.sharedContext.put(key, value);
         board.lastUpdated = LocalDateTime.now();
+        saveBoard(projectId);
     }
 
     /**
@@ -424,9 +452,9 @@ public class ProjectBoard {
             sb.append("\n");
         }
 
-        // 7. 最近团队事件
+        // 7. 最近团队事件（最多 5 条，控制输出大小）
         if (eventBus != null) {
-            List<EventBus.ProjectEvent> recentEvents = eventBus.getRecentEvents(projectId, 10);
+            List<EventBus.ProjectEvent> recentEvents = eventBus.getRecentEvents(projectId, 5);
             if (!recentEvents.isEmpty()) {
                 sb.append("### 最近团队动态\n");
                 for (EventBus.ProjectEvent event : recentEvents) {
@@ -435,14 +463,80 @@ public class ProjectBoard {
                     if (sourceStatus != null) {
                         sourceName = sourceStatus.agentName;
                     }
+                    String summary = (String) event.getData().getOrDefault("summary", "");
+                    if (summary.length() > 80) {
+                        summary = summary.substring(0, 80) + "...";
+                    }
                     sb.append(String.format("- [%s] %s: %s\n",
-                        event.getEventType(), sourceName,
-                        event.getData().getOrDefault("summary", "")));
+                        event.getEventType(), sourceName, summary));
                 }
                 sb.append("\n");
             }
         }
 
         return sb.toString();
+    }
+
+    // ===== 持久化 =====
+
+    /**
+     * 保存单个项目的看板到磁盘
+     *
+     * @param projectId 项目 ID
+     */
+    public void saveBoard(String projectId) {
+        BoardData board = boards.get(projectId);
+        if (board == null) return;
+
+        try {
+            Path dir = Path.of(BOARD_STORAGE_DIR);
+            Files.createDirectories(dir);
+            Path file = dir.resolve(projectId + ".json");
+            objectMapper.writerWithDefaultPrettyPrinter().writeValue(file.toFile(), board);
+            log.debug("Board saved for project: {}", projectId);
+        } catch (IOException e) {
+            log.warn("Failed to save board for project {}: {}", projectId, e.getMessage());
+        }
+    }
+
+    /**
+     * 从磁盘加载单个项目的看板
+     *
+     * @param projectId 项目 ID
+     */
+    public void loadBoard(String projectId) {
+        Path file = Path.of(BOARD_STORAGE_DIR, projectId + ".json");
+        if (!Files.exists(file)) return;
+
+        try {
+            BoardData board = objectMapper.readValue(file.toFile(), BoardData.class);
+            if (board != null) {
+                boards.put(projectId, board);
+                log.info("Board loaded for project: {}", projectId);
+            }
+        } catch (IOException e) {
+            log.warn("Failed to load board for project {}: {}", projectId, e.getMessage());
+        }
+    }
+
+    /**
+     * 启动时加载所有已保存的看板
+     */
+    private void loadAllBoards() {
+        try {
+            Path dir = Path.of(BOARD_STORAGE_DIR);
+            if (!Files.exists(dir)) return;
+
+            Files.list(dir)
+                .filter(p -> p.toString().endsWith(".json"))
+                .forEach(p -> {
+                    String filename = p.getFileName().toString();
+                    String projectId = filename.replace(".json", "");
+                    loadBoard(projectId);
+                });
+            log.info("Loaded {} boards from disk", boards.size());
+        } catch (IOException e) {
+            log.warn("Failed to load boards from disk: {}", e.getMessage());
+        }
     }
 }

@@ -91,6 +91,12 @@ cat > /tmp/game-maker-nginx.conf << 'NGINX_EOF'
 # ChengXun Game Maker Nginx 配置
 # 使用非常用端口避免被扫描封禁
 
+# WebSocket 升级映射（仅当客户端请求升级时才升级连接）
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
 server {
     listen 18080;
     server_name _;
@@ -99,10 +105,7 @@ server {
     root /var/www/game-maker;
     index index.html;
 
-    # 安全头
-    add_header X-Frame-Options "SAMEORIGIN" always;
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header X-XSS-Protection "1; mode=block" always;
+    # 安全头（后端已设置，Nginx 不再重复添加，避免飞书等外部回调解析异常）
 
     # Gzip 压缩
     gzip on;
@@ -156,7 +159,7 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
 
         # SSE 必须禁用缓冲，否则事件不会实时推送
         proxy_buffering off;
@@ -169,12 +172,13 @@ server {
     }
 
     # SSE 流式接口（项目讨论）- 需要长超时和禁用缓冲
-    location /api/project-discussions/ {
+    location /api/project-discussions {
         proxy_pass http://127.0.0.1:19922;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
+        proxy_set_header Authorization $http_authorization;
 
         # SSE 必须禁用缓冲
         proxy_buffering off;
@@ -192,12 +196,13 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        # 优先使用上游代理传来的协议头（支持 HTTPS 代理链）
+        proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
 
-        # WebSocket 支持
+        # WebSocket 支持（仅当客户端发送 Upgrade 头时才升级）
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
+        proxy_set_header Connection $connection_upgrade;
 
         # 超时设置
         proxy_connect_timeout 60s;

@@ -292,6 +292,13 @@
           >
             <el-icon><Promotion /></el-icon> 版本迭代
           </el-button>
+          <el-button
+            type="info"
+            @click="handleSnapshot(currentProject)"
+            v-permission="'agents:manage'"
+          >
+            <el-icon><Camera /></el-icon> 快照管理
+          </el-button>
         </div>
 
         <!-- 版本迭代状态 -->
@@ -335,11 +342,40 @@
               </el-col>
             </el-row>
           </div>
-          <!-- 回滚按钮 -->
-          <div class="iteration-actions" v-if="versionHistory.length > 1">
-            <el-button size="small" type="warning" @click="handleRollback">
+          <!-- 回滚和数据清理按钮 -->
+          <div class="iteration-actions">
+            <el-button size="small" type="warning" @click="handleRollback" v-if="versionHistory.length > 1">
               <el-icon><RefreshLeft /></el-icon> 版本回滚
             </el-button>
+            <el-button size="small" type="danger" @click="handleCleanData">
+              <el-icon><Delete /></el-icon> 清理脏数据
+            </el-button>
+            <el-button size="small" type="danger" plain @click="handleResetMilestones">
+              <el-icon><RefreshRight /></el-icon> 重置里程碑
+            </el-button>
+          </div>
+          <!-- 管理员迭代指令 -->
+          <div class="admin-instruction">
+            <el-divider content-position="left">
+              <span class="divider-title-sm">管理员迭代指令</span>
+            </el-divider>
+            <el-input
+              v-model="adminInstruction"
+              type="textarea"
+              :rows="3"
+              placeholder="可选：输入对下一版本的迭代指导，如重点关注方向、需要优先实现的功能等。留空则由系统自动决策。"
+            />
+            <div class="instruction-actions">
+              <el-button size="small" type="primary" @click="saveAdminInstruction" :loading="savingInstruction">
+                保存指令
+              </el-button>
+              <el-button size="small" @click="clearAdminInstruction" v-if="adminInstruction">
+                清空
+              </el-button>
+              <span v-if="currentProject.instructionSubmittedAt" class="instruction-time">
+                上次提交: {{ formatTime(currentProject.instructionSubmittedAt) }}
+              </span>
+            </div>
           </div>
         </div>
 
@@ -518,388 +554,35 @@
         </div>
         <el-empty v-else description="暂无里程碑" :image-size="60" />
 
-        <!-- 督查报告（完整面板） -->
+        <!-- 督查报告入口 -->
         <el-divider>
           <div class="divider-title">
             <span>督查报告</span>
-            <div>
-              <el-button size="small" text @click="handleExportIterationReport">
-                <el-icon><Download /></el-icon> 导出报告
-              </el-button>
-              <el-button size="small" text @click="supervisionRulesVisible = true">
-                <el-icon><Setting /></el-icon> 督查规则
-              </el-button>
-            </div>
           </div>
         </el-divider>
-        <div v-if="loadingSupervision" class="supervision-loading">
-          <el-skeleton :rows="3" animated />
+        <div class="supervision-entry">
+          <el-card shadow="hover" class="supervision-link-card" @click="router.push(`/projects/${currentProject.id}/supervision`)">
+            <div class="supervision-link-content">
+              <el-icon :size="32" color="var(--el-color-primary)"><DataAnalysis /></el-icon>
+              <div class="supervision-link-info">
+                <div class="supervision-link-title">查看完整督查报告</div>
+                <div class="supervision-link-desc">甘特图、Agent效率、协作分析、迭代趋势、风险预测等</div>
+              </div>
+              <el-icon :size="20"><ArrowRight /></el-icon>
+            </div>
+          </el-card>
+          <div class="supervision-quick-stats" v-if="supervisionReport">
+            <el-tag :type="supervisionReport.overdueTasks > 0 ? 'danger' : 'success'" size="small">
+              逾期: {{ supervisionReport.overdueTasks }}
+            </el-tag>
+            <el-tag type="info" size="small">
+              任务: {{ supervisionReport.completedTasks }}/{{ supervisionReport.totalTasks }}
+            </el-tag>
+            <el-tag type="info" size="small">
+              里程碑: {{ supervisionReport.completedMilestones }}/{{ supervisionReport.totalMilestones }}
+            </el-tag>
+          </div>
         </div>
-        <div v-else-if="supervisionReport" class="supervision-report">
-          <!-- 督查概览统计 -->
-          <el-row :gutter="16" class="supervision-stats">
-            <el-col :span="4">
-              <div class="stat-mini" :class="supervisionReport.overdueTasks > 0 ? 'stat-danger' : 'stat-success'">
-                <div class="stat-mini-value">{{ supervisionReport.overdueTasks }}</div>
-                <div class="stat-mini-label">逾期任务</div>
-              </div>
-            </el-col>
-            <el-col :span="4">
-              <div class="stat-mini">
-                <div class="stat-mini-value">{{ supervisionReport.totalTasks }}</div>
-                <div class="stat-mini-label">总任务</div>
-              </div>
-            </el-col>
-            <el-col :span="4">
-              <div class="stat-mini">
-                <div class="stat-mini-value">{{ supervisionReport.completedTasks }}</div>
-                <div class="stat-mini-label">已完成</div>
-              </div>
-            </el-col>
-            <el-col :span="4">
-              <div class="stat-mini">
-                <div class="stat-mini-value">{{ supervisionReport.taskCompletionRate?.toFixed(1) }}%</div>
-                <div class="stat-mini-label">完成率</div>
-              </div>
-            </el-col>
-            <el-col :span="4">
-              <div class="stat-mini">
-                <div class="stat-mini-value">{{ supervisionReport.completedMilestones }}/{{ supervisionReport.totalMilestones }}</div>
-                <div class="stat-mini-label">里程碑</div>
-              </div>
-            </el-col>
-            <el-col :span="4">
-              <div class="stat-mini">
-                <div class="stat-mini-value">{{ supervisionReport.versionCount }}</div>
-                <div class="stat-mini-label">迭代次数</div>
-              </div>
-            </el-col>
-          </el-row>
-
-          <!-- Tab 切换 -->
-          <el-tabs v-model="supervisionTab" class="supervision-tabs">
-            <!-- 甘特图视图 -->
-            <el-tab-pane label="甘特图" name="gantt">
-              <div class="gantt-view">
-                <div v-for="(milestone, mi) in supervisionReport.milestones" :key="milestone.id" class="gantt-milestone">
-                  <div class="gantt-milestone-header">
-                    <el-tag :type="getMilestoneTagType(milestone.status)" size="small">{{ getMilestoneStatusText(milestone.status) }}</el-tag>
-                    <span class="gantt-milestone-title">{{ milestone.title }}</span>
-                    <span class="gantt-milestone-role">{{ milestone.assignedRole }}</span>
-                    <el-progress :percentage="milestone.progress || 0" :stroke-width="6" style="width: 120px;" />
-                  </div>
-                  <div class="gantt-tasks">
-                    <div v-for="task in milestone.tasks" :key="task.id" class="gantt-task-row">
-                      <div class="gantt-task-label">
-                        <el-icon :size="12" :style="{ color: task.status === 'COMPLETED' ? '#67c23a' : '#909399' }">
-                          <CircleCheck v-if="task.status === 'COMPLETED'" />
-                          <Clock v-else />
-                        </el-icon>
-                        <span :class="{ 'text-done': task.status === 'COMPLETED' }">{{ task.title }}</span>
-                      </div>
-                      <div class="gantt-task-bar-area">
-                        <div
-                          class="gantt-task-bar"
-                          :style="{
-                            width: getGanttBarWidth(task) + '%',
-                            left: getGanttBarLeft(mi, task) + '%',
-                            backgroundColor: getGanttBarColor(task)
-                          }"
-                        >
-                          <span class="gantt-bar-text">{{ task.estimatedHours }}h</span>
-                        </div>
-                      </div>
-                      <div class="gantt-task-status">
-                        <el-tag :type="getTaskStatusType(task.status)" size="small">{{ getTaskStatusText(task.status) }}</el-tag>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </el-tab-pane>
-
-            <!-- Agent效率分析 -->
-            <el-tab-pane label="Agent效率" name="efficiency">
-              <div v-if="supervisionReport.agentEfficiency && supervisionReport.agentEfficiency.length > 0">
-                <div v-for="agent in supervisionReport.agentEfficiency" :key="agent.role" class="efficiency-card">
-                  <div class="efficiency-header">
-                    <span class="efficiency-role">{{ agent.role }}</span>
-                    <el-tag :type="agent.overdueTasks > 0 ? 'danger' : 'success'" size="small">
-                      {{ agent.overdueTasks > 0 ? agent.overdueTasks + '个逾期' : '正常' }}
-                    </el-tag>
-                  </div>
-                  <el-row :gutter="16">
-                    <el-col :span="6">
-                      <el-statistic title="总任务" :value="agent.totalTasks" />
-                    </el-col>
-                    <el-col :span="6">
-                      <el-statistic title="已完成" :value="agent.completedTasks" />
-                    </el-col>
-                    <el-col :span="6">
-                      <el-statistic title="完成率" :value="agent.completionRate" :precision="1" suffix="%" />
-                    </el-col>
-                    <el-col :span="6">
-                      <el-statistic title="逾期" :value="agent.overdueTasks" />
-                    </el-col>
-                  </el-row>
-                  <el-progress :percentage="agent.completionRate" :status="agent.completionRate >= 80 ? 'success' : agent.completionRate >= 50 ? '' : 'exception'" style="margin-top: 8px;" />
-                </div>
-              </div>
-              <el-empty v-else description="暂无效率数据" :image-size="60" />
-            </el-tab-pane>
-
-            <!-- 协作效率 -->
-            <el-tab-pane label="协作效率" name="collaboration">
-              <div v-if="collaborationMetrics" class="collaboration-metrics">
-                <el-row :gutter="16" style="margin-bottom: 16px;">
-                  <el-col :span="6">
-                    <el-statistic title="总任务数" :value="collaborationMetrics.totalTasks" />
-                  </el-col>
-                  <el-col :span="6">
-                    <el-statistic title="已完成" :value="collaborationMetrics.completedTasks" />
-                  </el-col>
-                  <el-col :span="6">
-                    <el-statistic title="返工任务" :value="collaborationMetrics.reworkedTasks" />
-                  </el-col>
-                  <el-col :span="6">
-                    <el-statistic title="返工率" :value="collaborationMetrics.reworkRate" :precision="1" suffix="%" />
-                  </el-col>
-                </el-row>
-                <el-row :gutter="16">
-                  <el-col :span="12">
-                    <el-card shadow="hover" class="metric-card">
-                      <div class="metric-title">返工率</div>
-                      <el-progress :percentage="collaborationMetrics.reworkRate" :precision="1"
-                        :status="collaborationMetrics.reworkRate > 20 ? 'exception' : collaborationMetrics.reworkRate < 5 ? 'success' : ''" />
-                      <div class="metric-hint">
-                        {{ collaborationMetrics.reworkRate > 20 ? '返工率偏高，建议检查质量标准' : collaborationMetrics.reworkRate < 5 ? '返工率良好' : '返工率正常' }}
-                      </div>
-                    </el-card>
-                  </el-col>
-                  <el-col :span="12">
-                    <el-card shadow="hover" class="metric-card">
-                      <div class="metric-title">预估工时</div>
-                      <div class="metric-value">{{ collaborationMetrics.totalEstimatedHours }} 小时</div>
-                      <div class="metric-hint">所有任务的预估工时总和</div>
-                    </el-card>
-                  </el-col>
-                </el-row>
-                <div v-if="collaborationMetrics.collaborationData" style="margin-top: 16px;">
-                  <el-alert :title="'协作数据: ' + collaborationMetrics.collaborationData" type="info" show-icon :closable="false" />
-                </div>
-              </div>
-              <el-empty v-else description="暂无协作效率数据" :image-size="60" />
-            </el-tab-pane>
-
-            <!-- 迭代趋势 -->
-            <el-tab-pane label="迭代趋势" name="trends">
-              <div v-if="iterationTrends" class="trends-view">
-                <!-- 版本评分趋势 -->
-                <div v-if="iterationTrends.versionTrend && iterationTrends.versionTrend.length > 0" class="trend-chart-section">
-                  <div class="section-title">版本评分趋势</div>
-                  <div class="trend-bars">
-                    <div v-for="v in iterationTrends.versionTrend" :key="v.version" class="trend-bar-item">
-                      <div class="trend-bar-wrapper">
-                        <div class="trend-bar" :style="{ height: (v.score * 10) + '%', backgroundColor: getScoreColor(v.score) }">
-                          <span class="trend-bar-value">{{ v.score }}</span>
-                        </div>
-                      </div>
-                      <div class="trend-bar-label">{{ v.version }}</div>
-                    </div>
-                  </div>
-                </div>
-
-                <!-- 迭代周期分析 -->
-                <div v-if="iterationEfficiency" class="efficiency-summary">
-                  <el-row :gutter="16">
-                    <el-col :span="8">
-                      <el-statistic title="平均迭代周期" :value="iterationEfficiency.averageCycleHours" :precision="0" suffix="小时" />
-                    </el-col>
-                    <el-col :span="8">
-                      <el-statistic title="预估总工时" :value="iterationEfficiency.totalEstimatedHours" suffix="小时" />
-                    </el-col>
-                    <el-col :span="8">
-                      <el-statistic title="实际总工时" :value="iterationEfficiency.totalActualHours" suffix="小时" />
-                    </el-col>
-                  </el-row>
-                  <el-row :gutter="16" style="margin-top: 16px;">
-                    <el-col :span="8">
-                      <el-statistic title="预估准确率" :value="iterationEfficiency.estimationAccuracy" :precision="1" suffix="%" />
-                    </el-col>
-                    <el-col :span="8">
-                      <el-statistic title="总任务数" :value="iterationEfficiency.totalTasks" />
-                    </el-col>
-                    <el-col :span="8">
-                      <el-statistic title="已完成任务" :value="iterationEfficiency.completedTasks" />
-                    </el-col>
-                  </el-row>
-                </div>
-              </div>
-              <el-empty v-else description="暂无趋势数据" :image-size="60" />
-            </el-tab-pane>
-
-            <!-- 逾期任务 -->
-            <el-tab-pane name="overdue">
-              <template #label>
-                逾期任务
-                <el-badge v-if="supervisionReport.overdueTasks > 0" :value="supervisionReport.overdueTasks" :max="99" class="overdue-badge" />
-              </template>
-              <div v-if="supervisionReport.overdueTasks > 0">
-                <div v-for="milestone in supervisionReport.milestones" :key="milestone.id">
-                  <div v-for="task in milestone.tasks" :key="task.id">
-                    <div v-if="task.status === 'IN_PROGRESS' && isTaskOverdue(task)" class="overdue-task-item">
-                      <el-tag type="danger" size="small">逾期</el-tag>
-                      <span class="task-name">{{ task.title }}</span>
-                      <span class="task-milestone">{{ milestone.title }}</span>
-                      <span class="task-role">{{ task.assignedRole }}</span>
-                      <span class="task-hours">预估 {{ task.estimatedHours }}h</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <el-empty v-else description="暂无逾期任务" :image-size="60" />
-            </el-tab-pane>
-
-            <!-- 迭代回顾 -->
-            <el-tab-pane label="迭代回顾" name="retrospective">
-              <div v-if="iterationStats.totalIterations > 0" class="retrospective-view">
-                <el-row :gutter="16" class="retro-stats">
-                  <el-col :span="6">
-                    <el-statistic title="迭代次数" :value="iterationStats.totalIterations" suffix="次" />
-                  </el-col>
-                  <el-col :span="6">
-                    <el-statistic title="通过次数" :value="iterationStats.passedIterations" suffix="次" />
-                  </el-col>
-                  <el-col :span="6">
-                    <el-statistic title="通过率" :value="iterationStats.passRate" :precision="1" suffix="%" />
-                  </el-col>
-                  <el-col :span="6">
-                    <el-statistic title="平均评分" :value="iterationStats.averageScore" :precision="1" suffix="/10" />
-                  </el-col>
-                </el-row>
-                <!-- 最近迭代记录 -->
-                <div class="recent-iterations" v-if="iterationRecords.length > 0">
-                  <div class="section-title">最近迭代</div>
-                  <div v-for="record in iterationRecords.slice(0, 5)" :key="record.id" class="retro-record">
-                    <el-tag :type="getRecordResultType(record.result)" size="small">{{ getRecordResultText(record.result) }}</el-tag>
-                    <span class="retro-version">{{ record.version }}</span>
-                    <el-rate v-model="record.evaluationScore" disabled :max="10" size="small" />
-                    <span class="retro-time">{{ formatTime(record.createdAt) }}</span>
-                  </div>
-                </div>
-              </div>
-              <el-empty v-else description="暂无迭代数据" :image-size="60" />
-            </el-tab-pane>
-
-            <!-- 玩家体验 -->
-            <el-tab-pane label="玩家体验" name="playerExperience">
-              <div v-if="playerExperience" class="player-experience-view">
-                <!-- 综合趣味度 -->
-                <div class="fun-score-header">
-                  <div class="fun-score-circle" :class="getFunScoreClass(playerExperience.overallScore)">
-                    <span class="fun-score-value">{{ playerExperience.overallScore }}</span>
-                    <span class="fun-score-label">趣味度</span>
-                  </div>
-                  <div class="fun-score-status">
-                    {{ playerExperience.overallScore >= 70 ? '游戏体验良好' : playerExperience.overallScore >= 50 ? '有改进空间' : '需要重点优化' }}
-                  </div>
-                </div>
-
-                <!-- 五维评分 -->
-                <el-row :gutter="16" style="margin-top: 16px;">
-                  <el-col :span="4" v-for="(score, key) in playerExperience.dimensionScores" :key="key">
-                    <div class="dimension-score">
-                      <el-progress type="circle" :percentage="score" :width="80"
-                        :color="getDimensionColor(score)" :stroke-width="8" />
-                      <div class="dimension-label">{{ getDimensionName(key) }}</div>
-                    </div>
-                  </el-col>
-                </el-row>
-
-                <!-- 功能完整度 -->
-                <el-card shadow="hover" style="margin-top: 16px;">
-                  <div class="metric-title">功能完整度</div>
-                  <el-progress :percentage="playerExperience.featureCompleteness" :precision="1"
-                    :status="playerExperience.featureCompleteness >= 80 ? 'success' : ''" />
-                  <div class="metric-hint">已完成 {{ playerExperience.completedFeatures }}/{{ playerExperience.totalFeatures }} 个功能</div>
-                </el-card>
-
-                <!-- 改进建议 -->
-                <div v-if="playerExperience.improvements && playerExperience.improvements.length > 0" style="margin-top: 16px;">
-                  <div class="section-title">改进建议</div>
-                  <div v-for="(item, idx) in playerExperience.improvements" :key="idx" class="improvement-item">
-                    <el-icon color="#E6A23C"><Warning /></el-icon>
-                    <span>{{ item }}</span>
-                  </div>
-                </div>
-              </div>
-              <el-empty v-else description="暂无玩家体验数据" :image-size="60" />
-            </el-tab-pane>
-
-            <!-- 风险预测 -->
-            <el-tab-pane label="风险预测" name="riskPrediction">
-              <div v-if="riskPrediction" class="risk-prediction-view">
-                <!-- 风险概览 -->
-                <el-row :gutter="16" style="margin-bottom: 16px;">
-                  <el-col :span="8">
-                    <el-statistic title="风险数量" :value="riskPrediction.riskCount" />
-                  </el-col>
-                  <el-col :span="8">
-                    <el-tag :type="riskPrediction.hasCritical ? 'danger' : riskPrediction.riskCount > 0 ? 'warning' : 'success'" size="large">
-                      {{ riskPrediction.hasCritical ? '严重' : riskPrediction.riskCount > 0 ? '警告' : '安全' }}
-                    </el-tag>
-                  </el-col>
-                </el-row>
-
-                <!-- 风险列表 -->
-                <div v-if="riskPrediction.risks && riskPrediction.risks.length > 0">
-                  <div v-for="(risk, idx) in riskPrediction.risks" :key="idx" class="risk-card">
-                    <div class="risk-header">
-                      <el-tag :type="getRiskSeverityType(risk.severity)" size="small">{{ risk.severity }}</el-tag>
-                      <span class="risk-type">{{ risk.type }}</span>
-                    </div>
-                    <div class="risk-description">{{ risk.description }}</div>
-                    <div class="risk-suggestion">
-                      <el-icon color="#409EFF"><InfoFilled /></el-icon>
-                      <span>{{ risk.suggestion }}</span>
-                    </div>
-                  </div>
-                </div>
-                <el-empty v-else description="当前无显著风险" :image-size="60" />
-              </div>
-              <el-empty v-else description="暂无风险数据" :image-size="60" />
-            </el-tab-pane>
-
-            <!-- 质量基准 -->
-            <el-tab-pane label="质量基准" name="qualityBenchmark">
-              <div v-if="qualityBenchmark" class="quality-benchmark-view">
-                <!-- 完整度 -->
-                <el-card shadow="hover" style="margin-bottom: 16px;">
-                  <div class="benchmark-header">
-                    <span class="benchmark-title">功能完整度</span>
-                    <el-tag :type="qualityBenchmark.completeness >= 70 ? 'success' : qualityBenchmark.completeness >= 40 ? '' : 'warning'">
-                      {{ qualityBenchmark.developmentStatus }}
-                    </el-tag>
-                  </div>
-                  <el-progress :percentage="qualityBenchmark.completeness" :precision="1" :stroke-width="12"
-                    :status="qualityBenchmark.completeness >= 80 ? 'success' : ''" />
-                  <div class="metric-hint">{{ qualityBenchmark.completedMilestones }}/{{ qualityBenchmark.totalMilestones }} 里程碑已完成</div>
-                </el-card>
-
-                <!-- 发布Checklist -->
-                <div v-if="qualityBenchmark.checklist && qualityBenchmark.checklist.length > 0">
-                  <div class="section-title">发布前Checklist</div>
-                  <div v-for="(item, idx) in qualityBenchmark.checklist" :key="idx" class="checklist-item">
-                    <el-checkbox disabled />
-                    <span>{{ item.item }}</span>
-                  </div>
-                </div>
-              </div>
-              <el-empty v-else description="暂无基准数据" :image-size="60" />
-            </el-tab-pane>
-          </el-tabs>
-        </div>
-        <el-empty v-else description="暂无督查数据" :image-size="60" />
 
         <!-- 目录配置 -->
         <el-divider>
@@ -1383,49 +1066,38 @@
       </template>
     </el-dialog>
 
-    <!-- 督查规则配置对话框 -->
-    <el-dialog v-model="supervisionRulesVisible" title="督查规则配置" width="550px" @open="loadSupervisionRules">
-      <el-form label-width="160px" v-if="supervisionRules">
-        <el-form-item label="迭代超时阈值">
-          <el-input-number v-model="supervisionRules.iterationTimeoutHours" :min="12" :max="336" :step="12" />
-          <span style="margin-left: 8px; color: #909399;">小时</span>
-        </el-form-item>
-        <el-form-item label="任务逾期阈值">
-          <el-input-number v-model="supervisionRules.taskOverdueThresholdHours" :min="1" :max="168" :step="1" />
-          <span style="margin-left: 8px; color: #909399;">小时</span>
-        </el-form-item>
-        <el-form-item label="质量评分阈值">
-          <el-input-number v-model="supervisionRules.qualityScoreThreshold" :min="1" :max="10" :step="1" />
-          <span style="margin-left: 8px; color: #909399;">分（低于此值预警）</span>
-        </el-form-item>
-        <el-form-item label="回滚率阈值">
-          <el-input-number v-model="supervisionRules.rollbackRateThreshold" :min="5" :max="100" :step="5" />
-          <span style="margin-left: 8px; color: #909399;">%（超过此值预警）</span>
-        </el-form-item>
-        <el-form-item label="Agent空闲阈值">
-          <el-input-number v-model="supervisionRules.agentIdleThresholdHours" :min="1" :max="48" :step="1" />
-          <span style="margin-left: 8px; color: #909399;">小时</span>
-        </el-form-item>
-        <el-divider>预警通知渠道</el-divider>
-        <el-form-item label="邮件通知">
-          <el-switch v-model="supervisionRules.enableEmailAlert" />
-        </el-form-item>
-        <el-form-item label="飞书通知">
-          <el-switch v-model="supervisionRules.enableFeishuAlert" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="supervisionRulesVisible = false">取消</el-button>
-        <el-button type="primary" @click="handleSaveSupervisionRules" :loading="savingRules">保存</el-button>
-      </template>
-    </el-dialog>
-
     <!-- 项目讨论抽屉 -->
     <ProjectChatDrawer
       v-model="chatDrawerVisible"
       :project-id="chatProjectId"
       :project-name="chatProjectName"
     />
+
+    <!-- 快照管理弹窗 -->
+    <el-dialog v-model="snapshotDialogVisible" title="快照管理" width="700px">
+      <div style="margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;">
+        <span style="color: #909399; font-size: 13px;">项目: {{ snapshotProject?.name }}</span>
+        <el-button type="primary" size="small" @click="handleCreateSnapshot" :loading="snapshotCreating">
+          <el-icon><Camera /></el-icon> 创建快照
+        </el-button>
+      </div>
+      <el-table :data="snapshotList" stripe v-loading="snapshotLoading" empty-text="暂无快照">
+        <el-table-column prop="id" label="快照ID" width="100" show-overflow-tooltip />
+        <el-table-column prop="description" label="描述" min-width="200" show-overflow-tooltip />
+        <el-table-column label="创建时间" width="170">
+          <template #default="{ row }">{{ row.createdAt || '-' }}</template>
+        </el-table-column>
+        <el-table-column label="操作" width="150" fixed="right">
+          <template #default="{ row }">
+            <el-button type="primary" link size="small" @click="handleRestoreSnapshot(row)">恢复</el-button>
+            <el-button type="danger" link size="small" @click="handleDeleteSnapshot(row)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <div style="margin-top: 12px;">
+        <el-button size="small" @click="handleUndoSnapshot" :disabled="snapshotList.length === 0">撤销最近一次恢复</el-button>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
@@ -1444,12 +1116,13 @@
  */
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { projectApi, gameTemplateApi, interventionApi } from '@/api'
+import { projectApi, gameTemplateApi, interventionApi, snapshotApi } from '@/api'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Search, Grid, List, Folder, CircleCheck, User, Aim,
   MoreFilled, Document, Edit, Delete, Box, Connection,
-  FolderOpened, Upload, Plus, Clock, Warning, CircleClose, Promotion
+  FolderOpened, Upload, Plus, Clock, Warning, CircleClose, Promotion, Camera,
+  DataAnalysis, ArrowRight, Download, Setting, RefreshLeft, RefreshRight, InfoFilled
 } from '@element-plus/icons-vue'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 import ProjectChatDrawer from '@/components/ProjectChatDrawer.vue'
@@ -1728,6 +1401,7 @@ const handleViewDetail = async (project) => {
   await loadIterationStats(project.id)
   await loadIterationRecords(project.id)
   await loadSupervisionReport(project.id)
+  await loadAdminInstruction(project.id)
 }
 
 /** 加载里程碑列表 */
@@ -1897,6 +1571,10 @@ const iterationSort = ref('time_desc')
 const iterationDetailVisible = ref(false)
 const currentIterationRecord = ref(null)
 
+// 管理员迭代指令
+const adminInstruction = ref('')
+const savingInstruction = ref(false)
+
 // 版本对比
 const versionComparisonVisible = ref(false)
 const versionComparisonData = ref(null)
@@ -1907,8 +1585,6 @@ const loadingSupervision = ref(false)
 const supervisionTab = ref('gantt')
 const iterationTrends = ref(null)
 const iterationEfficiency = ref(null)
-const supervisionRulesVisible = ref(false)
-const supervisionRules = ref({})
 const collaborationMetrics = ref(null)
 const playerExperience = ref(null)
 const riskPrediction = ref(null)
@@ -1918,6 +1594,71 @@ const qualityBenchmark = ref(null)
 const chatDrawerVisible = ref(false)
 const chatProjectId = ref('')
 const chatProjectName = ref('')
+
+// 快照管理
+const snapshotDialogVisible = ref(false)
+const snapshotLoading = ref(false)
+const snapshotCreating = ref(false)
+const snapshotList = ref([])
+const snapshotProject = ref(null)
+
+const handleSnapshot = async (project) => {
+  snapshotProject.value = project
+  snapshotDialogVisible.value = true
+  snapshotLoading.value = true
+  try {
+    const res = await snapshotApi.list(project.id, 'producer')
+    snapshotList.value = res.data || res || []
+  } catch (e) {
+    snapshotList.value = []
+  } finally {
+    snapshotLoading.value = false
+  }
+}
+
+const handleCreateSnapshot = async () => {
+  snapshotCreating.value = true
+  try {
+    await snapshotApi.create({ projectId: snapshotProject.value.id, agentId: 'producer', description: '手动快照' })
+    ElMessage.success('快照已创建')
+    handleSnapshot(snapshotProject.value)
+  } catch (e) {
+    ElMessage.error('创建快照失败')
+  } finally {
+    snapshotCreating.value = false
+  }
+}
+
+const handleRestoreSnapshot = async (row) => {
+  try {
+    await ElMessageBox.confirm('恢复快照将覆盖当前状态，确定继续？', '恢复确认', { type: 'warning' })
+    await snapshotApi.restore(snapshotProject.value.id, 'producer', row.id)
+    ElMessage.success('快照已恢复')
+  } catch (e) {
+    if (e !== false) ElMessage.error('恢复失败')
+  }
+}
+
+const handleDeleteSnapshot = async (row) => {
+  try {
+    await ElMessageBox.confirm('确定删除该快照？', '删除确认', { type: 'warning' })
+    await snapshotApi.delete(snapshotProject.value.id, 'producer', row.id)
+    ElMessage.success('快照已删除')
+    handleSnapshot(snapshotProject.value)
+  } catch (e) {
+    if (e !== false) ElMessage.error('删除失败')
+  }
+}
+
+const handleUndoSnapshot = async () => {
+  try {
+    await ElMessageBox.confirm('确定撤销最近一次恢复？', '撤销确认', { type: 'warning' })
+    await snapshotApi.undo(snapshotProject.value.id, 'producer')
+    ElMessage.success('已撤销')
+  } catch (e) {
+    if (e !== false) ElMessage.error('撤销失败')
+  }
+}
 
 const openProjectChat = (project) => {
   chatProjectId.value = project.id
@@ -1956,7 +1697,7 @@ const filteredIterationRecords = computed(() => {
 /** 加载版本历史 */
 const loadVersionHistory = async (projectId) => {
   try {
-    const data = await projectApi.get(projectId)
+    const data = await projectApi.getById(projectId)
     versionHistory.value = data?.versionHistory || []
   } catch (error) {
     console.error('加载版本历史失败:', error)
@@ -1986,86 +1727,32 @@ const loadIterationRecords = async (projectId) => {
   }
 }
 
-/** 加载督查报告 */
+/** 加载督查报告（各接口独立容错，接口不存在时静默跳过） */
 const loadSupervisionReport = async (projectId) => {
   loadingSupervision.value = true
   try {
+    const authHeader = { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+    const safeFetch = (url) => fetch(url, { headers: authHeader }).then(r => r.ok ? r.json() : null).catch(() => null)
     const [reportRes, trendsRes, efficiencyRes, collaborationRes, experienceRes, riskRes, benchmarkRes] = await Promise.all([
-      fetch(`/api/projects/${projectId}/supervision-report`, {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
-      }),
-      fetch(`/api/projects/${projectId}/supervision-trends`, {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
-      }),
-      fetch(`/api/projects/${projectId}/iteration-efficiency`, {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
-      }),
-      fetch(`/api/projects/${projectId}/collaboration-metrics`, {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
-      }),
-      fetch(`/api/projects/${projectId}/player-experience`, {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
-      }),
-      fetch(`/api/projects/${projectId}/risk-prediction`, {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
-      }),
-      fetch(`/api/projects/${projectId}/quality-benchmark`, {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
-      })
+      safeFetch(`/api/projects/api/${projectId}/supervision-report`),
+      safeFetch(`/api/projects/api/${projectId}/supervision-trends`),
+      safeFetch(`/api/projects/api/${projectId}/iteration-efficiency`),
+      safeFetch(`/api/projects/api/${projectId}/collaboration-metrics`),
+      safeFetch(`/api/projects/api/${projectId}/player-experience`),
+      safeFetch(`/api/projects/api/${projectId}/risk-prediction`),
+      safeFetch(`/api/projects/api/${projectId}/quality-benchmark`)
     ])
-    if (reportRes.ok) supervisionReport.value = await reportRes.json()
-    if (trendsRes.ok) iterationTrends.value = await trendsRes.json()
-    if (efficiencyRes.ok) iterationEfficiency.value = await efficiencyRes.json()
-    if (collaborationRes.ok) collaborationMetrics.value = await collaborationRes.json()
-    if (experienceRes.ok) playerExperience.value = await experienceRes.json()
-    if (riskRes.ok) riskPrediction.value = await riskRes.json()
-    if (benchmarkRes.ok) qualityBenchmark.value = await benchmarkRes.json()
+    if (reportRes) supervisionReport.value = reportRes
+    if (trendsRes) iterationTrends.value = trendsRes
+    if (efficiencyRes) iterationEfficiency.value = efficiencyRes
+    if (collaborationRes) collaborationMetrics.value = collaborationRes
+    if (experienceRes) playerExperience.value = experienceRes
+    if (riskRes) riskPrediction.value = riskRes
+    if (benchmarkRes) qualityBenchmark.value = benchmarkRes
   } catch (error) {
-    console.error('加载督查报告失败:', error)
+    console.debug('加载督查报告部分接口不可用')
   } finally {
     loadingSupervision.value = false
-  }
-}
-
-/** 加载督查规则 */
-const loadSupervisionRules = async () => {
-  try {
-    const response = await fetch('/api/supervision-rules', {
-      headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
-    })
-    if (response.ok) {
-      supervisionRules.value = await response.json()
-    }
-  } catch (error) {
-    console.error('加载督查规则失败:', error)
-  }
-}
-
-/** 保存督查规则 */
-const handleSaveSupervisionRules = async () => {
-  savingRules.value = true
-  try {
-    const response = await fetch('/api/supervision-rules', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${localStorage.getItem('token')}`
-      },
-      body: JSON.stringify(supervisionRules.value)
-    })
-    if (response.ok) {
-      const result = await response.json()
-      if (result.success) {
-        ElMessage.success('督查规则已保存')
-        supervisionRulesVisible.value = false
-      } else {
-        ElMessage.error(result.message || '保存失败')
-      }
-    }
-  } catch (error) {
-    ElMessage.error('保存失败')
-  } finally {
-    savingRules.value = false
   }
 }
 
@@ -2312,6 +1999,90 @@ const handleVersionIterationSubmit = async () => {
     ElMessage.error('发起版本迭代失败: ' + (error.message || '未知错误'))
   } finally {
     versionIterationLoading.value = false
+  }
+}
+
+/** 加载管理员迭代指令 */
+const loadAdminInstruction = async (projectId) => {
+  const id = projectId || currentProject.value?.id
+  if (!id) return
+  try {
+    const res = await projectApi.getVersionInstruction(id)
+    if (res.success) {
+      adminInstruction.value = res.instruction || ''
+    }
+  } catch (e) {
+    console.error('加载管理员指令失败', e)
+  }
+}
+
+/** 保存管理员迭代指令 */
+const saveAdminInstruction = async () => {
+  if (!currentProject.value?.id) return
+  savingInstruction.value = true
+  try {
+    const res = await projectApi.saveVersionInstruction(currentProject.value.id, adminInstruction.value)
+    if (res.success) {
+      ElMessage.success(res.message || '指令已保存')
+      // 刷新项目数据
+      await loadProjects()
+    } else {
+      ElMessage.error(res.message || '保存失败')
+    }
+  } catch (e) {
+    ElMessage.error('保存指令失败')
+  } finally {
+    savingInstruction.value = false
+  }
+}
+
+/** 清空管理员迭代指令 */
+const clearAdminInstruction = async () => {
+  adminInstruction.value = ''
+  await saveAdminInstruction()
+}
+
+/** 清理脏数据 */
+const handleCleanData = async () => {
+  if (!currentProject.value?.id) return
+  try {
+    await ElMessageBox.confirm(
+      '将修正不合理的任务工时（超过168小时的截断）和修复里程碑状态不一致问题。确定继续？',
+      '清理脏数据',
+      { confirmButtonText: '确定清理', cancelButtonText: '取消', type: 'warning' }
+    )
+    const res = await projectApi.cleanData(currentProject.value.id)
+    if (res.success) {
+      ElMessage.success(`清理完成：修正了 ${res.fixedTasks} 个任务，${res.fixedMilestones} 个里程碑`)
+      await loadMilestones(currentProject.value.id)
+      await loadProjects()
+    } else {
+      ElMessage.error(res.message || '清理失败')
+    }
+  } catch (e) {
+    if (e !== 'cancel') ElMessage.error('清理数据失败')
+  }
+}
+
+/** 重置里程碑 */
+const handleResetMilestones = async () => {
+  if (!currentProject.value?.id) return
+  try {
+    await ElMessageBox.confirm(
+      '将清除当前版本的所有里程碑和任务，让制作人重新规划。这是一个破坏性操作，确定继续？',
+      '重置里程碑',
+      { confirmButtonText: '确定重置', cancelButtonText: '取消', type: 'danger' }
+    )
+    const res = await projectApi.resetMilestones(currentProject.value.id)
+    if (res.success) {
+      ElMessage.success(res.message)
+      await loadMilestones(currentProject.value.id)
+      await loadProjects()
+    } else {
+      ElMessage.error(res.message || '重置失败')
+    }
+  } catch (e) {
+    if (e !== 'cancel') ElMessage.error('重置里程碑失败')
   }
 }
 
@@ -3079,6 +2850,26 @@ onMounted(() => {
   gap: 8px;
 }
 
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin: 16px 0 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+}
+
+.section-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+
+.section-actions {
+  display: flex;
+  gap: 4px;
+}
+
 .dir-config-list {
   display: flex;
   flex-direction: column;
@@ -3182,6 +2973,29 @@ onMounted(() => {
 .iteration-actions {
   margin-top: 12px;
   text-align: right;
+}
+
+/* 管理员迭代指令样式 */
+.admin-instruction {
+  margin-top: 16px;
+}
+
+.divider-title-sm {
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+}
+
+.instruction-actions {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.instruction-time {
+  font-size: 12px;
+  color: var(--el-text-color-placeholder);
+  margin-left: 8px;
 }
 
 /* 版本迭代记录样式 */
@@ -3919,5 +3733,50 @@ onMounted(() => {
   :deep(.el-drawer) {
     width: 90% !important;
   }
+}
+
+/* 督查报告入口 */
+.supervision-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.supervision-link-card {
+  cursor: pointer;
+  transition: all 0.3s;
+}
+
+.supervision-link-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--el-box-shadow-light);
+}
+
+.supervision-link-content {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.supervision-link-info {
+  flex: 1;
+}
+
+.supervision-link-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+
+.supervision-link-desc {
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+  margin-top: 4px;
+}
+
+.supervision-quick-stats {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 </style>

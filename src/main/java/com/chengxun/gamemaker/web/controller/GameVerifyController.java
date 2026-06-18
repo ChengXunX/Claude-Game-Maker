@@ -5,9 +5,12 @@ import com.chengxun.gamemaker.model.GameProject;
 import com.chengxun.gamemaker.service.GameAnalysisTaskService;
 import com.chengxun.gamemaker.service.GameDesignReviewService;
 import com.chengxun.gamemaker.service.GameRuntimeVerifier;
+import com.chengxun.gamemaker.web.entity.DesignReviewRecord;
 import com.chengxun.gamemaker.web.entity.GameVerifyResult;
+import com.chengxun.gamemaker.web.repository.DesignReviewRecordRepository;
 import com.chengxun.gamemaker.web.repository.GameVerifyResultRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import io.swagger.v3.oas.annotations.Operation;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -57,6 +60,9 @@ public class GameVerifyController {
 
     @Autowired(required = false)
     private com.chengxun.gamemaker.service.GameDesignReviewService gameDesignReviewService;
+
+    @Autowired
+    private com.chengxun.gamemaker.web.repository.DesignReviewRecordRepository designReviewRecordRepository;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -433,6 +439,28 @@ public class GameVerifyController {
         GameDesignReviewService.DesignReviewResult result =
             gameDesignReviewService.reviewDesign(goal, designDocuments, null);
 
+        // 保存审查记录到数据库
+        try {
+            DesignReviewRecord record = new DesignReviewRecord();
+            record.setProjectId(projectId);
+            record.setProjectName(project.getName());
+            record.setScore(result.score);
+            record.setPassed(result.passed);
+            record.setSummary(result.summary);
+            record.setStrengths(objectMapper.writeValueAsString(result.strengths));
+            record.setIssues(objectMapper.writeValueAsString(result.issues.stream().map(issue -> {
+                Map<String, String> issueMap = new HashMap<>();
+                issueMap.put("severity", issue.severity);
+                issueMap.put("description", issue.description);
+                issueMap.put("suggestion", issue.suggestion);
+                return issueMap;
+            }).toList()));
+            record.setReport(result.toReport());
+            designReviewRecordRepository.save(record);
+        } catch (Exception e) {
+            log.warn("保存设计审查记录失败: {}", e.getMessage());
+        }
+
         Map<String, Object> response = new HashMap<>();
         response.put("success", true);
         response.put("reviewed", result.reviewed);
@@ -453,43 +481,95 @@ public class GameVerifyController {
     }
 
     /**
+     * 获取设计审查历史
+     */
+    @GetMapping("/{projectId}/design-review/history")
+    @Operation(summary = "获取设计审查历史")
+    public ResponseEntity<List<DesignReviewRecord>> getDesignReviewHistory(@PathVariable String projectId) {
+        List<DesignReviewRecord> records = designReviewRecordRepository.findByProjectIdOrderByCreatedAtDesc(projectId);
+        return ResponseEntity.ok(records);
+    }
+
+    /**
      * 收集项目中的设计文档内容
+     * 从项目目录和里程碑产出中收集设计文档
      */
     private String collectDesignDocuments(GameProject project) {
         StringBuilder docs = new StringBuilder();
         String workDir = project.getWorkDir();
 
+        // 1. 从工作目录扫描文档（包含子目录）
         if (workDir != null && !workDir.isEmpty()) {
             java.io.File dir = new java.io.File(workDir);
             if (dir.exists() && dir.isDirectory()) {
-                // 查找 .md 和 .txt 文件作为设计文档
-                java.io.File[] files = dir.listFiles((d, name) ->
-                    name.endsWith(".md") || name.endsWith(".txt") ||
-                    name.contains("design") || name.contains("plan") ||
-                    name.contains("GDD"));
-                if (files != null) {
-                    for (java.io.File file : files) {
-                        try {
-                            String content = java.nio.file.Files.readString(file.toPath());
-                            if (content.length() > 3000) {
-                                content = content.substring(0, 3000) + "\n...(截断)";
-                            }
-                            docs.append("### ").append(file.getName()).append("\n");
-                            docs.append(content).append("\n\n");
-                        } catch (Exception e) {
-                            // 忽略读取失败的文件
+                scanDirectory(dir, docs, 0, 3); // 最多递归3层
+            }
+        }
+
+        // 2. 从里程碑产出中收集设计信息
+        if (project.getMilestones() != null) {
+            for (var milestone : project.getMilestones()) {
+                if (milestone.getDescription() != null && !milestone.getDescription().isEmpty()) {
+                    docs.append("### 里程碑: ").append(milestone.getTitle()).append("\n");
+                    docs.append(milestone.getDescription()).append("\n\n");
+                }
+                // 收集任务结果
+                if (milestone.getTasks() != null) {
+                    for (var task : milestone.getTasks()) {
+                        if (task.getResult() != null && !task.getResult().isEmpty()
+                            && task.getResult().length() > 50) {
+                            docs.append("### 任务: ").append(task.getTitle()).append("\n");
+                            String result = task.getResult();
+                            if (result.length() > 2000) result = result.substring(0, 2000) + "\n...(截断)";
+                            docs.append(result).append("\n\n");
                         }
                     }
                 }
             }
         }
 
-        // 如果没有找到设计文档，使用项目目标作为设计输入
+        // 3. 如果还是空的，使用项目目标
         if (docs.isEmpty() && project.getGoal() != null) {
             docs.append("项目目标：\n").append(project.getGoal());
         }
 
         return docs.toString();
+    }
+
+    /**
+     * 递归扫描目录中的文档
+     */
+    private void scanDirectory(java.io.File dir, StringBuilder docs, int depth, int maxDepth) {
+        if (depth > maxDepth) return;
+
+        java.io.File[] files = dir.listFiles();
+        if (files == null) return;
+
+        for (java.io.File file : files) {
+            if (file.isDirectory()) {
+                // 跳过隐藏目录和构建目录
+                if (!file.getName().startsWith(".") && !file.getName().equals("node_modules")
+                    && !file.getName().equals("target") && !file.getName().equals("build")) {
+                    scanDirectory(file, docs, depth + 1, maxDepth);
+                }
+            } else if (file.getName().endsWith(".md") || file.getName().endsWith(".txt") ||
+                       file.getName().contains("design") || file.getName().contains("plan") ||
+                       file.getName().contains("GDD") || file.getName().contains("README")) {
+                if (file.length() > 100000) continue; // 跳过超大文件
+                try {
+                    String content = java.nio.file.Files.readString(file.toPath());
+                    if (content.length() > 3000) {
+                        content = content.substring(0, 3000) + "\n...(截断)";
+                    }
+                    if (content.length() > 50) { // 只包含有实际内容的文件
+                        docs.append("### ").append(file.getName()).append("\n");
+                        docs.append(content).append("\n\n");
+                    }
+                } catch (Exception e) {
+                    // 忽略读取失败的文件
+                }
+            }
+        }
     }
 
     /**

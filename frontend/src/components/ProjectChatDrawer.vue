@@ -21,9 +21,8 @@
             v-for="d in discussions"
             :key="d.id"
             class="discussion-item"
-            @click="openDiscussion(d)"
           >
-            <div class="discussion-title">
+            <div class="discussion-title" @click="openDiscussion(d)">
               {{ d.title }}
               <el-icon v-if="d.status === 'MINUTES_GENERATED'" class="minutes-icon" color="#67c23a">
                 <Document />
@@ -31,9 +30,24 @@
             </div>
             <div class="discussion-meta">
               <span>{{ d.username }} · {{ formatTime(d.createdAt) }}</span>
-              <el-tag :type="getStatusType(d.status)" size="small">{{ getStatusText(d.status) }}</el-tag>
+              <div class="discussion-actions">
+                <el-tag :type="getStatusType(d.status)" size="small">{{ getStatusText(d.status) }}</el-tag>
+                <el-button
+                  v-if="d.status === 'ACTIVE'"
+                  type="warning"
+                  text
+                  size="small"
+                  @click.stop="closeDiscussion(d)"
+                >结束</el-button>
+                <el-button
+                  type="danger"
+                  text
+                  size="small"
+                  @click.stop="deleteDiscussion(d)"
+                >删除</el-button>
+              </div>
             </div>
-            <div v-if="d.meetingMinutes" class="discussion-minutes-preview">
+            <div v-if="d.meetingMinutes" class="discussion-minutes-preview" @click="openDiscussion(d)">
               {{ truncateText(d.meetingMinutes, 60) }}
             </div>
           </div>
@@ -63,7 +77,7 @@
             </div>
             <el-collapse-transition>
               <div v-if="expandedMinutes[m.id]" class="minutes-card-content">
-                <div v-html="renderMarkdown(m.minutes)"></div>
+                <MarkdownRenderer :content="m.minutes" />
               </div>
             </el-collapse-transition>
           </div>
@@ -94,15 +108,26 @@
           <div class="message-role">
             {{ msg.role === 'user' ? (msg.sender || '用户') : msg.role === 'system' ? '系统' : 'AI' }}
           </div>
-          <div class="message-content" v-html="renderMarkdown(msg.content)"></div>
+          <div class="message-content">
+            <MarkdownRenderer :content="msg.content" />
+          </div>
         </div>
 
         <!-- AI 正在回复 -->
         <div v-if="streaming" class="message-item assistant">
           <div class="message-role">AI</div>
           <div class="message-content">
-            <span v-if="streamThinking" class="thinking-text">{{ streamThinking }}</span>
-            <span v-html="renderMarkdown(streamContent)"></span>
+            <!-- 思考过程（可折叠） -->
+            <div v-if="streamThinking" class="thinking-block">
+              <div class="thinking-header" @click="showThinking = !showThinking">
+                <el-icon class="thinking-arrow" :class="{ expanded: showThinking }"><ArrowRight /></el-icon>
+                <span>思考过程</span>
+              </div>
+              <el-collapse-transition>
+                <div v-if="showThinking" class="thinking-body">{{ streamThinking }}</div>
+              </el-collapse-transition>
+            </div>
+            <MarkdownRenderer :content="streamContent" />
             <span class="typing-cursor">|</span>
           </div>
         </div>
@@ -126,8 +151,8 @@
         </div>
       </div>
 
-      <!-- 会议纪要区 -->
-      <div class="minutes-area" v-if="currentDiscussion.status === 'ACTIVE' && messages.length > 0">
+      <!-- 会议纪要区（进行中或已结束的讨论都可以生成纪要） -->
+      <div class="minutes-area" v-if="(currentDiscussion.status === 'ACTIVE' || currentDiscussion.status === 'CLOSED') && messages.length > 0">
         <el-button
           type="warning"
           @click="generateMinutes"
@@ -145,7 +170,9 @@
           会议纪要
           <el-tag type="success" size="small" style="margin-left: 8px">已同步给制作人</el-tag>
         </div>
-        <div class="minutes-content" v-html="renderMarkdown(currentDiscussion.meetingMinutes)"></div>
+        <div class="minutes-content">
+          <MarkdownRenderer :content="currentDiscussion.meetingMinutes" />
+        </div>
       </div>
     </div>
   </el-drawer>
@@ -154,8 +181,12 @@
 <script setup>
 import { ref, reactive, watch, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Plus, ArrowLeft, ArrowDown, Document } from '@element-plus/icons-vue'
+import { Plus, ArrowLeft, ArrowDown, ArrowRight, Document } from '@element-plus/icons-vue'
 import api from '@/api'
+import { useUserStore } from '@/stores/user'
+import MarkdownRenderer from './MarkdownRenderer.vue'
+
+const userStore = useUserStore()
 
 const props = defineProps({
   modelValue: Boolean,
@@ -175,6 +206,7 @@ const inputMessage = ref('')
 const streaming = ref(false)
 const streamContent = ref('')
 const streamThinking = ref('')
+const showThinking = ref(false)
 const generatingMinutes = ref(false)
 const messagesRef = ref(null)
 const expandedMinutes = reactive({})
@@ -243,13 +275,20 @@ const openDiscussion = async (discussion) => {
 }
 
 const backToList = () => {
+  if (activeEventSource) {
+    activeEventSource.close()
+    activeEventSource = null
+  }
   currentDiscussion.value = null
   messages.value = []
   streamContent.value = ''
   streamThinking.value = ''
+  streaming.value = false
   loadDiscussions()
   loadMinutes()
 }
+
+let activeEventSource = null
 
 const sendMessage = async () => {
   if (!inputMessage.value.trim() || streaming.value) return
@@ -261,75 +300,89 @@ const sendMessage = async () => {
     id: Date.now(),
     role: 'user',
     content: userMsg,
-    sender: '用户'
+    sender: userStore.username || '用户'
   })
   scrollToBottom()
 
   streaming.value = true
   streamContent.value = ''
   streamThinking.value = ''
+  showThinking.value = false
 
   try {
-    const token = localStorage.getItem('token')
-    const url = `/api/project-discussions/${currentDiscussion.value.id}/stream/ask?message=${encodeURIComponent(userMsg)}`
-    const headers = {}
-    if (token) headers['Authorization'] = `Bearer ${token}`
+    // 使用 EventSource（和AI助手一致），token通过URL参数传递
+    const token = localStorage.getItem('token') || ''
+    const url = `/api/project-discussions/${currentDiscussion.value.id}/stream/ask?message=${encodeURIComponent(userMsg)}&token=${encodeURIComponent(token)}`
+    const eventSource = new EventSource(url)
+    activeEventSource = eventSource
 
-    const response = await fetch(url, { headers })
-    const reader = response.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
+    eventSource.addEventListener('thinking', (e) => {
+      try {
+        const data = JSON.parse(e.data)
+        streamThinking.value += data.content || ''
+        scrollToBottom()
+      } catch {}
+    })
 
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
+    eventSource.addEventListener('text', (e) => {
+      try {
+        const data = JSON.parse(e.data)
+        streamContent.value += data.content || ''
+        scrollToBottom()
+      } catch {}
+    })
 
-      buffer += decoder.decode(value, { stream: true })
-      const lines = buffer.split('\n')
-      buffer = lines.pop() || ''
-
-      for (const line of lines) {
-        if (line.startsWith('event: ')) continue
-        if (line.startsWith('data: ')) {
-          const data = line.slice(6)
-          if (data === '[DONE]') continue
-          handleSSEData(data)
-        }
+    eventSource.addEventListener('done', () => {
+      if (streamContent.value) {
+        messages.value.push({
+          id: Date.now(),
+          role: 'assistant',
+          content: streamContent.value
+        })
       }
-    }
+      eventSource.close()
+      activeEventSource = null
+      streaming.value = false
+      streamContent.value = ''
+      streamThinking.value = ''
+      scrollToBottom()
+    })
 
-    if (streamContent.value) {
-      messages.value.push({
-        id: Date.now(),
-        role: 'assistant',
-        content: streamContent.value
-      })
+    eventSource.addEventListener('error', (e) => {
+      try {
+        const data = JSON.parse(e.data)
+        ElMessage.error('AI回复失败: ' + (data.message || data))
+      } catch {}
+      eventSource.close()
+      activeEventSource = null
+      streaming.value = false
+      streamContent.value = ''
+      streamThinking.value = ''
+      scrollToBottom()
+    })
+
+    eventSource.onerror = () => {
+      if (streaming.value) {
+        if (streamContent.value) {
+          messages.value.push({
+            id: Date.now(),
+            role: 'assistant',
+            content: streamContent.value
+          })
+        }
+        eventSource.close()
+        activeEventSource = null
+        streaming.value = false
+        streamContent.value = ''
+        streamThinking.value = ''
+        scrollToBottom()
+      }
     }
   } catch (e) {
     ElMessage.error('AI回复失败: ' + e.message)
-  } finally {
     streaming.value = false
     streamContent.value = ''
     streamThinking.value = ''
-    scrollToBottom()
-  }
-}
-
-const handleSSEData = (data) => {
-  try {
-    if (data.startsWith('{')) {
-      const parsed = JSON.parse(data)
-      if (parsed.type === 'thinking') {
-        streamThinking.value += parsed.content || ''
-      } else if (parsed.type === 'text') {
-        streamContent.value += parsed.content || ''
-      }
-    } else {
-      streamContent.value += data
-    }
-    scrollToBottom()
-  } catch {
-    streamContent.value += data
     scrollToBottom()
   }
 }
@@ -373,16 +426,48 @@ const scrollToBottom = () => {
 }
 
 const handleClose = () => {
+  if (activeEventSource) {
+    activeEventSource.close()
+    activeEventSource = null
+  }
   visible.value = false
 }
 
+const closeDiscussion = async (discussion) => {
+  try {
+    const res = await api.post(`/project-discussions/${discussion.id}/close`)
+    if (res.success) {
+      discussion.status = 'CLOSED'
+      ElMessage.success('讨论已结束')
+    } else {
+      ElMessage.error(res.error || '操作失败')
+    }
+  } catch (e) {
+    ElMessage.error('操作失败')
+  }
+}
+
+const deleteDiscussion = async (discussion) => {
+  try {
+    const res = await api.delete(`/project-discussions/${discussion.id}`)
+    if (res.success) {
+      discussions.value = discussions.value.filter(d => d.id !== discussion.id)
+      ElMessage.success('讨论已删除')
+    } else {
+      ElMessage.error(res.error || '删除失败')
+    }
+  } catch (e) {
+    ElMessage.error('删除失败')
+  }
+}
+
 const getStatusType = (status) => {
-  const map = { ACTIVE: 'primary', MINUTES_GENERATED: 'success', ARCHIVED: 'info' }
+  const map = { ACTIVE: 'primary', MINUTES_GENERATED: 'success', CLOSED: 'info', ARCHIVED: 'info' }
   return map[status] || 'info'
 }
 
 const getStatusText = (status) => {
-  const map = { ACTIVE: '进行中', MINUTES_GENERATED: '已生成纪要', ARCHIVED: '已归档' }
+  const map = { ACTIVE: '进行中', MINUTES_GENERATED: '已生成纪要', CLOSED: '已结束', ARCHIVED: '已归档' }
   return map[status] || status
 }
 
@@ -395,13 +480,6 @@ const formatTime = (t) => {
 const truncateText = (text, len) => {
   if (!text) return ''
   return text.length > len ? text.slice(0, len) + '...' : text
-}
-
-const renderMarkdown = (text) => {
-  if (!text) return ''
-  return text
-    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\n/g, '<br>')
 }
 </script>
 
@@ -480,6 +558,12 @@ const renderMarkdown = (text) => {
   align-items: center;
   font-size: 12px;
   color: #999;
+}
+
+.discussion-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .discussion-minutes-preview {
@@ -606,10 +690,48 @@ const renderMarkdown = (text) => {
   color: #e6a23c;
 }
 
-.thinking-text {
-  color: #999;
-  font-style: italic;
+.thinking-block {
+  margin-bottom: 8px;
+  border: 1px solid #e4e7ed;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.thinking-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  background: #f5f7fa;
+  cursor: pointer;
+  font-size: 12px;
+  color: #909399;
+  user-select: none;
+}
+
+.thinking-header:hover {
+  background: #ebeef5;
+}
+
+.thinking-arrow {
+  transition: transform 0.2s;
+  font-size: 12px;
+}
+
+.thinking-arrow.expanded {
+  transform: rotate(90deg);
+}
+
+.thinking-body {
+  padding: 8px 10px;
   font-size: 13px;
+  color: #67c23a;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 200px;
+  overflow-y: auto;
+  background: #f0f9eb;
 }
 
 .typing-cursor {

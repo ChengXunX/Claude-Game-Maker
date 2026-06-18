@@ -79,6 +79,61 @@ public class AgentScheduler {
      */
     private final Map<String, AtomicBoolean> immediateScheduling = new ConcurrentHashMap<>();
 
+    /** 启动唤醒是否已执行（防止重复执行） */
+    private final AtomicBoolean startupWakeDone = new AtomicBoolean(false);
+
+    /**
+     * 启动后唤醒所有 ProducerAgent
+     * 系统重启后 Agent 不会自动开始工作（调度器只在有待处理消息时才驱动），
+     * 需要主动发送一条唤醒消息让 Producer 开始检查项目状态和分配任务。
+     *
+     * 延迟 20 秒执行，等待所有 Agent 初始化完成。
+     */
+    @jakarta.annotation.PostConstruct
+    public void wakeAllProducersOnStartup() {
+        // 用延迟线程执行，避免阻塞 Spring 初始化
+        Thread startupThread = new Thread(() -> {
+            try {
+                // 等待 Agent 初始化完成
+                Thread.sleep(20000);
+
+                if (!startupWakeDone.compareAndSet(false, true)) return;
+
+                List<String> projectIds = agentManager.getRegisteredProjectIds();
+                int woken = 0;
+                for (String projectId : projectIds) {
+                    try {
+                        Agent producer = agentManager.getAgent(projectId, "producer");
+                        if (producer == null || !producer.isAlive()) continue;
+
+                        // 发送系统唤醒消息
+                        com.chengxun.gamemaker.model.AgentMessage wakeMsg =
+                            com.chengxun.gamemaker.model.AgentMessage.builder()
+                                .fromAgentId("system")
+                                .toAgentId(projectId + ":producer")
+                                .type(com.chengxun.gamemaker.model.AgentMessage.MessageType.SYSTEM)
+                                .content("[系统重启] 系统已重启完成，请检查项目状态、恢复工作上下文，继续推进目标和里程碑。")
+                                .priority(9)
+                                .build();
+                        producer.receiveMessage(wakeMsg);
+                        woken++;
+                        log.info("启动唤醒 Producer: {}", projectId);
+                    } catch (Exception e) {
+                        log.warn("启动唤醒 Producer 失败 ({}): {}", projectId, e.getMessage());
+                    }
+                }
+
+                if (woken > 0) {
+                    log.info("启动唤醒完成，已唤醒 {} 个 ProducerAgent", woken);
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }, "startup-producer-wake");
+        startupThread.setDaemon(true);
+        startupThread.start();
+    }
+
     /**
      * 分配任务给Agent
      *
@@ -668,7 +723,36 @@ public class AgentScheduler {
 
                 // 制作人不忙时才驱动（避免打断正在进行的 AI 调用）
                 if (!producer.isBusy()) {
-                    driveAgentWork(producer);
+                    boolean shouldDrive = false;
+
+                    // 有待处理消息时驱动
+                    int pendingCount = producer.getPendingMessages().size();
+                    if (pendingCount > 0) {
+                        log.debug("Producer has {} pending messages, driving work", pendingCount);
+                        shouldDrive = true;
+                    }
+
+                    // 目标正在分解中时也需要驱动（分解超时后需要重试）
+                    if (!shouldDrive && projectManager != null) {
+                        GameProject project = projectManager.getProject(projectId);
+                        if (project != null && project.getGoalStatus() == GameProject.GoalStatus.DECOMPOSING) {
+                            long startedAt = project.getGoalDecomposeStartedAt();
+                            if (startedAt == 0 || System.currentTimeMillis() - startedAt > 5 * 60 * 1000) {
+                                log.debug("Producer goal decomposing with stale state, driving work");
+                                shouldDrive = true;
+                            }
+                        }
+                    }
+
+                    // 始终驱动：Producer 需要定期检查里程碑推进、任务调度等
+                    if (!shouldDrive) {
+                        log.debug("Producer idle, periodic drive");
+                        shouldDrive = true;
+                    }
+
+                    if (shouldDrive) {
+                        driveAgentWork(producer);
+                    }
                 }
             } catch (Exception e) {
                 log.error("Producer fast loop error for project {}: {}", projectId, e.getMessage());
@@ -755,8 +839,12 @@ public class AgentScheduler {
             if (!agent.isAlive()) continue;
 
             try {
-                driveAgentWork(agent);
-                processed++;
+                // 只有待处理消息或忙碌时才驱动，避免无意义的重复 AI 调用
+                int pendingCount = agent.getPendingMessages().size();
+                if (pendingCount > 0 || agent.isBusy()) {
+                    driveAgentWork(agent);
+                    processed++;
+                }
             } catch (Exception e) {
                 log.error("Error driving agent {}: {}", agent.getId(), e.getMessage());
             }

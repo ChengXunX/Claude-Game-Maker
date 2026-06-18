@@ -1292,6 +1292,377 @@ public class AiToolRegistry {
             Map.of(),
             null
         ));
+
+        // ===== 用户管理 =====
+
+        // 121. 查询用户列表
+        registerTool(new AiTool(
+            "list_users",
+            "获取系统中所有用户的列表",
+            Map.of(),
+            "PERM_admin:manage"
+        ));
+
+        // 122. 创建用户
+        Map<String, ParameterDef> createUserP = new HashMap<>();
+        createUserP.put("username", new ParameterDef("string", "用户名", true));
+        createUserP.put("password", new ParameterDef("string", "密码", true));
+        createUserP.put("email", new ParameterDef("string", "邮箱", false));
+        createUserP.put("nickname", new ParameterDef("string", "昵称", false));
+        createUserP.put("roleId", new ParameterDef("number", "角色ID", false));
+        registerTool(new AiTool("create_user", "创建新用户", createUserP, "PERM_admin:manage"));
+
+        // 123. 更新用户
+        Map<String, ParameterDef> updateUserP = new HashMap<>();
+        updateUserP.put("userId", new ParameterDef("number", "用户ID", true));
+        updateUserP.put("nickname", new ParameterDef("string", "昵称", false));
+        updateUserP.put("email", new ParameterDef("string", "邮箱", false));
+        updateUserP.put("roleId", new ParameterDef("number", "角色ID", false));
+        registerTool(new AiTool("update_user", "更新用户信息", updateUserP, "PERM_admin:manage"));
+
+        // 124. 删除用户
+        Map<String, ParameterDef> deleteUserP = new HashMap<>();
+        deleteUserP.put("userId", new ParameterDef("number", "用户ID", true));
+        registerTool(new AiTool("delete_user", "删除用户", deleteUserP, "PERM_admin:manage"));
+
+        // 125. 审批用户注册
+        Map<String, ParameterDef> approveUserP = new HashMap<>();
+        approveUserP.put("userId", new ParameterDef("number", "用户ID", true));
+        registerTool(new AiTool("approve_user", "审批用户注册申请", approveUserP, "PERM_admin:manage"));
+
+        // 126. 拒绝用户注册
+        Map<String, ParameterDef> rejectUserP = new HashMap<>();
+        rejectUserP.put("userId", new ParameterDef("number", "用户ID", true));
+        registerTool(new AiTool("reject_user", "拒绝用户注册申请", rejectUserP, "PERM_admin:manage"));
+
+        // 127. 禁用用户
+        Map<String, ParameterDef> disableUserP = new HashMap<>();
+        disableUserP.put("userId", new ParameterDef("number", "用户ID", true));
+        registerTool(new AiTool("disable_user", "禁用用户账号", disableUserP, "PERM_admin:manage"));
+
+        // 128. 修改用户角色
+        Map<String, ParameterDef> changeRoleP = new HashMap<>();
+        changeRoleP.put("userId", new ParameterDef("number", "用户ID", true));
+        changeRoleP.put("roleId", new ParameterDef("number", "角色ID", true));
+        registerTool(new AiTool("change_user_role", "修改用户角色", changeRoleP, "PERM_admin:manage"));
+
+        // ===== 角色管理 =====
+
+        // 129. 查询角色列表
+        registerTool(new AiTool("list_roles", "获取系统中所有角色的列表", Map.of(), "PERM_admin:manage"));
+
+        // 130. 创建角色
+        Map<String, ParameterDef> createRoleP = new HashMap<>();
+        createRoleP.put("name", new ParameterDef("string", "角色名称", true));
+        createRoleP.put("description", new ParameterDef("string", "角色描述", false));
+        createRoleP.put("permissions", new ParameterDef("array", "权限列表", false));
+        registerTool(new AiTool("create_role", "创建新角色", createRoleP, "PERM_admin:manage"));
+
+        // 131. 更新角色
+        Map<String, ParameterDef> updateRoleP = new HashMap<>();
+        updateRoleP.put("roleId", new ParameterDef("number", "角色ID", true));
+        updateRoleP.put("name", new ParameterDef("string", "角色名称", false));
+        updateRoleP.put("description", new ParameterDef("string", "角色描述", false));
+        registerTool(new AiTool("update_role", "更新角色信息", updateRoleP, "PERM_admin:manage"));
+
+        // 132. 删除角色
+        Map<String, ParameterDef> deleteRoleP = new HashMap<>();
+        deleteRoleP.put("roleId", new ParameterDef("number", "角色ID", true));
+        registerTool(new AiTool("delete_role", "删除角色", deleteRoleP, "PERM_admin:manage"));
+
+        // ===== Token 管理 =====
+
+        // 133. 查询 Token 列表
+        registerTool(new AiTool("list_tokens", "获取所有 API Token 列表", Map.of(), "PERM_admin:manage"));
+
+        // 134. 创建 Token
+        Map<String, ParameterDef> createTokenP = new HashMap<>();
+        createTokenP.put("name", new ParameterDef("string", "Token 名称", true));
+        createTokenP.put("provider", new ParameterDef("string", "提供商", true));
+        createTokenP.put("apiKey", new ParameterDef("string", "API Key", true));
+        createTokenP.put("apiUrl", new ParameterDef("string", "API URL", false));
+        createTokenP.put("model", new ParameterDef("string", "模型名称", false));
+        registerTool(new AiTool("create_token", "创建新的 API Token", createTokenP, "PERM_admin:manage"));
+
+        // 135. 更新 Token
+        Map<String, ParameterDef> updateTokenP = new HashMap<>();
+        updateTokenP.put("tokenId", new ParameterDef("number", "Token ID", true));
+        updateTokenP.put("name", new ParameterDef("string", "Token 名称", false));
+        updateTokenP.put("apiKey", new ParameterDef("string", "API Key", false));
+        registerTool(new AiTool("update_token", "更新 API Token", updateTokenP, "PERM_admin:manage"));
+
+        // 136. 删除 Token
+        Map<String, ParameterDef> deleteTokenP = new HashMap<>();
+        deleteTokenP.put("tokenId", new ParameterDef("number", "Token ID", true));
+        registerTool(new AiTool("delete_token", "删除 API Token", deleteTokenP, "PERM_admin:manage"));
+
+        // 137. 测试 Token 连接
+        Map<String, ParameterDef> testTokenP = new HashMap<>();
+        testTokenP.put("tokenId", new ParameterDef("number", "Token ID", true));
+        registerTool(new AiTool("test_token", "测试 API Token 连接", testTokenP, "PERM_admin:manage"));
+
+        // ===== Git 仓库管理 =====
+
+        // 138. 查询 Git 仓库列表
+        registerTool(new AiTool("list_git_repos", "获取所有 Git 仓库列表", Map.of(), "PERM_projects:view"));
+
+        // 139. 添加 Git 仓库
+        Map<String, ParameterDef> addRepoP = new HashMap<>();
+        addRepoP.put("name", new ParameterDef("string", "仓库名称", true));
+        addRepoP.put("url", new ParameterDef("string", "仓库 URL", true));
+        addRepoP.put("projectId", new ParameterDef("string", "关联项目ID", false));
+        registerTool(new AiTool("add_git_repo", "添加 Git 仓库", addRepoP, "PERM_projects:manage"));
+
+        // 140. 更新 Git 仓库
+        Map<String, ParameterDef> updateRepoP = new HashMap<>();
+        updateRepoP.put("repoId", new ParameterDef("number", "仓库ID", true));
+        updateRepoP.put("name", new ParameterDef("string", "仓库名称", false));
+        updateRepoP.put("url", new ParameterDef("string", "仓库 URL", false));
+        registerTool(new AiTool("update_git_repo", "更新 Git 仓库配置", updateRepoP, "PERM_projects:manage"));
+
+        // 141. 删除 Git 仓库
+        Map<String, ParameterDef> deleteRepoP = new HashMap<>();
+        deleteRepoP.put("repoId", new ParameterDef("number", "仓库ID", true));
+        registerTool(new AiTool("delete_git_repo", "删除 Git 仓库", deleteRepoP, "PERM_projects:manage"));
+
+        // 142. 分配 Agent 到仓库
+        Map<String, ParameterDef> assignRepoP = new HashMap<>();
+        assignRepoP.put("repoId", new ParameterDef("number", "仓库ID", true));
+        assignRepoP.put("agentId", new ParameterDef("string", "Agent ID", true));
+        registerTool(new AiTool("assign_agent_to_repo", "分配 Agent 到 Git 仓库", assignRepoP, "PERM_projects:manage"));
+
+        // 143. 取消分配 Agent
+        Map<String, ParameterDef> unassignRepoP = new HashMap<>();
+        unassignRepoP.put("repoId", new ParameterDef("number", "仓库ID", true));
+        registerTool(new AiTool("unassign_agent_from_repo", "取消 Agent 与 Git 仓库的关联", unassignRepoP, "PERM_projects:manage"));
+
+        // 144. 切换自动审查
+        Map<String, ParameterDef> toggleReviewP = new HashMap<>();
+        toggleReviewP.put("repoId", new ParameterDef("number", "仓库ID", true));
+        registerTool(new AiTool("toggle_auto_review", "切换 Git 仓库的自动审查功能", toggleReviewP, "PERM_projects:manage"));
+
+        // ===== 代码审查管理 =====
+
+        // 145. 查询代码审查列表
+        registerTool(new AiTool("list_reviews", "获取所有代码审查列表", Map.of(), "PERM_projects:view"));
+
+        // 146. 查询待处理审查
+        Map<String, ParameterDef> pendingReviewP = new HashMap<>();
+        pendingReviewP.put("repoId", new ParameterDef("number", "仓库ID", true));
+        registerTool(new AiTool("list_pending_reviews", "获取待处理的代码审查", pendingReviewP, "PERM_projects:view"));
+
+        // 147. 审查代码
+        Map<String, ParameterDef> reviewCodeP = new HashMap<>();
+        reviewCodeP.put("reviewId", new ParameterDef("number", "审查ID", true));
+        reviewCodeP.put("action", new ParameterDef("string", "操作(approve/reject)", true));
+        reviewCodeP.put("comment", new ParameterDef("string", "审查意见", false));
+        registerTool(new AiTool("review_code", "审查代码（批准或拒绝）", reviewCodeP, "PERM_projects:manage"));
+
+        // ===== 项目管理扩展 =====
+
+        // 148. 更新项目
+        Map<String, ParameterDef> updateProjP = new HashMap<>();
+        updateProjP.put("projectId", new ParameterDef("string", "项目ID", true));
+        updateProjP.put("name", new ParameterDef("string", "项目名称", false));
+        updateProjP.put("description", new ParameterDef("string", "项目描述", false));
+        updateProjP.put("goal", new ParameterDef("string", "项目目标", false));
+        registerTool(new AiTool("update_project", "更新项目信息", updateProjP, "PERM_projects:manage"));
+
+        // 149. 删除项目
+        Map<String, ParameterDef> deleteProjP = new HashMap<>();
+        deleteProjP.put("projectId", new ParameterDef("string", "项目ID", true));
+        registerTool(new AiTool("delete_project", "删除项目", deleteProjP, "PERM_projects:manage"));
+
+        // 150. 归档项目
+        Map<String, ParameterDef> archiveProjP = new HashMap<>();
+        archiveProjP.put("projectId", new ParameterDef("string", "项目ID", true));
+        registerTool(new AiTool("archive_project", "归档项目", archiveProjP, "PERM_projects:manage"));
+
+        // 151. 刷新项目
+        Map<String, ParameterDef> refreshProjP = new HashMap<>();
+        refreshProjP.put("projectId", new ParameterDef("string", "项目ID", true));
+        registerTool(new AiTool("refresh_project", "刷新项目状态", refreshProjP, "PERM_projects:manage"));
+
+        // 152. 查询项目统计
+        Map<String, ParameterDef> projStatsP = new HashMap<>();
+        projStatsP.put("projectId", new ParameterDef("string", "项目ID", true));
+        registerTool(new AiTool("get_project_stats", "获取项目统计数据", projStatsP, "PERM_projects:view"));
+
+        // 153. 验证里程碑
+        Map<String, ParameterDef> verifyMsP = new HashMap<>();
+        verifyMsP.put("projectId", new ParameterDef("string", "项目ID", true));
+        verifyMsP.put("milestoneId", new ParameterDef("string", "里程碑ID", true));
+        registerTool(new AiTool("verify_milestone", "验证里程碑完成情况", verifyMsP, "PERM_projects:manage"));
+
+        // 154. 查询项目目录
+        Map<String, ParameterDef> projDirP = new HashMap<>();
+        projDirP.put("projectId", new ParameterDef("string", "项目ID", true));
+        registerTool(new AiTool("list_project_directories", "获取项目目录结构", projDirP, "PERM_projects:view"));
+
+        // 155. 创建项目目录
+        Map<String, ParameterDef> createDirP = new HashMap<>();
+        createDirP.put("projectId", new ParameterDef("string", "项目ID", true));
+        createDirP.put("path", new ParameterDef("string", "目录路径", true));
+        createDirP.put("description", new ParameterDef("string", "目录描述", false));
+        registerTool(new AiTool("create_project_directory", "创建项目目录配置", createDirP, "PERM_projects:manage"));
+
+        // 156. 删除项目目录
+        Map<String, ParameterDef> deleteDirP = new HashMap<>();
+        deleteDirP.put("projectId", new ParameterDef("string", "项目ID", true));
+        deleteDirP.put("path", new ParameterDef("string", "目录路径", true));
+        registerTool(new AiTool("delete_project_directory", "删除项目目录配置", deleteDirP, "PERM_projects:manage"));
+
+        // ===== Agent 管理扩展 =====
+
+        // 157. 更新 Agent 配置
+        Map<String, ParameterDef> updateAgentCfgP = new HashMap<>();
+        updateAgentCfgP.put("agentId", new ParameterDef("string", "Agent ID", true));
+        updateAgentCfgP.put("config", new ParameterDef("object", "配置对象", true));
+        registerTool(new AiTool("update_agent_config", "更新 Agent 配置", updateAgentCfgP, "PERM_agents:manage"));
+
+        // 158. 查询 Agent 详情
+        Map<String, ParameterDef> getAgentDetailP = new HashMap<>();
+        getAgentDetailP.put("agentId", new ParameterDef("string", "Agent ID", true));
+        registerTool(new AiTool("get_agent_detail", "获取 Agent 详细信息", getAgentDetailP, "PERM_agents:view"));
+
+        // 159. 查询 Agent 上下文
+        Map<String, ParameterDef> getAgentCtxP = new HashMap<>();
+        getAgentCtxP.put("agentId", new ParameterDef("string", "Agent ID", true));
+        registerTool(new AiTool("get_agent_context", "获取 Agent 上下文信息", getAgentCtxP, "PERM_agents:view"));
+
+        // 160. 压缩 Agent 上下文
+        Map<String, ParameterDef> compactCtxP = new HashMap<>();
+        compactCtxP.put("agentId", new ParameterDef("string", "Agent ID", true));
+        registerTool(new AiTool("compact_agent_context", "压缩 Agent 上下文", compactCtxP, "PERM_agents:manage"));
+
+        // 161. 查询 Agent 标签
+        Map<String, ParameterDef> getAgentTagP = new HashMap<>();
+        getAgentTagP.put("agentId", new ParameterDef("string", "Agent ID", true));
+        registerTool(new AiTool("get_agent_tags", "获取 Agent 标签", getAgentTagP, "PERM_agents:view"));
+
+        // 162. 设置 Agent 标签
+        Map<String, ParameterDef> setAgentTagP = new HashMap<>();
+        setAgentTagP.put("agentId", new ParameterDef("string", "Agent ID", true));
+        setAgentTagP.put("key", new ParameterDef("string", "标签键", true));
+        setAgentTagP.put("value", new ParameterDef("string", "标签值", true));
+        registerTool(new AiTool("set_agent_tag", "设置 Agent 标签", setAgentTagP, "PERM_agents:manage"));
+
+        // 163. 删除 Agent 标签
+        Map<String, ParameterDef> delAgentTagP = new HashMap<>();
+        delAgentTagP.put("agentId", new ParameterDef("string", "Agent ID", true));
+        delAgentTagP.put("key", new ParameterDef("string", "标签键", true));
+        registerTool(new AiTool("delete_agent_tag", "删除 Agent 标签", delAgentTagP, "PERM_agents:manage"));
+
+        // 164. 查询 Agent 版本
+        Map<String, ParameterDef> getAgentVerP = new HashMap<>();
+        getAgentVerP.put("agentId", new ParameterDef("string", "Agent ID", true));
+        registerTool(new AiTool("get_agent_versions", "获取 Agent 版本历史", getAgentVerP, "PERM_agents:view"));
+
+        // 165. 恢复 Agent 版本
+        Map<String, ParameterDef> restoreAgentVerP = new HashMap<>();
+        restoreAgentVerP.put("agentId", new ParameterDef("string", "Agent ID", true));
+        restoreAgentVerP.put("versionId", new ParameterDef("string", "版本ID", true));
+        registerTool(new AiTool("restore_agent_version", "恢复 Agent 到指定版本", restoreAgentVerP, "PERM_agents:manage"));
+
+        // ===== 告警管理 =====
+
+        // 166. 查询告警列表
+        registerTool(new AiTool("list_alerts", "获取所有告警列表", Map.of(), "PERM_monitoring:view"));
+
+        // 167. 确认告警
+        Map<String, ParameterDef> ackAlertP = new HashMap<>();
+        ackAlertP.put("alertId", new ParameterDef("number", "告警ID", true));
+        registerTool(new AiTool("acknowledge_alert", "确认告警", ackAlertP, "PERM_monitoring:manage"));
+
+        // 168. 解决告警
+        Map<String, ParameterDef> resolveAlertP = new HashMap<>();
+        resolveAlertP.put("alertId", new ParameterDef("number", "告警ID", true));
+        resolveAlertP.put("resolution", new ParameterDef("string", "解决方案", false));
+        registerTool(new AiTool("resolve_alert", "解决告警", resolveAlertP, "PERM_monitoring:manage"));
+
+        // 169. 忽略告警
+        Map<String, ParameterDef> ignoreAlertP = new HashMap<>();
+        ignoreAlertP.put("alertId", new ParameterDef("number", "告警ID", true));
+        registerTool(new AiTool("ignore_alert", "忽略告警", ignoreAlertP, "PERM_monitoring:manage"));
+
+        // 170. 确认所有告警
+        registerTool(new AiTool("acknowledge_all_alerts", "确认所有未处理告警", Map.of(), "PERM_monitoring:manage"));
+
+        // ===== 通知管理 =====
+
+        // 171. 查询通知列表
+        registerTool(new AiTool("list_notifications", "获取所有通知列表", Map.of(), "PERM_notifications:view"));
+
+        // 172. 标记通知已读
+        Map<String, ParameterDef> markReadP = new HashMap<>();
+        markReadP.put("notificationId", new ParameterDef("number", "通知ID", true));
+        registerTool(new AiTool("mark_notification_read", "标记通知为已读", markReadP, "PERM_notifications:manage"));
+
+        // 173. 标记所有通知已读
+        registerTool(new AiTool("mark_all_notifications_read", "标记所有通知为已读", Map.of(), "PERM_notifications:manage"));
+
+        // 174. 查询未读通知数
+        registerTool(new AiTool("get_unread_notification_count", "获取未读通知数量", Map.of(), "PERM_notifications:view"));
+
+        // ===== 系统信息 =====
+
+        // 175. 查询系统信息
+        registerTool(new AiTool("get_system_info", "获取系统运行信息", Map.of(), "PERM_admin:manage"));
+
+        // 176. 查询资源使用情况
+        registerTool(new AiTool("get_resource_usage", "获取系统资源使用情况", Map.of(), "PERM_admin:manage"));
+
+        // 177. 运行系统诊断
+        registerTool(new AiTool("run_diagnostic", "运行系统诊断", Map.of(), "PERM_admin:manage"));
+
+        // 178. 快速健康检查
+        registerTool(new AiTool("quick_health_check", "执行快速健康检查", Map.of(), "PERM_admin:manage"));
+
+        // ===== 操作日志 =====
+
+        // 179. 查询操作日志
+        Map<String, ParameterDef> getOpLogsP = new HashMap<>();
+        getOpLogsP.put("limit", new ParameterDef("number", "返回条数", false));
+        getOpLogsP.put("level", new ParameterDef("string", "日志级别", false));
+        registerTool(new AiTool("get_operation_logs", "获取操作日志", getOpLogsP, "PERM_admin:manage"));
+
+        // 180. 查询 Agent 日志
+        Map<String, ParameterDef> getAgentLogsP = new HashMap<>();
+        getAgentLogsP.put("agentId", new ParameterDef("string", "Agent ID", false));
+        getAgentLogsP.put("level", new ParameterDef("string", "日志级别", false));
+        getAgentLogsP.put("limit", new ParameterDef("number", "返回条数", false));
+        registerTool(new AiTool("get_agent_logs", "获取 Agent 运行日志", getAgentLogsP, "PERM_agents:view"));
+
+        // ===== 全局搜索 =====
+
+        // 181. 全局搜索
+        Map<String, ParameterDef> globalSearchP = new HashMap<>();
+        globalSearchP.put("query", new ParameterDef("string", "搜索关键词", true));
+        globalSearchP.put("type", new ParameterDef("string", "搜索类型(all/project/agent/knowledge)", false));
+        registerTool(new AiTool("global_search", "全局搜索", globalSearchP, null));
+
+        // ===== 导出功能 =====
+
+        // 182. 导出数据
+        Map<String, ParameterDef> exportDataP = new HashMap<>();
+        exportDataP.put("type", new ParameterDef("string", "导出类型(projects/agents/logs)", true));
+        exportDataP.put("format", new ParameterDef("string", "格式(csv/json)", false));
+        registerTool(new AiTool("export_data", "导出系统数据", exportDataP, "PERM_admin:manage"));
+
+        // ===== 系统重置 =====
+
+        // 183. 重置系统配置
+        Map<String, ParameterDef> resetCfgP = new HashMap<>();
+        resetCfgP.put("key", new ParameterDef("string", "配置键", true));
+        registerTool(new AiTool("reset_config", "重置系统配置到默认值", resetCfgP, "PERM_admin:manage"));
+
+        // 184. 重置所有配置
+        registerTool(new AiTool("reset_all_configs", "重置所有系统配置到默认值", Map.of(), "PERM_admin:manage"));
+
+        // ===== 重新加载 =====
+
+        // 185. 重新加载配置
+        registerTool(new AiTool("reload_config", "重新加载系统配置", Map.of(), "PERM_admin:manage"));
     }
 
     /**

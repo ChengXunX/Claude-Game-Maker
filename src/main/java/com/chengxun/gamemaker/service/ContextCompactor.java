@@ -82,6 +82,9 @@ public class ContextCompactor {
             conversationSummary.substring(0, 200) + "..." : conversationSummary);
         contextManager.saveContext(context, project);
 
+        // 6. 自动清理旧压缩记录（只保留最近5次）
+        cleanupOldCompacts(agentId, project, 5);
+
         log.info("Context compacted for agent: {} - {} messages processed", agentId, messages.size());
         return conversationSummary;
     }
@@ -124,6 +127,37 @@ public class ContextCompactor {
     }
 
     /**
+     * 话题关键词映射
+     */
+    private static final Map<String, String[]> TOPIC_KEYWORDS = Map.ofEntries(
+        Map.entry("任务讨论", new String[]{"任务", "task", "分配", "指派", "工作"}),
+        Map.entry("问题修复", new String[]{"bug", "错误", "修复", "fix", "异常", "崩溃", "crash"}),
+        Map.entry("设计讨论", new String[]{"设计", "架构", "方案", "模式", "接口"}),
+        Map.entry("测试验证", new String[]{"测试", "验证", "test", "校验", "验收"}),
+        Map.entry("性能优化", new String[]{"优化", "性能", "缓存", "提速", "瓶颈"}),
+        Map.entry("部署发布", new String[]{"部署", "发布", "deploy", "上线", "版本"}),
+        Map.entry("需求分析", new String[]{"需求", "功能", "特性", "feature", "用户故事"}),
+        Map.entry("代码审查", new String[]{"审查", "review", "代码质量", "重构", "refactor"})
+    );
+
+    /**
+     * 决策性语句模式
+     */
+    private static final String[] DECISION_PATTERNS = {
+        "决定", "选择", "确认", "采用", "放弃", "方案", "使用", "切换",
+        "agree", "decide", "confirm", "choose", "采用方案", "最终决定",
+        "经讨论", "综合考虑", "权衡后"
+    };
+
+    /**
+     * 任务性语句模式
+     */
+    private static final String[] TASK_PATTERNS = {
+        "TODO", "待完成", "需要", "FIXME", "待处理", "待办", "下一步",
+        "计划做", "安排", "todo", "fixme", "待实现", "待开发", "待测试"
+    };
+
+    /**
      * 提取主要话题
      */
     private List<String> extractTopics(List<ContextManager.ConversationMessage> messages) {
@@ -132,22 +166,15 @@ public class ContextCompactor {
         for (ContextManager.ConversationMessage msg : messages) {
             String content = msg.getContent();
             if (content == null) continue;
+            String lower = content.toLowerCase();
 
-            // 识别任务相关话题
-            if (content.contains("任务") || content.contains("task")) {
-                topics.add("任务讨论");
-            }
-            if (content.contains("bug") || content.contains("错误") || content.contains("修复")) {
-                topics.add("问题修复");
-            }
-            if (content.contains("设计") || content.contains("架构")) {
-                topics.add("设计讨论");
-            }
-            if (content.contains("测试") || content.contains("验证")) {
-                topics.add("测试验证");
-            }
-            if (content.contains("优化") || content.contains("性能")) {
-                topics.add("性能优化");
+            for (Map.Entry<String, String[]> entry : TOPIC_KEYWORDS.entrySet()) {
+                for (String keyword : entry.getValue()) {
+                    if (lower.contains(keyword.toLowerCase())) {
+                        topics.add(entry.getKey());
+                        break;
+                    }
+                }
             }
         }
 
@@ -155,7 +182,7 @@ public class ContextCompactor {
     }
 
     /**
-     * 提取关键决策
+     * 提取关键决策（增强版，支持更多模式）
      */
     private List<String> extractKeyDecisions(List<ContextManager.ConversationMessage> messages) {
         List<String> decisions = new ArrayList<>();
@@ -164,10 +191,12 @@ public class ContextCompactor {
             String content = msg.getContent();
             if (content == null) continue;
 
-            // 识别决策性语句
-            if (content.contains("决定") || content.contains("选择") || content.contains("确认")) {
-                String decision = content.length() > 100 ? content.substring(0, 100) + "..." : content;
-                decisions.add(decision);
+            for (String pattern : DECISION_PATTERNS) {
+                if (content.contains(pattern)) {
+                    String decision = content.length() > 100 ? content.substring(0, 100) + "..." : content;
+                    decisions.add(decision);
+                    break; // 每条消息只匹配一次
+                }
             }
         }
 
@@ -175,7 +204,7 @@ public class ContextCompactor {
     }
 
     /**
-     * 提取活跃任务
+     * 提取活跃任务（增强版，支持更多模式）
      */
     private List<String> extractActiveTasks(List<ContextManager.ConversationMessage> messages) {
         List<String> tasks = new ArrayList<>();
@@ -184,10 +213,12 @@ public class ContextCompactor {
             String content = msg.getContent();
             if (content == null) continue;
 
-            // 识别任务描述
-            if (content.contains("TODO") || content.contains("待完成") || content.contains("需要")) {
-                String task = content.length() > 80 ? content.substring(0, 80) + "..." : content;
-                tasks.add(task);
+            for (String pattern : TASK_PATTERNS) {
+                if (content.contains(pattern)) {
+                    String task = content.length() > 80 ? content.substring(0, 80) + "..." : content;
+                    tasks.add(task);
+                    break;
+                }
             }
         }
 
@@ -234,55 +265,58 @@ public class ContextCompactor {
             return "## 上下文恢复\n\n项目未指定，无法恢复上下文。";
         }
 
+        int maxLength = 3000;
         StringBuilder recoveryPrompt = new StringBuilder();
         recoveryPrompt.append("## 上下文恢复\n\n");
         recoveryPrompt.append("由于会话中断，正在从多个来源恢复工作上下文...\n\n");
 
-        // 1. 从快照恢复
+        // 1. 从快照恢复（简要）
         Map<String, Object> snapshot = contextManager.loadLatestSnapshot(agentId, project);
         if (snapshot != null) {
             recoveryPrompt.append("### 从快照恢复\n");
-            recoveryPrompt.append("- 找到最近的上下文快照\n");
-            if (snapshot.containsKey("recentMessages")) {
-                recoveryPrompt.append("- 包含最近的对话记录\n");
-            }
-            recoveryPrompt.append("\n");
+            recoveryPrompt.append("- 找到最近的上下文快照\n\n");
         }
 
-        // 2. 从记忆恢复
+        // 2. 从记忆恢复（只取最近3条）
         recoveryPrompt.append("### 已有知识\n");
         Map<String, String> knowledge = memoryManager.getCategoryMemory(project, agentId, "knowledge");
         if (!knowledge.isEmpty()) {
+            int count = 0;
             for (Map.Entry<String, String> entry : knowledge.entrySet()) {
-                String summary = entry.getValue().length() > 100 ?
-                    entry.getValue().substring(0, 100) + "..." : entry.getValue();
+                if (count >= 3) break;
+                String summary = entry.getValue().length() > 80 ?
+                    entry.getValue().substring(0, 80) + "..." : entry.getValue();
                 recoveryPrompt.append(String.format("- **%s**: %s\n", entry.getKey(), summary));
+                count++;
             }
         } else {
             recoveryPrompt.append("- 暂无已保存的知识\n");
         }
         recoveryPrompt.append("\n");
 
-        // 3. 从经验恢复
+        // 3. 从经验恢复（只取最近3条）
         recoveryPrompt.append("### 已有经验\n");
         Map<String, String> experiences = memoryManager.getCategoryMemory(project, agentId, "experiences");
         if (!experiences.isEmpty()) {
+            int count = 0;
             for (Map.Entry<String, String> entry : experiences.entrySet()) {
-                String summary = entry.getValue().length() > 100 ?
-                    entry.getValue().substring(0, 100) + "..." : entry.getValue();
+                if (count >= 3) break;
+                String summary = entry.getValue().length() > 80 ?
+                    entry.getValue().substring(0, 80) + "..." : entry.getValue();
                 recoveryPrompt.append(String.format("- **%s**: %s\n", entry.getKey(), summary));
+                count++;
             }
         } else {
             recoveryPrompt.append("- 暂无已保存的经验\n");
         }
         recoveryPrompt.append("\n");
 
-        // 4. 从技能恢复
+        // 4. 从技能恢复（只取前3个）
         recoveryPrompt.append("### 可用技能\n");
         String projectId = project.getId();
         List<Skill> skills = skillManager.getAllSkills(projectId);
         if (!skills.isEmpty()) {
-            for (Skill skill : skills.stream().limit(5).collect(Collectors.toList())) {
+            for (Skill skill : skills.stream().limit(3).collect(Collectors.toList())) {
                 recoveryPrompt.append(String.format("- **%s**: %s\n", skill.getName(), skill.getDescription()));
             }
         } else {
@@ -290,7 +324,7 @@ public class ContextCompactor {
         }
         recoveryPrompt.append("\n");
 
-        // 5. 从上下文恢复
+        // 5. 从上下文恢复（只取关键信息）
         AgentContext context = contextManager.loadContext(agentId, project);
         if (context != null) {
             recoveryPrompt.append("### 工作状态\n");
@@ -299,9 +333,12 @@ public class ContextCompactor {
             }
             List<AgentContext.WorkingMemoryItem> workingMemory = context.getWorkingMemory();
             if (workingMemory != null && !workingMemory.isEmpty()) {
-                recoveryPrompt.append("- 工作记忆:\n");
+                // 只取最近3个工作记忆
+                int count = 0;
                 for (AgentContext.WorkingMemoryItem item : workingMemory) {
+                    if (count >= 3) break;
                     recoveryPrompt.append(String.format("  - %s: %s\n", item.getKey(), item.getValue()));
+                    count++;
                 }
             }
             recoveryPrompt.append("\n");
@@ -309,8 +346,14 @@ public class ContextCompactor {
 
         recoveryPrompt.append("请基于以上信息恢复工作上下文，并确认你已准备好继续工作。");
 
-        log.info("Context recovery completed for agent: {}", agentId);
-        return recoveryPrompt.toString();
+        // 截断到最大长度
+        String result = recoveryPrompt.toString();
+        if (result.length() > maxLength) {
+            result = result.substring(0, maxLength) + "\n...(上下文恢复已截断)";
+        }
+
+        log.info("Context recovery completed for agent: {} (length: {})", agentId, result.length());
+        return result;
     }
 
     /**

@@ -321,8 +321,21 @@ const fetchAgents = async () => {
 const fetchProjects = async () => {
   try {
     const data = await projectApi.getAll()
-    stats.value.projectCount = (data || []).length
-    stats.value.activeProjects = (data || []).filter(p => p.status === 'ACTIVE').length
+    const projects = data || []
+    stats.value.projectCount = projects.length
+    stats.value.activeProjects = projects.filter(p => p.status === 'ACTIVE').length
+    // 从所有项目的里程碑任务中统计已完成任务数
+    let completed = 0
+    for (const p of projects) {
+      if (p.milestones) {
+        for (const m of p.milestones) {
+          if (m.tasks) {
+            completed += m.tasks.filter(t => t.status === 'COMPLETED').length
+          }
+        }
+      }
+    }
+    stats.value.completedTasks = completed
   } catch (error) {
     console.error('获取项目列表失败:', error)
   }

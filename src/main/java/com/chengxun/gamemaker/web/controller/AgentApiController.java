@@ -1,6 +1,7 @@
 package com.chengxun.gamemaker.web.controller;
 
 import com.chengxun.gamemaker.agent.Agent;
+import com.chengxun.gamemaker.model.AgentDefinition;
 import com.chengxun.gamemaker.manager.AgentManager;
 import com.chengxun.gamemaker.manager.ProjectManager;
 import com.chengxun.gamemaker.model.GameProject;
@@ -53,7 +54,7 @@ public class AgentApiController {
     }
 
     /**
-     * 获取所有 Agent 列表
+     * 获取所有 Agent 列表（精简版，避免加载大量任务数据导致序列化失败）
      * 需要agents:view权限
      */
     @GetMapping
@@ -68,7 +69,12 @@ public class AgentApiController {
                 info.put("role", agent.getRole());
                 info.put("busy", agent.isBusy());
                 info.put("alive", agent.isAlive());
-                info.put("tasks", agent.getTasks().size());
+                // 使用 try-catch 避免任务数据加载失败导致整个 API 失败
+                try {
+                    info.put("tasks", agent.getTasks() != null ? agent.getTasks().size() : 0);
+                } catch (Exception e) {
+                    info.put("tasks", 0);
+                }
                 return info;
             })
             .toList();
@@ -388,6 +394,59 @@ public class AgentApiController {
         return ResponseEntity.ok(Map.of(
             "reasoningDepth", depth,
             "reasoningDepthLabel", depthLabel
+        ));
+    }
+
+    /**
+     * 设置 Agent 思维模式
+     *
+     * @param projectId 项目 ID
+     * @param agentRole Agent 角色
+     * @param request   包含 thinkingMode 的请求体
+     * @return 操作结果
+     */
+    @PutMapping("/project/{projectId}/{agentRole}/thinking-mode")
+    @Operation(summary = "设置思维模式", description = "设置 Agent 的思维模式（1-5）：1=高度严谨 2=严谨 3=平衡 4=创新 5=突破")
+    public ResponseEntity<Map<String, Object>> setThinkingMode(
+            @PathVariable String projectId,
+            @PathVariable String agentRole,
+            @RequestBody Map<String, Object> request,
+            Authentication authentication) {
+        User user = userService.getUserByUsername(authentication.getName());
+        if (!permissionService.hasProjectAccess(user, projectId, ProjectMember.ProjectRole.MANAGER)) {
+            return ResponseEntity.status(403).body(Map.of("success", false, "message", "权限不足"));
+        }
+
+        Object modeObj = request.get("thinkingMode");
+        if (modeObj == null) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "思维模式值不能为空"));
+        }
+
+        int thinkingMode;
+        try {
+            thinkingMode = Integer.parseInt(modeObj.toString());
+        } catch (NumberFormatException e) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "思维模式值必须是 1-5 的整数"));
+        }
+
+        if (thinkingMode < 1 || thinkingMode > 5) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "思维模式值必须在 1-5 之间"));
+        }
+
+        Agent agent = agentManager.getAgent(projectId, agentRole);
+        if (agent == null) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "Agent 不存在"));
+        }
+
+        agent.getDefinition().setThinkingMode(thinkingMode);
+        String modeLabel = AgentDefinition.getThinkingModeLabel(thinkingMode);
+        logService.log(user.getId(), "SET_THINKING_MODE", agentRole,
+            "Set thinking mode to " + thinkingMode + " (" + modeLabel + ")", null);
+        return ResponseEntity.ok(Map.of(
+            "success", true,
+            "message", String.format("思维模式已设置为 %s", modeLabel),
+            "thinkingMode", thinkingMode,
+            "thinkingModeLabel", modeLabel
         ));
     }
 }

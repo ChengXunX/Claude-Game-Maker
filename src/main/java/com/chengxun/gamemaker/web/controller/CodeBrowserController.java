@@ -193,6 +193,52 @@ public class CodeBrowserController {
     }
 
     /**
+     * 获取文件原始内容（流式，用于图片/视频/音频内联预览）
+     * 返回文件二进制流，设置正确的 Content-Type 和 Content-Disposition: inline
+     *
+     * @param projectId 项目ID
+     * @param path 文件路径（相对于项目目录）
+     * @return 文件流
+     */
+    @GetMapping("/raw/{projectId}")
+    @PreAuthorize("hasAuthority('PERM_projects:view')")
+    public ResponseEntity<Resource> getRawFile(@PathVariable String projectId,
+                                                @RequestParam String path) {
+        try {
+            GameProject project = projectManager.getProject(projectId);
+            if (project == null) {
+                return ResponseEntity.notFound().build();
+            }
+
+            Path projectDir = Path.of(project.getWorkDir());
+            Path filePath = projectDir.resolve(path);
+
+            // 安全检查
+            if (!filePath.normalize().startsWith(projectDir.normalize())) {
+                return ResponseEntity.badRequest().build();
+            }
+
+            if (!Files.exists(filePath) || !Files.isRegularFile(filePath)) {
+                return ResponseEntity.notFound().build();
+            }
+
+            Resource resource = new FileSystemResource(filePath.toFile());
+            String extension = getExtension(path);
+            MediaType mediaType = getMediaType(extension);
+
+            return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "inline")
+                .contentType(mediaType)
+                .contentLength(Files.size(filePath))
+                .body(resource);
+
+        } catch (Exception e) {
+            log.error("获取原始文件失败: projectId={}, path={}", projectId, path, e);
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+
+    /**
      * 下载文件
      */
     @GetMapping("/download/{projectId}")
@@ -306,6 +352,49 @@ public class CodeBrowserController {
      */
     private boolean isTextFile(String extension) {
         return extension.isEmpty() || TEXT_EXTENSIONS.contains(extension);
+    }
+
+    /**
+     * 根据扩展名获取 MediaType（用于流式返回文件内容）
+     *
+     * @param extension 文件扩展名
+     * @return 对应的 MediaType，未知类型返回 APPLICATION_OCTET_STREAM
+     */
+    private MediaType getMediaType(String extension) {
+        return switch (extension) {
+            // 图片
+            case "png" -> MediaType.IMAGE_PNG;
+            case "jpg", "jpeg" -> MediaType.IMAGE_JPEG;
+            case "gif" -> MediaType.IMAGE_GIF;
+            case "svg" -> MediaType.parseMediaType("image/svg+xml");
+            case "webp" -> MediaType.parseMediaType("image/webp");
+            case "bmp" -> MediaType.parseMediaType("image/bmp");
+            case "ico" -> MediaType.parseMediaType("image/x-icon");
+            case "avif" -> MediaType.parseMediaType("image/avif");
+            // 视频
+            case "mp4" -> MediaType.parseMediaType("video/mp4");
+            case "webm" -> MediaType.parseMediaType("video/webm");
+            case "ogg", "ogv" -> MediaType.parseMediaType("video/ogg");
+            case "avi" -> MediaType.parseMediaType("video/x-msvideo");
+            case "mov" -> MediaType.parseMediaType("video/quicktime");
+            case "mkv" -> MediaType.parseMediaType("video/x-matroska");
+            // 音频
+            case "mp3" -> MediaType.parseMediaType("audio/mpeg");
+            case "wav" -> MediaType.parseMediaType("audio/wav");
+            case "oga" -> MediaType.parseMediaType("audio/ogg");
+            case "flac" -> MediaType.parseMediaType("audio/flac");
+            case "aac" -> MediaType.parseMediaType("audio/aac");
+            case "m4a" -> MediaType.parseMediaType("audio/mp4");
+            // 字体
+            case "woff" -> MediaType.parseMediaType("font/woff");
+            case "woff2" -> MediaType.parseMediaType("font/woff2");
+            case "ttf" -> MediaType.parseMediaType("font/ttf");
+            case "otf" -> MediaType.parseMediaType("font/otf");
+            // PDF
+            case "pdf" -> MediaType.APPLICATION_PDF;
+            // 默认
+            default -> MediaType.APPLICATION_OCTET_STREAM;
+        };
     }
 
     /**

@@ -36,7 +36,8 @@ public class CapabilityInitService {
     @EventListener(ApplicationReadyEvent.class)
     public void initDefaultCapabilities() {
         if (capabilityRepository.count() > 0) {
-            log.info("Capabilities already initialized ({} records), skipping", capabilityRepository.count());
+            log.info("Capabilities already initialized ({} records), checking for new capabilities...", capabilityRepository.count());
+            ensureNewCapabilities();
             capabilityRegistry.reloadAll();
             return;
         }
@@ -64,6 +65,8 @@ public class CapabilityInitService {
         initLevelDesignCapabilities();
         initDevOpsCapabilities();
         initCommonCapabilities();
+        initLspCodeUnderstandingCapabilities();
+        initAgentToolsCapabilities();
 
         capabilityRegistry.reloadAll();
         log.info("Default capabilities initialized successfully");
@@ -100,11 +103,11 @@ public class CapabilityInitService {
             "{\"agentId\":\"string|required\",\"workDir\":\"string|required\"}");
 
         save(role, "assignApiConfig", "配置工作环境", "为 Agent 配置 API 密钥、模型等开发环境",
-            "team_management", true, "ASSIGN_API", ++priority,
+            "team_management", false, null, ++priority,
             "{\"agentId\":\"string|required\",\"apiUrl\":\"string\",\"model\":\"string\"}");
 
         save(role, "changeAgentConfig", "调整成员配置", "调整 Agent 的配置参数以优化工作表现",
-            "team_management", true, "CHANGE_CONFIG", ++priority,
+            "team_management", false, null, ++priority,
             "{\"agentId\":\"string|required\",\"configKey\":\"string|required\",\"configValue\":\"string|required\"}");
 
         save(role, "optimizeAgentRole", "优化成员能力", "根据项目进展优化 Agent 的能力组合和工作方式",
@@ -126,19 +129,27 @@ public class CapabilityInitService {
         // ===== 2. 项目管理类 =====
 
         save(role, "setProjectGoal", "设定项目目标", "设定或调整项目的整体目标和方向",
-            "project_management", true, "SET_GOAL", ++priority,
-            "{\"goal\":\"string|required\",\"goalType\":\"enum:GAME_DEVELOPMENT,BUG_FIX,FEATURE,REFACTOR,CUSTOM|required\",\"deadline\":\"string\"}");
+            "project_management", false, null, ++priority,
+            "{\"goal\":\"string|required\",\"goalType\":\"enum:GAME_DEVELOPMENT,BUG_FIX,FEATURE,REFACTOR,CUSTOM\",\"deadline\":\"string\"}");
 
         save(role, "decomposeGoal", "分解项目目标", "将项目目标分解为可执行的里程碑和任务",
             "project_management", false, null, ++priority,
-            "{\"milestones\":\"string|required\",\"assignRoles\":\"string\"}");
+            "{\"milestones\":\"string\",\"assignRoles\":\"string\"}");
 
         save(role, "updateMilestone", "更新里程碑", "更新项目里程碑的状态、进度或调整计划",
             "project_management", false, null, ++priority,
             "{\"milestoneId\":\"string|required\",\"status\":\"enum:PENDING,IN_PROGRESS,COMPLETED,BLOCKED\",\"progress\":\"number\"}");
 
+        save(role, "addTaskToMilestone", "添加任务", "为里程碑添加新任务（用于干预新增需求）",
+            "project_management", false, null, ++priority,
+            "{\"milestoneId\":\"string|required\",\"title\":\"string|required\",\"description\":\"string\",\"assignedRole\":\"string\",\"priority\":\"enum:HIGH,MEDIUM,LOW\"}");
+
+        save(role, "updateTask", "更新任务", "修改现有任务的标题、描述、负责角色或优先级",
+            "project_management", false, null, ++priority,
+            "{\"milestoneId\":\"string|required\",\"taskId\":\"string|required\",\"title\":\"string\",\"description\":\"string\",\"assignedRole\":\"string\",\"priority\":\"enum:HIGH,MEDIUM,LOW\"}");
+
         save(role, "adjustProjectPlan", "调整项目计划", "根据实际情况调整项目计划、资源分配或优先级",
-            "project_management", true, "ADJUST_PLAN", ++priority,
+            "project_management", false, null, ++priority,
             "{\"adjustmentType\":\"enum:priority,resource,timeline,scope|required\",\"description\":\"string|required\",\"reason\":\"string\"}");
 
         save(role, "manageProjectRisk", "管理项目风险", "识别、评估和应对项目风险",
@@ -1290,6 +1301,113 @@ public class CapabilityInitService {
         log.info("Common capabilities initialized for {} roles", roles.length);
     }
 
+    // ===== LSP 代码理解能力集 =====
+    /**
+     * 初始化 LSP 代码理解能力
+     *
+     * 基于 Language Server Protocol 的代码理解能力，让 Agent 具备类似 IDE 的代码分析能力：
+     * 1. 跳转定义 - 查找符号的定义位置
+     * 2. 查找引用 - 查找符号在项目中的所有引用
+     * 3. 代码诊断 - 分析代码中的错误、警告和建议
+     * 4. 符号信息 - 获取符号的详细信息（类型、参数、文档）
+     * 5. 工作区符号搜索 - 在项目中搜索符号
+     *
+     * 适用角色：代码密集型角色（server-dev, ui-dev, tester, verifier, security-expert,
+     *           performance-engineer, ai-engineer, tech-artist, devops）
+     *
+     * 执行方式：prompt 类型，通过 AI 分析代码实现 LSP 级别的代码理解
+     */
+    private void initLspCodeUnderstandingCapabilities() {
+        // 适用的代码密集型角色
+        String[] codeRoles = {
+            "server-dev", "client-dev", "ui-dev", "tester", "verifier",
+            "security-expert", "performance-engineer", "ai-engineer",
+            "tech-artist", "devops"
+        };
+
+        for (String role : codeRoles) {
+            // 跳转定义：查找符号（类、方法、变量）的定义位置
+            save(role, "lspGoToDefinition", "跳转定义", "查找符号（类、方法、变量、接口）的定义位置，返回定义所在的文件路径、行号和上下文代码",
+                "code_intelligence", false, null, 80,
+                "{\"symbol\":\"string|required\",\"scope\":\"string\"}",
+                "prompt",
+                "请在项目中查找符号 \"{symbol}\" 的定义位置。\n\n" +
+                "分析步骤：\n" +
+                "1. 在项目目录中搜索该符号的定义（class、function、method、interface、type、const 等）\n" +
+                "2. 返回定义所在的文件路径、行号\n" +
+                "3. 展示定义的完整代码上下文（包含前后 5 行）\n" +
+                "4. 说明符号的类型、参数、返回值等信息\n\n" +
+                "如果找到多个同名定义，全部列出并说明区别。");
+
+            // 查找引用：查找符号在项目中的所有引用
+            save(role, "lspFindReferences", "查找引用", "查找符号在项目中的所有引用位置，包括调用、赋值、导入等",
+                "code_intelligence", false, null, 81,
+                "{\"symbol\":\"string|required\",\"includeDeclaration\":\"boolean\"}",
+                "prompt",
+                "请在项目中查找符号 \"{symbol}\" 的所有引用位置。\n\n" +
+                "分析步骤：\n" +
+                "1. 搜索项目中所有引用该符号的文件\n" +
+                "2. 对每个引用，说明引用类型（调用、赋值、导入、继承、实现等）\n" +
+                "3. 展示引用的代码上下文\n" +
+                "4. 统计引用总数和分布情况\n\n" +
+                "如果 includeDeclaration 为 true，同时包含定义位置。");
+
+            // 代码诊断：分析代码中的问题
+            save(role, "lspCodeDiagnostics", "代码诊断", "分析代码文件中的错误、警告和改进建议，类似 IDE 的实时诊断",
+                "code_intelligence", false, null, 82,
+                "{\"targetPath\":\"string|required\",\"severity\":\"enum:error,warning,info,all\"}",
+                "prompt",
+                "请对文件 \"{targetPath}\" 进行代码诊断分析。\n\n" +
+                "诊断维度：\n" +
+                "1. **语法错误**：语法不正确、缺少分号/括号等\n" +
+                "2. **类型错误**：类型不匹配、未定义的变量/方法\n" +
+                "3. **逻辑警告**：可能的空指针、未处理的异常、死代码\n" +
+                "4. **代码规范**：命名规范、代码风格、最佳实践\n" +
+                "5. **性能建议**：潜在的性能问题、优化建议\n" +
+                "6. **安全风险**：注入风险、敏感信息泄露等\n\n" +
+                "输出格式：\n" +
+                "- 严重程度：ERROR/WARNING/INFO\n" +
+                "- 位置：文件:行号\n" +
+                "- 描述：问题说明\n" +
+                "- 建议：修复方案");
+
+            // 符号信息：获取符号的详细信息
+            save(role, "lspSymbolInfo", "符号信息", "获取符号的详细信息，包括类型签名、文档注释、所属模块等",
+                "code_intelligence", false, null, 83,
+                "{\"symbol\":\"string|required\",\"context\":\"string\"}",
+                "prompt",
+                "请获取符号 \"{symbol}\" 的详细信息。\n\n" +
+                "分析内容：\n" +
+                "1. **类型签名**：完整的类型声明（参数类型、返回类型）\n" +
+                "2. **文档注释**：Javadoc/注释内容\n" +
+                "3. **所属模块**：所在文件、包/命名空间、类\n" +
+                "4. **可见性**：public/private/protected\n" +
+                "5. **使用示例**：从项目中提取该符号的典型使用方式\n" +
+                "6. **相关符号**：同类型的相关符号推荐\n\n" +
+                "如果 context 非空，在该上下文中分析符号的具体含义。");
+
+            // 工作区符号搜索
+            save(role, "lspWorkspaceSymbols", "符号搜索", "在项目中搜索符号，支持模糊匹配，返回匹配的符号列表",
+                "code_intelligence", false, null, 84,
+                "{\"query\":\"string|required\",\"symbolKind\":\"enum:class,method,function,variable,interface,enum,all\"}",
+                "prompt",
+                "请在项目中搜索匹配 \"{query}\" 的符号。\n\n" +
+                "搜索策略：\n" +
+                "1. 精确匹配：符号名完全匹配\n" +
+                "2. 前缀匹配：符号名以 query 开头\n" +
+                "3. 模糊匹配：符号名包含 query（不区分大小写）\n" +
+                "4. 如果 symbolKind 非 all，只搜索指定类型的符号\n\n" +
+                "输出格式（每条）：\n" +
+                "- 符号名称\n" +
+                "- 类型（class/method/function/variable/interface/enum）\n" +
+                "- 所在文件:行号\n" +
+                "- 简短描述（如有注释）\n\n" +
+                "按匹配度排序，最多返回 20 个结果。");
+        }
+
+        log.info("LSP Code Understanding capabilities initialized for {} roles", codeRoles.length);
+    }
+
     // ===== Verifier 能力集 =====
     /**
      * 初始化验证官能力集
@@ -1372,17 +1490,189 @@ public class CapabilityInitService {
         log.info("Verifier capabilities initialized: {} capabilities", priority);
     }
 
+    // ===== Agent 工具能力 =====
+    /**
+     * 初始化 Agent 工具能力集
+     *
+     * 这些能力对应 /api/agent-tools/* 端点，提供给 Agent 作为可调用的工具：
+     * 1. 快照管理 - 创建、查看、恢复、撤销文件快照
+     * 2. 会话分叉 - 创建、查看、合并、丢弃会话分叉
+     * 3. 子代理 - 创建、查看、终止子代理
+     * 4. 工具权限 - 管理 Agent 的工具调用权限规则
+     */
+    private void initAgentToolsCapabilities() {
+        // 快照管理：所有开发类角色可用
+        String[] devRoles = {"producer", "server-dev", "client-dev", "ui-dev", "tester",
+            "security-expert", "performance-engineer", "ai-engineer", "tech-artist", "devops"};
+
+        for (String role : devRoles) {
+            save(role, "createSnapshot", "创建快照", "对指定文件创建快照，保存当前状态以便后续恢复",
+                "snapshot", false, null, 90,
+                "{\"projectId\":\"string|required\",\"agentId\":\"string|required\",\"filePaths\":\"array|required\",\"description\":\"string\"}");
+
+            save(role, "listSnapshots", "查看快照", "查看指定项目和 Agent 的所有快照列表",
+                "snapshot", false, null, 91,
+                "{\"projectId\":\"string|required\",\"agentId\":\"string|required\"}");
+
+            save(role, "restoreSnapshot", "恢复快照", "恢复指定快照，将文件还原到快照时的状态",
+                "snapshot", false, null, 92,
+                "{\"projectId\":\"string|required\",\"agentId\":\"string|required\",\"snapshotId\":\"string|required\"}");
+
+            save(role, "undoSnapshot", "撤销快照恢复", "撤销最近一次快照恢复操作",
+                "snapshot", false, null, 93,
+                "{\"projectId\":\"string|required\",\"agentId\":\"string|required\"}");
+        }
+
+        // 会话分叉：制作人和高级角色可用
+        String[] leadRoles = {"producer", "server-dev", "system-planner", "security-expert", "ai-engineer"};
+
+        for (String role : leadRoles) {
+            save(role, "createSessionFork", "创建会话分叉", "从当前会话分叉出一个探索性分支，用于尝试不同方案",
+                "session", false, null, 95,
+                "{\"projectId\":\"string|required\",\"agentId\":\"string|required\",\"description\":\"string\"}");
+
+            save(role, "listSessionForks", "查看会话分叉", "查看指定 Agent 的所有会话分叉",
+                "session", false, null, 96,
+                "{\"parentAgentId\":\"string|required\"}");
+
+            save(role, "mergeSessionFork", "合并会话分叉", "将分叉的上下文合并回主会话",
+                "session", false, null, 97,
+                "{\"forkId\":\"string|required\",\"strategy\":\"string\"}");
+
+            save(role, "discardSessionFork", "丢弃会话分叉", "丢弃不需要的会话分叉",
+                "session", false, null, 98,
+                "{\"forkId\":\"string|required\"}");
+        }
+
+        // 子代理：制作人和高级角色可用
+        for (String role : leadRoles) {
+            save(role, "spawnSubAgent", "创建子代理", "创建子代理来并行处理子任务",
+                "subagent", false, null, 100,
+                "{\"parentAgentId\":\"string|required\",\"projectId\":\"string|required\",\"task\":\"string|required\",\"role\":\"string\"}");
+
+            save(role, "listSubAgents", "查看子代理", "查看指定父代理的所有子代理",
+                "subagent", false, null, 101,
+                "{\"parentAgentId\":\"string|required\"}");
+
+            save(role, "terminateSubAgent", "终止子代理", "终止运行中的子代理",
+                "subagent", false, null, 102,
+                "{\"subAgentId\":\"string|required\"}");
+        }
+
+        // 工具权限：仅制作人可用
+        save("producer", "setToolPermissions", "设置工具权限", "设置 Agent 的工具调用权限规则（允许/拒绝特定工具和命令模式）",
+            "security", false, null, 105,
+            "{\"agentId\":\"string|required\",\"permissions\":\"array|required\"}");
+
+        log.info("Agent tools capabilities initialized for {} dev roles (snapshot), {} lead roles (fork/subagent), producer (tool-perm)",
+            devRoles.length, leadRoles.length);
+    }
+
     // ===== 工具方法 =====
 
     private void save(String agentRole, String capabilityName, String displayName,
                       String description, String category, boolean requiresApproval,
                       String approvalType, int priority, String paramSchema) {
+        save(agentRole, capabilityName, displayName, description, category,
+            requiresApproval, approvalType, priority, paramSchema, "java", null);
+    }
+
+    /**
+     * 保存能力定义（支持 executionType 和 promptTemplate）
+     *
+     * @param agentRole      Agent 角色
+     * @param capabilityName 能力名称
+     * @param displayName    显示名称
+     * @param description    描述
+     * @param category       分类
+     * @param requiresApproval 是否需要审批
+     * @param approvalType   审批类型
+     * @param priority       优先级
+     * @param paramSchema    参数 Schema
+     * @param executionType  执行类型：java/prompt/message
+     * @param promptTemplate Prompt 模板（executionType=prompt 时使用）
+     */
+    private void save(String agentRole, String capabilityName, String displayName,
+                      String description, String category, boolean requiresApproval,
+                      String approvalType, int priority, String paramSchema,
+                      String executionType, String promptTemplate) {
         AgentCapability cap = new AgentCapability(agentRole, capabilityName, displayName, description, category);
         cap.setRequiresApproval(requiresApproval);
         cap.setApprovalType(approvalType);
         cap.setPriority(priority);
         cap.setParamSchema(paramSchema);
+        cap.setExecutionType(executionType != null ? executionType : "java");
+        cap.setPromptTemplate(promptTemplate);
         cap.setEnabled(true);
         capabilityRepository.save(cap);
+    }
+
+    /**
+     * 检查并补充新增的能力定义
+     * 在已有能力数据时调用，只添加缺失的能力，不覆盖已有记录
+     */
+    private void ensureNewCapabilities() {
+        String[] roles = {"producer", "server-dev", "system-planner", "numerical-planner", "git-commit", "ui-dev",
+            "tester", "security-expert", "data-analyst", "tech-artist", "product-manager",
+            "localization", "ai-engineer", "performance-engineer", "audio-dev",
+            "narrative-planner", "level-design", "devops"};
+
+        int added = 0;
+        for (String role : roles) {
+            if (capabilityRepository.findByCapabilityNameAndAgentRoleAndProjectIdIsNull("addTaskToMilestone", role).isEmpty()) {
+                save(role, "addTaskToMilestone", "添加任务", "为里程碑添加新任务（用于干预新增需求）",
+                    "project_management", false, null, 100,
+                    "{\"milestoneId\":\"string|required\",\"title\":\"string|required\",\"description\":\"string\",\"assignedRole\":\"string\",\"priority\":\"enum:HIGH,MEDIUM,LOW\"}");
+                added++;
+            }
+            if (capabilityRepository.findByCapabilityNameAndAgentRoleAndProjectIdIsNull("updateTask", role).isEmpty()) {
+                save(role, "updateTask", "更新任务", "修改现有任务的标题、描述、负责角色或优先级",
+                    "project_management", false, null, 101,
+                    "{\"milestoneId\":\"string|required\",\"taskId\":\"string|required\",\"title\":\"string\",\"description\":\"string\",\"assignedRole\":\"string\",\"priority\":\"enum:HIGH,MEDIUM,LOW\"}");
+                added++;
+            }
+        }
+
+        // MCP 工具调用能力（所有角色通用）
+        for (String role : roles) {
+            if (capabilityRepository.findByCapabilityNameAndAgentRoleAndProjectIdIsNull("callMcpTool", role).isEmpty()) {
+                save(role, "callMcpTool", "调用MCP工具", "调用外部 MCP Server 提供的工具（如图片生成、音频生成等）",
+                    "mcp", false, null, 210,
+                    "{\"toolName\":\"string|required\",\"arguments\":\"string\"}");
+                added++;
+            }
+        }
+
+        // 资源生成能力（只注册给资源类角色和制作人）
+        String[] resourceRoles = {"audio-dev", "tech-artist", "ui-dev", "producer"};
+        for (String role : resourceRoles) {
+            if (capabilityRepository.findByCapabilityNameAndAgentRoleAndProjectIdIsNull("generateMusic", role).isEmpty()) {
+                save(role, "generateMusic", "生成音乐", "使用 AI 生成游戏背景音乐",
+                    "resource_generation", false, null, 200,
+                    "{\"prompt\":\"string|required\",\"style\":\"string\",\"instrumental\":\"boolean\",\"title\":\"string\"}");
+                added++;
+            }
+            if (capabilityRepository.findByCapabilityNameAndAgentRoleAndProjectIdIsNull("generateSoundEffect", role).isEmpty()) {
+                save(role, "generateSoundEffect", "生成音效", "使用 AI 生成游戏音效",
+                    "resource_generation", false, null, 201,
+                    "{\"prompt\":\"string|required\",\"sfxType\":\"enum:ui,combat,environment,character\",\"duration\":\"string\"}");
+                added++;
+            }
+            if (capabilityRepository.findByCapabilityNameAndAgentRoleAndProjectIdIsNull("generateSprite", role).isEmpty()) {
+                save(role, "generateSprite", "生成精灵图", "使用 AI 生成 2D 精灵图/贴图",
+                    "resource_generation", false, null, 202,
+                    "{\"prompt\":\"string|required\",\"size\":\"string\",\"style\":\"string\"}");
+                added++;
+            }
+            if (capabilityRepository.findByCapabilityNameAndAgentRoleAndProjectIdIsNull("generateUIAsset", role).isEmpty()) {
+                save(role, "generateUIAsset", "生成UI素材", "使用 AI 生成 UI 界面素材",
+                    "resource_generation", false, null, 203,
+                    "{\"prompt\":\"string|required\",\"assetType\":\"enum:icon,button,background,panel\",\"size\":\"string\"}");
+                added++;
+            }
+        }
+        if (added > 0) {
+            log.info("补充了 {} 个新增能力定义", added);
+        }
     }
 }

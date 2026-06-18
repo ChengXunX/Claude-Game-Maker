@@ -18,8 +18,11 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
 import java.util.*;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * 项目讨论控制器
@@ -107,13 +110,37 @@ public class ProjectDiscussionController {
     }
 
     /**
+     * 结束讨论会话
+     * 结束后会话只读，不能再发送消息
+     */
+    @PostMapping("/{discussionId}/close")
+    @PreAuthorize("hasAuthority('PERM_projects:view')")
+    public Map<String, Object> closeDiscussion(@PathVariable Long discussionId) {
+        ProjectDiscussion discussion = discussionService.getDiscussion(discussionId);
+        if (discussion == null) {
+            return Map.of("success", false, "error", "讨论不存在");
+        }
+        if (!"ACTIVE".equals(discussion.getStatus())) {
+            return Map.of("success", false, "error", "该讨论已结束");
+        }
+        discussionService.closeDiscussion(discussionId);
+        return Map.of("success", true, "message", "讨论已结束");
+    }
+
+    /**
      * 流式发送消息（SSE）
      * 用户发送消息后，AI实时流式回复
      */
     @GetMapping(value = "/{discussionId}/stream/ask", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter streamAsk(@PathVariable Long discussionId,
                                 @RequestParam String message,
-                                Authentication auth) {
+                                Authentication auth,
+                                jakarta.servlet.http.HttpServletResponse response) {
+        // 禁用Nginx缓冲，确保SSE事件实时推送
+        response.setHeader("X-Accel-Buffering", "no");
+        response.setHeader("Cache-Control", "no-cache, no-transform");
+        response.setHeader("Connection", "keep-alive");
+
         SseEmitter emitter = new SseEmitter(5 * 60 * 1000L);
 
         // 验证讨论存在
@@ -148,9 +175,19 @@ public class ProjectDiscussionController {
         fullPrompt.append("**用户**: ").append(message).append("\n\n");
         fullPrompt.append("请回复用户的问题或建议。回复要简洁专业，聚焦项目方向讨论。");
 
+        // 保存当前安全上下文，传递给异步线程
+        var securityContext = org.springframework.security.core.context.SecurityContextHolder.getContext();
+
+        // 前端断开标记
+        AtomicBoolean isCancelled = new AtomicBoolean(false);
+
         // 异步流式调用AI
         executorService.submit(() -> {
+            // 在异步线程中设置安全上下文
+            org.springframework.security.core.context.SecurityContextHolder.setContext(securityContext);
             StringBuilder responseBuffer = new StringBuilder();
+            // 使用 CountDownLatch 同步等待流式完成（sendMessageStreaming 内部是异步的）
+            CountDownLatch latch = new CountDownLatch(1);
             try {
                 streamingEngine.sendMessageStreaming(
                     "discussion-" + discussionId,
@@ -161,23 +198,56 @@ public class ProjectDiscussionController {
                     appConfig.getApiUrl(),
                     appConfig.getModel(),
                     null,
-                    event -> handleStreamEvent(emitter, event, responseBuffer, discussionId)
+                    event -> {
+                        if (isCancelled.get()) {
+                            latch.countDown();
+                            return;
+                        }
+                        handleStreamEvent(emitter, event, responseBuffer, discussionId);
+                        // complete 或 error 事件时释放 latch
+                        if ("complete".equals(event.getType()) || "error".equals(event.getType())) {
+                            latch.countDown();
+                        }
+                    }
                 );
+
+                // 阻塞等待流式输出完成（最长5分钟）
+                boolean completed = latch.await(5, TimeUnit.MINUTES);
+                if (!completed) {
+                    log.warn("流式对话超时: discussionId={}", discussionId);
+                }
             } catch (Exception e) {
                 log.error("流式对话失败: discussionId={}", discussionId, e);
                 try {
                     emitter.send(SseEmitter.event().name("error").data("AI响应失败: " + e.getMessage()));
                 } catch (IOException ex) { /* ignore */ }
             } finally {
+                // 清理安全上下文
+                org.springframework.security.core.context.SecurityContextHolder.clearContext();
                 // 保存AI回复
                 if (responseBuffer.length() > 0) {
                     discussionService.addAssistantMessage(discussionId, responseBuffer.toString());
                 }
                 try {
                     emitter.send(SseEmitter.event().name("done").data("[DONE]"));
-                } catch (IOException e) { /* ignore */ }
-                emitter.complete();
+                } catch (Exception e) { /* ignore */ }
+                try {
+                    emitter.complete();
+                } catch (IllegalStateException e) { /* ignore */ }
             }
+        });
+
+        // 超时回调
+        emitter.onTimeout(() -> {
+            log.warn("SSE超时 - discussionId: {}", discussionId);
+            isCancelled.set(true);
+            emitter.complete();
+        });
+
+        // 完成回调
+        emitter.onCompletion(() -> {
+            log.debug("SSE完成 - discussionId: {}", discussionId);
+            isCancelled.set(true);
         });
 
         return emitter;
@@ -191,21 +261,23 @@ public class ProjectDiscussionController {
         try {
             switch (event.getType()) {
                 case "thinking":
-                    emitter.send(SseEmitter.event().name("thinking").data(event.getContent()));
+                    emitter.send(SseEmitter.event().name("thinking").data(Map.of("content", event.getContent() != null ? event.getContent() : "")));
                     break;
                 case "text":
                     responseBuffer.append(event.getContent());
-                    emitter.send(SseEmitter.event().name("text").data(event.getContent()));
+                    emitter.send(SseEmitter.event().name("text").data(Map.of("content", event.getContent() != null ? event.getContent() : "")));
                     break;
                 case "tool_use":
-                    emitter.send(SseEmitter.event().name("tool_use").data(event.getContent()));
+                    emitter.send(SseEmitter.event().name("tool_use").data(Map.of("content", event.getContent() != null ? event.getContent() : "")));
                     break;
                 case "error":
-                    emitter.send(SseEmitter.event().name("error").data(event.getContent()));
+                    emitter.send(SseEmitter.event().name("error").data(Map.of("message", event.getErrorMessage() != null ? event.getErrorMessage() : "")));
                     break;
             }
         } catch (IOException e) {
             log.debug("SSE发送失败（客户端可能已断开）: {}", e.getMessage());
+        } catch (IllegalStateException e) {
+            log.debug("SSE发射器已完成，忽略事件: {}", event.getType());
         }
     }
 

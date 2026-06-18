@@ -36,12 +36,37 @@ public class ContextManager {
         try {
             Files.createDirectories(contextPath.getParent());
             context.touch();
+
+            // 【优化】清理冗余数据后再保存
+            cleanupContextBeforeSave(context);
+
             objectMapper.writerWithDefaultPrettyPrinter()
                 .writeValue(contextPath.toFile(), context);
             log.debug("Context saved for agent: {} in project: {}", context.getAgentId(),
                 project != null ? project.getId() : "global");
         } catch (IOException e) {
             log.error("Failed to save context for agent: {}", context.getAgentId(), e);
+        }
+    }
+
+    /**
+     * 清理上下文中的冗余数据
+     * 只做最小化清理，不丢失 Agent 的学习成果和记忆
+     */
+    private void cleanupContextBeforeSave(AgentContext context) {
+        // 只清理空值字段（减少 JSON 文件大小，不影响内容）
+        if (context.getProjectSummary() != null && context.getProjectSummary().isEmpty()) {
+            context.setProjectSummary(null);
+        }
+
+        // 不清理工作记忆 - 这些是 Agent 的学习成果，对智能程度很重要
+        // 只保留 API 历史的合理数量（保留最近20条，足够参考）
+        if (context.getApiHistory() != null && context.getApiHistory().size() > 20) {
+            List<AgentContext.ApiConfigRecord> history = new java.util.ArrayList<>(context.getApiHistory());
+            java.util.Collections.sort(history, (a, b) ->
+                b.getUsedAt() != null && a.getUsedAt() != null
+                    ? b.getUsedAt().compareTo(a.getUsedAt()) : 0);
+            context.setApiHistory(history.subList(0, 20));
         }
     }
 
@@ -101,6 +126,31 @@ public class ContextManager {
             log.error("Failed to load conversation for agent: {}", agentId, e);
             return new ArrayList<>();
         }
+    }
+
+    /**
+     * 裁剪对话历史，只保留最近 N 条消息
+     * 超出部分被丢弃（应在裁剪前先压缩为摘要）
+     *
+     * @param agentId Agent ID
+     * @param project 项目
+     * @param conversationId 对话 ID
+     * @param keepCount 保留的消息数量
+     * @return 被裁剪掉的消息数量
+     */
+    public int trimConversation(String agentId, GameProject project, String conversationId, int keepCount) {
+        List<ConversationMessage> messages = loadConversation(agentId, project, conversationId);
+        if (messages.size() <= keepCount) {
+            return 0;
+        }
+
+        int removed = messages.size() - keepCount;
+        List<ConversationMessage> trimmed = new ArrayList<>(messages.subList(removed, messages.size()));
+        saveConversation(agentId, project, conversationId, trimmed);
+
+        log.info("Trimmed conversation for agent {}: removed {} messages, keeping {}",
+            agentId, removed, keepCount);
+        return removed;
     }
 
     public List<String> listConversations(String agentId, GameProject project) {

@@ -23,6 +23,7 @@
         </el-descriptions-item>
         <el-descriptions-item label="项目 ID">{{ projectId }}</el-descriptions-item>
         <el-descriptions-item label="推理深度">{{ getDepthLabel(agent.reasoningDepth) }}</el-descriptions-item>
+        <el-descriptions-item label="思维模式">{{ getThinkingModeLabel(agent.thinkingMode) }}</el-descriptions-item>
         <el-descriptions-item label="工作目录">{{ agent.workDir || '-' }}</el-descriptions-item>
         <el-descriptions-item label="任务数">{{ agent.taskCount || 0 }}</el-descriptions-item>
         <el-descriptions-item label="待处理消息">{{ agent.pendingMessages || 0 }}</el-descriptions-item>
@@ -190,6 +191,94 @@
       <el-empty v-else description="使用默认权重" :image-size="60" />
     </el-card>
 
+    <!-- 会话分叉 -->
+    <el-card class="mt-4">
+      <template #header>
+        <div class="card-header">
+          <span>会话分叉</span>
+          <el-button size="small" type="primary" text @click="showForkDialog = true">
+            <el-icon><Plus /></el-icon> 创建分叉
+          </el-button>
+        </div>
+      </template>
+      <el-table :data="forkList" stripe v-loading="forkLoading" empty-text="暂无会话分叉" size="small">
+        <el-table-column prop="id" label="分叉ID" width="120" show-overflow-tooltip />
+        <el-table-column prop="prompt" label="分叉提示" min-width="200" show-overflow-tooltip />
+        <el-table-column label="状态" width="100">
+          <template #default="{ row }">
+            <el-tag :type="row.status === 'ACTIVE' ? 'success' : row.status === 'MERGED' ? 'primary' : 'info'" size="small">
+              {{ row.status === 'ACTIVE' ? '活跃' : row.status === 'MERGED' ? '已合并' : row.status || '未知' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="创建时间" width="160">
+          <template #default="{ row }">{{ row.createdAt || '-' }}</template>
+        </el-table-column>
+        <el-table-column label="操作" width="140" fixed="right">
+          <template #default="{ row }">
+            <el-button type="primary" link size="small" @click="handleMergeFork(row.id)" :disabled="row.status !== 'ACTIVE'">合并</el-button>
+            <el-button type="danger" link size="small" @click="handleDiscardFork(row.id)" :disabled="row.status !== 'ACTIVE'">丢弃</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-card>
+
+    <!-- 子代理 -->
+    <el-card class="mt-4">
+      <template #header>
+        <div class="card-header">
+          <span>子代理</span>
+          <el-button size="small" type="primary" text @click="showSubAgentDialog = true">
+            <el-icon><Plus /></el-icon> 创建子代理
+          </el-button>
+        </div>
+      </template>
+      <el-table :data="subAgentList" stripe v-loading="subAgentLoading" empty-text="暂无子代理" size="small">
+        <el-table-column prop="id" label="子代理ID" width="120" show-overflow-tooltip />
+        <el-table-column prop="task" label="任务" min-width="200" show-overflow-tooltip />
+        <el-table-column label="状态" width="100">
+          <template #default="{ row }">
+            <el-tag :type="row.status === 'RUNNING' ? 'success' : row.status === 'COMPLETED' ? 'primary' : 'info'" size="small">
+              {{ row.status === 'RUNNING' ? '运行中' : row.status === 'COMPLETED' ? '已完成' : row.status || '未知' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="100" fixed="right">
+          <template #default="{ row }">
+            <el-button type="danger" link size="small" @click="handleTerminateSubAgent(row.id)" :disabled="row.status !== 'RUNNING'">终止</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-card>
+
+    <!-- 工具权限 -->
+    <el-card class="mt-4">
+      <template #header>
+        <div class="card-header">
+          <span>工具权限</span>
+          <el-button size="small" type="primary" text @click="showToolPermDialog = true">
+            <el-icon><Plus /></el-icon> 添加规则
+          </el-button>
+        </div>
+      </template>
+      <el-table :data="toolPermissions" stripe v-loading="toolPermLoading" empty-text="暂无权限规则" size="small">
+        <el-table-column prop="tool" label="工具" width="150" />
+        <el-table-column prop="pattern" label="匹配模式" min-width="200" show-overflow-tooltip />
+        <el-table-column label="动作" width="100">
+          <template #default="{ row }">
+            <el-tag :type="row.action === 'ALLOW' ? 'success' : 'danger'" size="small">
+              {{ row.action === 'ALLOW' ? '允许' : '拒绝' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="80" fixed="right">
+          <template #default="{ $index }">
+            <el-button type="danger" link size="small" @click="handleDeleteToolPerm($index)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-card>
+
     <!-- 绩效权重编辑弹窗 -->
     <el-dialog v-model="showPerformanceWeightsDialog" title="绩效评分权重配置" width="500px">
       <el-alert type="info" :closable="false" class="mb-4">
@@ -256,6 +345,24 @@
     <!-- 配置编辑弹窗 -->
     <el-dialog v-model="showConfigDialog" title="项目级Agent配置" width="800px" top="5vh">
       <el-form :model="configForm" label-width="120px">
+        <el-form-item label="思维模式">
+          <div style="width: 100%">
+            <el-select v-model="configForm.thinkingMode" style="width: 100%">
+              <el-option :value="1" label="1 - 高度严谨" />
+              <el-option :value="2" label="2 - 严谨" />
+              <el-option :value="3" label="3 - 平衡" />
+              <el-option :value="4" label="4 - 创新" />
+              <el-option :value="5" label="5 - 突破" />
+            </el-select>
+            <div class="thinking-mode-hint">
+              <span v-if="configForm.thinkingMode === 1">极度保守、精确执行、零风险容忍，适合关键代码修改</span>
+              <span v-else-if="configForm.thinkingMode === 2">稳健保守、注重规范、最小风险，适合日常开发任务</span>
+              <span v-else-if="configForm.thinkingMode === 3">兼顾效率与质量、适度灵活，适合一般任务和协调</span>
+              <span v-else-if="configForm.thinkingMode === 4">鼓励创意、接受适度风险、探索新方案，适合策划设计</span>
+              <span v-else-if="configForm.thinkingMode === 5">大胆突破、颠覆常规、追求极致创意，适合创新探索</span>
+            </div>
+          </div>
+        </el-form-item>
         <el-form-item label="自定义系统提示词">
           <MarkdownEditor v-model="configForm.customSystemPrompt" :rows="4" placeholder="输入项目特定的系统提示词，追加到默认提示词之后..." />
         </el-form-item>
@@ -321,15 +428,63 @@
         <el-button type="primary" @click="handleSubmitTask" :loading="sendingTask">发送</el-button>
       </template>
     </el-dialog>
+
+    <!-- 创建分叉弹窗 -->
+    <el-dialog v-model="showForkDialog" title="创建会话分叉" width="500px">
+      <el-form label-width="80px">
+        <el-form-item label="分叉提示">
+          <el-input v-model="forkForm.prompt" type="textarea" :rows="4" placeholder="输入分叉的探索方向或假设..." />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showForkDialog = false">取消</el-button>
+        <el-button type="primary" @click="handleCreateFork" :loading="forkCreating">创建</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 创建子代理弹窗 -->
+    <el-dialog v-model="showSubAgentDialog" title="创建子代理" width="500px">
+      <el-form label-width="80px">
+        <el-form-item label="任务描述">
+          <el-input v-model="subAgentForm.task" type="textarea" :rows="4" placeholder="输入子代理需要完成的任务..." />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showSubAgentDialog = false">取消</el-button>
+        <el-button type="primary" @click="handleSpawnSubAgent" :loading="subAgentSpawning">创建</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 添加工具权限规则弹窗 -->
+    <el-dialog v-model="showToolPermDialog" title="添加工具权限规则" width="500px">
+      <el-form :model="toolPermForm" label-width="80px">
+        <el-form-item label="工具名">
+          <el-input v-model="toolPermForm.tool" placeholder="如: Bash, Read, Write" />
+        </el-form-item>
+        <el-form-item label="匹配模式">
+          <el-input v-model="toolPermForm.pattern" placeholder="如: *, rm *, git push*" />
+        </el-form-item>
+        <el-form-item label="动作">
+          <el-radio-group v-model="toolPermForm.action">
+            <el-radio value="ALLOW">允许</el-radio>
+            <el-radio value="DENY">拒绝</el-radio>
+          </el-radio-group>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showToolPermDialog = false">取消</el-button>
+        <el-button type="primary" @click="handleAddToolPerm" :loading="toolPermSaving">添加</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { agentApi, recruitmentApi, projectAgentConfigApi } from '@/api'
+import { agentApi, recruitmentApi, projectAgentConfigApi, sessionForkApi, subAgentApi, toolPermissionApi } from '@/api'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { MagicStick, Edit } from '@element-plus/icons-vue'
+import { MagicStick, Edit, Plus } from '@element-plus/icons-vue'
 import MarkdownEditor from '@/components/MarkdownEditor.vue'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 
@@ -352,6 +507,7 @@ const responsibilityWeights = ref(null)
 const showConfigDialog = ref(false)
 const savingConfig = ref(false)
 const configForm = ref({
+  thinkingMode: 3,
   customSystemPrompt: '',
   customCapabilityPrompt: '',
   projectContext: ''
@@ -375,6 +531,27 @@ const optimizeResult = ref(null)
 const showOptimizeDialog = ref(false)
 const optimizeDirection = ref('')
 
+// 会话分叉
+const forkList = ref([])
+const forkLoading = ref(false)
+const forkCreating = ref(false)
+const showForkDialog = ref(false)
+const forkForm = ref({ prompt: '' })
+
+// 子代理
+const subAgentList = ref([])
+const subAgentLoading = ref(false)
+const subAgentSpawning = ref(false)
+const showSubAgentDialog = ref(false)
+const subAgentForm = ref({ task: '' })
+
+// 工具权限
+const toolPermissions = ref([])
+const toolPermLoading = ref(false)
+const toolPermSaving = ref(false)
+const showToolPermDialog = ref(false)
+const toolPermForm = ref({ tool: '', pattern: '*', action: 'ALLOW' })
+
 const getRoleTagType = (role) => {
   const map = { 'producer': 'danger', 'server-dev': 'primary', 'client-dev': 'success', 'ui-dev': 'warning', 'system-planner': 'info', 'numerical-planner': 'info', 'tester': '', 'git-commit': 'info' }
   return map[role] || ''
@@ -388,6 +565,23 @@ const getRoleLabel = (role) => {
 const getDepthLabel = (depth) => {
   const map = { 1: '快速', 2: '标准', 3: '深度', 4: '专家', 5: '极致' }
   return map[depth || 3] || '标准'
+}
+
+const getThinkingModeLabel = (mode) => {
+  const labels = { 1: '高度严谨', 2: '严谨', 3: '平衡', 4: '创新', 5: '突破' }
+  return labels[mode ?? 3] || '平衡'
+}
+
+/** 获取角色默认思维模式（与后端 AgentDefinition.getDefaultThinkingMode 一致） */
+const getDefaultThinkingMode = (role) => {
+  const defaults = {
+    'server-dev': 2, 'client-dev': 2, 'ui-dev': 2,
+    'git-commit': 1,
+    'verification': 2,
+    'system-planner': 4, 'numerical-planner': 4,
+    'producer': 3
+  }
+  return defaults[role] || 3
 }
 
 const getTaskStatusType = (status) => {
@@ -438,6 +632,7 @@ const loadProjectConfig = async () => {
     const data = await projectAgentConfigApi.getConfig(projectId.value, agentRole.value)
     projectConfig.value = data
     configForm.value = {
+      thinkingMode: data?.thinkingMode ?? getDefaultThinkingMode(agentRole.value),
       customSystemPrompt: data?.customSystemPrompt || '',
       customCapabilityPrompt: data?.customCapabilityPrompt || '',
       projectContext: data?.projectContext || ''
@@ -595,7 +790,119 @@ const handleSubmitTask = async () => {
   }
 }
 
-onMounted(() => { loadAgent() })
+// ===== 会话分叉 =====
+const loadForks = async () => {
+  forkLoading.value = true
+  try {
+    const res = await sessionForkApi.list(agentRole.value)
+    forkList.value = res.data || res || []
+  } catch { forkList.value = [] }
+  finally { forkLoading.value = false }
+}
+
+const handleCreateFork = async () => {
+  if (!forkForm.value.prompt) { ElMessage.warning('请输入分叉提示'); return }
+  forkCreating.value = true
+  try {
+    await sessionForkApi.create({ parentAgentId: agentRole.value, prompt: forkForm.value.prompt })
+    ElMessage.success('分叉已创建')
+    showForkDialog.value = false
+    forkForm.value.prompt = ''
+    loadForks()
+  } catch { ElMessage.error('创建失败') }
+  finally { forkCreating.value = false }
+}
+
+const handleMergeFork = async (forkId) => {
+  try {
+    await ElMessageBox.confirm('合并分叉将把其上下文合并回主会话，确定？', '合并确认', { type: 'warning' })
+    await sessionForkApi.merge(forkId)
+    ElMessage.success('分叉已合并')
+    loadForks()
+  } catch (e) { if (e !== false) ElMessage.error('合并失败') }
+}
+
+const handleDiscardFork = async (forkId) => {
+  try {
+    await ElMessageBox.confirm('确定丢弃该分叉？', '丢弃确认', { type: 'warning' })
+    await sessionForkApi.discard(forkId)
+    ElMessage.success('分叉已丢弃')
+    loadForks()
+  } catch (e) { if (e !== false) ElMessage.error('丢弃失败') }
+}
+
+// ===== 子代理 =====
+const loadSubAgents = async () => {
+  subAgentLoading.value = true
+  try {
+    const res = await subAgentApi.list(agentRole.value)
+    subAgentList.value = res.data || res || []
+  } catch { subAgentList.value = [] }
+  finally { subAgentLoading.value = false }
+}
+
+const handleSpawnSubAgent = async () => {
+  if (!subAgentForm.value.task) { ElMessage.warning('请输入任务描述'); return }
+  subAgentSpawning.value = true
+  try {
+    await subAgentApi.spawn({ parentAgentId: agentRole.value, task: subAgentForm.value.task })
+    ElMessage.success('子代理已创建')
+    showSubAgentDialog.value = false
+    subAgentForm.value.task = ''
+    loadSubAgents()
+  } catch { ElMessage.error('创建失败') }
+  finally { subAgentSpawning.value = false }
+}
+
+const handleTerminateSubAgent = async (subAgentId) => {
+  try {
+    await ElMessageBox.confirm('确定终止该子代理？', '终止确认', { type: 'warning' })
+    await subAgentApi.terminate(subAgentId)
+    ElMessage.success('子代理已终止')
+    loadSubAgents()
+  } catch (e) { if (e !== false) ElMessage.error('终止失败') }
+}
+
+// ===== 工具权限 =====
+const loadToolPermissions = async () => {
+  toolPermLoading.value = true
+  try {
+    const res = await toolPermissionApi.get(agentRole.value)
+    toolPermissions.value = res.data || res || []
+  } catch { toolPermissions.value = [] }
+  finally { toolPermLoading.value = false }
+}
+
+const handleAddToolPerm = async () => {
+  if (!toolPermForm.value.tool) { ElMessage.warning('请输入工具名'); return }
+  toolPermSaving.value = true
+  try {
+    const newList = [...toolPermissions.value, { ...toolPermForm.value }]
+    await toolPermissionApi.set(agentRole.value, newList)
+    ElMessage.success('规则已添加')
+    showToolPermDialog.value = false
+    toolPermForm.value = { tool: '', pattern: '*', action: 'ALLOW' }
+    loadToolPermissions()
+  } catch { ElMessage.error('添加失败') }
+  finally { toolPermSaving.value = false }
+}
+
+const handleDeleteToolPerm = async (index) => {
+  try {
+    await ElMessageBox.confirm('确定删除该权限规则？', '删除确认', { type: 'warning' })
+    const newList = toolPermissions.value.filter((_, i) => i !== index)
+    await toolPermissionApi.set(agentRole.value, newList)
+    ElMessage.success('规则已删除')
+    toolPermissions.value = newList
+  } catch (e) { if (e !== false) ElMessage.error('删除失败') }
+}
+
+onMounted(() => {
+  loadAgent()
+  loadForks()
+  loadSubAgents()
+  loadToolPermissions()
+})
 </script>
 
 <style scoped>
@@ -608,6 +915,7 @@ onMounted(() => { loadAgent() })
 .prompt-preview { background: #f5f7fa; border-radius: 8px; padding: 12px; font-size: 13px; line-height: 1.6; color: #606266; white-space: pre-wrap; }
 .full-prompt { font-size: 13px; line-height: 1.8; white-space: pre-wrap; max-height: 65vh; overflow-y: auto; background: #f5f7fa; border-radius: 8px; padding: 16px; }
 .config-content { font-size: 13px; line-height: 1.6; white-space: pre-wrap; max-height: 200px; overflow-y: auto; }
+.thinking-mode-hint { font-size: 12px; color: #909399; margin-top: 4px; }
 .weights-chart { display: flex; flex-direction: column; gap: 12px; }
 .weight-item { display: flex; align-items: center; gap: 12px; }
 .weight-label { width: 100px; font-size: 14px; color: #606266; }

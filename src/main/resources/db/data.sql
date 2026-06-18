@@ -75,7 +75,19 @@ INSERT IGNORE INTO role_permissions (role_id, permission) VALUES
 (1, 'PERM_permissions:manage'),
 (1, 'PERM_api:view'),
 (1, 'PERM_notification:preferences'),
-(1, 'PERM_context:monitor');
+(1, 'PERM_context:monitor'),
+(1, 'checkpoint:view'),
+(1, 'checkpoint:manage'),
+(1, 'goal:view'),
+(1, 'goal:manage'),
+(1, 'dream:execute'),
+(1, 'subagent:view'),
+(1, 'subagent:create'),
+(1, 'subagent:manage'),
+(1, 'skill:discover'),
+(1, 'iteration:view'),
+(1, 'iteration:manage'),
+(1, 'supervision:view');
 
 -- 插入项目经理角色权限
 INSERT IGNORE INTO role_permissions (role_id, permission) VALUES
@@ -114,7 +126,13 @@ INSERT IGNORE INTO role_permissions (role_id, permission) VALUES
 (2, 'PERM_api:view'),
 (2, 'PERM_notification:preferences'),
 (2, 'PERM_context:monitor'),
-(2, 'skills:manage');
+(2, 'skills:manage'),
+(2, 'checkpoint:view'),
+(2, 'goal:view'),
+(2, 'goal:manage'),
+(2, 'dream:execute'),
+(2, 'subagent:view'),
+(2, 'subagent:create');
 
 -- 插入开发者角色权限
 INSERT IGNORE INTO role_permissions (role_id, permission) VALUES
@@ -135,7 +153,11 @@ INSERT IGNORE INTO role_permissions (role_id, permission) VALUES
 (3, 'PERM_capabilities:view'),
 (3, 'PERM_files:view'),
 (3, 'PERM_api:view'),
-(3, 'PERM_notification:preferences');
+(3, 'PERM_notification:preferences'),
+(3, 'checkpoint:view'),
+(3, 'goal:view'),
+(3, 'subagent:view'),
+(3, 'subagent:create');
 
 -- 插入运维工程师角色权限
 INSERT IGNORE INTO role_permissions (role_id, permission) VALUES
@@ -355,4 +377,156 @@ INSERT IGNORE INTO permission_definitions (permission_key, name, description, ca
 ('PERM_permissions:manage', '权限管理', '管理权限定义和审批', '管理', 1, 1, 41),
 ('PERM_api:view', 'API文档', '查看API文档', '系统', 1, 1, 32),
 ('PERM_notification:preferences', '通知偏好', '配置通知接收偏好', '通知', 1, 1, 50),
-('PERM_context:monitor', '上下文监控', '监控Agent上下文健康', 'Agent', 1, 1, 26);
+('PERM_context:monitor', '上下文监控', '监控Agent上下文健康', 'Agent', 1, 1, 26),
+('PERM_checkpoint:view', '检查点查看', '查看会话检查点', '检查点', 1, 1, 1),
+('PERM_checkpoint:manage', '检查点管理', '创建、恢复、删除检查点', '检查点', 1, 1, 2),
+('PERM_goal:view', '目标查看', '查看项目目标', '目标', 1, 1, 1),
+('PERM_goal:manage', '目标管理', '设置、评估、完成目标', '目标', 1, 1, 2),
+('PERM_dream:execute', '知识提取', '执行Dream知识提取', '知识', 1, 1, 1),
+('PERM_subagent:view', '子代理查看', '查看子代理列表', '子代理', 1, 1, 1),
+('PERM_subagent:create', '子代理创建', '创建子代理', '子代理', 1, 1, 2),
+('PERM_subagent:manage', '子代理管理', '终止、清理子代理', '子代理', 1, 1, 3),
+('PERM_skill:discover', 'Skill发现', '发现文件系统中的Skill', '技能', 1, 1, 3),
+('PERM_iteration:view', '迭代查看', '查看版本迭代记录', '项目', 1, 1, 12),
+('PERM_iteration:manage', '迭代管理', '管理版本迭代、回滚', '项目', 1, 1, 13),
+('PERM_supervision:view', '督查查看', '查看督查报告', '项目', 1, 1, 14);
+
+-- ===== MiMo V2: 6个新模块权限 =====
+
+-- 新增权限定义
+INSERT IGNORE INTO permission_definitions (permission_key, name, description, category, enabled, `system`, sort_order) VALUES
+('PERM_distill:execute', '工作流发现', '执行Distill工作流发现', '知识', 1, 1, 2),
+('PERM_snapshot:view', '快照查看', '查看文件快照', '快照', 1, 1, 1),
+('PERM_snapshot:manage', '快照管理', '创建、恢复、删除快照', '快照', 1, 1, 2),
+('PERM_fork:view', '分叉查看', '查看会话分叉', '会话', 1, 1, 1),
+('PERM_fork:create', '分叉创建', '创建会话分叉', '会话', 1, 1, 2),
+('PERM_fork:manage', '分叉管理', '合并、丢弃会话分叉', '会话', 1, 1, 3),
+('PERM_tool:permission:manage', '工具权限管理', '管理Agent工具权限', 'Agent', 1, 1, 30);
+
+-- ADMIN 角色新增权限
+INSERT IGNORE INTO role_permissions (role_id, permission) VALUES
+(1, 'distill:execute'),
+(1, 'snapshot:view'), (1, 'snapshot:manage'),
+(1, 'fork:view'), (1, 'fork:create'), (1, 'fork:manage'),
+(1, 'tool:permission:manage');
+
+-- PROJECT_MANAGER 角色新增权限
+INSERT IGNORE INTO role_permissions (role_id, permission) VALUES
+(2, 'distill:execute'),
+(2, 'snapshot:view'), (2, 'snapshot:manage'),
+(2, 'fork:view'), (2, 'fork:create');
+
+-- DEVELOPER 角色新增权限
+INSERT IGNORE INTO role_permissions (role_id, permission) VALUES
+(3, 'snapshot:view'), (3, 'fork:view');
+
+-- ===== LSP 代码理解能力 =====
+-- 为代码密集型角色注册 LSP 代码理解能力（prompt 类型，AI 驱动）
+-- 适用角色：server-dev, client-dev, ui-dev, tester, verifier, security-expert, performance-engineer, ai-engineer, tech-artist, devops
+
+INSERT IGNORE INTO agent_capabilities (agent_role, capability_name, display_name, description, category, requires_approval, priority, param_schema, execution_type, prompt_template, enabled) VALUES
+-- server-dev
+('server-dev', 'lspGoToDefinition', '跳转定义', '查找符号（类、方法、变量、接口）的定义位置，返回定义所在的文件路径、行号和上下文代码', 'code_intelligence', 0, 80, '{"symbol":"string|required","scope":"string"}', 'prompt', '请在项目中查找符号 "{symbol}" 的定义位置。\n\n分析步骤：\n1. 在项目目录中搜索该符号的定义（class、function、method、interface、type、const 等）\n2. 返回定义所在的文件路径、行号\n3. 展示定义的完整代码上下文（包含前后 5 行）\n4. 说明符号的类型、参数、返回值等信息\n\n如果找到多个同名定义，全部列出并说明区别。', 1),
+('server-dev', 'lspFindReferences', '查找引用', '查找符号在项目中的所有引用位置，包括调用、赋值、导入等', 'code_intelligence', 0, 81, '{"symbol":"string|required","includeDeclaration":"boolean"}', 'prompt', '请在项目中查找符号 "{symbol}" 的所有引用位置。\n\n分析步骤：\n1. 搜索项目中所有引用该符号的文件\n2. 对每个引用，说明引用类型（调用、赋值、导入、继承、实现等）\n3. 展示引用的代码上下文\n4. 统计引用总数和分布情况\n\n如果 includeDeclaration 为 true，同时包含定义位置。', 1),
+('server-dev', 'lspCodeDiagnostics', '代码诊断', '分析代码文件中的错误、警告和改进建议，类似 IDE 的实时诊断', 'code_intelligence', 0, 82, '{"targetPath":"string|required","severity":"enum:error,warning,info,all"}', 'prompt', '请对文件 "{targetPath}" 进行代码诊断分析。\n\n诊断维度：\n1. 语法错误：语法不正确、缺少分号/括号等\n2. 类型错误：类型不匹配、未定义的变量/方法\n3. 逻辑警告：可能的空指针、未处理的异常、死代码\n4. 代码规范：命名规范、代码风格、最佳实践\n5. 性能建议：潜在的性能问题、优化建议\n6. 安全风险：注入风险、敏感信息泄露等\n\n输出格式：\n- 严重程度：ERROR/WARNING/INFO\n- 位置：文件:行号\n- 描述：问题说明\n- 建议：修复方案', 1),
+('server-dev', 'lspSymbolInfo', '符号信息', '获取符号的详细信息，包括类型签名、文档注释、所属模块等', 'code_intelligence', 0, 83, '{"symbol":"string|required","context":"string"}', 'prompt', '请获取符号 "{symbol}" 的详细信息。\n\n分析内容：\n1. 类型签名：完整的类型声明（参数类型、返回类型）\n2. 文档注释：Javadoc/注释内容\n3. 所属模块：所在文件、包/命名空间、类\n4. 可见性：public/private/protected\n5. 使用示例：从项目中提取该符号的典型使用方式\n6. 相关符号：同类型的相关符号推荐\n\n如果 context 非空，在该上下文中分析符号的具体含义。', 1),
+('server-dev', 'lspWorkspaceSymbols', '符号搜索', '在项目中搜索符号，支持模糊匹配，返回匹配的符号列表', 'code_intelligence', 0, 84, '{"query":"string|required","symbolKind":"enum:class,method,function,variable,interface,enum,all"}', 'prompt', '请在项目中搜索匹配 "{query}" 的符号。\n\n搜索策略：\n1. 精确匹配：符号名完全匹配\n2. 前缀匹配：符号名以 query 开头\n3. 模糊匹配：符号名包含 query（不区分大小写）\n4. 如果 symbolKind 非 all，只搜索指定类型的符号\n\n输出格式（每条）：\n- 符号名称\n- 类型（class/method/function/variable/interface/enum）\n- 所在文件:行号\n- 简短描述（如有注释）\n\n按匹配度排序，最多返回 20 个结果。', 1),
+
+-- client-dev
+('client-dev', 'lspGoToDefinition', '跳转定义', '查找符号（类、方法、变量、接口）的定义位置，返回定义所在的文件路径、行号和上下文代码', 'code_intelligence', 0, 80, '{"symbol":"string|required","scope":"string"}', 'prompt', '请在项目中查找符号 "{symbol}" 的定义位置。\n\n分析步骤：\n1. 在项目目录中搜索该符号的定义\n2. 返回定义所在的文件路径、行号\n3. 展示定义的完整代码上下文\n4. 说明符号的类型、参数、返回值等信息', 1),
+('client-dev', 'lspFindReferences', '查找引用', '查找符号在项目中的所有引用位置', 'code_intelligence', 0, 81, '{"symbol":"string|required","includeDeclaration":"boolean"}', 'prompt', '请在项目中查找符号 "{symbol}" 的所有引用位置。\n\n分析步骤：\n1. 搜索项目中所有引用该符号的文件\n2. 对每个引用，说明引用类型\n3. 展示引用的代码上下文\n4. 统计引用总数和分布情况', 1),
+('client-dev', 'lspCodeDiagnostics', '代码诊断', '分析代码文件中的错误、警告和改进建议', 'code_intelligence', 0, 82, '{"targetPath":"string|required","severity":"enum:error,warning,info,all"}', 'prompt', '请对文件 "{targetPath}" 进行代码诊断分析。\n\n诊断维度：语法错误、类型错误、逻辑警告、代码规范、性能建议、安全风险。', 1),
+('client-dev', 'lspSymbolInfo', '符号信息', '获取符号的详细信息', 'code_intelligence', 0, 83, '{"symbol":"string|required","context":"string"}', 'prompt', '请获取符号 "{symbol}" 的详细信息。包括类型签名、文档注释、所属模块、可见性、使用示例。', 1),
+('client-dev', 'lspWorkspaceSymbols', '符号搜索', '在项目中搜索符号', 'code_intelligence', 0, 84, '{"query":"string|required","symbolKind":"enum:class,method,function,variable,interface,enum,all"}', 'prompt', '请在项目中搜索匹配 "{query}" 的符号。按匹配度排序，最多返回 20 个结果。', 1),
+
+-- ui-dev
+('ui-dev', 'lspGoToDefinition', '跳转定义', '查找符号的定义位置', 'code_intelligence', 0, 80, '{"symbol":"string|required","scope":"string"}', 'prompt', '请在项目中查找符号 "{symbol}" 的定义位置。', 1),
+('ui-dev', 'lspFindReferences', '查找引用', '查找符号的所有引用位置', 'code_intelligence', 0, 81, '{"symbol":"string|required","includeDeclaration":"boolean"}', 'prompt', '请在项目中查找符号 "{symbol}" 的所有引用位置。', 1),
+('ui-dev', 'lspCodeDiagnostics', '代码诊断', '分析代码文件中的错误和警告', 'code_intelligence', 0, 82, '{"targetPath":"string|required","severity":"enum:error,warning,info,all"}', 'prompt', '请对文件 "{targetPath}" 进行代码诊断分析。', 1),
+('ui-dev', 'lspSymbolInfo', '符号信息', '获取符号的详细信息', 'code_intelligence', 0, 83, '{"symbol":"string|required","context":"string"}', 'prompt', '请获取符号 "{symbol}" 的详细信息。', 1),
+('ui-dev', 'lspWorkspaceSymbols', '符号搜索', '在项目中搜索符号', 'code_intelligence', 0, 84, '{"query":"string|required","symbolKind":"enum:class,method,function,variable,interface,enum,all"}', 'prompt', '请在项目中搜索匹配 "{query}" 的符号。', 1),
+
+-- tester
+('tester', 'lspGoToDefinition', '跳转定义', '查找符号的定义位置', 'code_intelligence', 0, 80, '{"symbol":"string|required","scope":"string"}', 'prompt', '请在项目中查找符号 "{symbol}" 的定义位置。', 1),
+('tester', 'lspFindReferences', '查找引用', '查找符号的所有引用位置', 'code_intelligence', 0, 81, '{"symbol":"string|required","includeDeclaration":"boolean"}', 'prompt', '请在项目中查找符号 "{symbol}" 的所有引用位置。', 1),
+('tester', 'lspCodeDiagnostics', '代码诊断', '分析代码文件中的错误和警告', 'code_intelligence', 0, 82, '{"targetPath":"string|required","severity":"enum:error,warning,info,all"}', 'prompt', '请对文件 "{targetPath}" 进行代码诊断分析。', 1),
+('tester', 'lspSymbolInfo', '符号信息', '获取符号的详细信息', 'code_intelligence', 0, 83, '{"symbol":"string|required","context":"string"}', 'prompt', '请获取符号 "{symbol}" 的详细信息。', 1),
+('tester', 'lspWorkspaceSymbols', '符号搜索', '在项目中搜索符号', 'code_intelligence', 0, 84, '{"query":"string|required","symbolKind":"enum:class,method,function,variable,interface,enum,all"}', 'prompt', '请在项目中搜索匹配 "{query}" 的符号。', 1),
+
+-- verifier
+('verifier', 'lspGoToDefinition', '跳转定义', '查找符号的定义位置', 'code_intelligence', 0, 80, '{"symbol":"string|required","scope":"string"}', 'prompt', '请在项目中查找符号 "{symbol}" 的定义位置。', 1),
+('verifier', 'lspFindReferences', '查找引用', '查找符号的所有引用位置', 'code_intelligence', 0, 81, '{"symbol":"string|required","includeDeclaration":"boolean"}', 'prompt', '请在项目中查找符号 "{symbol}" 的所有引用位置。', 1),
+('verifier', 'lspCodeDiagnostics', '代码诊断', '分析代码文件中的错误和警告', 'code_intelligence', 0, 82, '{"targetPath":"string|required","severity":"enum:error,warning,info,all"}', 'prompt', '请对文件 "{targetPath}" 进行代码诊断分析。', 1),
+('verifier', 'lspSymbolInfo', '符号信息', '获取符号的详细信息', 'code_intelligence', 0, 83, '{"symbol":"string|required","context":"string"}', 'prompt', '请获取符号 "{symbol}" 的详细信息。', 1),
+('verifier', 'lspWorkspaceSymbols', '符号搜索', '在项目中搜索符号', 'code_intelligence', 0, 84, '{"query":"string|required","symbolKind":"enum:class,method,function,variable,interface,enum,all"}', 'prompt', '请在项目中搜索匹配 "{query}" 的符号。', 1),
+
+-- security-expert
+('security-expert', 'lspGoToDefinition', '跳转定义', '查找符号的定义位置', 'code_intelligence', 0, 80, '{"symbol":"string|required","scope":"string"}', 'prompt', '请在项目中查找符号 "{symbol}" 的定义位置。', 1),
+('security-expert', 'lspFindReferences', '查找引用', '查找符号的所有引用位置', 'code_intelligence', 0, 81, '{"symbol":"string|required","includeDeclaration":"boolean"}', 'prompt', '请在项目中查找符号 "{symbol}" 的所有引用位置。', 1),
+('security-expert', 'lspCodeDiagnostics', '代码诊断', '分析代码文件中的错误和警告', 'code_intelligence', 0, 82, '{"targetPath":"string|required","severity":"enum:error,warning,info,all"}', 'prompt', '请对文件 "{targetPath}" 进行代码诊断分析。', 1),
+('security-expert', 'lspSymbolInfo', '符号信息', '获取符号的详细信息', 'code_intelligence', 0, 83, '{"symbol":"string|required","context":"string"}', 'prompt', '请获取符号 "{symbol}" 的详细信息。', 1),
+('security-expert', 'lspWorkspaceSymbols', '符号搜索', '在项目中搜索符号', 'code_intelligence', 0, 84, '{"query":"string|required","symbolKind":"enum:class,method,function,variable,interface,enum,all"}', 'prompt', '请在项目中搜索匹配 "{query}" 的符号。', 1),
+
+-- performance-engineer
+('performance-engineer', 'lspGoToDefinition', '跳转定义', '查找符号的定义位置', 'code_intelligence', 0, 80, '{"symbol":"string|required","scope":"string"}', 'prompt', '请在项目中查找符号 "{symbol}" 的定义位置。', 1),
+('performance-engineer', 'lspFindReferences', '查找引用', '查找符号的所有引用位置', 'code_intelligence', 0, 81, '{"symbol":"string|required","includeDeclaration":"boolean"}', 'prompt', '请在项目中查找符号 "{symbol}" 的所有引用位置。', 1),
+('performance-engineer', 'lspCodeDiagnostics', '代码诊断', '分析代码文件中的错误和警告', 'code_intelligence', 0, 82, '{"targetPath":"string|required","severity":"enum:error,warning,info,all"}', 'prompt', '请对文件 "{targetPath}" 进行代码诊断分析。', 1),
+('performance-engineer', 'lspSymbolInfo', '符号信息', '获取符号的详细信息', 'code_intelligence', 0, 83, '{"symbol":"string|required","context":"string"}', 'prompt', '请获取符号 "{symbol}" 的详细信息。', 1),
+('performance-engineer', 'lspWorkspaceSymbols', '符号搜索', '在项目中搜索符号', 'code_intelligence', 0, 84, '{"query":"string|required","symbolKind":"enum:class,method,function,variable,interface,enum,all"}', 'prompt', '请在项目中搜索匹配 "{query}" 的符号。', 1),
+
+-- ai-engineer
+('ai-engineer', 'lspGoToDefinition', '跳转定义', '查找符号的定义位置', 'code_intelligence', 0, 80, '{"symbol":"string|required","scope":"string"}', 'prompt', '请在项目中查找符号 "{symbol}" 的定义位置。', 1),
+('ai-engineer', 'lspFindReferences', '查找引用', '查找符号的所有引用位置', 'code_intelligence', 0, 81, '{"symbol":"string|required","includeDeclaration":"boolean"}', 'prompt', '请在项目中查找符号 "{symbol}" 的所有引用位置。', 1),
+('ai-engineer', 'lspCodeDiagnostics', '代码诊断', '分析代码文件中的错误和警告', 'code_intelligence', 0, 82, '{"targetPath":"string|required","severity":"enum:error,warning,info,all"}', 'prompt', '请对文件 "{targetPath}" 进行代码诊断分析。', 1),
+('ai-engineer', 'lspSymbolInfo', '符号信息', '获取符号的详细信息', 'code_intelligence', 0, 83, '{"symbol":"string|required","context":"string"}', 'prompt', '请获取符号 "{symbol}" 的详细信息。', 1),
+('ai-engineer', 'lspWorkspaceSymbols', '符号搜索', '在项目中搜索符号', 'code_intelligence', 0, 84, '{"query":"string|required","symbolKind":"enum:class,method,function,variable,interface,enum,all"}', 'prompt', '请在项目中搜索匹配 "{query}" 的符号。', 1),
+
+-- tech-artist
+('tech-artist', 'lspGoToDefinition', '跳转定义', '查找符号的定义位置', 'code_intelligence', 0, 80, '{"symbol":"string|required","scope":"string"}', 'prompt', '请在项目中查找符号 "{symbol}" 的定义位置。', 1),
+('tech-artist', 'lspFindReferences', '查找引用', '查找符号的所有引用位置', 'code_intelligence', 0, 81, '{"symbol":"string|required","includeDeclaration":"boolean"}', 'prompt', '请在项目中查找符号 "{symbol}" 的所有引用位置。', 1),
+('tech-artist', 'lspCodeDiagnostics', '代码诊断', '分析代码文件中的错误和警告', 'code_intelligence', 0, 82, '{"targetPath":"string|required","severity":"enum:error,warning,info,all"}', 'prompt', '请对文件 "{targetPath}" 进行代码诊断分析。', 1),
+('tech-artist', 'lspSymbolInfo', '符号信息', '获取符号的详细信息', 'code_intelligence', 0, 83, '{"symbol":"string|required","context":"string"}', 'prompt', '请获取符号 "{symbol}" 的详细信息。', 1),
+('tech-artist', 'lspWorkspaceSymbols', '符号搜索', '在项目中搜索符号', 'code_intelligence', 0, 84, '{"query":"string|required","symbolKind":"enum:class,method,function,variable,interface,enum,all"}', 'prompt', '请在项目中搜索匹配 "{query}" 的符号。', 1),
+
+-- devops
+('devops', 'lspGoToDefinition', '跳转定义', '查找符号的定义位置', 'code_intelligence', 0, 80, '{"symbol":"string|required","scope":"string"}', 'prompt', '请在项目中查找符号 "{symbol}" 的定义位置。', 1),
+('devops', 'lspFindReferences', '查找引用', '查找符号的所有引用位置', 'code_intelligence', 0, 81, '{"symbol":"string|required","includeDeclaration":"boolean"}', 'prompt', '请在项目中查找符号 "{symbol}" 的所有引用位置。', 1),
+('devops', 'lspCodeDiagnostics', '代码诊断', '分析代码文件中的错误和警告', 'code_intelligence', 0, 82, '{"targetPath":"string|required","severity":"enum:error,warning,info,all"}', 'prompt', '请对文件 "{targetPath}" 进行代码诊断分析。', 1),
+('devops', 'lspSymbolInfo', '符号信息', '获取符号的详细信息', 'code_intelligence', 0, 83, '{"symbol":"string|required","context":"string"}', 'prompt', '请获取符号 "{symbol}" 的详细信息。', 1),
+('devops', 'lspWorkspaceSymbols', '符号搜索', '在项目中搜索符号', 'code_intelligence', 0, 84, '{"query":"string|required","symbolKind":"enum:class,method,function,variable,interface,enum,all"}', 'prompt', '请在项目中搜索匹配 "{query}" 的符号。', 1);
+
+-- ===== Agent 工具能力：快照、会话分叉、子代理、工具权限 =====
+-- 快照管理（所有开发类角色）
+INSERT IGNORE INTO agent_capabilities (agent_role, capability_name, display_name, description, category, requires_approval, priority, param_schema, execution_type, prompt_template, enabled) VALUES
+('producer', 'createSnapshot', '创建快照', '对指定文件创建快照，保存当前状态以便后续恢复', 'snapshot', 0, 90, '{"projectId":"string|required","agentId":"string|required","filePaths":"array|required","description":"string"}', 'java', NULL, 1),
+('producer', 'listSnapshots', '查看快照', '查看指定项目和 Agent 的所有快照列表', 'snapshot', 0, 91, '{"projectId":"string|required","agentId":"string|required"}', 'java', NULL, 1),
+('producer', 'restoreSnapshot', '恢复快照', '恢复指定快照，将文件还原到快照时的状态', 'snapshot', 0, 92, '{"projectId":"string|required","agentId":"string|required","snapshotId":"string|required"}', 'java', NULL, 1),
+('producer', 'undoSnapshot', '撤销快照恢复', '撤销最近一次快照恢复操作', 'snapshot', 0, 93, '{"projectId":"string|required","agentId":"string|required"}', 'java', NULL, 1),
+('server-dev', 'createSnapshot', '创建快照', '对指定文件创建快照', 'snapshot', 0, 90, '{"projectId":"string|required","agentId":"string|required","filePaths":"array|required","description":"string"}', 'java', NULL, 1),
+('server-dev', 'listSnapshots', '查看快照', '查看快照列表', 'snapshot', 0, 91, '{"projectId":"string|required","agentId":"string|required"}', 'java', NULL, 1),
+('server-dev', 'restoreSnapshot', '恢复快照', '恢复指定快照', 'snapshot', 0, 92, '{"projectId":"string|required","agentId":"string|required","snapshotId":"string|required"}', 'java', NULL, 1),
+('server-dev', 'undoSnapshot', '撤销快照恢复', '撤销最近一次快照恢复', 'snapshot', 0, 93, '{"projectId":"string|required","agentId":"string|required"}', 'java', NULL, 1);
+
+-- 会话分叉（制作人和高级角色）
+INSERT IGNORE INTO agent_capabilities (agent_role, capability_name, display_name, description, category, requires_approval, priority, param_schema, execution_type, prompt_template, enabled) VALUES
+('producer', 'createSessionFork', '创建会话分叉', '从当前会话分叉出一个探索性分支', 'session', 0, 95, '{"projectId":"string|required","agentId":"string|required","description":"string"}', 'java', NULL, 1),
+('producer', 'listSessionForks', '查看会话分叉', '查看所有会话分叉', 'session', 0, 96, '{"parentAgentId":"string|required"}', 'java', NULL, 1),
+('producer', 'mergeSessionFork', '合并会话分叉', '将分叉的上下文合并回主会话', 'session', 0, 97, '{"forkId":"string|required","strategy":"string"}', 'java', NULL, 1),
+('producer', 'discardSessionFork', '丢弃会话分叉', '丢弃不需要的会话分叉', 'session', 0, 98, '{"forkId":"string|required"}', 'java', NULL, 1),
+('server-dev', 'createSessionFork', '创建会话分叉', '从当前会话分叉出探索分支', 'session', 0, 95, '{"projectId":"string|required","agentId":"string|required","description":"string"}', 'java', NULL, 1),
+('server-dev', 'listSessionForks', '查看会话分叉', '查看所有会话分叉', 'session', 0, 96, '{"parentAgentId":"string|required"}', 'java', NULL, 1),
+('server-dev', 'mergeSessionFork', '合并会话分叉', '合并分叉回主会话', 'session', 0, 97, '{"forkId":"string|required","strategy":"string"}', 'java', NULL, 1),
+('server-dev', 'discardSessionFork', '丢弃会话分叉', '丢弃不需要的分叉', 'session', 0, 98, '{"forkId":"string|required"}', 'java', NULL, 1);
+
+-- 子代理（制作人和高级角色）
+INSERT IGNORE INTO agent_capabilities (agent_role, capability_name, display_name, description, category, requires_approval, priority, param_schema, execution_type, prompt_template, enabled) VALUES
+('producer', 'spawnSubAgent', '创建子代理', '创建子代理来并行处理子任务', 'subagent', 0, 100, '{"parentAgentId":"string|required","projectId":"string|required","task":"string|required","role":"string"}', 'java', NULL, 1),
+('producer', 'listSubAgents', '查看子代理', '查看所有子代理', 'subagent', 0, 101, '{"parentAgentId":"string|required"}', 'java', NULL, 1),
+('producer', 'terminateSubAgent', '终止子代理', '终止运行中的子代理', 'subagent', 0, 102, '{"subAgentId":"string|required"}', 'java', NULL, 1),
+('server-dev', 'spawnSubAgent', '创建子代理', '创建子代理并行处理子任务', 'subagent', 0, 100, '{"parentAgentId":"string|required","projectId":"string|required","task":"string|required","role":"string"}', 'java', NULL, 1),
+('server-dev', 'listSubAgents', '查看子代理', '查看所有子代理', 'subagent', 0, 101, '{"parentAgentId":"string|required"}', 'java', NULL, 1),
+('server-dev', 'terminateSubAgent', '终止子代理', '终止运行中的子代理', 'subagent', 0, 102, '{"subAgentId":"string|required"}', 'java', NULL, 1);
+
+-- 工具权限（仅制作人）
+INSERT IGNORE INTO agent_capabilities (agent_role, capability_name, display_name, description, category, requires_approval, priority, param_schema, execution_type, prompt_template, enabled) VALUES
+('producer', 'setToolPermissions', '设置工具权限', '设置 Agent 的工具调用权限规则', 'security', 0, 105, '{"agentId":"string|required","permissions":"array|required"}', 'java', NULL, 1);

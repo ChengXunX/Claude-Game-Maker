@@ -113,7 +113,7 @@ CREATE TABLE IF NOT EXISTS agent_logs (
     agent_name VARCHAR(100),
     action VARCHAR(50),
     level VARCHAR(20) DEFAULT 'INFO',
-    summary VARCHAR(200),
+    summary TEXT,
     detail TEXT,
     project_id VARCHAR(100),
     task_id VARCHAR(100),
@@ -616,27 +616,50 @@ CREATE TABLE IF NOT EXISTS notification_templates (
 -- API Token 表
 CREATE TABLE IF NOT EXISTS api_tokens (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    user_id BIGINT NOT NULL,
-    token VARCHAR(255) NOT NULL UNIQUE,
-    name VARCHAR(100),
-    api_key TEXT,
+    user_id BIGINT,
+    token VARCHAR(255) DEFAULT '',
+    token_name VARCHAR(100) NOT NULL DEFAULT '',
+    api_key VARCHAR(255) NOT NULL DEFAULT '',
     api_url VARCHAR(500),
     model VARCHAR(100),
-    max_tokens INT DEFAULT 4096,
+    max_tokens INT,
     context_window INT DEFAULT 200000,
-    agent_id VARCHAR(50),
-    permissions TEXT,
+    priority INT,
+    agent_tags VARCHAR(500),
+    usage_count BIGINT,
+    total_tokens_used BIGINT DEFAULT 0,
+    quota_type VARCHAR(20) DEFAULT 'UNLIMITED' COMMENT '配额类型: UNLIMITED/TOTAL/SLIDING_WINDOW',
+    quota_total BIGINT DEFAULT 0 COMMENT '配额总量（token数）',
+    window_seconds INT DEFAULT 0 COMMENT '滑动窗口时长（秒）',
+    max_concurrent_agents INT DEFAULT 0 COMMENT '最大并发Agent数，0=不限',
+    provider_type VARCHAR(30) DEFAULT 'ANTHROPIC' COMMENT '提供商类型: ANTHROPIC/OPENAI_COMPATIBLE/SUNO/ELEVENLABS/DALL_E/STABILITY/ZHIPU_IMAGE/CUSTOM_RESOURCE',
+    resource_type VARCHAR(20) DEFAULT 'TEXT' COMMENT '资源类型: TEXT/AUDIO/IMAGE/MULTIMODAL',
+    description VARCHAR(500),
     status VARCHAR(20) DEFAULT 'ACTIVE',
+    created_by VARCHAR(50),
+    name VARCHAR(100),
+    permissions TEXT,
     expires_at TIMESTAMP NULL,
     last_used_at TIMESTAMP NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NULL,
     INDEX idx_api_tokens_user_id (user_id),
     INDEX idx_api_tokens_token (token),
     INDEX idx_api_tokens_expires_at (expires_at),
     INDEX idx_api_tokens_token_expires (token, expires_at),
     INDEX idx_api_tokens_user_expires (user_id, expires_at),
+    UNIQUE KEY uk_token (token),
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='API Token表';
+
+-- Token 使用记录表（滑动窗口配额计算）
+CREATE TABLE IF NOT EXISTS token_usage_records (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    token_id BIGINT NOT NULL COMMENT 'Token ID',
+    tokens_used BIGINT NOT NULL COMMENT '本次使用的token数量',
+    used_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '使用时间',
+    INDEX idx_usage_token_time (token_id, used_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Token使用记录（滑动窗口配额计算）';
 
 -- Token 使用统计表
 CREATE TABLE IF NOT EXISTS token_usage (
@@ -713,6 +736,7 @@ CREATE TABLE IF NOT EXISTS agent_presets (
     role VARCHAR(50) NOT NULL COMMENT 'Agent 角色',
     description VARCHAR(500) COMMENT '预设描述',
     reasoning_depth INT DEFAULT 3 COMMENT '推理深度 1-5',
+    thinking_mode INT DEFAULT NULL COMMENT '思维模式 1-5: 1=高度严谨 2=严谨 3=平衡 4=创新 5=突破',
     capabilities TEXT COMMENT '能力标签 JSON',
     tags TEXT COMMENT '自定义标签 JSON',
     supported_file_types TEXT COMMENT '支持的文件类型 JSON',
@@ -722,7 +746,7 @@ CREATE TABLE IF NOT EXISTS agent_presets (
     supports_code_execution BOOLEAN DEFAULT TRUE COMMENT '是否支持代码执行',
     supports_file_operations BOOLEAN DEFAULT TRUE COMMENT '是否支持文件操作',
     api_provider VARCHAR(50) DEFAULT 'anthropic' COMMENT 'API 提供商',
-    prompt TEXT COMMENT '角色系统提示词（完整角色定义）',
+    prompt MEDIUMTEXT COMMENT '角色系统提示词（完整角色定义）',
     notify_targets VARCHAR(500) DEFAULT 'producer' COMMENT '完成任务后的通知目标角色（逗号分隔）',
     reviewer VARCHAR(50) COMMENT '审查者角色',
     role_name VARCHAR(100) COMMENT '角色中文名称',
@@ -824,6 +848,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     user_id BIGINT NOT NULL COMMENT '用户 ID',
     title VARCHAR(200) NOT NULL DEFAULT '新对话' COMMENT '会话标题',
+    source VARCHAR(20) DEFAULT 'web' COMMENT '会话来源：web=网页端, feishu=飞书端',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     INDEX idx_chat_sessions_user (user_id),
@@ -840,6 +865,8 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     role VARCHAR(20) NOT NULL COMMENT '角色：user/assistant',
     content TEXT COMMENT '消息内容',
     thinking TEXT COMMENT '思考过程',
+    feishu_message_id VARCHAR(50) COMMENT '飞书消息ID（用于回复）',
+    feishu_open_id VARCHAR(100) COMMENT '飞书用户open_id',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     INDEX idx_chat_messages_session (session_id),
     FOREIGN KEY (session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE
@@ -1033,3 +1060,256 @@ CREATE TABLE IF NOT EXISTS version_evaluations (
     INDEX idx_ve_project (project_id),
     INDEX idx_ve_milestone (milestone_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='版本评估持久化表';
+
+-- ===== 项目讨论系统 =====
+
+CREATE TABLE IF NOT EXISTS project_discussions (
+    id BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键',
+    project_id VARCHAR(100) NOT NULL COMMENT '关联项目ID',
+    user_id BIGINT NOT NULL COMMENT '发起用户ID',
+    username VARCHAR(50) COMMENT '发起用户名',
+    title VARCHAR(200) COMMENT '会话标题',
+    status VARCHAR(30) NOT NULL DEFAULT 'ACTIVE' COMMENT '会话状态：ACTIVE/MINUTES_GENERATED/ARCHIVED',
+    meeting_minutes TEXT COMMENT '会议纪要',
+    synced_to_producer TINYINT(1) DEFAULT 0 COMMENT '是否已同步给制作人',
+    synced_at TIMESTAMP NULL COMMENT '同步时间',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (id),
+    INDEX idx_pd_project (project_id),
+    INDEX idx_pd_user (user_id),
+    INDEX idx_pd_status (status),
+    INDEX idx_pd_updated (updated_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='项目讨论会话表';
+
+CREATE TABLE IF NOT EXISTS project_discussion_messages (
+    id BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键',
+    discussion_id BIGINT NOT NULL COMMENT '所属讨论会话ID',
+    role VARCHAR(20) NOT NULL COMMENT '角色：user/assistant/system',
+    content TEXT NOT NULL COMMENT '消息内容',
+    sender VARCHAR(50) COMMENT '发送者用户名',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (id),
+    INDEX idx_pdm_discussion (discussion_id),
+    INDEX idx_pdm_created (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='项目讨论消息表';
+
+CREATE TABLE IF NOT EXISTS feishu_user_bindings (
+    id BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键',
+    open_id VARCHAR(100) COMMENT '飞书用户 open_id（待绑定时为空）',
+    user_id BIGINT NOT NULL COMMENT '系统用户 ID',
+    binding_code VARCHAR(10) COMMENT '绑定验证码',
+    status ENUM('PENDING','BOUND') DEFAULT 'PENDING' COMMENT '绑定状态',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_open_id (open_id),
+    INDEX idx_user_id (user_id),
+    INDEX idx_binding_code (binding_code)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='飞书用户绑定表';
+
+-- ============================================
+-- 多轮推理记录表
+-- ============================================
+CREATE TABLE IF NOT EXISTS multi_turn_records (
+    id BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键',
+    agent_id VARCHAR(200) NOT NULL COMMENT 'Agent ID',
+    project_id VARCHAR(200) COMMENT '项目 ID',
+    task_id VARCHAR(200) COMMENT '任务 ID',
+    task_description TEXT COMMENT '任务描述',
+    turn_number INT DEFAULT 1 COMMENT '当前轮次',
+    max_turns INT DEFAULT 3 COMMENT '最大轮次',
+    think_result TEXT COMMENT 'Think 阶段结果',
+    plan_result TEXT COMMENT 'Plan 阶段结果',
+    act_result TEXT COMMENT 'Act 阶段结果',
+    verify_result TEXT COMMENT 'Verify 阶段结果',
+    verify_passed BOOLEAN COMMENT '验证是否通过',
+    status VARCHAR(20) DEFAULT 'THINKING' COMMENT '状态',
+    duration_ms BIGINT COMMENT '总耗时（毫秒）',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (id),
+    INDEX idx_mtr_agent (agent_id),
+    INDEX idx_mtr_project (project_id),
+    INDEX idx_mtr_status (status),
+    INDEX idx_mtr_time (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='多轮推理记录表';
+
+-- ============================================
+-- 迭代适应记录表
+-- ============================================
+CREATE TABLE IF NOT EXISTS iteration_adapt_records (
+    id BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键',
+    project_id VARCHAR(200) NOT NULL COMMENT '项目 ID',
+    phase VARCHAR(20) COMMENT '项目阶段：EARLY/MID/LATE',
+    version VARCHAR(50) COMMENT '版本号',
+    iteration_count INT COMMENT '版本迭代次数',
+    old_strategy VARCHAR(50) COMMENT '旧策略',
+    new_strategy VARCHAR(50) COMMENT '新策略',
+    old_pass_score INT COMMENT '旧通过分数',
+    new_pass_score INT COMMENT '新通过分数',
+    reason VARCHAR(500) COMMENT '调整原因',
+    applied BOOLEAN DEFAULT FALSE COMMENT '是否已应用',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (id),
+    INDEX idx_iar_project (project_id),
+    INDEX idx_iar_phase (phase),
+    INDEX idx_iar_time (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='迭代适应记录表';
+
+-- ============================================
+-- 质量预测记录表
+-- ============================================
+CREATE TABLE IF NOT EXISTS quality_predictions (
+    id BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键',
+    project_id VARCHAR(200) NOT NULL COMMENT '项目 ID',
+    project_name VARCHAR(200) COMMENT '项目名称',
+    version VARCHAR(50) COMMENT '版本号',
+    pass_probability INT COMMENT '预测通过概率（0-100）',
+    risk_level VARCHAR(20) COMMENT '风险等级：LOW/MEDIUM/HIGH/CRITICAL',
+    risk_factors TEXT COMMENT '风险因素（JSON数组）',
+    improvement_suggestions TEXT COMMENT '改进建议（JSON数组）',
+    factors_detail TEXT COMMENT '因子详情（JSON对象）',
+    historical_pass_rate DOUBLE COMMENT '历史通过率',
+    milestone_completion_rate DOUBLE COMMENT '里程碑完成率',
+    verification_fail_count INT COMMENT '验证失败次数',
+    avg_agent_error_rate DOUBLE COMMENT 'Agent平均错误率',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (id),
+    INDEX idx_qp_project (project_id),
+    INDEX idx_qp_version (version),
+    INDEX idx_qp_time (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='质量预测记录表';
+
+-- ============================================
+-- 知识图谱节点表
+-- ============================================
+CREATE TABLE IF NOT EXISTS knowledge_graph_nodes (
+    id BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键',
+    project_id VARCHAR(200) NOT NULL COMMENT '项目 ID',
+    node_type VARCHAR(30) NOT NULL COMMENT '节点类型：AGENT/SKILL/DOCUMENT/MILESTONE/VERIFICATION/TASK/KNOWLEDGE/PROJECT',
+    node_ref_id VARCHAR(200) COMMENT '节点引用ID',
+    display_name VARCHAR(200) COMMENT '节点显示名称',
+    properties TEXT COMMENT '节点属性（JSON）',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (id),
+    INDEX idx_kgn_project (project_id),
+    INDEX idx_kgn_type (node_type),
+    INDEX idx_kgn_ref (node_ref_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='知识图谱节点表';
+
+-- ============================================
+-- 知识图谱边表
+-- ============================================
+CREATE TABLE IF NOT EXISTS knowledge_graph_edges (
+    id BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键',
+    project_id VARCHAR(200) NOT NULL COMMENT '项目 ID',
+    from_node_id BIGINT NOT NULL COMMENT '起始节点ID',
+    to_node_id BIGINT NOT NULL COMMENT '目标节点ID',
+    relation_type VARCHAR(30) NOT NULL COMMENT '关系类型：DEPENDS_ON/PRODUCES/VERIFIES/USES/BELONGS_TO/COLLABORATES_WITH/EVOLVES_FROM/FIXES',
+    properties TEXT COMMENT '关系属性（JSON）',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (id),
+    INDEX idx_kge_project (project_id),
+    INDEX idx_kge_from (from_node_id),
+    INDEX idx_kge_to (to_node_id),
+    INDEX idx_kge_type (relation_type)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='知识图谱边表';
+
+-- ============================================
+-- 设计审查记录表
+-- ============================================
+CREATE TABLE IF NOT EXISTS design_review_records (
+    id BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键',
+    project_id VARCHAR(200) NOT NULL COMMENT '项目 ID',
+    project_name VARCHAR(200) COMMENT '项目名称',
+    score INT COMMENT '审查评分（0-100）',
+    passed BOOLEAN COMMENT '是否通过',
+    summary TEXT COMMENT '审查摘要',
+    strengths TEXT COMMENT '设计亮点（JSON数组）',
+    issues TEXT COMMENT '发现的问题（JSON数组）',
+    report TEXT COMMENT '完整报告',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (id),
+    INDEX idx_drr_project (project_id),
+    INDEX idx_drr_time (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='设计审查记录表';
+
+-- ============================================
+-- MCP (Model Context Protocol) 表
+-- ============================================
+
+-- MCP 服务器配置表
+CREATE TABLE IF NOT EXISTS mcp_servers (
+    id BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键',
+    name VARCHAR(100) NOT NULL COMMENT '服务器名称',
+    description TEXT COMMENT '服务器描述',
+    transport_type VARCHAR(20) NOT NULL COMMENT '传输方式：STDIO/SSE/STREAMABLE_HTTP',
+    command VARCHAR(500) COMMENT '命令（STDIO 模式）',
+    args TEXT COMMENT '命令参数（JSON 数组）',
+    env TEXT COMMENT '环境变量（JSON）',
+    url VARCHAR(500) COMMENT 'URL（SSE/HTTP 模式）',
+    headers TEXT COMMENT '请求头（JSON）',
+    ai_api_key VARCHAR(500) COMMENT 'AI 服务 API Key（独立于 Agent Token）',
+    ai_api_url VARCHAR(500) COMMENT 'AI 服务 API URL',
+    ai_model VARCHAR(100) COMMENT 'AI 服务模型名',
+    category VARCHAR(50) COMMENT '模板分类：resource-image/resource-audio/resource-video/resource-3d/dev/data/collaboration/monitoring/gamedev',
+    auth_mode VARCHAR(20) DEFAULT 'env' COMMENT '认证模式：header/body/env',
+    auth_header_name VARCHAR(100) DEFAULT 'Authorization' COMMENT '自定义认证头名',
+    required_params TEXT COMMENT '必填参数定义（JSON 数组）',
+    enabled TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否启用',
+    `template` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否为模板',
+    template_key VARCHAR(50) COMMENT '模板标识',
+    project_id VARCHAR(100) COMMENT '所属项目 ID（null 表示全局）',
+    tool_count INT NOT NULL DEFAULT 0 COMMENT '已发现工具数量',
+    last_test_at TIMESTAMP NULL COMMENT '最后测试时间',
+    last_test_result VARCHAR(500) COMMENT '最后测试结果',
+    connected TINYINT(1) NOT NULL DEFAULT 0 COMMENT '连接状态',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (id),
+    UNIQUE KEY idx_mcp_server_template_key (template_key),
+    INDEX idx_mcp_server_project (project_id),
+    INDEX idx_mcp_server_enabled (enabled),
+    INDEX idx_mcp_server_name (name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='MCP 服务器配置表';
+
+-- MCP 工具表
+CREATE TABLE IF NOT EXISTS mcp_tools (
+    id BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键',
+    server_id BIGINT NOT NULL COMMENT '所属 Server ID',
+    tool_name VARCHAR(100) NOT NULL COMMENT '工具名称',
+    display_name VARCHAR(100) COMMENT '显示名称',
+    description TEXT COMMENT '工具描述',
+    input_schema TEXT COMMENT '输入参数 Schema（JSON）',
+    default_params TEXT COMMENT '默认参数（JSON）',
+    param_hints TEXT COMMENT '参数提示（JSON 格式，为 AI 提供填写指导）',
+    category VARCHAR(50) COMMENT '工具分类',
+    requires_approval TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否需要审批',
+    enabled TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否启用',
+    call_count BIGINT NOT NULL DEFAULT 0 COMMENT '调用次数',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (id),
+    INDEX idx_mcp_tool_server (server_id),
+    INDEX idx_mcp_tool_name (tool_name),
+    INDEX idx_mcp_tool_enabled (enabled)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='MCP 工具表';
+
+-- Agent MCP 绑定表
+CREATE TABLE IF NOT EXISTS agent_mcp_bindings (
+    id BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键',
+    agent_role VARCHAR(50) NOT NULL COMMENT 'Agent 角色',
+    project_id VARCHAR(100) NOT NULL COMMENT '项目 ID',
+    server_id BIGINT NOT NULL COMMENT 'MCP Server ID',
+    tool_id BIGINT COMMENT 'MCP Tool ID（null 表示绑定整个 Server）',
+    enabled TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否启用',
+    priority INT NOT NULL DEFAULT 5 COMMENT '优先级',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (id),
+    INDEX idx_amb_agent (agent_role, project_id),
+    INDEX idx_amb_server (server_id),
+    INDEX idx_amb_tool (tool_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Agent MCP 绑定表';

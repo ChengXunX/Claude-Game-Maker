@@ -48,6 +48,14 @@ public class ChatMessage {
     @Column(name = "created_at")
     private LocalDateTime createdAt = LocalDateTime.now();
 
+    /** 飞书消息ID（用于回复） */
+    @Column(name = "feishu_message_id", length = 50)
+    private String feishuMessageId;
+
+    /** 飞书用户 open_id */
+    @Column(name = "feishu_open_id", length = 100)
+    private String feishuOpenId;
+
     // Getters and Setters
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
@@ -72,4 +80,10 @@ public class ChatMessage {
 
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
+
+    public String getFeishuMessageId() { return feishuMessageId; }
+    public void setFeishuMessageId(String feishuMessageId) { this.feishuMessageId = feishuMessageId; }
+
+    public String getFeishuOpenId() { return feishuOpenId; }
+    public void setFeishuOpenId(String feishuOpenId) { this.feishuOpenId = feishuOpenId; }
 }

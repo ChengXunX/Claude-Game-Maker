@@ -60,6 +60,9 @@
               style="width: 200px"
               :prefix-icon="Search"
             />
+            <el-button type="info" @click="showCheckpointDialog = true" v-permission="'checkpoint:view'">
+              <el-icon><Clock /></el-icon> 会话检查点
+            </el-button>
             <el-button type="warning" @click="handleVersionIteration" v-permission="'agents:manage'">
               <el-icon><Promotion /></el-icon> 版本迭代
             </el-button>
@@ -353,6 +356,53 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <!-- 会话检查点对话框 -->
+    <el-dialog v-model="showCheckpointDialog" title="会话检查点管理" width="750px">
+      <div style="margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; gap: 12px;">
+        <div style="display: flex; gap: 8px; flex: 1;">
+          <el-select v-model="checkpointAgentId" placeholder="选择 Agent" style="width: 200px" @change="loadCheckpoints">
+            <el-option label="全部 Agent" value="" />
+            <el-option v-for="a in availableAgents" :key="a.id" :label="`${a.name} (${a.role})`" :value="a.id" />
+          </el-select>
+        </div>
+        <el-button type="primary" size="small" @click="showCreateCheckpoint = true">
+          <el-icon><Plus /></el-icon> 创建检查点
+        </el-button>
+      </div>
+      <el-table :data="checkpoints" stripe v-loading="checkpointLoading" empty-text="暂无检查点">
+        <el-table-column prop="timestamp" label="时间戳" width="180" />
+        <el-table-column prop="agentId" label="Agent" width="150" />
+        <el-table-column prop="reason" label="原因" show-overflow-tooltip />
+        <el-table-column label="操作" width="160">
+          <template #default="{ row }">
+            <el-button size="small" type="primary" text @click="restoreCheckpoint(row)">恢复</el-button>
+            <el-button size="small" type="danger" text @click="deleteCheckpoint(row)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <template #footer>
+        <el-button @click="showCheckpointDialog = false">关闭</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 创建检查点对话框 -->
+    <el-dialog v-model="showCreateCheckpoint" title="创建检查点" width="450px">
+      <el-form :model="checkpointForm" label-width="80px">
+        <el-form-item label="Agent">
+          <el-select v-model="checkpointForm.agentId" placeholder="选择 Agent" style="width: 100%">
+            <el-option v-for="a in availableAgents" :key="a.id" :label="`${a.name} (${a.role})`" :value="a.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="原因">
+          <el-input v-model="checkpointForm.reason" placeholder="创建原因（如：里程碑完成前备份）" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showCreateCheckpoint = false">取消</el-button>
+        <el-button type="primary" @click="createCheckpoint">创建</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -371,16 +421,24 @@
  * 操作维度：项目级
  * 权限要求：agents:manage
  */
-import { ref, computed, onMounted } from 'vue'
-import { interventionApi, agentApi } from '@/api'
-import { ElMessage } from 'element-plus'
-import { Warning, CircleCheck, Promotion, EditPen, Search } from '@element-plus/icons-vue'
+import { ref, computed, onMounted, watch } from 'vue'
+import { interventionApi, agentApi, checkpointApi } from '@/api'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Warning, CircleCheck, Promotion, EditPen, Search, Clock, Plus } from '@element-plus/icons-vue'
 import ProjectSelector from '@/components/ProjectSelector.vue'
 
 const loading = ref(false)
 const interventions = ref([])
 const selectedProjectId = ref(localStorage.getItem('selectedProjectId') || '')
 const filterType = ref('')
+
+// 会话检查点
+const showCheckpointDialog = ref(false)
+const showCreateCheckpoint = ref(false)
+const checkpointLoading = ref(false)
+const checkpoints = ref([])
+const checkpointAgentId = ref('')
+const checkpointForm = ref({ agentId: '', reason: '' })
 const filterStatus = ref('')
 const searchKeyword = ref('')
 const availableAgents = ref([])
@@ -610,6 +668,23 @@ const handleSubmit = async () => {
     ElMessage.success('干预指令已发送')
     dialogVisible.value = false
     loadInterventions()
+
+    // 干预成功后提示创建检查点
+    try {
+      await ElMessageBox.confirm('干预已发送，是否创建检查点保存当前状态？', '创建检查点', {
+        confirmButtonText: '创建',
+        cancelButtonText: '跳过',
+        type: 'info'
+      })
+      await checkpointApi.create({
+        projectId: selectedProjectId.value,
+        agentId: form.value.agentId,
+        description: `干预后检查点 - ${form.value.interventionType}`
+      })
+      ElMessage.success('检查点已创建')
+    } catch (e) {
+      // 用户点击跳过，忽略
+    }
   } catch (error) {
     if (error !== false) {
       let errorMessage = '提交失败'
@@ -673,6 +748,53 @@ const handleIterationSubmit = async () => {
     iterationSubmitting.value = false
   }
 }
+
+// ===== 会话检查点 =====
+const loadCheckpoints = async () => {
+  if (!selectedProjectId.value) return
+  checkpointLoading.value = true
+  try {
+    const agentId = checkpointAgentId.value || 'producer'
+    const res = await checkpointApi.list(selectedProjectId.value, agentId)
+    if (res.data?.success) {
+      checkpoints.value = (res.data.checkpoints || []).map(t => ({
+        timestamp: t,
+        agentId: agentId,
+        reason: ''
+      }))
+    }
+  } catch (e) { console.error('加载检查点失败', e) }
+  finally { checkpointLoading.value = false }
+}
+
+const createCheckpoint = async () => {
+  try {
+    const res = await checkpointApi.create({ projectId: selectedProjectId.value, ...checkpointForm.value })
+    if (res.data?.success) {
+      ElMessage.success('检查点已创建')
+      showCreateCheckpoint.value = false
+      loadCheckpoints()
+    }
+  } catch (e) { ElMessage.error('创建失败') }
+}
+
+const restoreCheckpoint = async (row) => {
+  try {
+    await checkpointApi.restore(selectedProjectId.value, row.agentId, row.timestamp)
+    ElMessage.success('检查点已恢复')
+  } catch (e) { ElMessage.error('恢复失败') }
+}
+
+const deleteCheckpoint = async (row) => {
+  try {
+    await checkpointApi.delete(selectedProjectId.value, row.agentId, row.timestamp)
+    ElMessage.success('已删除')
+    loadCheckpoints()
+  } catch (e) { ElMessage.error('删除失败') }
+}
+
+// 监听检查点对话框打开
+watch(showCheckpointDialog, (val) => { if (val) loadCheckpoints() })
 
 onMounted(() => {
   loadInterventions()

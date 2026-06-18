@@ -50,6 +50,10 @@ public class StreamingClaudeCliEngine {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.chengxun.gamemaker.web.service.ApiTokenService apiTokenService;
 
+    /** 可选注入，用于 OpenAI 兼容 API（MiniMax 等） */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private OpenAiCompatibleEngine openAiEngine;
+
     public StreamingClaudeCliEngine(AppConfig appConfig) {
         this.appConfig = appConfig;
     }
@@ -71,6 +75,31 @@ public class StreamingClaudeCliEngine {
     public void sendMessageStreaming(String agentId, String sessionId, String message,
                                      String workDir, String apiKey, String apiUrl, String model,
                                      String userToken, Consumer<StreamEvent> onEvent) {
+        // 检查是否为 OpenAI 兼容 API（MiniMax 等），使用专用引擎
+        if (openAiEngine != null && OpenAiCompatibleEngine.isOpenAiCompatible(apiUrl)) {
+            log.info("Using OpenAI compatible engine for streaming: agent={}, url={}", agentId, apiUrl);
+            Thread openAiThread = new Thread(() -> {
+                try {
+                    ClaudeCliEngine.AiCallResult result = openAiEngine.sendMessage(
+                        agentId, message, apiKey, apiUrl, model);
+                    if (result.response != null && !result.response.isEmpty()) {
+                        // 模拟流式事件：发送文本内容
+                        onEvent.accept(StreamEvent.text(result.response));
+                        onEvent.accept(StreamEvent.complete(result.response));
+                    } else {
+                        onEvent.accept(StreamEvent.error("OpenAI compatible API returned empty response"));
+                    }
+                } catch (Exception e) {
+                    log.error("OpenAI compatible engine error for agent {}: {}", agentId, e.getMessage(), e);
+                    onEvent.accept(StreamEvent.error("API Error: " + e.getMessage()));
+                }
+            });
+            openAiThread.setDaemon(true);
+            openAiThread.setName("openai-stream-" + agentId);
+            openAiThread.start();
+            return;
+        }
+
         ProcessInfo processInfo = getOrCreateProcess(agentId, sessionId, workDir, apiKey, apiUrl, model, userToken);
         if (processInfo == null) {
             onEvent.accept(StreamEvent.error("Failed to create Claude CLI process"));
@@ -275,10 +304,10 @@ public class StreamingClaudeCliEngine {
                     String line;
                     while ((line = stderr.readLine()) != null) {
                         stderrOutput.append(line).append("\n");
-                        log.debug("Claude stderr [{}]: {}", agentId, line);
+                        log.info("Claude stderr [{}]: {}", agentId, line);
                     }
                 } catch (Exception e) {
-                    log.debug("Stderr reader error: {}", e.getMessage());
+                    log.info("Stderr reader error [{}]: {}", agentId, e.getMessage());
                 }
             });
             stderrThread.setDaemon(true);
@@ -297,6 +326,8 @@ public class StreamingClaudeCliEngine {
 
             while ((line = stdout.readLine()) != null) {
                 if (line.isEmpty()) continue;
+
+                log.info("Claude stdout [{}]: {}", agentId, line.length() > 200 ? line.substring(0, 200) + "..." : line);
 
                 try {
                     JsonNode node = objectMapper.readTree(line);
@@ -374,14 +405,23 @@ public class StreamingClaudeCliEngine {
                 }
             }
 
-            stderrThread.join(3000);
+            stderrThread.join(10000);
+
+            int exitCode = processInfo.process.waitFor();
+            log.info("Claude process exited [{}]: exitCode={}, resultLength={}", agentId, exitCode, finalResult.length());
 
             // 完成
             String result = finalResult.toString().trim();
-            if (result.isEmpty() && stderrOutput.length() > 0) {
-                onEvent.accept(StreamEvent.error(stderrOutput.toString().trim()));
+            String stderr = stderrOutput.toString().trim();
+            if (result.isEmpty()) {
+                log.warn("Claude CLI streaming returned empty result [{}]: exitCode={}, stderr={}", agentId, exitCode, stderr.isEmpty() ? "(empty)" : stderr);
+                if (!stderr.isEmpty()) {
+                    onEvent.accept(StreamEvent.error(stderr));
+                } else {
+                    onEvent.accept(StreamEvent.error("No response from Claude (exitCode=" + exitCode + ", agentId=" + agentId + "). Check logs for details."));
+                }
             } else {
-                onEvent.accept(StreamEvent.complete(result.isEmpty() ? "No response from Claude" : result));
+                onEvent.accept(StreamEvent.complete(result));
             }
 
         } catch (Exception e) {

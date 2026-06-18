@@ -3,7 +3,7 @@
     <!-- 侧边栏 -->
     <el-aside :width="isCollapse ? '64px' : '220px'" class="aside">
       <div class="logo">
-        <el-icon :size="24"><Monitor /></el-icon>
+        <img src="/favicon.svg" alt="Logo" class="logo-icon" />
         <span v-show="!isCollapse">Game Maker</span>
       </div>
 
@@ -433,6 +433,16 @@ html.dark .aside {
   font-weight: bold;
   border-bottom: 1px solid #ffffff1a;
   flex-shrink: 0;
+}
+
+.logo-icon {
+  width: 32px;
+  height: 32px;
+  transition: transform 0.3s;
+}
+
+.logo-icon:hover {
+  transform: rotate(10deg) scale(1.1);
 }
 
 .menu-group-title {

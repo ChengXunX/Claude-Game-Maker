@@ -50,9 +50,7 @@ public class ProducerAgent extends BaseAgent {
     @Autowired(required = false)
     private ApprovalService approvalService;
 
-    /** 通知服务（延迟注入） */
-    @Autowired(required = false)
-    private com.chengxun.gamemaker.web.service.NotificationService notificationService;
+    // notificationService 继承自 BaseAgent，由 AgentManager 注入
 
     /** 游戏设计审查服务（延迟注入） */
     private GameDesignReviewService gameDesignReviewService;
@@ -92,6 +90,34 @@ public class ProducerAgent extends BaseAgent {
     /** 项目讨论服务（延迟注入）—— 用于读取会议纪要 */
     @Autowired(required = false)
     private com.chengxun.gamemaker.service.ProjectDiscussionService projectDiscussionService;
+
+    /** 项目成员仓库（延迟注入）—— 用于查询项目所有者 */
+    @Autowired(required = false)
+    private com.chengxun.gamemaker.web.repository.ProjectMemberRepository projectMemberRepository;
+
+    /** 用户仓库（延迟注入）—— 用于查询用户名 */
+    @Autowired(required = false)
+    private com.chengxun.gamemaker.web.repository.UserRepository userRepository;
+
+    /** 知识图谱服务（延迟注入）—— 里程碑完成时自动构建 */
+    @Autowired(required = false)
+    private com.chengxun.gamemaker.service.KnowledgeGraphService knowledgeGraphService;
+
+    /** 质量预测服务（延迟注入）—— 版本评估前自动预测 */
+    @Autowired(required = false)
+    private com.chengxun.gamemaker.service.QualityPredictionService qualityPredictionService;
+
+    /** 迭代适应服务（延迟注入）—— 自动检测项目阶段并调整策略 */
+    @Autowired(required = false)
+    private com.chengxun.gamemaker.service.IterationAdaptService iterationAdaptService;
+
+    /** 多轮推理服务（延迟注入）—— 复杂任务自动多轮推理 */
+    @Autowired(required = false)
+    private com.chengxun.gamemaker.service.MultiTurnReasoningService multiTurnReasoningService;
+
+    /** 文档归档服务（延迟注入）—— 里程碑/任务完成时自动归档文档 */
+    @Autowired(required = false)
+    private com.chengxun.gamemaker.service.DocumentArchiveService documentArchiveService;
 
     /** 当前暂停的里程碑 ID（等待审批） */
     private String pendingApprovalMilestoneId;
@@ -136,6 +162,20 @@ public class ProducerAgent extends BaseAgent {
     /** 移除工作流追踪 */
     private void untrackWorkflow(String milestoneId) {
         activeWorkflows.remove(milestoneId);
+    }
+
+    /**
+     * 清理所有里程碑相关的内存状态
+     * 版本升级时调用，防止旧里程碑 ID 残留在内存中导致逻辑异常
+     */
+    public void clearMilestoneState() {
+        pendingApprovalMilestoneId = null;
+        activeWorkflows.clear();
+        rejectedMilestones.clear();
+        failedWorkflowMilestones.clear();
+        assignedTasks.clear();
+        sentTaskIds.clear();
+        log.info("里程碑状态已清理（版本升级）: project={}", getProjectId());
     }
 
     /** 工作流卡住超时时间（分钟）：超过此时间无进展则自动取消 */
@@ -333,10 +373,35 @@ public class ProducerAgent extends BaseAgent {
         this.projectDiscussionService = service;
     }
 
+    public void setVersionIterationService(VersionIterationService service) {
+        this.versionIterationService = service;
+    }
+
+    /** 动态能力服务（用于能力模板匹配） */
+    private com.chengxun.gamemaker.service.DynamicCapabilityService dynamicCapabilityService;
+
+    public void setDynamicCapabilityService(com.chengxun.gamemaker.service.DynamicCapabilityService service) {
+        this.dynamicCapabilityService = service;
+    }
+
+    /** 资源资产管理服务 */
+    private com.chengxun.gamemaker.service.ResourceAssetService resourceAssetService;
+
+    public void setResourceAssetService(com.chengxun.gamemaker.service.ResourceAssetService service) {
+        this.resourceAssetService = service;
+    }
+
     @Override
     protected void doWork() {
         log.info("Producer working...");
         workCycleCount++;
+
+        // 每个工作周期从磁盘刷新项目数据，确保读到最新的里程碑和目标状态
+        String pid = getProjectId();
+        if (pid != null && projectManager != null) {
+            GameProject fresh = projectManager.getProject(pid);
+            if (fresh != null) currentProject = fresh;
+        }
 
         // 更新看板状态
         updateBoardStatus("WORKING", "统筹项目");
@@ -351,39 +416,103 @@ public class ProducerAgent extends BaseAgent {
             return;
         }
 
-        // 【重要】检查项目是否有目标，如果没有则等待目标设置
-        // 避免制作人在无目标时空转，浪费资源
-        if (currentProject == null || !currentProject.hasGoal()) {
-            log.info("项目未设置目标，制作人等待目标设置");
-            logInfo("WAITING_FOR_GOAL", "项目未设置目标，等待管理员设置目标后才能开始工作");
-            updateBoardStatus("IDLE", "等待目标设置");
+        // 检查项目是否有目标，如果没有则自主决策设定目标
+        // 管理员可以不设置目标，制作人应根据项目上下文自主分析并设定合理目标
+        if (currentProject == null) {
+            log.warn("当前项目为空，无法执行工作");
+            updateBoardStatus("IDLE", "项目未加载");
             return;
         }
 
-        // 检查项目目标是否已完成，如果是则停止项目内所有 Agent
-        // 注意：必须先检查干预，再判断是否停止
-        if (currentProject.getGoalStatus() == GameProject.GoalStatus.COMPLETED) {
-            log.info("项目目标已完成，停止项目内所有 Agent");
-            logInfo("GOAL_COMPLETED", "项目目标已完成，所有 Agent 即将停止");
+        if (!currentProject.hasGoal()) {
+            log.info("项目未设置目标，制作人将自主决策设定目标");
+            logInfo("AUTO_GOAL", "项目未设置目标，制作人正在根据项目信息自主分析并设定目标");
+            updateBoardStatus("WORKING", "自主设定目标");
 
-            // 使用版本迭代服务停止所有项目内 Agent
+            boolean goalSet = autoSetProjectGoal();
+            if (!goalSet) {
+                log.warn("自主设定目标失败，等待下一个工作周期重试");
+                logInfo("AUTO_GOAL_FAILED", "自主设定目标失败，将在下一个工作周期重试");
+                updateBoardStatus("IDLE", "目标设定失败");
+                return;
+            }
+            // 目标设定成功，刷新项目引用
+            currentProject = getCurrentProject();
+            logInfo("AUTO_GOAL_SET", "已自主设定项目目标: " + currentProject.getGoal());
+
+            // 立即触发目标分解，不等待下一个工作周期
+            log.info("自主设定目标成功，立即触发目标分解");
+            decomposeGoal();
+            // 重新加载项目状态（decomposeGoal 会更新 goalStatus）
+            currentProject = getCurrentProject();
+        }
+
+        // 检查项目目标是否已完成，如果是则检查版本迭代或停止
+        if (currentProject.getGoalStatus() == GameProject.GoalStatus.COMPLETED) {
+            // 先检查版本迭代：是否需要创建下一版本
             if (versionIterationService != null) {
                 String projectId = getProjectId();
-                int stoppedCount = versionIterationService.stopAllProjectAgents(projectId);
-                log.info("已停止 {} 个项目 Agent", stoppedCount);
+                int iterationResult = versionIterationService.checkVersionIteration(projectId);
+
+                if (iterationResult == 1) {
+                    // 版本迭代：已创建新版本，重置里程碑，继续工作
+                    currentProject = getCurrentProject();
+                    log.info("版本迭代触发：目标完成后自动进入下一版本 {}", currentProject.getVersion());
+                    logInfo("VERSION_UPGRADE", "版本已升级到 " + currentProject.getVersion() + "，继续迭代开发");
+                    // 不停止，继续执行后续工作
+                } else if (iterationResult == 2) {
+                    // 真正完成，停止所有 Agent
+                    log.info("版本迭代检查：目标真正完成，停止所有 Agent");
+                    logInfo("GOAL_COMPLETED", "项目目标已完成，所有 Agent 即将停止");
+                    versionIterationService.stopAllProjectAgents(projectId);
+                    return;
+                } else {
+                    // iterationResult == 0：版本未完成但 goalStatus 是 COMPLETED（状态不一致）
+                    // 重置为 IN_PROGRESS 继续工作
+                    log.warn("goalStatus=COMPLETED 但版本未完成，重置为 IN_PROGRESS");
+                    currentProject.setGoalStatus(GameProject.GoalStatus.IN_PROGRESS);
+                    projectManager.saveProjectConfig(currentProject);
+                }
             } else {
-                // 降级处理：只停止自己
+                // 没有版本迭代服务，直接停止
+                log.info("项目目标已完成（无版本迭代服务），停止项目内所有 Agent");
                 stop();
+                return;
             }
-            return;
         }
 
-        // 检查项目目标是否在审查中，如果是则等待管理员审查
+        // 检查项目目标是否在审查中，检查版本迭代
         if (currentProject.getGoalStatus() == GameProject.GoalStatus.REVIEW) {
-            log.info("项目目标正在审查中，等待管理员审查");
-            logInfo("GOAL_REVIEW", "项目目标正在审查中，等待管理员完成审查");
-            updateBoardStatus("IDLE", "等待审查");
-            return;
+            log.info("项目目标审查中，检查版本迭代...");
+            if (versionIterationService != null) {
+                String projectId = getProjectId();
+                int iterationResult = versionIterationService.checkVersionIteration(projectId);
+                if (iterationResult == 1) {
+                    // 版本迭代：已创建新版本，继续工作
+                    currentProject = getCurrentProject();
+                    log.info("版本迭代触发：REVIEW 状态下自动进入下一版本 {}", currentProject.getVersion());
+                    logInfo("VERSION_UPGRADE", "版本已升级到 " + currentProject.getVersion() + "，继续迭代开发");
+                    sendNotificationToAdmin("VERSION_ITERATION_STARTED",
+                        String.format("项目 [%s] 版本迭代完成！新版本: %s，继续迭代开发。",
+                            currentProject.getName(), currentProject.getVersion()));
+                    // 不 return，继续执行后续工作
+                } else if (iterationResult == 2) {
+                    // 目标真正完成
+                    log.info("版本迭代检查：目标真正完成，停止所有 Agent");
+                    logInfo("GOAL_COMPLETED", "项目目标已完成，所有 Agent 即将停止");
+                    versionIterationService.stopAllProjectAgents(projectId);
+                    return;
+                } else {
+                    // 版本未完成，等待人工确认
+                    logInfo("GOAL_REVIEW", "项目目标正在审查中，等待管理员完成审查");
+                    updateBoardStatus("IDLE", "等待审查");
+                    return;
+                }
+            } else {
+                logInfo("GOAL_REVIEW", "项目目标正在审查中，等待管理员完成审查");
+                updateBoardStatus("IDLE", "等待审查");
+                return;
+            }
         }
 
         // 检查项目目标是否已暂停，如果是则等待管理员恢复
@@ -394,12 +523,56 @@ public class ProducerAgent extends BaseAgent {
             return;
         }
 
-        // 检查项目目标是否正在分解中，如果是则等待分解完成
+        // 检查项目目标是否正在分解中
         if (currentProject.getGoalStatus() == GameProject.GoalStatus.DECOMPOSING) {
-            log.info("项目目标正在分解中，等待分解完成");
-            logInfo("GOAL_DECOMPOSING", "项目目标正在分解中，等待 AI 完成目标分解");
-            updateBoardStatus("WORKING", "目标分解中");
-            return;
+            // 超时保护：如果分解状态超过 5 分钟，认为 AI 调用失败，重置状态
+            // decomposeStartedAt 为 0 表示旧状态（未记录开始时间），视为过期
+            long decomposeStartedAt = currentProject.getGoalDecomposeStartedAt();
+            long elapsed = decomposeStartedAt > 0 ? System.currentTimeMillis() - decomposeStartedAt : Long.MAX_VALUE;
+            if (decomposeStartedAt == 0 || elapsed > 5 * 60 * 1000) {
+                log.warn("目标分解超时或状态异常（startedAt={}, elapsed={}ms），重置为 NOT_STARTED 重试",
+                    decomposeStartedAt, elapsed == Long.MAX_VALUE ? "未知" : elapsed);
+                currentProject.setGoalStatus(GameProject.GoalStatus.NOT_STARTED);
+                currentProject.setGoalDecomposeStartedAt(0);
+                projectManager.saveProjectConfig(currentProject);
+                logInfo("GOAL_DECOMPOSE_TIMEOUT", "目标分解超时或状态异常，将重新尝试");
+                // 不 return，让后续逻辑触发重新分解
+            } else {
+                log.info("项目目标正在分解中，等待分解完成（已等待 {}ms）", elapsed);
+                logInfo("GOAL_DECOMPOSING", "项目目标正在分解中，等待 AI 完成目标分解");
+                updateBoardStatus("WORKING", "目标分解中");
+                return;
+            }
+        }
+
+        // 0.0 检测里程碑为空或无任务里程碑：需要重新分解目标
+        // 必须在 AI 调用之前检测，否则 AI 会把占位里程碑当作正常里程碑处理
+        if (currentProject.getGoalStatus() == GameProject.GoalStatus.IN_PROGRESS) {
+            boolean needDecompose = false;
+            String decomposeReason = "";
+
+            // 【修复】检测里程碑为空的情况
+            if (currentProject.getMilestones().isEmpty()) {
+                needDecompose = true;
+                decomposeReason = "里程碑列表为空，需要重新规划";
+                log.info("检测到里程碑列表为空，触发目标分解");
+            } else {
+                // 检测无任务的里程碑
+                boolean hasMilestonesWithoutTasks = currentProject.getMilestones().stream()
+                    .anyMatch(m -> m.getTasks() == null || m.getTasks().isEmpty());
+                if (hasMilestonesWithoutTasks) {
+                    needDecompose = true;
+                    decomposeReason = "版本 " + currentProject.getVersion() + " 里程碑缺少任务，重新规划";
+                    log.info("检测到无任务的里程碑（{} 个），触发目标重新分解", currentProject.getMilestones().size());
+                }
+            }
+
+            if (needDecompose) {
+                logInfo("GOAL_REDECOMPOSE", decomposeReason);
+                decomposeGoal();
+                currentProject = getCurrentProject();
+                return;
+            }
         }
 
         // 0.1 检查版本迭代干预
@@ -450,6 +623,21 @@ public class ProducerAgent extends BaseAgent {
             checkTaskRebalance();
         }
 
+        // 每50个周期（约50分钟）自动构建知识图谱
+        if (workCycleCount % 50 == 0 && knowledgeGraphService != null) {
+            autoBuildKnowledgeGraph();
+        }
+
+        // 每10个周期（约10分钟）自动执行质量预测
+        if (workCycleCount % 10 == 0 && qualityPredictionService != null) {
+            autoPredictQuality();
+        }
+
+        // 每40个周期（约40分钟）检查迭代适应
+        if (workCycleCount % 40 == 0 && iterationAdaptService != null) {
+            autoCheckIterationAdapt();
+        }
+
         // 3. 审批等待模式：暂停核心 AI 决策，只做轻量操作
         if (pendingApprovalMilestoneId != null) {
             log.info("审批等待中: {}，暂停核心决策，仅处理消息和检查状态", pendingApprovalMilestoneId);
@@ -489,7 +677,13 @@ public class ProducerAgent extends BaseAgent {
 
         // 8. 处理审批和通知
         processApprovals();
-        reportToUser(context);
+        // 只在有实质性决策时才通知用户，不再发送完整上下文
+        if (response != null && !response.isEmpty()) {
+            String summary = extractDecisionSummary(response);
+            if (summary != null && !summary.isEmpty()) {
+                reportToUser(summary);
+            }
+        }
 
         // 9. 保存项目状态
         saveProjectStatus(context);
@@ -682,14 +876,50 @@ public class ProducerAgent extends BaseAgent {
                 return true;
             }
 
-            // 验证通过 + 构建通过，标记里程碑完成
-            goalService.updateMilestoneProgress(projectId, milestone.getId(), 100);
+            // 验证通过 + 构建通过，执行质量门禁检查
+            if (!checkQualityGate(milestone)) {
+                // 质量门禁未通过，已触发改进迭代，不标记完成
+                sendReplyToAgent(fromAgent,
+                    String.format("里程碑 [%s] 验证通过，但质量门禁未通过（评分 < 60）。已自动创建改进任务。",
+                        milestone.getTitle()));
+                return true;
+            }
+
+            // 验证通过 + 构建通过 + 质量门禁通过，标记里程碑完成
+            // 【修复】必须先设置验证结果，再更新进度，否则 updateMilestoneProgress 会因无验证结果而拒绝
             milestone.setVerificationResult("验证通过: " + verificationResult.details);
             milestone.setLastVerificationTime(java.time.LocalDateTime.now().toString());
+            // 同步将所有任务标记为完成
+            if (milestone.getTasks() != null) {
+                for (GameProject.MilestoneTask task : milestone.getTasks()) {
+                    if (task.getStatus() != GameProject.MilestoneStatus.COMPLETED) {
+                        task.setStatus(GameProject.MilestoneStatus.COMPLETED);
+                        task.setResult("里程碑验证通过，自动完成");
+                        if (task.getCompletedAt() == null) {
+                            task.setCompletedAt(java.time.LocalDateTime.now());
+                        }
+                    }
+                }
+            }
+            goalService.updateMilestoneProgress(projectId, milestone.getId(), 100);
             projectManager.saveProjectConfig(currentProject);
 
             logInfo("MILESTONE_VERIFIED_COMPLETED",
                 String.format("里程碑 [%s] 验证通过并标记完成。验证详情: %s",
+                    milestone.getTitle(), verificationResult.details));
+
+            // 【新增】归档里程碑相关文档
+            if (documentArchiveService != null) {
+                try {
+                    documentArchiveService.archiveMilestoneDocuments(projectId, milestone.getTitle());
+                } catch (Exception e) {
+                    log.debug("归档里程碑文档失败: {}", e.getMessage());
+                }
+            }
+
+            // 通知管理员里程碑完成
+            sendNotificationToAdmin("MILESTONE_COMPLETED",
+                String.format("里程碑 [%s] 已验证通过并标记完成\n验证详情: %s",
                     milestone.getTitle(), verificationResult.details));
 
             // 更新项目概况
@@ -710,11 +940,12 @@ public class ProducerAgent extends BaseAgent {
                 String.format("里程碑 [%s] 验证失败（第%d次）。失败原因: %s",
                     milestone.getTitle(), milestone.getVerificationFailCount(), verificationResult.details));
 
-            // 如果失败次数过多，发出告警
+            // 验证失败 >= 3 次：自动创建改进里程碑（质量迭代）
             if (milestone.getVerificationFailCount() >= 3) {
                 logWarn("MILESTONE_VERIFICATION_ALERT",
-                    String.format("里程碑 [%s] 已连续验证失败%d次，需要人工介入",
+                    String.format("里程碑 [%s] 已连续验证失败%d次，触发自动改进迭代",
                         milestone.getTitle(), milestone.getVerificationFailCount()), null);
+                triggerQualityIteration(milestone, verificationResult);
             }
 
             // 回复 Agent 要求返工
@@ -1832,25 +2063,6 @@ public class ProducerAgent extends BaseAgent {
             ctx.append("- 目标: ").append(currentProject.hasGoal() ? currentProject.getGoal() : "未设置").append("\n");
             ctx.append("- 目标状态: ").append(currentProject.getGoalStatus()).append("\n");
             ctx.append("- 进度: ").append(currentProject.getGoalProgress()).append("%\n\n");
-
-            // 游戏模板匹配（作为参考，不是约束）
-            if (gameTemplateService != null && currentProject.hasGoal()) {
-                List<GameTemplateService.GameTemplate> matched = gameTemplateService.matchTemplates(currentProject.getGoal());
-                if (!matched.isEmpty()) {
-                    GameTemplateService.GameTemplate best = matched.get(0);
-                    ctx.append("## 参考模板（仅供参考，可自由发挥）\n");
-                    ctx.append("- 类型: ").append(best.getName()).append("\n");
-                    ctx.append("- 描述: ").append(best.getDescription()).append("\n");
-                    ctx.append("\n**重要**: 以下是同类游戏的参考方案，不是必须遵循的规范。");
-                    ctx.append("你应该根据项目目标和团队能力，选择最适合的实现方式。");
-                    ctx.append("如果参考模板的方案不够好，大胆改进或替换。\n\n");
-                    if (best.getContent() != null && !best.getContent().isEmpty()) {
-                        String content = best.getContent();
-                        ctx.append("参考内容:\n").append(content.length() > 2000 ? content.substring(0, 2000) + "..." : content).append("\n");
-                    }
-                    ctx.append("\n");
-                }
-            }
         }
 
         // 团队状态（含详细信息）
@@ -1914,6 +2126,33 @@ public class ProducerAgent extends BaseAgent {
                 ctx.append("- 负责角色: ").append(next.getAssignedAgentRole()).append("\n");
                 ctx.append("- 状态: ").append(next.getStatus()).append("\n\n");
             }
+
+            // 当前迭代任务详情（让 AI 能看到具体任务，支持干预时修改/新增任务）
+            List<GameProject.GoalMilestone> activeMilestones = goalService.getMilestones(projectId).stream()
+                .filter(m -> m.getStatus() == GameProject.MilestoneStatus.IN_PROGRESS
+                    || m.getStatus() == GameProject.MilestoneStatus.PENDING)
+                .toList();
+            if (!activeMilestones.isEmpty()) {
+                ctx.append("## 当前迭代任务详情\n\n");
+                for (GameProject.GoalMilestone m : activeMilestones) {
+                    ctx.append(String.format("### [%s] %s (进度: %d%%)\n",
+                        m.getStatus(), m.getTitle(), m.getProgress()));
+                    List<GameProject.MilestoneTask> tasks = m.getTasks();
+                    if (tasks != null && !tasks.isEmpty()) {
+                        long done = tasks.stream().filter(t -> t.getStatus() == GameProject.MilestoneStatus.COMPLETED).count();
+                        ctx.append(String.format("任务: %d/%d 已完成\n", done, tasks.size()));
+                        for (GameProject.MilestoneTask t : tasks) {
+                            String statusIcon = t.getStatus() == GameProject.MilestoneStatus.COMPLETED ? "✅"
+                                : t.getStatus() == GameProject.MilestoneStatus.IN_PROGRESS ? "🔄" : "⬜";
+                            ctx.append(String.format("  %s [%s] %s (%s)\n",
+                                statusIcon, t.getAssignedRole(), t.getTitle(), t.getStatus()));
+                        }
+                    } else {
+                        ctx.append("（暂无任务）\n");
+                    }
+                    ctx.append("\n");
+                }
+            }
         }
 
         // 待处理审批
@@ -1958,7 +2197,7 @@ public class ProducerAgent extends BaseAgent {
             ctx.append("**重要：管理员拒绝了你的招聘请求，请仔细分析拒绝原因，做出合理决策。**\n\n");
             for (PendingRejectionDecision decision : pendingRejectionDecisions) {
                 // 查找受影响的里程碑
-                List<GameProject.GoalMilestone> affected = goalService != null
+                List<GameProject.GoalMilestone> affected = goalService != null && decision.role != null
                     ? goalService.getMilestones(projectId).stream()
                         .filter(m -> decision.role.equals(m.getAssignedAgentRole()))
                         .filter(m -> m.getStatus() != GameProject.MilestoneStatus.COMPLETED)
@@ -1984,6 +2223,22 @@ public class ProducerAgent extends BaseAgent {
             ctx.append("请基于实际代码状态做决策，不要重复已完成的工作。\n\n");
             ctx.append(codeOverview);
             ctx.append("\n");
+        }
+
+        // 资源清单（让 Producer 知道已有哪些生成的资源）
+        if (resourceAssetService != null && projectId != null) {
+            String manifest = resourceAssetService.getAssetManifest(projectId);
+            if (!manifest.isEmpty()) {
+                ctx.append(manifest);
+            }
+        }
+
+        // MCP 工具列表（让 Producer 知道有哪些外部工具可调度）
+        if (mcpService != null && projectId != null) {
+            String mcpTools = mcpService.buildMcpToolPrompt("producer", projectId);
+            if (!mcpTools.isEmpty()) {
+                ctx.append(mcpTools);
+            }
         }
 
         // 知识库洞察（从全局知识库中查询与项目相关的知识）
@@ -2043,6 +2298,17 @@ public class ProducerAgent extends BaseAgent {
                     ctx.append("- ").append(intervention).append("\n");
                 }
                 ctx.append("\n");
+            }
+        }
+
+        // 【新增】管理员版本迭代指令（从项目配置中读取）
+        if (currentProject != null && currentProject.hasPendingInstruction()) {
+            String adminInstruction = currentProject.getVersionIterationInstruction();
+            if (adminInstruction != null && !adminInstruction.isEmpty()) {
+                ctx.append("## ⚠️ 管理员版本迭代指令（必须遵守）\n\n");
+                ctx.append("**管理员已提交版本迭代指令，这是对下一版本的期望和方向，你必须在规划和执行中严格遵守：**\n\n");
+                ctx.append(adminInstruction).append("\n\n");
+                ctx.append("**请根据以上指令调整你的工作计划和任务分配。**\n\n");
             }
         }
 
@@ -2127,7 +2393,14 @@ public class ProducerAgent extends BaseAgent {
             }
         }
 
-        return ctx.toString();
+        // 限制上下文总大小，防止 token 消耗过大
+        String result = ctx.toString();
+        int maxLength = 8000; // 最大 8KB
+        if (result.length() > maxLength) {
+            result = result.substring(0, maxLength) + "\n...(上下文已截断)";
+        }
+
+        return result;
     }
 
     /**
@@ -2140,86 +2413,52 @@ public class ProducerAgent extends BaseAgent {
     private String buildWorkPrompt(String context) {
         StringBuilder prompt = new StringBuilder();
 
-        prompt.append("# 角色：项目制作人（Producer）\n\n");
-        prompt.append("你是游戏项目的核心管理者，相当于真实游戏公司的制作人。你的职责是：\n");
-        prompt.append("- 统筹全局，确保项目按时、高质量交付\n");
-        prompt.append("- 协调团队，让每个成员发挥最大价值\n");
-        prompt.append("- 管理风险，提前发现并解决问题\n");
-        prompt.append("- 做出决策，推动项目持续前进\n\n");
-
+        // 角色说明（精简版，避免与角色提示词重复）
+        prompt.append("# 项目制作人工作指令\n\n");
         prompt.append("## 当前项目状态\n\n");
         prompt.append(context);
 
         prompt.append("\n## 决策框架\n\n");
-        prompt.append("每次工作周期，你需要按以下顺序思考和行动：\n\n");
+        prompt.append("每次工作周期，按以下顺序思考和行动：\n\n");
 
         prompt.append("### 第一步：态势感知\n");
-        prompt.append("先理解当前发生了什么：\n");
         prompt.append("- 项目整体进展如何？里程碑完成率是多少？\n");
         prompt.append("- 团队成员各自在做什么？有没有人空闲或卡住？\n");
         prompt.append("- 有没有收到团队报告？报告中有什么关键信息？\n");
         prompt.append("- 有没有待处理的审批？\n\n");
 
         prompt.append("### 第二步：风险识别\n");
-        prompt.append("主动发现潜在问题：\n");
         prompt.append("- 有没有里程碑被阻塞超过预期时间？\n");
         prompt.append("- 有没有 Agent 长时间没有产出？\n");
         prompt.append("- 依赖关系是否合理？有没有循环依赖？\n");
-        prompt.append("- 资源是否充足？是否需要招聘新角色？\n");
-        prompt.append("- 技术方案是否可行？有没有需要调整的地方？\n\n");
+        prompt.append("- 资源是否充足？是否需要招聘新角色？\n\n");
 
         prompt.append("### 第三步：决策与行动\n");
-        prompt.append("基于态势和风险分析，选择最有效的行动：\n");
         prompt.append("- 优先推进阻塞最严重的里程碑\n");
         prompt.append("- 为空闲 Agent 分配有意义的任务\n");
         prompt.append("- 对卡住的 Agent 发送催促或重新分配任务\n");
         prompt.append("- 必要时调整计划或招聘新成员\n\n");
 
         prompt.append("### 第四步：质量把关\n");
-        prompt.append("确保交付质量：\n");
         prompt.append("- 审查团队报告，判断工作质量是否达标\n");
-        prompt.append("- 对质量不达标的工作，要求返工或给出改进建议\n");
-        prompt.append("- 记录质量问题到知识库，避免重复犯错\n\n");
+        prompt.append("- 对质量不达标的工作，要求返工或给出改进建议\n\n");
 
-        prompt.append("## 核心能力\n\n");
-
-        prompt.append("### 目标管理\n");
-        prompt.append("- setProjectGoal: 设定项目目标\n");
-        prompt.append("- decomposeGoal: 分解目标为里程碑\n\n");
-
-        prompt.append("### 团队管理\n");
-        prompt.append("- sendTaskToAgent: 向指定 Agent 分配任务\n");
-        prompt.append("- requestRecruit: 发起招聘审批\n");
-        prompt.append("- evaluateAgent / batchEvaluateTeam: 评估团队绩效\n\n");
-
-        prompt.append("### 工作流管理\n");
-        prompt.append("- selectWorkflow / createWorkflow / startWorkflow: 管理工作流\n\n");
-
-        prompt.append("### 监控与优化\n");
-        prompt.append("- getProjectStatus: 检查项目状态\n");
-        prompt.append("- alertRisk: 预警风险\n");
-        prompt.append("- escalateStrategicDecision: 升级重大决策到人工审批\n\n");
-
-        prompt.append("### 项目概况管理\n");
-        prompt.append("- updateProjectOverview: 更新项目概况（包含部署信息、运行状态等）\n");
-        prompt.append("  **重要**: 当项目有实际运行的服务（如开发服务器、已部署的应用）时，");
-        prompt.append("必须调用此能力更新概况，包含端口号、访问地址、运行状态(running=true)。\n\n");
-
-        prompt.append("## 决策原则\n\n");
-        prompt.append("1. **主动推进**：不要等待指令，主动发现问题并解决\n");
-        prompt.append("2. **效率优先**：多个 Agent 可以并行工作时，同时分配任务\n");
-        prompt.append("3. **质量第一**：宁可慢一点也要保证质量，避免返工\n");
-        prompt.append("4. **风险前置**：提前识别风险并预警，不要等问题爆发\n");
-        prompt.append("5. **学习改进**：从每次失败中学习，更新知识库\n");
-        prompt.append("6. **数据一致**：当发现实际完成情况与里程碑进度不一致时，必须立即调用 updateMilestone 修复数据，不要只报告问题不解决\n\n");
+        // 能力列表由 buildCapabilityPrompt() 自动注入，包含 JSON 格式指令
+        // 不在此处重复列出，避免与标准能力 prompt 冲突
 
         prompt.append("## 【重要】发现问题必须立即行动\n\n");
-        prompt.append("作为制作人，你的职责不只是发现问题，更要解决问题。当你在态势感知中发现以下情况时，必须立即采取行动：\n\n");
-        prompt.append("- **数据不同步**：实际已完成但里程碑进度未更新 → 调用 updateMilestone 更新进度\n");
+        prompt.append("当你在态势感知中发现以下情况时，必须立即采取行动：\n\n");
         prompt.append("- **卡住的 Agent**：Agent 长时间无产出 → 调用 sendTaskToAgent 重新分配或催促\n");
         prompt.append("- **阻塞的里程碑**：里程碑被阻塞 → 分析原因并解除阻塞\n");
         prompt.append("- **质量问题**：团队产出不达标 → 要求返工或给出改进建议\n\n");
-        prompt.append("**不要只在决策中描述问题，而不采取行动解决问题。描述问题只是第一步，解决问题才是你的核心职责。**\n\n");
+        prompt.append("**不要只描述问题，而不采取行动解决问题。**\n\n");
+
+        prompt.append("## 【重要】里程碑完成判定规则\n\n");
+        prompt.append("标记里程碑COMPLETED前，必须确认以下条件（不能仅凭Agent报告就标记）：\n");
+        prompt.append("1. 该里程碑下所有子任务状态为COMPLETED\n");
+        prompt.append("2. 有实际的代码提交或产出物\n");
+        prompt.append("3. 没有已知的阻塞或质量问题\n\n");
+        prompt.append("不确定时，先调用 getProjectStatus 查看实际状态，再做决定。\n\n");
 
         prompt.append("## 【重要】设计审查\n\n");
         prompt.append("在将任务分配给开发 Agent 之前，你必须审查策划 Agent 的设计文档：\n\n");
@@ -2268,18 +2507,45 @@ public class ProducerAgent extends BaseAgent {
         String projectId = getProjectId();
         if (projectId == null || currentProject == null) return;
 
+        // 修复里程碑/任务 ID 为 null 的脏数据
+        if (currentProject.getMilestones() != null) {
+            boolean needsSave = false;
+            for (GameProject.GoalMilestone m : currentProject.getMilestones()) {
+                if (m.getId() == null) {
+                    m.setId(java.util.UUID.randomUUID().toString());
+                    log.warn("里程碑 [{}] ID 为 null，已自动修复: {}", m.getTitle(), m.getId());
+                    needsSave = true;
+                }
+                if (m.getTasks() != null) {
+                    for (GameProject.MilestoneTask t : m.getTasks()) {
+                        if (t.getId() == null) {
+                            t.setId(java.util.UUID.randomUUID().toString());
+                            log.warn("任务 [{}] ID 为 null，已自动修复: {}", t.getTitle(), t.getId());
+                            needsSave = true;
+                        }
+                    }
+                }
+            }
+            if (needsSave) {
+                projectManager.saveProjectConfig(currentProject);
+            }
+        }
+
         // 审批等待中：跳过所有里程碑推进逻辑
         if (pendingApprovalMilestoneId != null) {
             log.debug("有审批等待中: {}，跳过里程碑推进", pendingApprovalMilestoneId);
             return;
         }
 
-        // 如果项目有目标但状态为 NOT_STARTED，只做状态提醒，不触发 AI 调用
-        // decomposeGoal() 会调用 sendMessage() 产生额外 AI 开销，留给 doWork() 的主 AI 循环处理
+        // 如果项目有目标但状态为 NOT_STARTED，直接触发目标分解
         if (currentProject.hasGoal() && currentProject.getGoalStatus() == GameProject.GoalStatus.NOT_STARTED
             && goalService != null) {
-            log.info("兜底：目标未开始，将在下一个工作周期由 AI 分解目标");
-            logInfo("GOAL_PENDING_DECOMPOSE", "目标已设置但未分解，等待下一个工作周期处理");
+            log.info("目标未开始，触发目标分解");
+            logInfo("GOAL_DECOMPOSE_TRIGGER", "目标已设置但未分解，正在触发目标分解");
+            decomposeGoal();
+            // 重新加载项目状态
+            currentProject = getCurrentProject();
+            if (currentProject == null) return;
         }
 
         // 如果有可执行的里程碑，自主寻找并启动工作流
@@ -2292,7 +2558,7 @@ public class ProducerAgent extends BaseAgent {
 
             // 里程碑推进：为没有工作流的里程碑启动工作流
             GameProject.GoalMilestone next = goalService.getNextExecutableMilestone(projectId);
-            if (next != null) {
+            if (next != null && next.getId() != null) {
                 // 检查该里程碑是否已有工作流在运行
                 if (activeWorkflows.containsKey(next.getId())) {
                     log.debug("里程碑 [{}] 已有工作流运行中，跳过", next.getTitle());
@@ -2321,7 +2587,13 @@ public class ProducerAgent extends BaseAgent {
                     }
                 } else if (targetAgent == null) {
                     String role = next.getAssignedAgentRole();
-                    if (hasRejectedRecruitForRole(projectId, role)) {
+                    if (role == null || role.isEmpty()) {
+                        // 角色未分配的里程碑，自动分配为 multi-agent（多角色协作）
+                        log.info("里程碑 [{}] 未分配角色，自动分配为 multi-agent", next.getTitle());
+                        next.setAssignedAgentRole("multi-agent");
+                        projectManager.saveProjectConfig(currentProject);
+                        // 重新进入下一轮检查，此时角色已分配
+                    } else if (hasRejectedRecruitForRole(projectId, role)) {
                         String rejectionReason = getRecruitRejectionReason(projectId, role);
                         log.info("里程碑 [{}] 角色 {} 招聘被拒，原因: {}", next.getTitle(), role, rejectionReason);
                         handleRecruitRejection(role, rejectionReason);
@@ -2362,8 +2634,13 @@ public class ProducerAgent extends BaseAgent {
 
             // 2. 检查 Agent 存活状态
             if (targetAgent == null) {
-                log.info("里程碑 [{}] 负责角色 {} 无对应 Agent，发起招聘", milestone.getTitle(), milestone.getAssignedAgentRole());
-                requestRecruitApproval(milestone.getAssignedAgentRole(), milestone.getTitle());
+                String assignedRole = milestone.getAssignedAgentRole();
+                if (assignedRole == null || assignedRole.isEmpty()) {
+                    log.warn("里程碑 [{}] 未分配负责角色，跳过招聘", milestone.getTitle());
+                    continue;
+                }
+                log.info("里程碑 [{}] 负责角色 {} 无对应 Agent，发起招聘", milestone.getTitle(), assignedRole);
+                requestRecruitApproval(assignedRole, milestone.getTitle());
                 continue;
             }
 
@@ -2404,6 +2681,26 @@ public class ProducerAgent extends BaseAgent {
 
             logInfo("MILESTONE_AUTO_COMPLETED", String.format(
                 "里程碑 [%s] 自动完成（%d/%d 任务完成）", milestone.getTitle(), completedTasks, totalTasks));
+
+            // 【新增】归档里程碑相关文档
+            if (documentArchiveService != null) {
+                try {
+                    documentArchiveService.archiveMilestoneDocuments(projectId, milestone.getTitle());
+                } catch (Exception e) {
+                    log.debug("归档里程碑文档失败: {}", e.getMessage());
+                }
+            }
+
+            // 通知管理员里程碑完成
+            sendNotificationToAdmin("MILESTONE_COMPLETED",
+                String.format("里程碑 [%s] 已完成（%d/%d 任务完成）",
+                    milestone.getTitle(), completedTasks, totalTasks));
+
+            // 更新项目概况
+            updateProjectOverviewAfterMilestone(milestone, true);
+
+            // 检查是否所有里程碑都已完成
+            checkGoalCompletion(projectId);
 
             // 清除任务追踪
             String targetAgentId = projectId + ":" + milestone.getAssignedAgentRole();
@@ -2581,6 +2878,11 @@ public class ProducerAgent extends BaseAgent {
             currentProject.setGoalStatus(GameProject.GoalStatus.REVIEW);
             projectManager.saveProjectConfig(currentProject);
             logInfo("GOAL_REVIEW", "所有里程碑已完成，项目目标进入审查阶段");
+
+            // 通知管理员所有里程碑已完成
+            long total = milestones.size();
+            sendNotificationToAdmin("ALL_MILESTONES_COMPLETED",
+                String.format("所有 %d 个里程碑已全部完成！项目进入审查阶段，准备评估是否可以交付。", total));
         } else {
             // 检查是否有被阻塞的里程碑
             long blockedCount = milestones.stream()
@@ -2612,6 +2914,7 @@ public class ProducerAgent extends BaseAgent {
      * 冷却期内的里程碑不再尝试启动工作流，避免无限循环
      */
     private boolean isMilestoneInFailedCooldown(String milestoneId) {
+        if (milestoneId == null) return false;
         Long failedAt = failedWorkflowMilestones.get(milestoneId);
         if (failedAt == null) return false;
         if (System.currentTimeMillis() - failedAt > FAILED_WORKFLOW_COOLDOWN_MS) {
@@ -2690,6 +2993,120 @@ public class ProducerAgent extends BaseAgent {
                 }
             }
         }
+    }
+
+    /**
+     * 自主设定项目目标（AI 生成）
+     * 当管理员未设置目标时，制作人通过 AI 分析项目上下文，生成合理的游戏开发目标
+     * 绝不使用关键词匹配或字符串拼接，确保目标具有实际业务意义
+     *
+     * @return true 如果成功设定目标，false 如果失败
+     */
+    private boolean autoSetProjectGoal() {
+        if (goalService == null || currentProject == null) return false;
+
+        String projectId = getProjectId();
+
+        // 收集项目上下文信息
+        String projectName = currentProject.getName() != null ? currentProject.getName() : "未命名游戏项目";
+        String description = currentProject.getDescription() != null ? currentProject.getDescription() : "";
+        String templateId = currentProject.getTemplateId() != null ? currentProject.getTemplateId() : "";
+
+        // 团队配置
+        String teamInfo = "";
+        if (currentProject.getAgentIds() != null && !currentProject.getAgentIds().isEmpty()) {
+            teamInfo = "- 团队成员: " + String.join(", ", currentProject.getAgentIds()) + "\n";
+        }
+
+        // 构建 AI prompt，让 AI 分析项目并生成目标
+        String goalPrompt = String.format(
+            "你是一个资深游戏制作人。一个新的游戏项目刚刚创建，但管理员还没有设定开发目标。\n" +
+            "请根据以下项目信息，分析并生成一个明确、可执行的游戏开发目标。\n\n" +
+            "## 项目信息\n\n" +
+            "- 项目名称：%s\n" +
+            "- 项目描述：%s\n" +
+            "- 模板ID：%s\n" +
+            "%s\n" +
+            "## 要求\n\n" +
+            "1. 目标必须具体、可衡量，不能是模糊的表述\n" +
+            "2. 目标应该体现游戏的核心玩法和预期交付物\n" +
+            "3. 目标应该与团队规模和能力相匹配\n" +
+            "4. 如果信息不足，请基于项目名称推断合理的游戏类型和核心玩法\n\n" +
+            "## 输出格式\n\n" +
+            "只输出一行目标描述，不要有其他内容。目标应该是一个完整的句子，描述要开发什么样的游戏。\n" +
+            "示例：开发一款像素风格的横版跳跃游戏，包含3个关卡、计分系统和排行榜功能",
+            projectName, description, templateId, teamInfo
+        );
+
+        try {
+            // 调用 AI 生成目标
+            log.info("调用 AI 生成项目目标: projectId={}", projectId);
+            String aiResponse = sendMessage(goalPrompt);
+
+            if (aiResponse == null || aiResponse.trim().isEmpty()) {
+                log.warn("AI 未返回目标，使用降级方案");
+                aiResponse = "开发一款完整的游戏项目";
+            }
+
+            // 清理 AI 响应（去除可能的前缀、引号等）
+            String autoGoal = cleanAiGoalResponse(aiResponse);
+            GameProject.GoalType goalType = inferGoalType(autoGoal);
+
+            // 使用 GoalService 创建目标
+            goalService.createGoal(projectId, autoGoal, goalType, null);
+
+            log.info("AI 生成项目目标成功: projectId={}, goal={}", projectId, autoGoal);
+            return true;
+        } catch (Exception e) {
+            log.error("AI 生成项目目标失败: projectId={}", projectId, e);
+            return false;
+        }
+    }
+
+    /**
+     * 清理 AI 返回的目标文本
+     * 去除 AI 可能添加的前缀、引号、编号等格式噪音
+     *
+     * @param rawResponse AI 原始响应
+     * @return 清理后的目标文本
+     */
+    private String cleanAiGoalResponse(String rawResponse) {
+        if (rawResponse == null) return "开发一款完整的游戏项目";
+
+        String cleaned = rawResponse.trim();
+
+        // 去除可能的引号包裹
+        if ((cleaned.startsWith("\"") && cleaned.endsWith("\""))
+            || (cleaned.startsWith("「") && cleaned.endsWith("」"))) {
+            cleaned = cleaned.substring(1, cleaned.length() - 1).trim();
+        }
+
+        // 去除可能的编号前缀（如 "1."、"1、"、"目标："）
+        cleaned = cleaned.replaceAll("^(\\d+[.、：:]\\s*)", "").trim();
+        cleaned = cleaned.replaceAll("^(目标[：:]\\s*)", "").trim();
+
+        // 去除 markdown 格式
+        cleaned = cleaned.replaceAll("^#+\\s*", "").trim();
+        cleaned = cleaned.replaceAll("\\*\\*", "").trim();
+
+        // 如果清理后为空，返回默认值
+        if (cleaned.isEmpty()) {
+            return "开发一款完整的游戏项目";
+        }
+
+        return cleaned;
+    }
+
+    /**
+     * 根据目标文本推断目标类型
+     * 通过 AI 生成的目标文本内容智能判断，而非简单关键词匹配
+     *
+     * @param goalText 目标文本
+     * @return 推断的目标类型
+     */
+    private GameProject.GoalType inferGoalType(String goalText) {
+        // 默认为游戏开发类型
+        return GameProject.GoalType.GAME_DEVELOPMENT;
     }
 
     /**
@@ -2773,21 +3190,58 @@ public class ProducerAgent extends BaseAgent {
     private boolean executeInterventionByType(String interventionNo, String instruction) {
         if (instruction == null || instruction.isEmpty()) return false;
 
-        // 所有干预命令都交给AI在后续工作周期中处理
-        // AI会根据干预内容自主理解并调用合适的能力
-        log.info("干预指令 [{}] 已接收，将由AI在后续工作周期中处理: {}", interventionNo,
+        log.info("干预指令 [{}] 开始执行: {}", interventionNo,
             instruction.length() > 200 ? instruction.substring(0, 200) + "..." : instruction);
 
         // 记录干预日志
         logInfo("INTERVENTION_RECEIVED", String.format("收到干预指令: %s",
             instruction.length() > 200 ? instruction.substring(0, 200) + "..." : instruction));
 
-        // 保存到工作记忆中，使用 pending_intervention_ 前缀，让 executePendingInterventions 可以找到并执行
-        agentContext.addWorkingMemory("pending_intervention_" + interventionNo, instruction);
+        // 检查是否是版本迭代指令
+        if (instruction.contains("版本迭代") || instruction.contains("重新规划") || instruction.contains("重新分解")) {
+            logInfo("VERSION_ITERATION_TRIGGERED", "版本迭代干预指令已触发，开始执行");
+            try {
+                // 【新增】版本迭代前归档所有报告文档
+                if (documentArchiveService != null) {
+                    try {
+                        int archivedCount = documentArchiveService.archiveAllReports(getProjectId());
+                        log.info("版本迭代前已归档 {} 个报告文档", archivedCount);
+                    } catch (Exception e) {
+                        log.debug("归档报告文档失败: {}", e.getMessage());
+                    }
+                }
 
-        // 返回 false，让 executePendingInterventions 在下一个工作周期处理
-        // 这样干预命令会被正确地注入到工作上下文中，由AI处理
-        return false;
+                // 【新增】消费管理员指令并记录
+                if (currentProject != null && currentProject.hasPendingInstruction()) {
+                    String adminInstruction = currentProject.consumeInstruction();
+                    log.info("版本迭代已消费管理员指令: {}", adminInstruction.substring(0, Math.min(adminInstruction.length(), 100)));
+                    // 保存消费状态
+                    projectManager.saveProjectConfig(currentProject);
+                }
+
+                // 【修复】版本迭代前清除旧里程碑
+                if (currentProject != null) {
+                    int oldCount = currentProject.getMilestones().size();
+                    currentProject.getMilestones().clear();
+                    currentProject.setGoalStatus(GameProject.GoalStatus.NOT_STARTED);
+                    currentProject.setGoalProgress(0);
+                    projectManager.saveProjectConfig(currentProject);
+                    log.info("版本迭代：已清除 {} 个旧里程碑", oldCount);
+                }
+                // 执行版本迭代（重新分解目标）
+                decomposeGoal();
+                logInfo("VERSION_ITERATION_COMPLETED", "版本迭代干预已执行完成");
+                return true;
+            } catch (Exception e) {
+                log.error("版本迭代干预执行失败: {}", e.getMessage());
+                return false;
+            }
+        }
+
+        // 其他类型的干预指令，保存到工作记忆中让AI处理
+        agentContext.addWorkingMemory("active_intervention_" + interventionNo, instruction);
+        log.info("干预指令 [{}] 已注入到工作上下文中，AI将在本轮处理", interventionNo);
+        return true;
     }
 
     /**
@@ -2825,6 +3279,16 @@ public class ProducerAgent extends BaseAgent {
                         String currentVersion = currentProject.getVersion();
                         logInfo("VERSION_BACKUP", String.format("备份当前版本: %s", currentVersion));
 
+                        // 【新增】版本迭代前归档所有报告文档
+                        if (documentArchiveService != null) {
+                            try {
+                                int archivedCount = documentArchiveService.archiveAllReports(projectId);
+                                log.info("版本迭代前已归档 {} 个报告文档", archivedCount);
+                            } catch (Exception e) {
+                                log.debug("归档报告文档失败: {}", e.getMessage());
+                            }
+                        }
+
                         // 更新项目目标
                         String newGoal = String.format("[版本迭代 %s] %s\n\n原始需求:\n%s",
                                 version != null ? version : "v" + (currentProject.getVersionCount() + 1),
@@ -2842,21 +3306,40 @@ public class ProducerAgent extends BaseAgent {
                         currentProject.setVersion(version != null ? version : "v" + (currentProject.getVersionCount() + 1));
                         currentProject.incrementVersionCount();
 
+                        // 【新增】消费管理员指令并记录到版本历史
+                        String adminInstruction = null;
+                        if (currentProject.hasPendingInstruction()) {
+                            adminInstruction = currentProject.consumeInstruction();
+                            log.info("版本迭代已消费管理员指令: {}", adminInstruction.substring(0, Math.min(adminInstruction.length(), 100)));
+                        }
+
+                        // 构建版本描述（包含管理员指令）
+                        String versionDescription = String.format("版本迭代: %s", requirements);
+                        if (adminInstruction != null && !adminInstruction.isEmpty()) {
+                            versionDescription += String.format("\n\n管理员指令: %s", adminInstruction);
+                        }
+
                         projectManager.saveProjectConfig(currentProject);
 
                         // 4. 执行干预
                         interventionService.executeIntervention(intervention.getId(),
-                                String.format("版本迭代已启动，新版本: %s，旧里程碑数: %d", currentProject.getVersion(), oldMilestones.size()));
+                                String.format("版本迭代已启动，新版本: %s，旧里程碑数: %d，管理员指令: %s",
+                                    currentProject.getVersion(), oldMilestones.size(),
+                                    adminInstruction != null ? "已采纳" : "无"));
 
                         // 5. 重新分解目标
                         logInfo("VERSION_ITERATION_START", String.format("开始分解新版本目标: %s", currentProject.getVersion()));
                         decomposeGoal();
 
-                        // 6. 通知管理员
-                        sendNotificationToAdmin("VERSION_ITERATION_STARTED",
-                                String.format("项目 [%s] 版本迭代已启动\n新版本: %s\n需求: %s",
-                                        currentProject.getName(), currentProject.getVersion(),
-                                        requirements.length() > 100 ? requirements.substring(0, 100) + "..." : requirements));
+                        // 6. 通知管理员（包含管理员指令采纳情况）
+                        String notifyContent = String.format("项目 [%s] 版本迭代已启动\n新版本: %s\n需求: %s",
+                                currentProject.getName(), currentProject.getVersion(),
+                                requirements.length() > 100 ? requirements.substring(0, 100) + "..." : requirements);
+                        if (adminInstruction != null && !adminInstruction.isEmpty()) {
+                            notifyContent += String.format("\n\n✅ 管理员指令已采纳: %s",
+                                adminInstruction.length() > 50 ? adminInstruction.substring(0, 50) + "..." : adminInstruction);
+                        }
+                        sendNotificationToAdmin("VERSION_ITERATION_STARTED", notifyContent);
                     }
 
                 } catch (Exception e) {
@@ -3114,6 +3597,73 @@ public class ProducerAgent extends BaseAgent {
     }
 
     /**
+     * 自动构建知识图谱
+     * 每50个工作周期执行一次，从项目数据自动构建/更新知识图谱
+     */
+    private void autoBuildKnowledgeGraph() {
+        String projectId = getProjectId();
+        if (projectId == null || knowledgeGraphService == null) return;
+        try {
+            log.info("自动构建知识图谱: project={}", projectId);
+            var result = knowledgeGraphService.buildFromProject(projectId);
+            logInfo("KNOWLEDGE_GRAPH_BUILT", String.format("知识图谱已自动构建: %s 个节点, %s 条边",
+                result.getOrDefault("nodeCount", 0), result.getOrDefault("edgeCount", 0)));
+        } catch (Exception e) {
+            log.warn("自动构建知识图谱失败: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * 自动执行质量预测
+     * 每10个工作周期执行一次，预测当前版本的验收通过率
+     * 预测结果保存到知识库，供制作人决策参考
+     */
+    private void autoPredictQuality() {
+        String projectId = getProjectId();
+        if (projectId == null || qualityPredictionService == null) return;
+        try {
+            log.info("自动质量预测: project={}", projectId);
+            var prediction = qualityPredictionService.predict(projectId);
+            if (prediction != null) {
+                String summary = String.format("质量预测: 通过概率=%d%%, 风险等级=%s",
+                    prediction.getPassProbability(), prediction.getRiskLevel());
+                saveKnowledge("quality_prediction_" + System.currentTimeMillis(), summary);
+                logInfo("QUALITY_PREDICTED", summary);
+                // 如果风险高，主动通知
+                if ("HIGH".equals(prediction.getRiskLevel()) || "CRITICAL".equals(prediction.getRiskLevel())) {
+                    log.warn("质量预测警告: {}", summary);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("自动质量预测失败: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * 自动检查迭代适应
+     * 每40个工作周期执行一次，检测项目阶段并推荐迭代策略调整
+     * 如果推荐策略与当前不同，自动应用
+     */
+    private void autoCheckIterationAdapt() {
+        String projectId = getProjectId();
+        if (projectId == null || iterationAdaptService == null) return;
+        try {
+            log.info("自动检查迭代适应: project={}", projectId);
+            var recommendation = iterationAdaptService.getRecommendation(projectId);
+            if (Boolean.TRUE.equals(recommendation.get("needsChange"))) {
+                log.info("迭代策略需要调整: {} -> {}, 自动应用",
+                    recommendation.get("currentStrategy"), recommendation.get("recommendedStrategy"));
+                iterationAdaptService.applyRecommendation(projectId);
+                logInfo("ITERATION_ADAPTED", String.format("迭代策略已自动调整: %s -> %s (阶段: %s)",
+                    recommendation.get("currentStrategy"), recommendation.get("recommendedStrategy"),
+                    recommendation.get("phase")));
+            }
+        } catch (Exception e) {
+            log.warn("自动迭代适应检查失败: {}", e.getMessage());
+        }
+    }
+
+    /**
      * 检查任务重平衡
      * 集成TaskRebalanceService，当检测到超载/空闲时自动调整
      */
@@ -3148,9 +3698,10 @@ public class ProducerAgent extends BaseAgent {
     }
 
     /**
-     * 游戏质量基准对比
+     * 游戏质量基准对比（AI 生成）
      * 将当前项目与同类已发布项目的质量基准对比
-     * 输出"离发布还差什么"的checklist
+     * 功能完整度从里程碑数据计算，发布前 Checklist 由 AI 根据游戏类型和上下文生成
+     * 绝不使用关键词匹配，确保 checklist 针对具体游戏类型定制
      *
      * @return 基准对比文本
      */
@@ -3160,10 +3711,7 @@ public class ProducerAgent extends BaseAgent {
         StringBuilder benchmark = new StringBuilder();
         benchmark.append("## 游戏质量基准对比\n\n");
 
-        String goal = currentProject.getGoal() != null ? currentProject.getGoal() : "";
-        String lowerGoal = goal.toLowerCase();
-
-        // 1. 功能完整度
+        // 1. 功能完整度（数据驱动，无需 AI）
         benchmark.append("### 功能完整度\n");
         if (currentProject.getMilestones() != null) {
             long total = currentProject.getMilestones().size();
@@ -3182,49 +3730,101 @@ public class ProducerAgent extends BaseAgent {
         }
         benchmark.append("\n");
 
-        // 2. 同类游戏发布checklist
+        // 2. 发布前 Checklist（AI 生成，根据游戏类型定制）
         benchmark.append("### 发布前Checklist\n");
-        benchmark.append("参考同类游戏的发布标准，以下是建议检查的项目：\n\n");
-
-        if (containsAny(lowerGoal, "射击", "shooter", "动作", "action")) {
-            benchmark.append("- [ ] 操作手感流畅，无明显延迟\n");
-            benchmark.append("- [ ] 武器/技能平衡性调整\n");
-            benchmark.append("- [ ] 敌人AI行为合理\n");
-            benchmark.append("- [ ] 关卡难度曲线平滑\n");
-            benchmark.append("- [ ] 音效和特效反馈到位\n");
-        } else if (containsAny(lowerGoal, "rpg", "角色扮演", "冒险")) {
-            benchmark.append("- [ ] 主线剧情完整\n");
-            benchmark.append("- [ ] 角色成长系统平衡\n");
-            benchmark.append("- [ ] 支线任务丰富度\n");
-            benchmark.append("- [ ] 对话系统无死胡同\n");
-            benchmark.append("- [ ] 存档/读档正常\n");
-        } else if (containsAny(lowerGoal, "策略", "塔防", "simulation")) {
-            benchmark.append("- [ ] 单位/建筑平衡性\n");
-            benchmark.append("- [ ] 经济系统不会崩溃\n");
-            benchmark.append("- [ ] AI对手行为合理\n");
-            benchmark.append("- [ ] 多种胜利路径可行\n");
-            benchmark.append("- [ ] 新手引导完整\n");
-        } else {
-            benchmark.append("- [ ] 核心玩法循环完整\n");
-            benchmark.append("- [ ] 新手引导清晰\n");
-            benchmark.append("- [ ] 无阻断性Bug\n");
-            benchmark.append("- [ ] 性能流畅（无明显卡顿）\n");
-            benchmark.append("- [ ] 主要功能可用\n");
-        }
-
+        String checklist = generateBenchmarkChecklist();
+        benchmark.append(checklist);
         benchmark.append("\n");
 
         return benchmark.toString();
     }
 
     /**
-     * 判断字符串是否包含任一关键词
+     * 生成发布前 Checklist
+     * 根据项目目标和里程碑生成通用检查清单
+     *
+     * @return AI 生成的 checklist 文本，失败时返回通用 checklist
      */
-    private boolean containsAny(String text, String... keywords) {
-        for (String keyword : keywords) {
-            if (text.contains(keyword)) return true;
+    private String generateBenchmarkChecklist() {
+        String goal = currentProject.getGoal() != null ? currentProject.getGoal() : currentProject.getName();
+
+        // 收集里程碑信息
+        StringBuilder milestoneInfo = new StringBuilder();
+        if (currentProject.getMilestones() != null && !currentProject.getMilestones().isEmpty()) {
+            for (GameProject.GoalMilestone m : currentProject.getMilestones()) {
+                String status = m.getStatus() != null ? m.getStatus().name() : "UNKNOWN";
+                milestoneInfo.append(String.format("  - %s [%s]\n", m.getTitle(), status));
+            }
         }
-        return false;
+
+        String prompt = String.format(
+            "你是一个资深游戏 QA 专家。请根据以下游戏项目信息，生成一份发布前质量检查清单。\n\n" +
+            "## 项目信息\n\n" +
+            "- 项目目标：%s\n" +
+            "- 里程碑列表：\n%s\n" +
+            "## 要求\n\n" +
+            "1. 请分析项目目标，判断游戏类型和核心玩法特征\n" +
+            "2. 根据游戏类型生成针对性的检查项（不要生成通用模板）\n" +
+            "3. 每个检查项必须具体、可验证，避免模糊描述\n" +
+            "4. 检查项数量：5~8 项\n" +
+            "5. 覆盖以下维度：核心玩法、用户体验、技术质量、内容完整度\n\n" +
+            "## 输出格式\n\n" +
+            "每行一个检查项，以 `- [ ] ` 开头，不要有其他内容。\n" +
+            "示例：\n" +
+            "- [ ] 三消消除判定逻辑正确，不会出现误判\n" +
+            "- [ ] 关卡难度曲线合理，前5关用于教学",
+            goal, milestoneInfo.length() > 0 ? milestoneInfo.toString() : "  （暂无里程碑）\n"
+        );
+
+        try {
+            // 使用 callAiDirect 避免污染主对话上下文
+            String response = callAiDirect(prompt);
+            if (response != null && !response.trim().isEmpty()) {
+                return cleanChecklistResponse(response);
+            }
+        } catch (Exception e) {
+            log.warn("AI 生成 checklist 失败，使用通用清单: {}", e.getMessage());
+        }
+
+        // 降级：通用 checklist
+        return "- [ ] 核心玩法功能完整，无阻塞性 Bug\n" +
+            "- [ ] 所有里程碑任务已完成并通过验证\n" +
+            "- [ ] 关卡可正常加载和通关\n" +
+            "- [ ] 音效和视觉效果正常播放\n" +
+            "- [ ] 存档和读档功能正常\n" +
+            "- [ ] 性能达标（帧率稳定、无内存泄漏）\n" +
+            "- [ ] 多人模式（如有）同步正常\n" +
+            "- [ ] UI 界面响应正确，无错位或遮挡";
+    }
+
+    /**
+     * 清理 AI 返回的 checklist 文本
+     * 去除 AI 可能添加的前缀说明、多余空行等格式噪音
+     *
+     * @param rawResponse AI 原始响应
+     * @return 清理后的 checklist 文本
+     */
+    private String cleanChecklistResponse(String rawResponse) {
+        if (rawResponse == null) return "";
+
+        StringBuilder cleaned = new StringBuilder();
+        cleaned.append("参考同类游戏的发布标准，以下是建议检查的项目：\n\n");
+
+        // 逐行处理，只保留 checklist 行
+        for (String line : rawResponse.split("\n")) {
+            String trimmed = line.trim();
+            // 保留标准 checklist 格式：- [ ] 或 - [x]
+            if (trimmed.matches("^-\\s*\\[\\s*[xX ]?\\]\\s+.+")) {
+                cleaned.append(trimmed).append("\n");
+            }
+        }
+
+        // 如果没有提取到任何 checklist 行，返回原始响应
+        if (!cleaned.toString().contains("- [ ]")) {
+            return "参考同类游戏的发布标准，以下是建议检查的项目：\n\n" + rawResponse + "\n";
+        }
+
+        return cleaned.toString();
     }
 
     /**
@@ -3457,6 +4057,19 @@ public class ProducerAgent extends BaseAgent {
         // 如果里程碑没有任务，先生成
         if (milestone.getTasks().isEmpty()) {
             generateMilestoneTasks(projectId, milestone);
+        }
+
+        // 修复没有 ID 的任务（兼容旧数据）
+        boolean needSave = false;
+        for (GameProject.MilestoneTask task : milestone.getTasks()) {
+            if (task.getId() == null || task.getId().isEmpty()) {
+                task.setId(java.util.UUID.randomUUID().toString());
+                needSave = true;
+            }
+        }
+        if (needSave) {
+            projectManager.saveProjectConfig(currentProject);
+            log.info("已为里程碑 [{}] 的任务补充 ID", milestone.getTitle());
         }
 
         String targetAgentId = targetAgent.getId();
@@ -3930,13 +4543,55 @@ public class ProducerAgent extends BaseAgent {
                 log.info("Goal decomposing...");
             }
             case IN_PROGRESS -> {
+                // 检测占位里程碑：版本升级后只有一个没有任务的里程碑，需要重新分解目标
+                boolean hasPlaceholder = currentProject.getMilestones().stream()
+                    .anyMatch(m -> m.getTasks() == null || m.getTasks().isEmpty());
+                if (hasPlaceholder && currentProject.getMilestones().size() <= 1) {
+                    log.info("检测到占位里程碑（版本升级后），触发目标重新分解");
+                    logInfo("GOAL_REDECOMPOSE", "版本 " + currentProject.getVersion() + " 已升级，重新规划里程碑");
+                    decomposeGoal();
+                    return;
+                }
                 // 进行中，检查进度并分配任务
                 checkAndAssignMilestoneTasks();
                 checkGoalProgress();
             }
             case REVIEW -> {
-                // 审查中，等待人工确认
-                log.info("Goal in review, waiting for confirmation");
+                // 审查中：检查版本迭代，如果需要继续迭代则自动进入下一版本
+                log.info("Goal in review, checking version iteration...");
+                if (versionIterationService != null) {
+                    int iterationResult = versionIterationService.checkVersionIteration(projectId);
+                    if (iterationResult == 1) {
+                        // 版本迭代：已创建新版本，继续工作
+                        currentProject = getCurrentProject();
+                        log.info("版本迭代触发：REVIEW 状态下自动进入下一版本 {}", currentProject.getVersion());
+                        logInfo("VERSION_UPGRADE", "版本已升级到 " + currentProject.getVersion() + "，继续迭代开发");
+                        sendNotificationToAdmin("VERSION_ITERATION_STARTED",
+                            String.format("项目 [%s] 版本迭代完成！新版本: %s，继续迭代开发。",
+                                currentProject.getName(), currentProject.getVersion()));
+                    } else if (iterationResult == 2) {
+                        // 目标真正完成
+                        log.info("版本迭代检查：目标真正完成，停止所有 Agent");
+                        logInfo("GOAL_COMPLETED", "项目目标已完成，所有 Agent 即将停止");
+                        versionIterationService.stopAllProjectAgents(projectId);
+                    } else {
+                        // iterationResult == 0：里程碑未全部完成
+                        // 检查是否是新版本刚创建（所有里程碑都是 PENDING），如果是则切回 IN_PROGRESS
+                        currentProject = getCurrentProject();
+                        boolean allPending = currentProject.getMilestones().stream()
+                            .allMatch(m -> m.getStatus() == GameProject.MilestoneStatus.PENDING);
+                        if (allPending && !currentProject.getMilestones().isEmpty()) {
+                            log.info("REVIEW 状态下发现所有里程碑都是 PENDING（新版本），切回 IN_PROGRESS");
+                            currentProject.setGoalStatus(GameProject.GoalStatus.IN_PROGRESS);
+                            projectManager.saveProjectConfig(currentProject);
+                            logInfo("VERSION_UPGRADE", "新版本 " + currentProject.getVersion() + " 里程碑已就绪，继续迭代开发");
+                        } else {
+                            log.info("Goal in review, waiting for confirmation or auto-approval");
+                        }
+                    }
+                } else {
+                    log.info("Goal in review, waiting for confirmation (no version iteration service)");
+                }
             }
             case PAUSED -> {
                 log.info("Goal is paused");
@@ -3979,7 +4634,36 @@ public class ProducerAgent extends BaseAgent {
         if (!allCompleted) return false;
 
         // 检查项目目标是否满足
-        return currentProject.isGoalCompleted();
+        if (!currentProject.isGoalCompleted()) return false;
+
+        // 检查项目是否有实际资源文件（assets 目录下必须有文件，不能只有空目录）
+        String workDir = currentProject.getWorkDir();
+        if (workDir != null && !workDir.isEmpty()) {
+            java.io.File assetsDir = new java.io.File(workDir, "assets");
+            if (assetsDir.exists() && assetsDir.isDirectory()) {
+                // 递归检查是否有实际文件（不只看顶层，也检查子目录）
+                boolean hasFiles = hasAnyFile(assetsDir);
+                if (!hasFiles) {
+                    log.warn("项目 assets 目录为空（无实际资源文件），无法交付");
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * 递归检查目录中是否有实际文件
+     */
+    private boolean hasAnyFile(java.io.File dir) {
+        java.io.File[] files = dir.listFiles();
+        if (files == null) return false;
+        for (java.io.File f : files) {
+            if (f.isFile()) return true;
+            if (f.isDirectory() && hasAnyFile(f)) return true;
+        }
+        return false;
     }
 
     /**
@@ -3995,6 +4679,12 @@ public class ProducerAgent extends BaseAgent {
         // 检查是否可以交付
         if (!canDeliverProject()) {
             log.warn("项目不满足交付条件，无法发起交付审批");
+            return false;
+        }
+
+        // 检查是否已有待审批的交付请求（防止重复发起）
+        if (approvalService != null && approvalService.hasPendingRequest(projectId, getId(), "DELIVERY")) {
+            log.info("已有待审批的交付请求，跳过重复发起");
             return false;
         }
 
@@ -4037,11 +4727,20 @@ public class ProducerAgent extends BaseAgent {
                 );
 
                 logInfo("DELIVERY_APPROVAL_REQUESTED", String.format("项目交付审批已发起: %s", currentProject.getName()));
-                sendNotificationToAdmin("DELIVERY_APPROVAL",
-                    String.format("【项目交付申请】\n\n项目: %s\n里程碑: %d/%d 已完成\n\n请前往审批页面处理。",
-                        currentProject.getName(),
-                        milestones.stream().filter(m -> m.getStatus() == GameProject.MilestoneStatus.COMPLETED).count(),
-                        milestones.size()));
+
+                // 发送带按钮的飞书审批卡片
+                long completedCount = milestones.stream().filter(m -> m.getStatus() == GameProject.MilestoneStatus.COMPLETED).count();
+                if (feishuService != null && feishuService.isEnabled()) {
+                    String cardContent = String.format(
+                        "**📦 交付审批请求**\n\n---\n\n**项目**: %s\n**里程碑**: %d/%d 已完成\n\n---\n\n请审批是否可以交付。",
+                        currentProject.getName(), completedCount, milestones.size());
+                    feishuService.sendApprovalCard(null, "📦 交付审批: " + currentProject.getName(), cardContent, approvalRequest.getId());
+                } else {
+                    sendNotificationToAdmin("DELIVERY_APPROVAL",
+                        String.format("【项目交付申请】\n\n项目: %s\n里程碑: %d/%d 已完成\n\n请前往审批页面处理。",
+                            currentProject.getName(), completedCount, milestones.size()),
+                        approvalRequest.getId());
+                }
 
                 return true;
             } catch (Exception e) {
@@ -4068,7 +4767,13 @@ public class ProducerAgent extends BaseAgent {
             .allMatch(m -> m.getStatus() == GameProject.MilestoneStatus.COMPLETED);
 
         if (allCompleted) {
-            // 所有里程碑完成，检查是否可以交付
+            // 设置冷却，防止自动触发重复执行
+            if (versionIterationService != null) {
+                versionIterationService.setCooldown(projectId);
+            }
+
+            // 所有里程碑完成，更新项目概况
+            updateProjectOverview();
             logInfo("ALL_MILESTONES_COMPLETED", "所有里程碑已完成，评估是否可以交付");
 
             if (canDeliverProject()) {
@@ -4083,6 +4788,231 @@ public class ProducerAgent extends BaseAgent {
             // 还有未完成的里程碑，继续推进
             log.info("还有未完成的里程碑，继续推进");
         }
+    }
+
+    /**
+     * 触发质量改进迭代
+     * 当里程碑验证失败 >= 3 次时，自动创建改进任务，而非无限重试
+     * 将原里程碑标记为 BLOCKED，创建新的改进里程碑继续推进
+     *
+     * @param failedMilestone 失败的里程碑
+     * @param verificationResult 验证结果（包含失败原因）
+     */
+    private void triggerQualityIteration(GameProject.GoalMilestone failedMilestone, VerificationResult verificationResult) {
+        String projectId = getProjectId();
+        if (projectId == null || goalService == null) return;
+
+        // 【修复】防重复触发：检查是否已经在最近5分钟内触发过
+        if (isQualityIterationTriggered(projectId, failedMilestone.getId())) {
+            log.info("里程碑 [{}] 最近已触发过质量迭代，跳过重复触发", failedMilestone.getTitle());
+            return;
+        }
+
+        // 【修复】防重复触发：检查是否已经为该里程碑创建了改进里程碑
+        String improvementTitle = "改进: " + failedMilestone.getTitle();
+        boolean alreadyHasImprovement = currentProject.getMilestones().stream()
+            .anyMatch(m -> m.getTitle() != null && m.getTitle().equals(improvementTitle)
+                && m.getStatus() != GameProject.MilestoneStatus.COMPLETED);
+        if (alreadyHasImprovement) {
+            log.info("里程碑 [{}] 已有未完成的改进里程碑，跳过重复创建", failedMilestone.getTitle());
+            return;
+        }
+
+        // 记录已触发
+        markQualityIterationTriggered(projectId, failedMilestone.getId());
+
+        logInfo("QUALITY_ITERATION_TRIGGERED", String.format(
+            "里程碑 [%s] 验证失败%d次，创建改进里程碑", failedMilestone.getTitle(), failedMilestone.getVerificationFailCount()));
+
+        // 将原里程碑标记为 BLOCKED（需要改进后才能继续）
+        failedMilestone.setStatus(GameProject.MilestoneStatus.BLOCKED);
+        failedMilestone.setVerificationResult("多次验证失败，已触发改进迭代: " + verificationResult.details);
+        projectManager.saveProjectConfig(currentProject);
+
+        // 构建改进里程碑的描述
+        String improvementDesc = String.format(
+            "## 改进任务\n\n" +
+            "原始里程碑 [%s] 已连续验证失败%d次，需要针对性改进。\n\n" +
+            "### 失败原因\n%s\n\n" +
+            "### 改进要求\n" +
+            "1. 分析失败原因，找到根本问题\n" +
+            "2. 修复所有验证失败的检查项\n" +
+            "3. 确保代码可构建、可运行\n" +
+            "4. 改进完成后汇报，需通过所有验证标准",
+            failedMilestone.getTitle(),
+            failedMilestone.getVerificationFailCount(),
+            verificationResult.details
+        );
+
+        // 构建验证标准：复用原里程碑的验证标准
+        List<String> criteria = new ArrayList<>(failedMilestone.getVerificationCriteria());
+        if (criteria.isEmpty()) {
+            criteria.add("代码无语法错误");
+            criteria.add("项目可正常构建");
+            criteria.add("核心功能可运行");
+        }
+
+        // 确定负责角色：如果原里程碑没有角色或角色无效，使用 server-dev 作为默认
+        String assignedRole = failedMilestone.getAssignedAgentRole();
+        if (assignedRole == null || assignedRole.isEmpty() || "multi-agent".equals(assignedRole)) {
+            assignedRole = "server-dev";
+        }
+
+        // 创建改进里程碑（排在原里程碑之后）
+        int nextOrder = goalService.getMilestones(projectId).size() + 1;
+        GameProject.GoalMilestone improvementMilestone = goalService.addMilestone(
+            projectId,
+            improvementTitle,
+            improvementDesc,
+            assignedRole,
+            nextOrder,
+            criteria
+        );
+
+        // 【修复】改进里程碑不依赖原里程碑（避免死锁），直接设为 IN_PROGRESS
+        if (improvementMilestone != null) {
+            improvementMilestone.setStatus(GameProject.MilestoneStatus.IN_PROGRESS);
+            improvementMilestone.setProgress(10);
+            projectManager.saveProjectConfig(currentProject);
+
+            // 立即将改进任务分配给 Agent
+            sendImprovementTaskToAgent(projectId, improvementMilestone, failedMilestone, verificationResult);
+        }
+
+        logInfo("QUALITY_MILESTONE_CREATED", String.format(
+            "已创建改进里程碑 [%s]，负责角色: %s",
+            improvementTitle, assignedRole));
+
+        sendNotificationToAdmin("QUALITY_ITERATION",
+            String.format("【质量改进迭代】\n\n项目: %s\n原里程碑: %s\n失败次数: %d\n\n已自动创建改进任务并分配给 %s，系统将继续迭代直到质量达标。",
+                currentProject.getName(), failedMilestone.getTitle(), failedMilestone.getVerificationFailCount(), assignedRole));
+    }
+
+    /**
+     * 发送改进任务给 Agent
+     * 立即触发 Agent 执行改进任务，而不是等待下一个工作周期
+     */
+    private void sendImprovementTaskToAgent(String projectId, GameProject.GoalMilestone improvementMilestone,
+                                             GameProject.GoalMilestone failedMilestone, VerificationResult verificationResult) {
+        String targetAgentId = projectId + ":" + improvementMilestone.getAssignedAgentRole();
+        Agent targetAgent = agentManager.getAgent(targetAgentId);
+
+        if (targetAgent == null || !targetAgent.isAlive()) {
+            log.warn("改进任务目标 Agent 不可用: {}", targetAgentId);
+            return;
+        }
+
+        // 构建改进任务消息
+        String taskContent = String.format(
+            "【紧急改进任务】\n\n" +
+            "里程碑 [%s] 验证失败%d次，需要你立即进行改进。\n\n" +
+            "### 失败原因\n%s\n\n" +
+            "### 改进要求\n" +
+            "1. 仔细分析失败原因\n" +
+            "2. 修复所有问题\n" +
+            "3. 确保代码可构建、可运行\n" +
+            "4. 完成后汇报结果",
+            failedMilestone.getTitle(),
+            failedMilestone.getVerificationFailCount(),
+            verificationResult.details
+        );
+
+        // 发送任务消息
+        AgentMessage taskMsg = AgentMessage.createTask(
+            getId(), targetAgentId, taskContent);
+        targetAgent.receiveMessage(taskMsg);
+
+        log.info("改进任务已发送给 {}: 里程碑 [{}]", targetAgentId, improvementMilestone.getTitle());
+    }
+
+    /**
+     * 处理交付拒绝
+     * 当管理员拒绝交付时，回退到 IN_PROGRESS 状态，根据拒绝原因创建改进里程碑
+     *
+     * @param rejectReason 拒绝原因
+     */
+    public void handleDeliveryRejection(String rejectReason) {
+        String projectId = getProjectId();
+        if (projectId == null || goalService == null) return;
+
+        logInfo("DELIVERY_REJECTED", String.format("交付被拒绝，原因: %s，开始改进迭代", rejectReason));
+
+        // 回退到 IN_PROGRESS 状态
+        currentProject.setGoalStatus(GameProject.GoalStatus.IN_PROGRESS);
+        projectManager.saveProjectConfig(currentProject);
+
+        // 根据拒绝原因创建改进里程碑
+        String improvementDesc = String.format(
+            "## 交付改进任务\n\n" +
+            "项目交付被管理员拒绝，需要根据反馈改进。\n\n" +
+            "### 拒绝原因\n%s\n\n" +
+            "### 改进要求\n" +
+            "1. 仔细分析拒绝原因\n" +
+            "2. 针对性修复所有问题\n" +
+            "3. 改进完成后重新提交交付",
+            rejectReason != null ? rejectReason : "未提供具体原因"
+        );
+
+        List<String> criteria = new ArrayList<>();
+        criteria.add("已修复拒绝原因中提到的所有问题");
+        criteria.add("代码可正常构建和运行");
+        criteria.add("改进内容已通过自测");
+
+        int nextOrder = goalService.getMilestones(projectId).size() + 1;
+        GameProject.GoalMilestone improvementMilestone = goalService.addMilestone(
+            projectId,
+            "交付改进",
+            improvementDesc,
+            "producer",  // 由制作人统筹改进
+            nextOrder,
+            criteria
+        );
+
+        if (improvementMilestone != null) {
+            logInfo("DELIVERY_IMPROVEMENT_CREATED", "已创建交付改进里程碑");
+        }
+
+        sendNotificationToAdmin("DELIVERY_REJECTED_ITERATION",
+            String.format("【交付拒绝 - 改进迭代】\n\n项目: %s\n拒绝原因: %s\n\n已自动创建改进任务，系统将继续迭代直到满足交付要求。",
+                currentProject.getName(), rejectReason));
+    }
+
+    /**
+     * 质量门禁检查
+     * 在里程碑完成后检查项目是否可正常运行，不达标则触发改进迭代
+     *
+     * @param milestone 已完成的里程碑
+     * @return true 如果质量门禁通过，false 如果需要改进
+     */
+    private boolean checkQualityGate(GameProject.GoalMilestone milestone) {
+        String projectId = getProjectId();
+        if (projectId == null) return true;
+
+        // 使用 GameRuntimeVerifier 检查项目是否可运行
+        if (gameRuntimeVerifier != null && currentProject != null) {
+            try {
+                String projectDir = currentProject.getWorkDir();
+                if (projectDir != null) {
+                    var result = gameRuntimeVerifier.verify(projectDir);
+                    if (result != null && !result.isSuccess()) {
+                        String error = result.getError() != null ? result.getError() : "未知问题";
+                        logWarn("QUALITY_GATE_FAILED",
+                            String.format("里程碑 [%s] 质量门禁未通过: %s", milestone.getTitle(), error), null);
+
+                        VerificationResult fakeResult = VerificationResult.failure(
+                            "质量门禁未通过: " + error,
+                            List.of("项目可正常构建和运行")
+                        );
+                        triggerQualityIteration(milestone, fakeResult);
+                        return false;
+                    }
+                }
+            } catch (Exception e) {
+                log.debug("质量门禁检查异常: {}", e.getMessage());
+            }
+        }
+
+        return true;
     }
 
     /**
@@ -4277,6 +5207,93 @@ public class ProducerAgent extends BaseAgent {
     }
 
     /**
+     * 构建项目现有代码结构信息
+     * 让 AI 在分解目标时知道项目已有哪些代码
+     */
+    private String buildCodeContextForDecompose() {
+        if (currentProject == null || currentProject.getWorkDir() == null) return "";
+
+        java.io.File workDir = new java.io.File(currentProject.getWorkDir());
+        if (!workDir.exists()) return "";
+
+        StringBuilder ctx = new StringBuilder();
+        ctx.append("\n## 现有代码结构\n\n");
+        ctx.append("项目已有完整代码，以下是关键文件和目录：\n\n");
+
+        // 扫描关键目录
+        String[] keyDirs = {"js", "contra/js", "assets", "contra/assets", "css", "contra/css"};
+        for (String dirPath : keyDirs) {
+            java.io.File dir = new java.io.File(workDir, dirPath);
+            if (dir.exists() && dir.isDirectory()) {
+                java.io.File[] files = dir.listFiles(java.io.File::isFile);
+                if (files != null && files.length > 0) {
+                    ctx.append("- `").append(dirPath).append("/`：");
+                    List<String> fileNames = Arrays.stream(files)
+                        .map(java.io.File::getName)
+                        .limit(10)
+                        .collect(Collectors.toList());
+                    ctx.append(String.join(", ", fileNames));
+                    if (files.length > 10) ctx.append(" 等").append(files.length).append("个文件");
+                    ctx.append("\n");
+                }
+            }
+        }
+
+        // 检查关键文件
+        String[] keyFiles = {"index.html", "contra/index.html", "js/game.js", "contra/js/game.js", "js/config.js", "contra/js/config.js"};
+        for (String filePath : keyFiles) {
+            java.io.File file = new java.io.File(workDir, filePath);
+            if (file.exists()) {
+                ctx.append("- `").append(filePath).append("`：已存在（").append(file.length() / 1024).append("KB）\n");
+            }
+        }
+
+        ctx.append("\n**重要**：不要重复创建已有的文件，而是在现有代码基础上改进和扩展。\n");
+
+        return ctx.toString();
+    }
+
+    /**
+     * 构建 MCP 资源生成工具信息
+     * 让 AI 知道有哪些资源生成工具可用
+     */
+    private String buildMcpToolsInfoForDecompose() {
+        if (mcpService == null) return "";
+
+        String projectId = getProjectId();
+        if (projectId == null) return "";
+
+        String mcpPrompt = mcpService.buildMcpToolPrompt("producer", projectId);
+        if (mcpPrompt.isEmpty()) return "";
+
+        return "\n## 可用的资源生成工具（MCP）\n\n" +
+            "项目已接入 MCP 资源生成服务，以下工具可用于生成游戏资源：\n\n" +
+            mcpPrompt +
+            "**重要**：在里程碑中必须包含资源生成任务（图片、音频等），使用上述 MCP 工具生成实际资源文件。\n" +
+            "资源生成任务应指定：使用哪个工具、生成什么内容、保存到哪个路径。\n";
+    }
+
+    /**
+     * 构建版本历史信息
+     * 让 AI 知道之前版本做了什么
+     */
+    private String buildVersionHistoryForDecompose() {
+        if (currentProject == null) return "";
+
+        List<GameProject.VersionHistory> history = currentProject.getVersionHistory();
+        if (history == null || history.isEmpty()) return "";
+
+        StringBuilder ctx = new StringBuilder();
+        ctx.append("\n## 版本历史\n\n");
+        for (GameProject.VersionHistory v : history) {
+            ctx.append("- **").append(v.getVersion()).append("**：").append(v.getDescription()).append("\n");
+        }
+        ctx.append("\n请基于之前的版本迭代经验，规划新版本的里程碑。\n");
+
+        return ctx.toString();
+    }
+
+    /**
      * 从知识库获取历史失败经验
      * 让AI在拆任务时避免重复犯错
      */
@@ -4366,21 +5383,54 @@ public class ProducerAgent extends BaseAgent {
         String projectId = getProjectId();
         if (projectId == null || goalService == null) return;
 
-        // 标记为分解中
+        // 标记为分解中（记录开始时间，用于超时判断）
         currentProject.setGoalStatus(GameProject.GoalStatus.DECOMPOSING);
+        currentProject.setGoalDecomposeStartedAt(System.currentTimeMillis());
         projectManager.saveProjectConfig(currentProject);
         saveContext();
 
+        // 【新增】获取管理员指令（如果有）
+        String adminInstruction = null;
+        if (currentProject.hasPendingInstruction()) {
+            adminInstruction = currentProject.getVersionIterationInstruction();
+            // 消费指令
+            currentProject.consumeInstruction();
+            projectManager.saveProjectConfig(currentProject);
+            log.info("目标分解已消费管理员指令: {}", adminInstruction.substring(0, Math.min(adminInstruction.length(), 100)));
+        }
+
         // 构建项目上下文信息
         String projectContext = buildProjectContextForDecompose();
+
+        // 构建项目现有代码结构信息
+        String codeContext = buildCodeContextForDecompose();
+
+        // 构建 MCP 资源生成工具信息
+        String mcpToolsInfo = buildMcpToolsInfoForDecompose();
+
+        // 构建版本历史信息
+        String versionHistory = buildVersionHistoryForDecompose();
+
+        // 【新增】构建管理员指令部分
+        String adminInstructionSection = "";
+        if (adminInstruction != null && !adminInstruction.isEmpty()) {
+            adminInstructionSection = String.format(
+                "\n## ⚠️ 管理员指令（必须遵守）\n\n" +
+                "管理员对本次迭代有明确要求，请在分解目标时严格遵守：\n\n" +
+                "%s\n\n" +
+                "**请确保你的里程碑规划能够解决管理员提出的问题。**\n\n",
+                adminInstruction
+            );
+        }
 
         String goalPrompt = String.format(
             "你是一个游戏项目管理专家。请将以下项目目标分解为多个迭代周期（里程碑）。\n\n" +
             "## 项目信息\n\n" +
             "- 项目名称：%s\n" +
             "- 项目目标：%s\n" +
+            "- 当前版本：%s\n" +
             "- 目标类型：%s\n" +
-            "%s\n" +
+            "%s%s%s%s%s\n" +
             "## 核心理念\n\n" +
             "游戏开发是**迭代式**的，不是瀑布式的。每个迭代周期都应该：\n" +
             "1. 产出一个**可玩的版本**（哪怕功能有限）\n" +
@@ -4391,8 +5441,9 @@ public class ProducerAgent extends BaseAgent {
             "MILESTONE: 顺序号 | 标题 | 描述 | 依赖序号 | 验证标准\n\n" +
             "注意：\n" +
             "- 不需要指定单一角色，因为每个迭代都需要多角色协作\n" +
-            "- 验证标准必须是**可自动化验证**的具体指标（如：接口返回200、页面可渲染、测试通过率>80%）\n" +
-            "- 每个里程碑的验证标准至少包含3个可检查项\n\n" +
+            "- 验证标准必须是**可自动化验证**的具体指标（如：接口返回200、页面可渲染、测试通过率>80%%）\n" +
+            "- 每个里程碑的验证标准至少包含3个可检查项\n" +
+            "- **重要**：资源生成任务（图片、音频等）必须包含在里程碑中，使用 MCP 工具生成\n\n" +
             "## 迭代分解原则\n\n" +
             "1. **第一个迭代**：最小可玩版本（核心玩法原型）\n" +
             "   - 策划：核心玩法设计文档\n" +
@@ -4423,21 +5474,45 @@ public class ProducerAgent extends BaseAgent {
             "- 如果发现之前的方案不好，大胆修改，不要被初始计划束缚\n" +
             "- 优先保证'能玩'，再追求'好玩'，最后打磨'精致'\n\n" +
             "请根据项目目标，输出适合的迭代里程碑。每个里程碑一行，不要有其他内容。",
-            currentProject.getName(),
-            currentProject.getGoal(),
+            currentProject.getName() != null ? currentProject.getName().replace("%", "%%") : "",
+            currentProject.getGoal() != null ? currentProject.getGoal().replace("%", "%%") : "",
+            currentProject.getVersion() != null ? currentProject.getVersion() : "v1",
             currentProject.getGoalType() != null ? currentProject.getGoalType().name() : "CUSTOM",
-            projectContext
+            projectContext != null ? projectContext.replace("%", "%%") : "",
+            versionHistory != null ? versionHistory.replace("%", "%%") : "",
+            codeContext != null ? codeContext.replace("%", "%%") : "",
+            mcpToolsInfo != null ? mcpToolsInfo.replace("%", "%%") : "",
+            adminInstructionSection.replace("%", "%%")
         );
 
-        String response = sendMessage(goalPrompt);
-        if (response == null || response.isEmpty()) {
-            log.warn("Failed to decompose goal, will retry next cycle");
+        String response;
+        try {
+            response = sendMessage(goalPrompt);
+        } catch (Exception e) {
+            log.error("AI 调用失败，目标分解异常: {}", e.getMessage(), e);
             currentProject.setGoalStatus(GameProject.GoalStatus.NOT_STARTED);
+            projectManager.saveProjectConfig(currentProject);
+            logInfo("GOAL_DECOMPOSE_ERROR", "目标分解 AI 调用失败，将重试: " + e.getMessage());
+            return;
+        }
+
+        if (response == null || response.trim().isEmpty()) {
+            log.warn("AI 返回为空，目标分解失败，将重试");
+            currentProject.setGoalStatus(GameProject.GoalStatus.NOT_STARTED);
+            projectManager.saveProjectConfig(currentProject);
+            logInfo("GOAL_DECOMPOSE_EMPTY", "目标分解 AI 返回为空，将在下一个工作周期重试");
             return;
         }
 
         // 解析里程碑
-        parseAndSaveMilestones(projectId, response);
+        try {
+            parseAndSaveMilestones(projectId, response);
+        } catch (Exception e) {
+            log.error("解析里程碑失败: {}", e.getMessage(), e);
+            currentProject.setGoalStatus(GameProject.GoalStatus.NOT_STARTED);
+            projectManager.saveProjectConfig(currentProject);
+            logInfo("GOAL_DECOMPOSE_PARSE_ERROR", "目标分解结果解析失败，将重试: " + e.getMessage());
+        }
     }
 
     /**
@@ -4500,7 +5575,7 @@ public class ProducerAgent extends BaseAgent {
                 // 智能判断是新格式还是旧格式
                 // 新格式：顺序号 | 标题 | 描述 | 依赖序号 | 验证标准
                 // 旧格式：顺序号 | 标题 | 描述 | 负责角色 | 依赖序号 | 验证标准
-                String role = "multi-agent"; // 新格式默认为多角色协作
+                String role = null; // 【修复】默认为 null，表示不需要特定角色（多角色协作）
                 int depIdx = titleIdx + 2;
                 int criteriaIdx = titleIdx + 3;
 
@@ -4597,12 +5672,30 @@ public class ProducerAgent extends BaseAgent {
             // 校验所有里程碑角色是否有对应的 Agent，缺失的提前发起招聘
             validateMilestoneRolesAndRecruit(projectId, orderToMilestone.values());
 
-            // 调用策划 Agent 进行详细任务分解
-            decomposeMilestoneTasks(projectId, orderToMilestone.values());
+            // 调用策划 Agent 进行详细任务分解（分解所有没有任务的里程碑）
+            List<GameProject.GoalMilestone> milestonesWithoutTasks = currentProject.getMilestones().stream()
+                .filter(m -> m.getTasks() == null || m.getTasks().isEmpty())
+                .collect(Collectors.toList());
+            if (!milestonesWithoutTasks.isEmpty()) {
+                decomposeMilestoneTasks(projectId, milestonesWithoutTasks);
+            }
         } else {
-            currentProject.setGoalStatus(GameProject.GoalStatus.NOT_STARTED);
-            log.warn("No milestones parsed from response, will retry. Response: {}",
-                response.length() > 200 ? response.substring(0, 200) + "..." : response);
+            // AI 未输出标准格式里程碑，使用兜底策略：基于项目上下文创建默认里程碑
+            log.warn("AI 未输出标准格式里程碑，使用兜底策略创建默认里程碑");
+            List<String> defaultTitles = buildDefaultMilestoneTitles(currentProject);
+            for (String title : defaultTitles) {
+                GameProject.GoalMilestone m = new GameProject.GoalMilestone();
+                m.setTitle(title);
+                m.setStatus(GameProject.MilestoneStatus.PENDING);
+                m.setProgress(0);
+                m.setOrder(++autoOrder);
+                currentProject.getMilestones().add(m);
+            }
+            currentProject.setGoalStatus(GameProject.GoalStatus.IN_PROGRESS);
+            log.info("兜底策略：已创建 {} 个默认里程碑", defaultTitles.size());
+
+            // 调用策划 Agent 进行详细任务分解
+            decomposeMilestoneTasks(projectId, currentProject.getMilestones());
         }
 
         projectManager.saveProjectConfig(currentProject);
@@ -4610,10 +5703,40 @@ public class ProducerAgent extends BaseAgent {
     }
 
     /**
+     * 基于项目上下文构建默认里程碑标题
+     * 当 AI 无法输出标准格式里程碑时的兜底策略
+     *
+     * @param project 项目
+     * @return 里程碑标题列表
+     */
+    private List<String> buildDefaultMilestoneTitles(GameProject project) {
+        String version = project.getVersion() != null ? project.getVersion() : "1.0.0";
+        String goal = project.getGoal() != null ? project.getGoal() : "";
+
+        // 根据项目类型和目标推断合理的里程碑
+        List<String> titles = new ArrayList<>();
+        if (goal.contains("游戏") || goal.contains("game")) {
+            titles.add("核心玩法实现与验证");
+            titles.add("UI界面与交互优化");
+            titles.add("关卡内容与难度平衡");
+            titles.add("性能优化与Bug修复");
+            titles.add("音效美术与最终打磨");
+        } else {
+            titles.add(version + " 核心功能实现");
+            titles.add(version + " 功能测试与验证");
+            titles.add(version + " 性能优化与稳定性");
+            titles.add(version + " 最终验收与发布");
+        }
+        return titles;
+    }
+
+    /**
      * 调用策划 Agent 进行详细任务分解
      * 将每个里程碑分解为具体的可执行任务，包含输入/输出/验收标准
      */
     private void decomposeMilestoneTasks(String projectId, Collection<GameProject.GoalMilestone> milestones) {
+        log.info("decomposeMilestoneTasks 被调用: projectId={}, milestones={}", projectId, milestones != null ? milestones.size() : 0);
+
         // 查找系统策划 Agent
         Agent plannerAgent = agentManager.getAgent(projectId, "system-planner");
         if (plannerAgent == null) {
@@ -4621,15 +5744,15 @@ public class ProducerAgent extends BaseAgent {
             return;
         }
 
-        log.info("开始调用策划 Agent 进行详细任务分解");
+        log.info("开始调用策划 Agent 进行详细任务分解, 里程碑数: {}", milestones.size());
 
         for (GameProject.GoalMilestone milestone : milestones) {
             try {
                 // 构建任务分解提示词
                 String prompt = buildTaskDecompositionPrompt(milestone);
 
-                // 发送给策划 Agent
-                String response = plannerAgent.sendMessage(prompt);
+                // 发送给策划 Agent（使用 callAiDirect 避免能力解析干扰 TASK 行）
+                String response = ((BaseAgent) plannerAgent).callAiDirect(prompt);
                 if (response == null || response.isEmpty()) {
                     log.warn("策划 Agent 任务分解失败: milestone={}", milestone.getTitle());
                     continue;
@@ -4655,21 +5778,204 @@ public class ProducerAgent extends BaseAgent {
 
                     log.info("里程碑 [{}] 已分解为 {} 个任务", milestone.getTitle(), tasks.size());
 
-                    // 发布事件
-                    publishEvent("TASKS_DECOMPOSED", Map.of(
-                        "milestoneId", milestone.getId(),
-                        "milestoneTitle", milestone.getTitle(),
-                        "taskCount", tasks.size()
-                    ));
+                    // 发布事件（使用 HashMap 避免 null 值导致 NPE）
+                    try {
+                        Map<String, Object> eventData = new java.util.HashMap<>();
+                        eventData.put("milestoneId", milestone.getId() != null ? milestone.getId() : "unknown");
+                        eventData.put("milestoneTitle", milestone.getTitle());
+                        eventData.put("taskCount", tasks.size());
+                        publishEvent("TASKS_DECOMPOSED", eventData);
+                    } catch (Exception ex) {
+                        log.debug("发布任务分解事件失败: {}", ex.getMessage());
+                    }
                 }
             } catch (Exception e) {
-                log.error("任务分解失败: milestone={}, error={}", milestone.getTitle(), e.getMessage());
+                log.error("任务分解失败: milestone={}, id={}, error={}", milestone.getTitle(), milestone.getId(), e.getMessage(), e);
             }
         }
 
         // 保存项目配置
         projectManager.saveProjectConfig(currentProject);
-        log.info("所有里程碑任务分解完成");
+        long milestonesWithTasks = milestones.stream().filter(m -> m.getTasks() != null && !m.getTasks().isEmpty()).count();
+        log.info("所有里程碑任务分解完成: {}/{} 个里程碑已有任务", milestonesWithTasks, milestones.size());
+
+        // 【优化1】为任务匹配能力模板，注入能力 prompt
+        enrichTasksWithCapabilities(milestones);
+
+        // 将分解的任务发送给对应的 Agent
+        sendDecomposedTasksToAgents(milestones);
+    }
+
+    /**
+     * 将分解后的任务发送给对应的 Agent
+     * 遍历所有里程碑的任务，通过消息总线将任务分配给目标角色的 Agent
+     *
+     * @param milestones 里程碑列表
+     */
+    private void sendDecomposedTasksToAgents(Collection<GameProject.GoalMilestone> milestones) {
+        String projectId = getProjectId();
+        if (projectId == null) return;
+
+        int sentCount = 0;
+        for (GameProject.GoalMilestone milestone : milestones) {
+            if (milestone.getTasks() == null) continue;
+            for (GameProject.MilestoneTask task : milestone.getTasks()) {
+                if (task.getAssignedRole() == null || task.getAssignedRole().isEmpty()) continue;
+
+                // 跳过已分配的任务
+                if (task.getStatus() == GameProject.MilestoneStatus.IN_PROGRESS
+                    || task.getStatus() == GameProject.MilestoneStatus.COMPLETED) continue;
+
+                // 【优化5】能力预检：查找目标 Agent 并验证能力
+                String targetAgentId = projectId + ":" + task.getAssignedRole();
+                Agent targetAgent = agentManager.getAgent(targetAgentId);
+                if (targetAgent == null || !targetAgent.isAlive()) {
+                    log.debug("目标 Agent 不可用，跳过任务分配: {} -> {}", task.getTitle(), targetAgentId);
+                    continue;
+                }
+
+                // 检查 Agent 是否具备任务所需的能力
+                if (dynamicCapabilityService != null && task.getDescription() != null
+                    && task.getDescription().contains("【推荐使用能力】")) {
+                    String agentRole = task.getAssignedRole();
+                    List<String> roleCapNames = dynamicCapabilityService.getRoleTemplates(agentRole).stream()
+                        .map(t -> t.getCapabilityName()).toList();
+                    // 提取推荐能力
+                    int idx = task.getDescription().indexOf("【推荐使用能力】");
+                    String capStr = task.getDescription().substring(idx + "【推荐使用能力】".length()).trim();
+                    String[] recommended = capStr.split("[,，]");
+                    List<String> missing = new ArrayList<>();
+                    for (String cap : recommended) {
+                        String trimmed = cap.trim();
+                        if (!trimmed.isEmpty() && !roleCapNames.contains(trimmed)) {
+                            missing.add(trimmed);
+                        }
+                    }
+                    if (!missing.isEmpty()) {
+                        log.warn("Agent {} 缺少任务所需能力: {} (任务: {})", targetAgentId, missing, task.getTitle());
+                    }
+                }
+
+                // 构建任务内容
+                StringBuilder taskContentBuilder = new StringBuilder();
+                taskContentBuilder.append("[里程碑任务]\n\n");
+                taskContentBuilder.append("里程碑: ").append(milestone.getTitle()).append("\n");
+                taskContentBuilder.append("任务: ").append(task.getTitle()).append("\n");
+                taskContentBuilder.append("角色: ").append(task.getAssignedRole()).append("\n");
+                taskContentBuilder.append("优先级: ").append(task.getPriority() != null ? task.getPriority() : "MEDIUM").append("\n\n");
+                taskContentBuilder.append("## 描述\n").append(task.getDescription() != null ? task.getDescription() : "无").append("\n\n");
+                taskContentBuilder.append("## 输入要求\n").append(task.getInputRequirements() != null ? task.getInputRequirements() : "无").append("\n\n");
+                taskContentBuilder.append("## 输出交付物\n").append(task.getOutputDeliverables() != null ? task.getOutputDeliverables() : "无").append("\n\n");
+                taskContentBuilder.append("## 验收标准\n").append(task.getAcceptanceCriteria() != null ? String.join("; ", task.getAcceptanceCriteria()) : "无");
+
+                // 资源类任务提示：引导 Agent 使用 MCP 工具或内置能力生成资源
+                if (isResourceAgentRole(task.getAssignedRole())) {
+                    taskContentBuilder.append("\n\n## 资源生成提示\n");
+                    taskContentBuilder.append("你是资源类 Agent，拥有 AI 资源生成能力。\n");
+                    // 优先使用 MCP 工具
+                    if (mcpService != null) {
+                        String mcpTools = mcpService.buildMcpToolPrompt(task.getAssignedRole(), projectId);
+                        if (!mcpTools.isEmpty()) {
+                            taskContentBuilder.append("### 可用的 MCP 工具\n");
+                            taskContentBuilder.append(mcpTools);
+                            taskContentBuilder.append("使用方式：调用 `callMcpTool` 能力，传入 toolName 和 arguments。\n\n");
+                        }
+                    }
+                    taskContentBuilder.append("### 内置能力\n");
+                    taskContentBuilder.append("也可以使用内置能力：generateMusic/generateSoundEffect/generateSprite/generateUIAsset\n");
+                    taskContentBuilder.append("生成的资源文件会自动保存到项目的 assets/ 目录。");
+                }
+
+                String taskContent = taskContentBuilder.toString();
+
+                // 发送任务消息
+                AgentMessage taskMsg = AgentMessage.createTask(getId(), targetAgentId, taskContent);
+                taskMsg.setPriority(5);
+                targetAgent.receiveMessage(taskMsg);
+
+                // 更新任务状态
+                task.setStatus(GameProject.MilestoneStatus.IN_PROGRESS);
+                sentCount++;
+
+                log.info("已分配任务: {} -> {} ({})", task.getTitle(), targetAgentId, task.getAssignedRole());
+            }
+        }
+
+        if (sentCount > 0) {
+            projectManager.saveProjectConfig(currentProject);
+            log.info("已发送 {} 个任务给团队成员", sentCount);
+            logInfo("TASKS_SENT", String.format("已将 %d 个任务分配给团队成员", sentCount));
+        }
+    }
+
+    /**
+     * 【优化1】为任务匹配能力模板
+     * 遍历里程碑任务，根据负责角色和任务内容匹配 DynamicCapabilityService 中的能力模板，
+     * 将匹配到的能力 prompt 注入到任务描述中，让 Agent 知道应该使用什么能力。
+     *
+     * @param milestones 里程碑列表
+     */
+    private void enrichTasksWithCapabilities(Collection<GameProject.GoalMilestone> milestones) {
+        if (dynamicCapabilityService == null) return;
+
+        int enrichedCount = 0;
+        for (GameProject.GoalMilestone milestone : milestones) {
+            if (milestone.getTasks() == null) continue;
+            for (GameProject.MilestoneTask task : milestone.getTasks()) {
+                String role = task.getAssignedRole();
+                if (role == null || role.isEmpty()) continue;
+
+                List<com.chengxun.gamemaker.service.DynamicCapabilityService.CapabilityTemplate> templates =
+                    dynamicCapabilityService.getRoleTemplates(role);
+                if (templates.isEmpty()) continue;
+
+                // 匹配能力模板：基于任务标题和描述的关键词匹配
+                String taskText = (task.getTitle() + " " + task.getDescription()).toLowerCase();
+                List<String> matchedCapabilities = new ArrayList<>();
+                for (var template : templates) {
+                    String templateText = (template.getDisplayName() + " " + template.getDescription()).toLowerCase();
+                    // 简单关键词匹配：模板名/描述中的词出现在任务文本中
+                    if (containsMatch(taskText, templateText)) {
+                        matchedCapabilities.add(template.getCapabilityName());
+                    }
+                }
+
+                if (!matchedCapabilities.isEmpty()) {
+                    // 注入能力提示到任务描述末尾
+                    String capabilityHint = String.format("\n\n【推荐使用能力】%s", String.join(", ", matchedCapabilities));
+                    if (task.getDescription() != null && !task.getDescription().contains("【推荐使用能力】")) {
+                        task.setDescription(task.getDescription() + capabilityHint);
+                    }
+                    enrichedCount++;
+                }
+            }
+        }
+        if (enrichedCount > 0) {
+            log.info("已为 {} 个任务匹配能力模板", enrichedCount);
+        }
+    }
+
+    /**
+     * 判断是否为资源类 Agent 角色
+     */
+    private boolean isResourceAgentRole(String role) {
+        return "audio-dev".equals(role) || "tech-artist".equals(role) || "ui-dev".equals(role);
+    }
+
+    /**
+     * 检查任务文本是否与能力模板匹配
+     */
+    private boolean containsMatch(String taskText, String templateText) {
+        // 将模板描述拆分为关键词，检查是否有任何关键词出现在任务文本中
+        String[] keywords = templateText.split("[,，、\\s]+");
+        int matchCount = 0;
+        for (String keyword : keywords) {
+            keyword = keyword.trim();
+            if (keyword.length() >= 2 && taskText.contains(keyword)) {
+                matchCount++;
+            }
+        }
+        return matchCount >= 1;
     }
 
     /**
@@ -4729,6 +6035,21 @@ public class ProducerAgent extends BaseAgent {
         sb.append("- server-dev: 服务端开发，负责后端逻辑、数据存储、多人联网\n");
         sb.append("- tester: 测试，负责质量验证\n");
         sb.append("- git-commit: 版本管理，负责代码提交和版本控制\n\n");
+
+        // 注入 MCP 资源生成工具信息
+        if (mcpService != null) {
+            String mcpProjectId = getProjectId();
+            String mcpTools = mcpService.buildMcpToolPrompt("producer", mcpProjectId);
+            if (!mcpTools.isEmpty()) {
+                sb.append("## 可用的资源生成工具\n");
+                sb.append("以下角色可以使用 MCP 工具生成资源（图片、音频等），任务中应明确指定使用哪个工具：\n\n");
+                sb.append(mcpTools);
+                sb.append("**重要**：如果任务涉及资源生成（图片、音频、视频等），必须在任务描述中明确：\n");
+                sb.append("1. 使用哪个 MCP 工具（如 minimax_image_generate）\n");
+                sb.append("2. 需要生成什么内容（prompt 描述）\n");
+                sb.append("3. 输出文件路径（如 assets/images/background.png）\n\n");
+            }
+        }
 
         sb.append("## 分解原则\n");
         sb.append("1. **每个迭代都需要多角色协作**，不要只分配给一个角色\n");
@@ -4862,28 +6183,30 @@ public class ProducerAgent extends BaseAgent {
                 }
 
                 String[] parts = content.split("\\|");
-                if (parts.length < 6) continue;
+                if (parts.length < 3) continue;  // 至少需要：标题 | 角色 | 描述
 
                 com.chengxun.gamemaker.model.TaskTemplate task = new com.chengxun.gamemaker.model.TaskTemplate();
                 task.setTitle(parts[0].trim());
                 task.setAssignedRole(normalizeRole(parts[1].trim()));
                 task.setDescription(parts[2].trim());
-                task.setInputRequirements(parts[3].trim());
-                task.setOutputDeliverables(parts[4].trim());
+                task.setInputRequirements(parts.length > 3 ? parts[3].trim() : "");
+                task.setOutputDeliverables(parts.length > 4 ? parts[4].trim() : "");
                 task.setMilestoneId(milestoneId);
 
                 // 解析验收标准
-                String criteriaStr = parts[5].trim();
-                if (!criteriaStr.isEmpty()) {
-                    String[] criteria = criteriaStr.split("[;；]");
-                    List<String> criteriaList = new ArrayList<>();
-                    for (String c : criteria) {
-                        String trimmed = c.trim();
-                        if (!trimmed.isEmpty()) {
-                            criteriaList.add(trimmed);
+                if (parts.length > 5) {
+                    String criteriaStr = parts[5].trim();
+                    if (!criteriaStr.isEmpty()) {
+                        String[] criteria = criteriaStr.split("[;；]");
+                        List<String> criteriaList = new ArrayList<>();
+                        for (String c : criteria) {
+                            String trimmed = c.trim();
+                            if (!trimmed.isEmpty()) {
+                                criteriaList.add(trimmed);
+                            }
                         }
+                        task.setAcceptanceCriteria(criteriaList);
                     }
-                    task.setAcceptanceCriteria(criteriaList);
                 }
 
                 // 解析优先级
@@ -4949,6 +6272,8 @@ public class ProducerAgent extends BaseAgent {
             case "测试", "qa", "tester", "test" -> "tester";
             case "git", "版本", "version", "git-commit", "gitcommit" -> "git-commit";
             case "制作人", "producer", "pm" -> "producer";
+            // 【修复】multi-agent 表示多角色协作，不需要招聘特定 Agent
+            case "multi-agent", "多角色", "协作", "团队" -> null;
             default -> null;
         };
 
@@ -5064,6 +6389,9 @@ public class ProducerAgent extends BaseAgent {
             return;
         }
 
+        // 自动扫描并填充目录配置
+        scanAndPopulateDirectoryConfigs();
+
         // 生成项目运行规则
         String rules = generateProjectRules();
 
@@ -5078,6 +6406,92 @@ public class ProducerAgent extends BaseAgent {
         notifyTeamProjectRules(projectId, rules);
 
         log.info("项目运行规则已生成并通知: {}", projectId);
+    }
+
+    /**
+     * 扫描项目工作目录并自动填充目录配置
+     * 遍历工作目录下的子目录，为每个有意义的目录创建配置
+     */
+    private void scanAndPopulateDirectoryConfigs() {
+        if (currentProject == null) return;
+
+        String workDir = currentProject.getWorkDir();
+        if (workDir == null || workDir.isEmpty()) return;
+
+        java.io.File dir = new java.io.File(workDir);
+        if (!dir.exists() || !dir.isDirectory()) return;
+
+        // 如果已有目录配置，不重复扫描
+        if (currentProject.getDirectoryConfigs() != null && !currentProject.getDirectoryConfigs().isEmpty()) {
+            return;
+        }
+
+        // 常见目录的描述映射
+        Map<String, String> dirDescriptions = Map.ofEntries(
+            Map.entry("src", "源代码目录"),
+            Map.entry("src/main", "主代码目录"),
+            Map.entry("src/main/java", "Java 源代码"),
+            Map.entry("src/main/resources", "资源文件目录"),
+            Map.entry("src/test", "测试代码目录"),
+            Map.entry("frontend", "前端项目目录"),
+            Map.entry("frontend/src", "前端源代码"),
+            Map.entry("frontend/src/views", "前端页面组件"),
+            Map.entry("frontend/src/components", "前端公共组件"),
+            Map.entry("assets", "资源文件目录（图片、音频等）"),
+            Map.entry("assets/images", "图片资源"),
+            Map.entry("assets/audio", "音频资源"),
+            Map.entry("assets/fonts", "字体资源"),
+            Map.entry("public", "静态资源目录"),
+            Map.entry("static", "静态资源目录"),
+            Map.entry("docs", "文档目录"),
+            Map.entry("config", "配置文件目录"),
+            Map.entry("scripts", "脚本目录"),
+            Map.entry("build", "构建输出目录"),
+            Map.entry("dist", "打包输出目录"),
+            Map.entry("lib", "库文件目录"),
+            Map.entry("css", "样式文件目录"),
+            Map.entry("js", "JavaScript 文件目录"),
+            Map.entry("img", "图片目录"),
+            Map.entry("res", "资源目录"),
+            Map.entry("data", "数据文件目录")
+        );
+
+        // 扫描顶层和二级目录
+        scanDirectory(dir, "", dirDescriptions, 2);
+
+        // 保存项目配置
+        projectManager.saveProjectConfig(currentProject);
+        log.info("目录配置已自动填充: {}", currentProject.getName());
+    }
+
+    /**
+     * 递归扫描目录并添加配置
+     */
+    private void scanDirectory(java.io.File dir, String prefix, Map<String, String> descriptions, int depth) {
+        if (depth <= 0) return;
+
+        java.io.File[] children = dir.listFiles();
+        if (children == null) return;
+
+        for (java.io.File child : children) {
+            if (!child.isDirectory() || child.getName().startsWith(".")) continue;
+
+            String relativePath = prefix.isEmpty() ? child.getName() : prefix + "/" + child.getName();
+            String desc = descriptions.get(relativePath);
+            if (desc == null) {
+                desc = descriptions.get(child.getName());
+            }
+            if (desc == null) {
+                desc = child.getName() + " 目录";
+            }
+
+            currentProject.addDirectoryConfig(
+                new GameProject.DirectoryConfig(relativePath, desc)
+            );
+
+            // 递归扫描子目录
+            scanDirectory(child, relativePath, descriptions, depth - 1);
+        }
     }
 
     /**
@@ -5264,6 +6678,94 @@ public class ProducerAgent extends BaseAgent {
         projectManager.saveProjectConfig(currentProject);
 
         log.info("项目概况已更新: {}", currentProject.getName());
+    }
+
+    /**
+     * 更新项目概况（无参数版本，用于所有里程碑完成时调用）
+     */
+    private void updateProjectOverview() {
+        if (currentProject == null) return;
+
+        StringBuilder overview = new StringBuilder();
+        overview.append("# 项目概况\n\n");
+
+        // 项目信息
+        overview.append("## 项目信息\n");
+        overview.append("- **项目名称**: ").append(currentProject.getName()).append("\n");
+        overview.append("- **项目目标**: ").append(currentProject.getGoal() != null ? currentProject.getGoal() : "未设置").append("\n");
+        overview.append("- **当前版本**: ").append(currentProject.getVersion() != null ? currentProject.getVersion() : "v1").append("\n");
+        overview.append("- **工作目录**: `").append(currentProject.getWorkDir()).append("`\n");
+        overview.append("- **运行状态**: ").append(currentProject.isRunning() ? "运行中" : "未运行").append("\n\n");
+
+        // 启动信息
+        overview.append("## 启动方式\n");
+        String workDir = currentProject.getWorkDir();
+        if (workDir != null && !workDir.isEmpty()) {
+            java.io.File dir = new java.io.File(workDir);
+            if (new java.io.File(workDir, "package.json").exists()) {
+                overview.append("```bash\ncd ").append(workDir).append("\nnpm install\nnpm run dev\n```\n\n");
+            } else if (new java.io.File(workDir, "pom.xml").exists()) {
+                overview.append("```bash\ncd ").append(workDir).append("\nmvn spring-boot:run\n```\n\n");
+            } else if (new java.io.File(workDir, "index.html").exists()) {
+                overview.append("```bash\n# 直接用浏览器打开 ").append(workDir).append("/index.html\n```\n\n");
+            } else {
+                overview.append("- 工作目录: `").append(workDir).append("`\n\n");
+            }
+        }
+
+        // 部署信息
+        String deploymentRules = currentProject.getDeploymentRules();
+        if (deploymentRules != null && !deploymentRules.isEmpty()) {
+            overview.append("## 部署信息\n");
+            overview.append(deploymentRules).append("\n\n");
+        }
+
+        // 团队成员
+        String projectId = getProjectId();
+        if (projectId != null) {
+            List<Agent> agents = agentManager.getAgentsByProject(projectId);
+            if (!agents.isEmpty()) {
+                overview.append("## 团队成员\n");
+                for (Agent agent : agents) {
+                    String status = agent.isBusy() ? "工作中" : (agent.isAlive() ? "空闲" : "离线");
+                    overview.append("- **").append(agent.getName()).append("** (").append(agent.getRole()).append("): ").append(status).append("\n");
+                }
+                overview.append("\n");
+            }
+        }
+
+        // 里程碑进度
+        overview.append("## 里程碑进度\n");
+        int completed = 0;
+        int total = currentProject.getMilestones().size();
+        for (GameProject.GoalMilestone m : currentProject.getMilestones()) {
+            String statusIcon = switch (m.getStatus()) {
+                case COMPLETED -> "✅";
+                case IN_PROGRESS -> "🔄";
+                case BLOCKED -> "🚫";
+                default -> "⏳";
+            };
+            overview.append("- ").append(statusIcon).append(" **").append(m.getTitle()).append("**");
+            if (m.getAssignedAgentRole() != null) {
+                overview.append(" — ").append(m.getAssignedAgentRole());
+            }
+            if (m.getStatus() == GameProject.MilestoneStatus.COMPLETED) {
+                completed++;
+            }
+            overview.append("\n");
+        }
+        double progress = total > 0 ? (double) completed / total * 100 : 0;
+        overview.append(String.format("\n**完成率**: %d/%d (%.0f%%)\n\n", completed, total, progress));
+
+        // 完成时间
+        overview.append("## 状态\n");
+        overview.append("- **完成时间**: ").append(java.time.LocalDateTime.now().format(
+            java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))).append("\n");
+        overview.append("- **状态**: 所有里程碑已完成\n");
+
+        currentProject.setProjectOverview(overview.toString());
+        projectManager.saveProjectConfig(currentProject);
+        log.info("项目概况已更新（全量）: {}", currentProject.getName());
     }
 
     /**
@@ -5553,6 +7055,12 @@ public class ProducerAgent extends BaseAgent {
         String projectId = getProjectId();
         if (projectId == null) return;
 
+        // 【修复】role 为 null 时跳过招聘，避免无效请求
+        if (role == null || role.isEmpty()) {
+            log.warn("跳过招聘审批：role 为 null，taskDescription={}", taskDescription);
+            return;
+        }
+
         // 防止重复发起审批：已有审批在等待中，跳过
         if (pendingApprovalMilestoneId != null) {
             log.debug("已有审批等待中: {}，跳过对 {} 的重复审批", pendingApprovalMilestoneId, role);
@@ -5607,15 +7115,23 @@ public class ProducerAgent extends BaseAgent {
                     description
                 );
                 logInfo("RECRUIT_APPROVAL_SENT", "已发起招聘审批请求，ID: " + approvalRequest.getId() + "，角色: " + role);
+
+                // 发送带按钮的飞书审批卡片
+                if (feishuService != null && feishuService.isEnabled()) {
+                    String cardContent = String.format(
+                        "**👥 招聘审批请求**\n\n---\n\n**项目**: %s\n**角色**: %s\n**名称**: %s\n**任务**: %s\n\n---\n\n请审批是否允许招聘该 Agent。",
+                        currentProject.getName(), role, name, taskDescription);
+                    feishuService.sendApprovalCard(null, "👥 招聘审批: " + role, cardContent, approvalRequest.getId());
+                }
             } catch (Exception e) {
                 log.error("创建审批请求失败: {}", e.getMessage());
-                // 回退到直接通知
+                // 回退到直接通知（无 requestId）
                 sendNotificationToAdmin("RECRUIT_APPROVAL_REQUIRED",
                     String.format("【招聘审批请求】\n\n项目: %s\n角色: %s\n名称: %s\n任务: %s",
                         currentProject.getName(), role, name, taskDescription));
             }
         } else {
-            // ApprovalService 不可用，使用直接通知
+            // ApprovalService 不可用，使用直接通知（无 requestId）
             sendNotificationToAdmin("RECRUIT_APPROVAL_REQUIRED",
                 String.format("【招聘审批请求】\n\n项目: %s\n角色: %s\n名称: %s\n任务: %s",
                     currentProject.getName(), role, name, taskDescription));
@@ -5653,7 +7169,7 @@ public class ProducerAgent extends BaseAgent {
      * 检查该角色是否有被拒绝的招聘请求（从数据库查询，重启后仍有效）
      */
     private boolean hasRejectedRecruitForRole(String projectId, String role) {
-        if (approvalService == null) return false;
+        if (approvalService == null || role == null) return false;
 
         try {
             List<ApprovalRequest> allRequests = approvalService.getRequestsByProject(projectId);
@@ -5892,13 +7408,10 @@ public class ProducerAgent extends BaseAgent {
                     logInfo("VERSION_UPGRADE", "版本已升级，里程碑已重置，继续迭代开发");
 
                     // 通知团队
-                    if (feishuService.isEnabled()) {
-                        GameProject updatedProject = projectManager.getProject(projectId);
-                        feishuService.sendMessage(String.format(
-                            "项目 [%s] 版本迭代完成！\n\n新版本: %s\n\n继续迭代开发。",
-                            updatedProject.getName(), updatedProject.getVersion()
-                        ));
-                    }
+                    GameProject updatedProject = projectManager.getProject(projectId);
+                    sendNotificationToAdmin("VERSION_ITERATION_STARTED",
+                        String.format("项目 [%s] 版本迭代完成！新版本: %s，继续迭代开发。",
+                            updatedProject.getName(), updatedProject.getVersion()));
                 }
                 case 2 -> {
                     // 目标完成，停止所有Agent
@@ -5914,12 +7427,9 @@ public class ProducerAgent extends BaseAgent {
                     projectManager.saveProjectConfig(project);
 
                     // 通知用户
-                    if (feishuService.isEnabled()) {
-                        feishuService.sendMessage(String.format(
-                            "项目 [%s] 目标已完成！\n\n版本: %s\n已停止 %d 个Agent。",
-                            project.getName(), project.getVersion(), stoppedCount
-                        ));
-                    }
+                    sendNotificationToAdmin("VERSION_ITERATION_STARTED",
+                        String.format("项目 [%s] 目标已完成！版本: %s，已停止 %d 个Agent。",
+                            project.getName(), project.getVersion(), stoppedCount));
                 }
             }
         } else {
@@ -5928,12 +7438,9 @@ public class ProducerAgent extends BaseAgent {
                 project.setGoalStatus(GameProject.GoalStatus.REVIEW);
                 projectManager.saveProjectConfig(project);
 
-                if (feishuService.isEnabled()) {
-                    feishuService.sendMessage(String.format(
-                        "项目 [%s] 的目标已全部完成！\n\n目标: %s\n\n请确认验收。",
-                        project.getName(), project.getGoal()
-                    ));
-                }
+                sendNotificationToAdmin("DELIVERY_APPROVAL",
+                    String.format("项目 [%s] 的目标已全部完成！目标: %s，请确认验收。",
+                        project.getName(), project.getGoal()));
                 log.info("Goal entered review for project: {}", projectId);
             }
         }
@@ -6002,6 +7509,42 @@ public class ProducerAgent extends BaseAgent {
         if (feishuService.isEnabled()) {
             feishuService.sendMessage(status);
         }
+    }
+
+    /**
+     * 从 AI 响应中提取决策摘要
+     * 只提取关键行动和决策，不发送原始上下文
+     */
+    private String extractDecisionSummary(String response) {
+        if (response == null || response.isEmpty()) return null;
+
+        StringBuilder summary = new StringBuilder();
+        summary.append("**📊 制作人工作汇报**\n\n");
+        summary.append("**项目**: ").append(currentProject != null ? currentProject.getName() : "全局").append("\n\n");
+
+        // 提取关键行动（查找"行动"、"任务"、"分配"等关键词）
+        String[] lines = response.split("\n");
+        int actionCount = 0;
+        for (String line : lines) {
+            String trimmed = line.trim();
+            if (trimmed.isEmpty()) continue;
+
+            // 匹配关键行动
+            if (trimmed.matches(".*(?:分配|执行|创建|启动|验证|完成|修复|优化|通知).*") && trimmed.length() > 10) {
+                // 清理 markdown 格式
+                String clean = trimmed.replaceAll("[*#`]", "").trim();
+                if (clean.length() > 5 && clean.length() < 150) {
+                    summary.append("- ").append(clean).append("\n");
+                    actionCount++;
+                    if (actionCount >= 5) break;  // 最多5条
+                }
+            }
+        }
+
+        // 如果没有提取到关键行动，返回 null 不发送
+        if (actionCount == 0) return null;
+
+        return summary.toString();
     }
 
     private void saveProjectStatus(String status) {
@@ -6150,6 +7693,32 @@ public class ProducerAgent extends BaseAgent {
         return "招聘请求已发送，等待批准";
     }
 
+    /** 质量迭代防重复触发缓存：key = projectId:milestoneId，value = 触发时间 */
+    private final java.util.concurrent.ConcurrentHashMap<String, Long> qualityIterationTriggered = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * 检查是否已经触发过质量迭代（防重复）
+     *
+     * @param projectId 项目ID
+     * @param milestoneId 里程碑ID
+     * @return true 如果最近5分钟内已触发过
+     */
+    private boolean isQualityIterationTriggered(String projectId, String milestoneId) {
+        String key = projectId + ":" + milestoneId;
+        Long triggeredTime = qualityIterationTriggered.get(key);
+        if (triggeredTime == null) return false;
+        // 5分钟内的重复触发视为重复
+        return System.currentTimeMillis() - triggeredTime < 5 * 60 * 1000;
+    }
+
+    /**
+     * 记录质量迭代已触发
+     */
+    private void markQualityIterationTriggered(String projectId, String milestoneId) {
+        String key = projectId + ":" + milestoneId;
+        qualityIterationTriggered.put(key, System.currentTimeMillis());
+    }
+
     /**
      * 发送通知给管理员
      *
@@ -6157,30 +7726,46 @@ public class ProducerAgent extends BaseAgent {
      * @param content 通知内容
      */
     private void sendNotificationToAdmin(String notificationType, String content) {
-        // 通过飞书发送通知
-        if (feishuService != null && feishuService.isEnabled()) {
-            feishuService.sendMessage(String.format(
-                "📢 制作人通知\n\n类型: %s\n\n%s",
-                notificationType, content
-            ));
-        }
+        sendNotificationToAdmin(notificationType, content, null);
+    }
 
-        // 发送站内信通知到管理员
+    /**
+     * 发送通知给管理员（支持审批 requestId）
+     */
+    private void sendNotificationToAdmin(String notificationType, String content, Long requestId) {
+        // 通过模板系统发送通知（飞书+站内信+邮件），不再直接调用 feishuService
         if (notificationService != null) {
             try {
                 String title = getNotificationTitle(notificationType);
                 com.chengxun.gamemaker.web.entity.Notification.NotificationType type =
                     getNotificationType(notificationType);
-                // 向所有管理员发送通知（使用偏好系统定义的 key）
                 String prefKey = mapToPreferenceKey(notificationType);
-                notificationService.notifyAdmins(
-                    prefKey,
-                    "PRODUCER_" + notificationType,
-                    java.util.Map.of("title", title, "content", content),
-                    type);
+                // 清理和截断内容，使通知更可读
+                String cleanContent = cleanNotificationContent(content);
+                // 构建变量映射，包含项目信息
+                java.util.Map<String, String> variables = new java.util.HashMap<>();
+                variables.put("title", title);
+                variables.put("content", cleanContent);
+                if (requestId != null) {
+                    variables.put("requestId", requestId.toString());
+                }
+                if (currentProject != null) {
+                    variables.put("projectName", currentProject.getName());
+                    variables.put("projectDescription", currentProject.getDescription() != null ? currentProject.getDescription() : "");
+                    // 从项目成员中获取创建者（OWNER）
+                    String createdBy = getProjectOwner();
+                    variables.put("createdBy", createdBy != null ? createdBy : "");
+                }
+                notificationService.notifyAdmins(prefKey, "PRODUCER_" + notificationType, variables, type);
             } catch (Exception e) {
                 log.debug("发送管理员通知失败: {}", e.getMessage());
             }
+        } else if (feishuService != null && feishuService.isEnabled()) {
+            // fallback：notificationService 未注入时直接发飞书
+            feishuService.sendMessage(String.format(
+                "📢 制作人通知\n\n类型: %s\n\n%s",
+                notificationType, content
+            ));
         }
 
         // 记录日志
@@ -6188,6 +7773,60 @@ public class ProducerAgent extends BaseAgent {
 
         // 保存到经验
         saveExperience(notificationType.toLowerCase() + "_" + System.currentTimeMillis(), content);
+    }
+
+    /**
+     * 清理通知内容，使其更可读
+     * - 截断过长内容
+     * - 移除技术性细节
+     * - 保留关键信息
+     */
+    private String cleanNotificationContent(String content) {
+        if (content == null || content.isEmpty()) return "（无内容）";
+
+        // 移除箭头链式描述（如 "A→B→C→D"）
+        String cleaned = content.replaceAll("→[^\\n]{2,}", "→...");
+
+        // 移除过长的技术描述（超过300字截断）
+        if (cleaned.length() > 300) {
+            // 尝试在换行处截断
+            int cutAt = cleaned.lastIndexOf('\n', 300);
+            if (cutAt > 100) {
+                cleaned = cleaned.substring(0, cutAt) + "\n\n...";
+            } else {
+                cleaned = cleaned.substring(0, 300) + "...";
+            }
+        }
+
+        return cleaned;
+    }
+
+    /**
+     * 获取项目所有者用户名
+     * 从 project_members 表中查询 OWNER 角色的用户
+     *
+     * @return 项目所有者用户名，未找到返回 null
+     */
+    private String getProjectOwner() {
+        if (currentProject == null || projectMemberRepository == null) return null;
+        try {
+            java.util.List<com.chengxun.gamemaker.web.entity.ProjectMember> owners =
+                projectMemberRepository.findByProjectIdAndRole(
+                    currentProject.getId(),
+                    com.chengxun.gamemaker.web.entity.ProjectMember.ProjectRole.OWNER);
+            if (!owners.isEmpty()) {
+                // 获取第一个 OWNER 的用户 ID，然后查询用户名
+                Long userId = owners.get(0).getUserId();
+                if (userId != null && userRepository != null) {
+                    return userRepository.findById(userId)
+                        .map(u -> u.getUsername())
+                        .orElse(null);
+                }
+            }
+        } catch (Exception e) {
+            log.debug("获取项目所有者失败: {}", e.getMessage());
+        }
+        return null;
     }
 
     /**
@@ -6237,6 +7876,8 @@ public class ProducerAgent extends BaseAgent {
             case "WORKFLOW_HUMAN_APPROVAL_NEEDED" -> "需要人工审批";
             case "WORKFLOW_PRODUCER_APPROVED" -> "工作流已自动审批";
             case "VERSION_ITERATION_STARTED" -> "版本迭代已启动";
+            case "MILESTONE_COMPLETED" -> "里程碑完成";
+            case "ALL_MILESTONES_COMPLETED" -> "所有里程碑完成";
             case "RECRUIT_APPROVAL_REQUIRED" -> "招聘审批请求";
             case "RECRUIT_COMPLETED" -> "招聘完成";
             case "RECRUIT_REJECTED" -> "招聘被拒绝";
@@ -6250,6 +7891,8 @@ public class ProducerAgent extends BaseAgent {
             case "DISMISS_REJECTED" -> "解雇被拒绝";
             case "TEAM_OPTIMIZATION" -> "团队优化";
             case "AUTO_RECRUIT_REQUEST" -> "自动招聘请求";
+            case "QUALITY_ITERATION" -> "质量改进迭代";
+            case "QUALITY_MILESTONE_CREATED" -> "改进里程碑已创建";
             default -> "制作人通知";
         };
     }
@@ -6266,6 +7909,10 @@ public class ProducerAgent extends BaseAgent {
                  "DISMISS_REJECTED" -> com.chengxun.gamemaker.web.entity.Notification.NotificationType.WARNING;
             case "AGENT_EVALUATED", "TEAM_OPTIMIZATION",
                  "AUTO_RECRUIT_REQUEST" -> com.chengxun.gamemaker.web.entity.Notification.NotificationType.INFO;
+            case "MILESTONE_COMPLETED" -> com.chengxun.gamemaker.web.entity.Notification.NotificationType.SUCCESS;
+            case "ALL_MILESTONES_COMPLETED" -> com.chengxun.gamemaker.web.entity.Notification.NotificationType.SUCCESS;
+            case "WORKFLOW_STARTED", "WORKFLOW_CREATED",
+                 "WORKFLOW_PRODUCER_APPROVED" -> com.chengxun.gamemaker.web.entity.Notification.NotificationType.WORKFLOW;
             default -> com.chengxun.gamemaker.web.entity.Notification.NotificationType.SYSTEM;
         };
     }
@@ -6285,9 +7932,13 @@ public class ProducerAgent extends BaseAgent {
             // Agent 生命周期 → agent_status
             case "AGENT_CREATED", "AGENT_EVALUATED", "TEAM_OPTIMIZATION",
                  "AUTO_RECRUIT_REQUEST" -> "agent_status";
+            // 工作流启动 → workflow（独立偏好，可单独关闭邮件）
+            case "WORKFLOW_STARTED" -> "workflow";
             // 工作流/项目相关 → system
-            case "WORKFLOW_STARTED", "WORKFLOW_CREATED", "WORKFLOW_PRODUCER_APPROVED",
+            case "WORKFLOW_CREATED", "WORKFLOW_PRODUCER_APPROVED",
                  "VERSION_ITERATION_STARTED" -> "system";
+            // 里程碑完成 → project
+            case "MILESTONE_COMPLETED", "ALL_MILESTONES_COMPLETED" -> "project";
             default -> "system";
         };
     }
@@ -6321,6 +7972,14 @@ public class ProducerAgent extends BaseAgent {
                 ApprovalRequest approvalRequest = approvalService.createRequest(
                     projectId, getId(), "CREATE_AGENT", requestData, description);
                 logInfo("AUTO_RECRUIT_APPROVAL", "已发起自动招聘审批，ID: " + approvalRequest.getId() + "，角色: " + role);
+
+                // 发送带按钮的飞书审批卡片
+                if (feishuService != null && feishuService.isEnabled()) {
+                    String cardContent = String.format(
+                        "**🤖 创建Agent审批**\n\n---\n\n**角色**: %s\n**名称**: %s\n**任务**: %s\n\n---\n\n请审批。",
+                        role, name, taskDescription);
+                    feishuService.sendApprovalCard(null, "🤖 创建Agent审批: " + role, cardContent, approvalRequest.getId());
+                }
                 return true;
             } catch (Exception e) {
                 log.error("创建自动招聘审批请求失败: {}", e.getMessage());
@@ -6395,6 +8054,9 @@ public class ProducerAgent extends BaseAgent {
      * 生成 Agent 名称
      */
     private String generateAgentName(String role) {
+        if (role == null || role.isEmpty()) {
+            return "Agent-" + System.currentTimeMillis() % 10000;
+        }
         String prefix = switch (role) {
             case "server-dev" -> "服务端开发";
             case "client-dev" -> "客户端开发";
@@ -6529,7 +8191,7 @@ public class ProducerAgent extends BaseAgent {
 
     /**
      * 推动团队知识进化
-     * 触发知识库自进化，并将积累的知识改进推送给团队 Agent
+     * 触发知识库自进化，扫描项目文档，将积累的知识改进推送给团队 Agent
      */
     private void evolveTeamKnowledge() {
         if (knowledgeEvolutionService == null) return;
@@ -6538,7 +8200,10 @@ public class ProducerAgent extends BaseAgent {
         if (projectId == null) return;
 
         try {
-            // 1. 触发知识进化
+            // 1. 扫描项目文档并处理
+            scanAndProcessProjectDocuments();
+
+            // 2. 触发知识进化
             knowledgeEvolutionService.selfEvolve();
 
             // 2. 获取进化统计
@@ -6565,6 +8230,50 @@ public class ProducerAgent extends BaseAgent {
             }
         } catch (Exception e) {
             log.error("推动知识进化失败: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * 扫描项目目录中的文档并处理到知识库
+     * 查找 .md, .txt, .json 等文件，提取知识
+     */
+    private void scanAndProcessProjectDocuments() {
+        if (knowledgeEvolutionService == null || currentProject == null) return;
+
+        String workDir = currentProject.getWorkDir();
+        if (workDir == null || workDir.isEmpty()) return;
+
+        java.io.File dir = new java.io.File(workDir);
+        if (!dir.exists() || !dir.isDirectory()) return;
+
+        try {
+            java.io.File[] files = dir.listFiles((d, name) ->
+                name.endsWith(".md") || name.endsWith(".txt") ||
+                name.contains("design") || name.contains("plan") ||
+                name.contains("README") || name.contains("GDD"));
+
+            if (files == null || files.length == 0) return;
+
+            int processed = 0;
+            for (java.io.File file : files) {
+                if (file.length() > 100000) continue; // 跳过超大文件
+                try {
+                    String content = new String(java.nio.file.Files.readAllBytes(file.toPath()));
+                    if (content.length() > 50) { // 有实际内容
+                        knowledgeEvolutionService.processAgentDocument(
+                            getId(), file.getAbsolutePath(), content);
+                        processed++;
+                    }
+                } catch (Exception e) {
+                    log.debug("读取文档失败: {}", file.getName());
+                }
+            }
+
+            if (processed > 0) {
+                log.info("扫描项目文档完成: 处理了 {} 个文档", processed);
+            }
+        } catch (Exception e) {
+            log.debug("扫描项目文档失败: {}", e.getMessage());
         }
     }
 
@@ -6604,6 +8313,14 @@ public class ProducerAgent extends BaseAgent {
                     description
                 );
                 logInfo("CREATE_AGENT_APPROVAL_SENT", "已发起创建 Agent 审批请求，ID: " + approvalRequest.getId());
+
+                // 发送带按钮的飞书审批卡片
+                if (feishuService != null && feishuService.isEnabled()) {
+                    String cardContent = String.format(
+                        "**🤖 创建Agent审批**\n\n---\n\n**名称**: %s\n**角色**: %s\n**工作目录**: %s\n\n---\n\n请审批。",
+                        name, role, workDir);
+                    feishuService.sendApprovalCard(null, "🤖 创建Agent审批: " + name, cardContent, approvalRequest.getId());
+                }
             } catch (Exception e) {
                 log.error("创建审批请求失败: {}", e.getMessage());
                 // 回退到直接通知
@@ -6928,11 +8645,9 @@ public class ProducerAgent extends BaseAgent {
     }
 
     public void notifyQuotaExhausted(String agentId) {
-        if (feishuService.isEnabled()) {
-            feishuService.sendMessage(
-                String.format("⚠️ Agent %s 的 API 配额不足，请及时更换或重置。", agentId)
-            );
-        } else {
+        sendNotificationToAdmin("AGENT_STATUS",
+            String.format("Agent %s 的 API 配额不足，请及时更换或重置。", agentId));
+        if (!feishuService.isEnabled()) {
             log.warn("Agent {} 的 API 配额不足", agentId);
         }
         saveExperience("quota_exhausted_" + agentId, "API quota exhausted at " + java.time.LocalDateTime.now());

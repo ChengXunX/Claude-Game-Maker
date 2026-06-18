@@ -197,7 +197,7 @@ CREATE TABLE IF NOT EXISTS `agent_logs` (
   `duration_ms` bigint DEFAULT NULL,
   `level` varchar(20) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `project_id` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `summary` varchar(200) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `summary` text COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `task_id` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   PRIMARY KEY (`id`),
   KEY `idx_agent_logs_agent_id` (`agent_id`),
@@ -291,7 +291,15 @@ CREATE TABLE IF NOT EXISTS `agent_presets` (
   `capabilities` text COLLATE utf8mb4_unicode_ci,
   `max_context_size` int DEFAULT NULL,
   `reasoning_depth` int DEFAULT NULL,
+  `thinking_mode` int DEFAULT NULL COMMENT '思维模式 1-5: 1=高度严谨 2=严谨 3=平衡 4=创新 5=突破',
   `role` varchar(50) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `prompt` mediumtext COLLATE utf8mb4_unicode_ci COMMENT '角色系统提示词（完整角色定义）',
+  `notify_targets` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT 'producer' COMMENT '完成任务后的通知目标角色',
+  `reviewer` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '审查者角色',
+  `role_name` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '角色中文名称',
+  `prompt_version` int DEFAULT '0' COMMENT '提示词版本号',
+  `last_evolution_source` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '上次进化来源',
+  `last_evolution_at` datetime DEFAULT NULL COMMENT '上次进化时间',
   `source_agent_id` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `source_project_id` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `supported_file_types` text COLLATE utf8mb4_unicode_ci,
@@ -414,10 +422,14 @@ CREATE TABLE IF NOT EXISTS `api_tokens` (
   `context_window` int DEFAULT 200000,
   `priority` int DEFAULT NULL,
   `agent_tags` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `assigned_agent_id` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `assigned_agent_name` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `usage_count` bigint DEFAULT NULL,
   `total_tokens_used` bigint DEFAULT '0',
+  `quota_type` varchar(20) COLLATE utf8mb4_unicode_ci DEFAULT 'UNLIMITED' COMMENT '配额类型: UNLIMITED/TOTAL/SLIDING_WINDOW',
+  `quota_total` bigint DEFAULT 0 COMMENT '配额总量（token数）',
+  `window_seconds` int DEFAULT 0 COMMENT '滑动窗口时长（秒）',
+  `max_concurrent_agents` int DEFAULT 0 COMMENT '最大并发Agent数，0=不限',
+  `provider_type` varchar(30) COLLATE utf8mb4_unicode_ci DEFAULT 'ANTHROPIC' COMMENT '提供商类型',
+  `resource_type` varchar(20) COLLATE utf8mb4_unicode_ci DEFAULT 'TEXT' COMMENT '资源类型',
   `description` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `status` enum('ACTIVE','EXHAUSTED','DISABLED','EXPIRED') COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `created_by` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
@@ -436,6 +448,23 @@ CREATE TABLE IF NOT EXISTS `api_tokens` (
   KEY `idx_api_tokens_user_expires` (`user_id`,`expires_at`),
   CONSTRAINT `api_tokens_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB AUTO_INCREMENT=19 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Table structure for table `token_usage_records`
+--
+
+DROP TABLE IF EXISTS `token_usage_records`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40503 SET character_set_client = utf8mb4 */;
+CREATE TABLE IF NOT EXISTS `token_usage_records` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `token_id` bigint NOT NULL COMMENT 'Token ID',
+  `tokens_used` bigint NOT NULL COMMENT '本次使用的token数量',
+  `used_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '使用时间',
+  PRIMARY KEY (`id`),
+  KEY `idx_usage_token_time` (`token_id`,`used_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Token使用记录（滑动窗口配额计算）';
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -511,6 +540,8 @@ CREATE TABLE IF NOT EXISTS `chat_messages` (
   `thinking` text,
   `tool_uses` text,
   `tasks` text,
+  `feishu_message_id` varchar(50) DEFAULT NULL COMMENT '飞书消息ID',
+  `feishu_open_id` varchar(100) DEFAULT NULL COMMENT '飞书用户open_id',
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   KEY `idx_chat_messages_session` (`session_id`),
@@ -528,6 +559,7 @@ CREATE TABLE IF NOT EXISTS `chat_sessions` (
   `id` bigint NOT NULL AUTO_INCREMENT,
   `user_id` bigint NOT NULL,
   `title` varchar(200) NOT NULL DEFAULT '新对话',
+  `source` varchar(20) DEFAULT 'web' COMMENT '会话来源：web=网页端, feishu=飞书端',
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
@@ -813,6 +845,13 @@ CREATE TABLE IF NOT EXISTS `mcp_servers` (
   `last_test_at` timestamp NULL DEFAULT NULL,
   `last_test_result` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `connected` tinyint(1) NOT NULL DEFAULT '0',
+  `ai_api_key` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `ai_api_url` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `ai_model` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `category` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `auth_mode` varchar(20) COLLATE utf8mb4_unicode_ci DEFAULT 'env',
+  `auth_header_name` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT 'Authorization',
+  `required_params` text COLLATE utf8mb4_unicode_ci,
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
@@ -836,6 +875,8 @@ CREATE TABLE IF NOT EXISTS `mcp_tools` (
   `display_name` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `description` text COLLATE utf8mb4_unicode_ci,
   `input_schema` text COLLATE utf8mb4_unicode_ci,
+  `default_params` text COLLATE utf8mb4_unicode_ci,
+  `param_hints` text COLLATE utf8mb4_unicode_ci,
   `category` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `requires_approval` tinyint(1) NOT NULL DEFAULT '0',
   `enabled` tinyint(1) NOT NULL DEFAULT '1',
@@ -1742,7 +1783,17 @@ INSERT IGNORE INTO `system_constants` (`id`, `constant_key`, `display_name`, `de
 (30,'supervision.rollback.rate.threshold','回滚率阈值','版本回滚率超过此百分比视为异常','30','30','int','supervision','%',5,100,0,1,'2026-06-11 12:00:00','2026-06-11 12:00:00'),
 (31,'supervision.agent.idle.threshold.hours','Agent空闲阈值','Agent无活动超过此时间视为空闲','4','4','int','supervision','小时',1,48,0,1,'2026-06-11 12:00:00','2026-06-11 12:00:00'),
 (32,'supervision.alert.email.enabled','邮件预警开关','是否通过邮件发送督查预警','false','false','boolean','supervision','',NULL,NULL,0,1,'2026-06-11 12:00:00','2026-06-11 12:00:00'),
-(33,'supervision.alert.feishu.enabled','飞书预警开关','是否通过飞书发送督查预警','true','true','boolean','supervision','',NULL,NULL,0,1,'2026-06-11 12:00:00','2026-06-11 12:00:00');
+(33,'supervision.alert.feishu.enabled','飞书预警开关','是否通过飞书发送督查预警','true','true','boolean','supervision','',NULL,NULL,0,1,'2026-06-11 12:00:00','2026-06-11 12:00:00'),
+(34,'agent.context-window-size','对话窗口大小','保留的最大对话消息数，超出部分自动压缩为摘要','50','50','int','agent','条',10,500,0,1,'2026-06-11 12:00:00','2026-06-11 12:00:00'),
+(35,'agent.token-budget-daily','每日Token预算','每个Agent每日Token消耗上限，0表示不限制','0','0','long','agent','tokens',0,100000000,0,1,'2026-06-11 12:00:00','2026-06-11 12:00:00'),
+(36,'agent.token-budget-alert-threshold','Token预算告警阈值','Token消耗达到预算的此百分比时触发告警','80','80','int','agent','%',10,100,0,1,'2026-06-11 12:00:00','2026-06-11 12:00:00'),
+(37,'agent.capability-prompt-cache-ttl','能力Prompt缓存时间','能力列表Prompt缓存有效期，避免每次调用都重建','300','300','int','agent','秒',10,3600,0,1,'2026-06-11 12:00:00','2026-06-11 12:00:00'),
+(38,'agent.message-dedup-window-seconds','消息去重窗口','相同来源和类型的连续消息在此时间窗口内合并','30','30','int','agent','秒',5,300,0,1,'2026-06-11 12:00:00','2026-06-11 12:00:00'),
+(39,'agent.collaboration-context-inject','协作上下文注入开关','是否在Agent发送消息时自动注入团队协作上下文','true','true','boolean','agent','',NULL,NULL,0,1,'2026-06-11 12:00:00','2026-06-11 12:00:00'),
+(40,'context.compact-token-threshold','Token压缩触发阈值','会话累计Token超过此值时自动触发上下文压缩','80000','80000','int','performance','tokens',10000,500000,0,1,'2026-06-11 12:00:00','2026-06-11 12:00:00'),
+(41,'agent.token-alert-per-call','单次调用Token告警阈值','单次AI调用Token超过此值时记录告警日志','10000','10000','int','agent','tokens',1000,500000,0,1,'2026-06-11 12:00:00','2026-06-11 12:00:00'),
+(42,'context.recovery-max-length','上下文恢复最大长度','上下文恢复Prompt最大字符数，超出部分截断','3000','3000','int','performance','字符',500,10000,0,1,'2026-06-11 12:00:00','2026-06-11 12:00:00'),
+(43,'context.collaboration-max-length','协作上下文最大长度','注入到Agent Prompt中的协作上下文最大字符数','2000','2000','int','performance','字符',500,5000,0,1,'2026-06-11 12:00:00','2026-06-11 12:00:00');
 
 -- 表: notification_templates
 INSERT IGNORE INTO `notification_templates` (`id`, `template_code`, `template_name`, `channel`, `category`, `subject`, `content`, `description`, `enabled`, `system_builtin`, `created_at`, `updated_at`) VALUES (1,'TASK_FEISHU','任务飞书模板','FEISHU','TASK','任务通知','**任务通知**\n\n任务：${taskTitle}\n状态：${content}\n时间：${time}','用于发送任务相关飞书通知',1,1,'2026-06-04 18:38:31','2026-06-04 18:38:31'),(2,'TASK_SYSTEM','任务站内通知模板','SYSTEM','TASK','任务通知：${taskTitle}','任务状态：${content}','用于发送任务站内通知',1,1,'2026-06-04 18:38:31','2026-06-04 18:38:31'),(3,'AGENT_FEISHU','Agent飞书模板','FEISHU','AGENT','Agent通知','**Agent通知**\n\nAgent：${agentName}\n内容：${content}\n时间：${time}','用于发送Agent相关飞书通知',1,1,'2026-06-04 18:38:31','2026-06-04 18:38:31'),(4,'AGENT_SYSTEM','Agent站内通知模板','SYSTEM','AGENT','Agent通知：${agentName}','通知内容：${content}','用于发送Agent站内通知',1,1,'2026-06-04 18:38:31','2026-06-04 18:38:31'),(5,'RECOVERY_FEISHU','恢复通知飞书模板','FEISHU','ALERT','告警恢复','**告警恢复**\n\n规则：${ruleName}\n当前值：${triggerValue}\n时间：${time}','用于发送告警恢复飞书通知',1,1,'2026-06-04 18:38:31','2026-06-04 18:38:31'),(6,'RECOVERY_DINGTALK','恢复通知钉钉模板','DINGTALK','ALERT','告警恢复','### 告警恢复\n\n**规则名称**：${ruleName}\n**当前值**：${triggerValue}\n**恢复时间**：${time}\n\n告警已恢复，系统运行正常。','用于发送告警恢复钉钉通知',1,1,'2026-06-04 18:38:31','2026-06-04 18:38:31'),(7,'TASK_DINGTALK','任务钉钉模板','DINGTALK','TASK','任务通知','### 任务通知\n\n**任务标题**：${taskTitle}\n**任务状态**：${content}\n**通知时间**：${time}','用于发送任务钉钉通知',1,1,'2026-06-04 18:38:31','2026-06-04 18:38:31'),(8,'AGENT_DINGTALK','Agent钉钉模板','DINGTALK','AGENT','Agent通知','### Agent通知\n\n**Agent名称**：${agentName}\n**通知内容**：${content}\n**通知时间**：${time}','用于发送Agent钉钉通知',1,1,'2026-06-04 18:38:31','2026-06-04 18:38:31'),(9,'ALERT_SYSTEM','站内告警通知','SYSTEM','ALERT','[${priorityDesc}] 告警: ${ruleName}','监控告警已触发\n\n规则：${ruleName}\n级别：${priorityDesc}\n当前值：${triggerValue}\n阈值：${thresholdValue}\n时间：${time}',NULL,1,1,'2026-06-06 12:31:00','2026-06-06 12:31:00'),(10,'ALERT_EMAIL','邮件告警通知','EMAIL','ALERT','[${priorityDesc}] 告警: ${ruleName}','<h2>监控告警通知</h2><p><b>规则：</b>${ruleName}</p><p><b>级别：</b>${priorityDesc}</p><p><b>当前值：</b>${triggerValue}</p><p><b>阈值：</b>${thresholdValue}</p><p><b>时间：</b>${time}</p>',NULL,1,1,'2026-06-06 12:31:00','2026-06-06 12:31:00'),(11,'ALERT_FEISHU','飞书告警通知','FEISHU','ALERT','[${priorityDesc}] 告警: ${ruleName}','**监控告警通知**\n\n- 规则：${ruleName}\n- 级别：${priorityDesc}\n- 当前值：${triggerValue}\n- 阈值：${thresholdValue}\n- 时间：${time}',NULL,1,1,'2026-06-06 12:31:00','2026-06-06 12:31:00'),(12,'ALERT_DINGTALK','钉钉告警通知','DINGTALK','ALERT','[${priorityDesc}] 告警: ${ruleName}','### 监控告警通知\n\n- 规则：${ruleName}\n- 级别：${priorityDesc}\n- 当前值：${triggerValue}\n- 阈值：${thresholdValue}\n- 时间：${time}',NULL,1,1,'2026-06-06 12:31:00','2026-06-06 12:31:00'),(13,'RECOVERY_SYSTEM','站内告警恢复','SYSTEM','ALERT','告警恢复: ${ruleName}','告警已恢复\n\n规则：${ruleName}\n当前值：${triggerValue}\n时间：${time}',NULL,1,1,'2026-06-06 12:31:00','2026-06-06 12:31:00'),(14,'RECOVERY_EMAIL','邮件告警恢复','EMAIL','ALERT','告警恢复: ${ruleName}','<h2>告警恢复通知</h2><p><b>规则：</b>${ruleName}</p><p><b>当前值：</b>${triggerValue}</p><p><b>时间：</b>${time}</p>',NULL,1,1,'2026-06-06 12:31:00','2026-06-06 12:31:00'),(15,'TASK_EMAIL','邮件任务通知','EMAIL','TASK','任务通知: ${taskTitle}','<h2>任务通知</h2><p><b>任务：</b>${taskTitle}</p><p><b>结果：</b>${taskResult}</p><p><b>时间：</b>${time}</p>',NULL,1,1,'2026-06-06 12:31:00','2026-06-06 12:31:00'),(16,'AGENT_EMAIL','邮件Agent通知','EMAIL','AGENT','Agent通知: ${agentName}','<h2>Agent通知</h2><p><b>Agent：</b>${agentName}</p><p>${content}</p><p><b>时间：</b>${time}</p>',NULL,1,1,'2026-06-06 12:31:00','2026-06-06 12:31:00'),(17,'APPROVAL_SYSTEM','站内审批通知','SYSTEM','SYSTEM','审批通知: ${title}','${content}\n时间：${time}',NULL,1,1,'2026-06-06 12:31:00','2026-06-06 12:31:00'),(18,'APPROVAL_EMAIL','邮件审批通知','EMAIL','SYSTEM','审批通知: ${title}','<h2>审批通知</h2><p>${content}</p><p><b>时间：</b>${time}</p>',NULL,1,1,'2026-06-06 12:31:00','2026-06-06 12:31:00'),(19,'PERMISSION_SYSTEM','站内权限通知','SYSTEM','SYSTEM','权限通知: ${title}','${content}\n时间：${time}',NULL,1,1,'2026-06-06 12:31:00','2026-06-06 12:31:00'),(20,'PERMISSION_EMAIL','邮件权限通知','EMAIL','SYSTEM','权限通知: ${title}','<h2>权限通知</h2><p>${content}</p><p><b>时间：</b>${time}</p>',NULL,1,1,'2026-06-06 12:31:00','2026-06-06 12:31:00'),(21,'SYSTEM_MAINTENANCE_SYSTEM','站内系统维护','SYSTEM','SYSTEM','系统维护: ${title}','${content}\n时间：${time}',NULL,1,1,'2026-06-06 12:31:00','2026-06-06 12:31:00'),(22,'SYSTEM_MAINTENANCE_EMAIL','邮件系统维护','EMAIL','SYSTEM','系统维护: ${title}','<h2>系统维护通知</h2><p>${content}</p><p><b>时间：</b>${time}</p>',NULL,1,1,'2026-06-06 12:31:00','2026-06-06 12:31:00'),(23,'TOKEN_EXHAUSTED_SYSTEM','站内Token耗尽','SYSTEM','SYSTEM','Token 耗尽警告','API Token 配额不足，请及时补充。\n时间：${time}',NULL,1,1,'2026-06-06 12:31:00','2026-06-06 12:31:00'),(24,'TOKEN_EXHAUSTED_EMAIL','邮件Token耗尽','EMAIL','SYSTEM','Token 耗尽警告','<h2>Token 耗尽警告</h2><p>API Token 配额不足，请及时补充。</p><p><b>时间：</b>${time}</p>',NULL,1,1,'2026-06-06 12:31:00','2026-06-06 12:31:00'),(25,'PROJECT_SYSTEM','站内项目通知','SYSTEM','SYSTEM','项目通知: ${projectName}','${content}\n项目：${projectName}\n时间：${time}',NULL,1,1,'2026-06-06 12:31:00','2026-06-06 12:31:00'),(26,'PROJECT_EMAIL','邮件项目通知','EMAIL','SYSTEM','项目通知: ${projectName}','<h2>项目通知</h2><p><b>项目：</b>${projectName}</p><p>${content}</p><p><b>时间：</b>${time}</p>',NULL,1,1,'2026-06-06 12:31:00','2026-06-06 12:31:00'),
@@ -1757,5 +1808,193 @@ INSERT IGNORE INTO `agent_presets` (`id`, `api_provider`, `description`, `capabi
 
 -- 表: workflow_templates
 INSERT IGNORE INTO `workflow_templates` (`id`, `builtin`, `created_at`, `description`, `name`, `steps_json`, `updated_at`) VALUES ('client-only-dev',_binary '','2026-06-06 00:55:50.615020','纯前端项目开发流程，适用于H5游戏、小程序、可视化页面等无服务端的项目','客户端开发流程','[{\"id\":\"plan\",\"name\":\"交互策划\",\"agentRole\":\"system-planner\",\"taskDescription\":\"分析需求，设计页面结构、交互流程和视觉规范\",\"dependencies\":[],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3},{\"id\":\"design\",\"name\":\"UI开发\",\"agentRole\":\"ui-dev\",\"taskDescription\":\"实现页面布局、组件设计和样式开发\",\"dependencies\":[\"plan\"],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3},{\"id\":\"dev-client\",\"name\":\"功能开发\",\"agentRole\":\"client-dev\",\"taskDescription\":\"实现交互逻辑、数据绑定和动画效果\",\"dependencies\":[\"design\"],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3},{\"id\":\"test\",\"name\":\"测试验证\",\"agentRole\":\"tester\",\"taskDescription\":\"执行功能测试、兼容性测试和用户体验测试\",\"dependencies\":[\"dev-client\"],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3},{\"id\":\"deploy\",\"name\":\"发布上线\",\"agentRole\":\"git-commit\",\"taskDescription\":\"合并代码并部署到CDN或静态资源服务器\",\"dependencies\":[\"test\"],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":true,\"maxRetries\":3}]','2026-06-06 00:55:50.615026'),('code-dev-full',_binary '','2026-06-06 00:55:50.621429','代码从编写、测试、审查到部署的完整流程，确保代码质量','代码开发全流程','[{\"id\":\"analyze\",\"name\":\"需求分析\",\"agentRole\":\"system-planner\",\"taskDescription\":\"分析开发需求，确定技术方案和实现路径\",\"dependencies\":[],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3},{\"id\":\"code-write\",\"name\":\"代码编写\",\"agentRole\":\"server-dev\",\"taskDescription\":\"根据需求和设计文档编写高质量、可维护的代码，遵循编码规范\",\"dependencies\":[\"analyze\"],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3},{\"id\":\"unit-test\",\"name\":\"单元测试\",\"agentRole\":\"tester\",\"taskDescription\":\"编写和执行单元测试，确保代码逻辑正确，测试覆盖率达标\",\"dependencies\":[\"code-write\"],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3},{\"id\":\"integration-test\",\"name\":\"集成测试\",\"agentRole\":\"tester\",\"taskDescription\":\"执行集成测试，验证模块间交互和系统整体功能\",\"dependencies\":[\"unit-test\"],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3},{\"id\":\"code-review\",\"name\":\"代码审查\",\"agentRole\":\"server-dev\",\"taskDescription\":\"对代码进行专业审查，发现潜在问题，提供改进建议。审查不通过则返回修改\",\"dependencies\":[\"integration-test\"],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":true,\"maxRetries\":3},{\"id\":\"code-revise\",\"name\":\"代码修改\",\"agentRole\":\"server-dev\",\"taskDescription\":\"根据审查意见修改代码，解决审查中发现的问题\",\"dependencies\":[\"code-review\"],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3},{\"id\":\"deploy\",\"name\":\"部署上线\",\"agentRole\":\"git-commit\",\"taskDescription\":\"合并代码并部署到生产环境，进行线上验证\",\"dependencies\":[\"code-revise\"],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":true,\"maxRetries\":3}]','2026-06-06 00:55:50.621435'),('code-quick-fix',_binary '','2026-06-06 00:55:50.565820','代码快速修复流程，适用于小Bug修复和紧急改动','代码快速修复','[{\"id\":\"fix\",\"name\":\"问题修复\",\"agentRole\":\"server-dev\",\"taskDescription\":\"快速定位并修复代码问题，做最小化改动\",\"dependencies\":[],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3},{\"id\":\"test\",\"name\":\"快速测试\",\"agentRole\":\"tester\",\"taskDescription\":\"快速验证修复是否生效，确认无回归问题\",\"dependencies\":[\"fix\"],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3},{\"id\":\"deploy\",\"name\":\"快速上线\",\"agentRole\":\"git-commit\",\"taskDescription\":\"提交修复代码并快速部署\",\"dependencies\":[\"test\"],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3}]','2026-06-06 00:55:50.565827'),('code-review',_binary '','2026-06-06 00:55:50.607042','标准化的代码审查流程','代码审查流程','[{\"id\":\"submit\",\"name\":\"提交审查\",\"agentRole\":\"git-commit\",\"taskDescription\":\"整理代码变更，准备审查材料\",\"dependencies\":[],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3},{\"id\":\"review\",\"name\":\"执行审查\",\"agentRole\":\"server-dev\",\"taskDescription\":\"审查代码质量、安全性、规范性\",\"dependencies\":[\"submit\"],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3},{\"id\":\"merge\",\"name\":\"合并部署\",\"agentRole\":\"git-commit\",\"taskDescription\":\"审查通过后合并代码并触发部署\",\"dependencies\":[\"review\"],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":true,\"maxRetries\":3}]','2026-06-06 00:55:50.607056'),('feature-branch',_binary '','2026-06-06 00:55:50.585958','标准的功能开发分支流程','功能分支流程','[{\"id\":\"design\",\"name\":\"功能设计\",\"agentRole\":\"system-planner\",\"taskDescription\":\"设计功能方案、接口定义和数据模型\",\"dependencies\":[],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3},{\"id\":\"implement\",\"name\":\"功能实现\",\"agentRole\":\"server-dev\",\"taskDescription\":\"在功能分支上实现代码，编写单元测试\",\"dependencies\":[\"design\"],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3},{\"id\":\"test\",\"name\":\"测试验证\",\"agentRole\":\"tester\",\"taskDescription\":\"执行功能测试和回归测试\",\"dependencies\":[\"implement\"],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3},{\"id\":\"review\",\"name\":\"代码审查\",\"agentRole\":\"server-dev\",\"taskDescription\":\"审查代码质量、设计合理性和测试覆盖率\",\"dependencies\":[\"test\"],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3},{\"id\":\"merge\",\"name\":\"合并上线\",\"agentRole\":\"git-commit\",\"taskDescription\":\"审查通过后合并功能分支到主干并部署\",\"dependencies\":[\"review\"],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":true,\"maxRetries\":3}]','2026-06-06 00:55:50.585964'),('hotfix',_binary '','2026-06-06 00:55:50.515785','线上问题快速修复流程，精简环节优先恢复服务','紧急修复流程','[{\"id\":\"analyze\",\"name\":\"问题分析\",\"agentRole\":\"system-planner\",\"taskDescription\":\"分析线上问题根因，确定影响范围和修复方案\",\"dependencies\":[],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3},{\"id\":\"fix\",\"name\":\"紧急修复\",\"agentRole\":\"server-dev\",\"taskDescription\":\"实施最小化修复，不做无关改动\",\"dependencies\":[\"analyze\"],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3},{\"id\":\"test\",\"name\":\"验证测试\",\"agentRole\":\"tester\",\"taskDescription\":\"验证修复是否生效，确认无回归问题\",\"dependencies\":[\"fix\"],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3},{\"id\":\"deploy\",\"name\":\"紧急上线\",\"agentRole\":\"git-commit\",\"taskDescription\":\"合并修复代码并紧急部署到生产环境\",\"dependencies\":[\"test\"],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":true,\"maxRetries\":3}]','2026-06-06 00:55:50.515799'),('minimal',_binary '','2026-06-06 00:55:50.592559','极简三步流程','最小可用流程','[{\"id\":\"dev\",\"name\":\"开发\",\"agentRole\":\"server-dev\",\"taskDescription\":\"完成功能开发或改动\",\"dependencies\":[],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3},{\"id\":\"test\",\"name\":\"测试\",\"agentRole\":\"tester\",\"taskDescription\":\"快速验证改动是否生效\",\"dependencies\":[\"dev\"],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3},{\"id\":\"deploy\",\"name\":\"上线\",\"agentRole\":\"git-commit\",\"taskDescription\":\"提交代码并部署\",\"dependencies\":[\"test\"],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3}]','2026-06-06 00:55:50.592565'),('planning-full',_binary '','2026-06-06 00:55:50.573013','策划案从撰写、分析、审核到落实的完整流程，支持审核打回和修改迭代','策划案全流程','[{\"id\":\"plan-write\",\"name\":\"策划案撰写\",\"agentRole\":\"system-planner\",\"taskDescription\":\"根据项目需求撰写完整的游戏策划案，包括核心玩法、系统设计、数值框架、关卡设计等\",\"dependencies\":[],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3},{\"id\":\"plan-analyze\",\"name\":\"策划案分析\",\"agentRole\":\"numerical-planner\",\"taskDescription\":\"深入分析策划案的可行性、完整性、平衡性和风险点，输出分析报告\",\"dependencies\":[\"plan-write\"],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3},{\"id\":\"plan-review\",\"name\":\"策划案审核\",\"agentRole\":\"system-planner\",\"taskDescription\":\"对策划案进行专业审核，给出审核意见和是否通过的建议。审核不通过则打回修改\",\"dependencies\":[\"plan-analyze\"],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":true,\"maxRetries\":3},{\"id\":\"plan-revise\",\"name\":\"策划案修改\",\"agentRole\":\"system-planner\",\"taskDescription\":\"根据审核意见修改策划案，解决审核中发现的问题\",\"dependencies\":[\"plan-review\"],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3},{\"id\":\"plan-implement\",\"name\":\"策划案落实\",\"agentRole\":\"system-planner\",\"taskDescription\":\"将审核通过的策划案转化为可执行的开发任务和技术方案，制定开发计划\",\"dependencies\":[\"plan-revise\"],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3}]','2026-06-06 00:55:50.573019'),('planning-quick',_binary '','2026-06-06 00:55:50.551236','策划案快速评审流程，精简环节快速完成审核，适用于小型或紧急策划','策划案快速评审','[{\"id\":\"write\",\"name\":\"策划撰写\",\"agentRole\":\"system-planner\",\"taskDescription\":\"快速撰写策划案核心内容，聚焦关键设计点\",\"dependencies\":[],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3},{\"id\":\"review\",\"name\":\"快速审核\",\"agentRole\":\"system-planner\",\"taskDescription\":\"快速审核策划案，给出通过或打回意见\",\"dependencies\":[\"write\"],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":true,\"maxRetries\":3},{\"id\":\"implement\",\"name\":\"快速落实\",\"agentRole\":\"system-planner\",\"taskDescription\":\"将策划案快速转化为开发任务\",\"dependencies\":[\"review\"],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3}]','2026-06-06 00:55:50.551245'),('rapid-prototype',_binary '','2026-06-06 00:55:50.579737','快速验证游戏创意的轻量流程，跳过审查直接测试，适合Demo和概念验证','快速原型流程','[{\"id\":\"plan\",\"name\":\"快速策划\",\"agentRole\":\"system-planner\",\"taskDescription\":\"快速分析需求，确定核心玩法和最小功能集\",\"dependencies\":[],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3},{\"id\":\"dev\",\"name\":\"快速开发\",\"agentRole\":\"server-dev\",\"taskDescription\":\"实现核心功能的最小可用版本，不做过度设计\",\"dependencies\":[\"plan\"],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3},{\"id\":\"test\",\"name\":\"快速测试\",\"agentRole\":\"tester\",\"taskDescription\":\"验证核心功能是否可用，记录明显Bug\",\"dependencies\":[\"dev\"],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3}]','2026-06-06 00:55:50.579743'),('server-only-dev',_binary '','2026-06-06 00:55:50.558838','纯后端项目开发流程，适用于API服务、微服务、后台管理系统等无客户端的项目','服务端开发流程','[{\"id\":\"plan\",\"name\":\"系统策划\",\"agentRole\":\"system-planner\",\"taskDescription\":\"分析需求，设计API接口、数据库模型和系统架构\",\"dependencies\":[],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3},{\"id\":\"dev-server\",\"name\":\"服务端开发\",\"agentRole\":\"server-dev\",\"taskDescription\":\"实现业务逻辑、API接口、数据库设计和单元测试\",\"dependencies\":[\"plan\"],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3},{\"id\":\"test\",\"name\":\"测试验证\",\"agentRole\":\"tester\",\"taskDescription\":\"执行接口测试、集成测试和性能测试。如测试失败，需记录问题并通知服务端开发Agent修复后重新测试\",\"dependencies\":[\"dev-server\"],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3},{\"id\":\"review\",\"name\":\"代码审查\",\"agentRole\":\"server-dev\",\"taskDescription\":\"审查代码质量、API设计合理性、安全性和性能\",\"dependencies\":[\"test\"],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3},{\"id\":\"deploy\",\"name\":\"部署上线\",\"agentRole\":\"git-commit\",\"taskDescription\":\"合并代码并部署到生产环境\",\"dependencies\":[\"review\"],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":true,\"maxRetries\":3}]','2026-06-06 00:55:50.558845'),('standard-game-dev',_binary '','2026-06-06 00:55:50.599506','完整的游戏开发流程，包含策划审批、技术评审、并行开发、测试验收、bug修复和部署。适用于有客户端和服务端的完整项目','标准游戏开发流程','[{\"id\":\"plan\",\"name\":\"系统策划\",\"agentRole\":\"system-planner\",\"taskDescription\":\"分析游戏需求，撰写完整的系统策划案，包括核心玩法、系统架构、功能模块划分、交互流程和数据模型设计。输出策划文档供数值策划审批\",\"dependencies\":[],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3},{\"id\":\"numerical-review\",\"name\":\"数值策划审批\",\"agentRole\":\"numerical-planner\",\"taskDescription\":\"审查系统策划案的数值可行性、平衡性和完整性。检查数值框架是否合理、成长曲线是否平滑、经济系统是否平衡。审批通过后进入技术评审，不通过则打回修改\",\"dependencies\":[\"plan\"],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":true,\"maxRetries\":3},{\"id\":\"server-tech-review\",\"name\":\"服务端技术评审\",\"agentRole\":\"server-dev\",\"taskDescription\":\"从服务端角度评审策划案：评估技术可行性、性能瓶颈、数据库设计难度、接口复杂度。输出技术评审意见和风险点\",\"dependencies\":[\"numerical-review\"],\"parallel\":true,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3},{\"id\":\"client-tech-review\",\"name\":\"客户端技术评审\",\"agentRole\":\"client-dev\",\"taskDescription\":\"从客户端角度评审策划案：评估前端实现难度、渲染性能、交互体验、兼容性问题。输出技术评审意见和风险点\",\"dependencies\":[\"numerical-review\"],\"parallel\":true,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3},{\"id\":\"server-design\",\"name\":\"服务端设计\",\"agentRole\":\"server-dev\",\"taskDescription\":\"根据策划案和技术评审意见，完成以下设计：\\n1. 数据库设计：用户表、角色表、背包表等核心业务表结构\\n2. 配置表设计：装备配置、技能配置、关卡配置等策划配置表\\n3. 接口文档：RESTful API 接口定义，包含请求/响应格式、错误码\\n输出：数据库DDL、配置表模板、接口文档（Swagger格式）\\n接口文档传递给客户端开发，配置表传递给数值策划\",\"dependencies\":[\"server-tech-review\",\"client-tech-review\"],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3},{\"id\":\"dev-server\",\"name\":\"服务端开发\",\"agentRole\":\"server-dev\",\"taskDescription\":\"根据接口文档和数据库设计，实现服务端业务逻辑：\\n1. 实现数据库表和ORM映射\\n2. 实现 RESTful API 接口\\n3. 实现核心业务逻辑（战斗、背包、任务等）\\n4. 编写单元测试\\n5. 输出接口联调文档给客户端\",\"dependencies\":[\"server-design\"],\"parallel\":true,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3},{\"id\":\"dev-client\",\"name\":\"客户端开发\",\"agentRole\":\"client-dev\",\"taskDescription\":\"根据接口文档和策划案，实现客户端功能：\\n1. 实现 UI 界面和交互逻辑\\n2. 对接服务端 API 接口\\n3. 实现游戏核心玩法的前端逻辑\\n4. 实现动画、音效等多媒体资源集成\\n5. 编写自动化测试脚本\",\"dependencies\":[\"server-design\"],\"parallel\":true,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3},{\"id\":\"dev-numerical\",\"name\":\"数值配置\",\"agentRole\":\"numerical-planner\",\"taskDescription\":\"根据配置表模板和策划案，完成数值配置：\\n1. 填写装备、技能、怪物等配置表数据\\n2. 设计数值成长曲线和平衡参数\\n3. 配置关卡难度和奖励数值\\n4. 输出数值配置文件供服务端加载\",\"dependencies\":[\"server-design\"],\"parallel\":true,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3},{\"id\":\"server-self-test\",\"name\":\"服务端自测\",\"agentRole\":\"server-dev\",\"taskDescription\":\"服务端自测：验证API接口正确性、数据一致性、性能指标。确保所有接口可正常调用，无明显bug\",\"dependencies\":[\"dev-server\"],\"parallel\":true,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3},{\"id\":\"client-self-test\",\"name\":\"客户端自测\",\"agentRole\":\"client-dev\",\"taskDescription\":\"客户端自测：验证UI展示正确性、交互流畅性、接口对接无误。确保所有页面可正常访问和操作\",\"dependencies\":[\"dev-client\"],\"parallel\":true,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3},{\"id\":\"numerical-self-test\",\"name\":\"数值自测\",\"agentRole\":\"numerical-planner\",\"taskDescription\":\"数值自测：验证配置表数据正确性、数值平衡性、成长曲线合理性。确保配置表可正确加载，数值无明显异常\",\"dependencies\":[\"dev-numerical\"],\"parallel\":true,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3},{\"id\":\"acceptance\",\"name\":\"策划验收\",\"agentRole\":\"system-planner\",\"taskDescription\":\"系统策划验收：对照策划案逐项检查功能实现完整性，确认核心玩法、系统逻辑、交互流程是否符合设计预期。验收不通过则记录问题并打回对应开发方修改\",\"dependencies\":[\"server-self-test\",\"client-self-test\",\"numerical-self-test\"],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":true,\"maxRetries\":3},{\"id\":\"test\",\"name\":\"测试验证\",\"agentRole\":\"tester\",\"taskDescription\":\"全面测试：\\n1. 功能测试：验证所有功能模块是否正常工作\\n2. 集成测试：验证前后端联调是否正确\\n3. 性能测试：验证响应时间、并发能力、资源占用\\n4. 兼容性测试：验证不同设备和浏览器的兼容性\\n5. 记录所有bug并分配给对应开发方（服务端/客户端/数值）\\n测试不通过则进入bug修复阶段\",\"dependencies\":[\"acceptance\"],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3},{\"id\":\"fix-server\",\"name\":\"服务端Bug修复\",\"agentRole\":\"server-dev\",\"taskDescription\":\"修复测试阶段发现的服务端bug，确保修复后不影响其他功能\",\"dependencies\":[\"test\"],\"parallel\":true,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3},{\"id\":\"fix-client\",\"name\":\"客户端Bug修复\",\"agentRole\":\"client-dev\",\"taskDescription\":\"修复测试阶段发现的客户端bug，确保修复后不影响其他功能\",\"dependencies\":[\"test\"],\"parallel\":true,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3},{\"id\":\"fix-numerical\",\"name\":\"数值Bug修复\",\"agentRole\":\"numerical-planner\",\"taskDescription\":\"修复测试阶段发现的数值配置bug，调整不合理的数值参数\",\"dependencies\":[\"test\"],\"parallel\":true,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3},{\"id\":\"regression\",\"name\":\"回归测试\",\"agentRole\":\"tester\",\"taskDescription\":\"回归测试：重新验证所有已修复的bug，确认修复有效且未引入新问题。执行核心功能回归测试套件，确保系统稳定性\",\"dependencies\":[\"fix-server\",\"fix-client\",\"fix-numerical\"],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3},{\"id\":\"deploy\",\"name\":\"部署上线\",\"agentRole\":\"git-commit\",\"taskDescription\":\"合并所有代码分支，执行构建流水线，部署到生产环境。进行线上冒烟测试，确认服务正常运行\",\"dependencies\":[\"regression\"],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":true,\"maxRetries\":3}]','2026-06-06 00:55:50.599512');
+INSERT IGNORE INTO `workflow_templates` (`id`, `builtin`, `created_at`, `description`, `name`, `steps_json`, `updated_at`) VALUES ('test-fix-loop',_binary ' ','2026-06-15 12:00:00','测试驱动的质量保证流程：测试→发现问题→分配修复→重新测试，循环直到所有测试通过','测试-修复循环流程','[{\"id\":\"analyze\",\"name\":\"需求分析\",\"agentRole\":\"system-planner\",\"taskDescription\":\"分析功能需求，明确测试范围和验收标准\",\"dependencies\":[],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3},{\"id\":\"write-test\",\"name\":\"编写测试用例\",\"agentRole\":\"tester\",\"taskDescription\":\"根据验收标准编写测试用例，覆盖正常路径、边界条件、异常场景\",\"dependencies\":[\"analyze\"],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3},{\"id\":\"execute-test\",\"name\":\"执行测试\",\"agentRole\":\"tester\",\"taskDescription\":\"执行测试用例，记录测试结果，生成测试报告\",\"dependencies\":[\"write-test\"],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3,\"loopUntilSuccess\":true,\"maxLoopIterations\":5,\"loopCondition\":\"所有测试用例通过\",\"feedbackOnFailure\":\"测试失败，请根据测试报告修复以下问题\",\"loopBodyStepIds\":[\"fix-bug\",\"execute-test\"]},{\"id\":\"fix-bug\",\"name\":\"修复Bug\",\"agentRole\":\"server-dev\",\"taskDescription\":\"根据测试报告修复发现的Bug，确保修复不引入新问题\",\"dependencies\":[\"execute-test\"],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":false,\"maxRetries\":3},{\"id\":\"regression\",\"name\":\"回归测试\",\"agentRole\":\"tester\",\"taskDescription\":\"执行回归测试，验证所有修复的Bug已通过且未引入新Bug\",\"dependencies\":[\"fix-bug\"],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":true,\"maxRetries\":3},{\"id\":\"deploy\",\"name\":\"部署上线\",\"agentRole\":\"git-commit\",\"taskDescription\":\"合并代码并部署到生产环境，进行线上冒烟测试\",\"dependencies\":[\"regression\"],\"parallel\":false,\"timeoutMinutes\":60,\"requiresApproval\":true,\"maxRetries\":3}]','2026-06-15 12:00:00');
+
+-- ============================================================
+-- MiMo Code 特性表 (v3.0.0)
+-- ============================================================
+
+-- 记忆全文搜索索引表
+CREATE TABLE IF NOT EXISTS `memory_fts` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `project_id` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `agent_id` varchar(50) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `category` varchar(50) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `memory_key` varchar(200) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `content` text COLLATE utf8mb4_unicode_ci NOT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_memory_fts` (`project_id`, `agent_id`, `category`, `memory_key`),
+  FULLTEXT KEY `ft_content` (`content`) WITH PARSER ngram
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================
+-- MiMo Code 特性权限数据 (v3.0.0)
+-- ============================================================
+
+-- 新增权限定义
+INSERT IGNORE INTO `permission_definitions` (`id`, `permission_key`, `name`, `description`, `category`, `enabled`, `system`, `sort_order`, `created_at`, `updated_at`) VALUES
+(43,'PERM_checkpoint:view','检查点查看','查看会话检查点','检查点',1,1,1,'2026-06-11 18:00:00','2026-06-11 18:00:00'),
+(44,'PERM_checkpoint:manage','检查点管理','创建、恢复、删除检查点','检查点',1,1,2,'2026-06-11 18:00:00','2026-06-11 18:00:00'),
+(45,'PERM_goal:view','目标查看','查看项目目标','目标',1,1,1,'2026-06-11 18:00:00','2026-06-11 18:00:00'),
+(46,'PERM_goal:manage','目标管理','设置、评估、完成目标','目标',1,1,2,'2026-06-11 18:00:00','2026-06-11 18:00:00'),
+(47,'PERM_dream:execute','知识提取','执行Dream知识提取','知识',1,1,1,'2026-06-11 18:00:00','2026-06-11 18:00:00'),
+(48,'PERM_subagent:view','子代理查看','查看子代理列表','子代理',1,1,1,'2026-06-11 18:00:00','2026-06-11 18:00:00'),
+(49,'PERM_subagent:create','子代理创建','创建子代理','子代理',1,1,2,'2026-06-11 18:00:00','2026-06-11 18:00:00'),
+(50,'PERM_subagent:manage','子代理管理','终止、清理子代理','子代理',1,1,3,'2026-06-11 18:00:00','2026-06-11 18:00:00'),
+(51,'PERM_skill:discover','Skill发现','发现文件系统中的Skill','技能',1,1,3,'2026-06-11 18:00:00','2026-06-11 18:00:00');
+
+-- 新增角色权限分配
+INSERT IGNORE INTO `role_permissions` (`id`, `role_id`, `permission`, `created_at`) VALUES
+-- ADMIN 角色 (role_id=1) - 全部权限
+(105,1,'checkpoint:view','2026-06-11 18:00:00'),
+(106,1,'checkpoint:manage','2026-06-11 18:00:00'),
+(107,1,'goal:view','2026-06-11 18:00:00'),
+(108,1,'goal:manage','2026-06-11 18:00:00'),
+(109,1,'dream:execute','2026-06-11 18:00:00'),
+(110,1,'subagent:view','2026-06-11 18:00:00'),
+(111,1,'subagent:create','2026-06-11 18:00:00'),
+(112,1,'subagent:manage','2026-06-11 18:00:00'),
+(113,1,'skill:discover','2026-06-11 18:00:00'),
+-- 项目经理 (role_id=2)
+(114,2,'checkpoint:view','2026-06-11 18:00:00'),
+(115,2,'goal:view','2026-06-11 18:00:00'),
+(116,2,'goal:manage','2026-06-11 18:00:00'),
+(117,2,'dream:execute','2026-06-11 18:00:00'),
+(118,2,'subagent:view','2026-06-11 18:00:00'),
+(119,2,'subagent:create','2026-06-11 18:00:00'),
+-- 开发者 (role_id=3)
+(120,3,'checkpoint:view','2026-06-11 18:00:00'),
+(121,3,'goal:view','2026-06-11 18:00:00'),
+(122,3,'subagent:view','2026-06-11 18:00:00'),
+(123,3,'subagent:create','2026-06-11 18:00:00'),
+-- 运维 (role_id=4)
+(124,4,'checkpoint:view','2026-06-11 18:00:00'),
+(125,4,'goal:view','2026-06-11 18:00:00'),
+-- 观察者 (role_id=5)
+(126,5,'checkpoint:view','2026-06-11 18:00:00'),
+(127,5,'goal:view','2026-06-11 18:00:00');
+
+-- 新增系统常量
+INSERT IGNORE INTO `system_constants` (`id`, `constant_key`, `display_name`, `description`, `value`, `default_value`, `value_type`, `group_name`, `unit`, `min_value`, `max_value`, `require_restart`, `system_builtin`, `created_at`, `updated_at`) VALUES
+(44,'checkpoint.auto-create-threshold','自动创建检查点阈值','对话消息数达到此值时自动创建检查点','30','30','int','checkpoint','条',5,200,0,1,'2026-06-11 18:00:00','2026-06-11 18:00:00'),
+(45,'checkpoint.max-keep-count','最大检查点保留数','每个Agent最多保留的检查点数量','10','10','int','checkpoint','个',1,50,0,1,'2026-06-11 18:00:00','2026-06-11 18:00:00'),
+(46,'checkpoint.token-budget','检查点注入Token预算','检查点内容注入到上下文的最大Token数','4000','4000','int','checkpoint','tokens',500,20000,0,1,'2026-06-11 18:00:00','2026-06-11 18:00:00'),
+(47,'compactor.enabled','工具结果压缩开关','是否启用工具结果微压缩','true','true','boolean','compactor','',NULL,NULL,0,1,'2026-06-11 18:00:00','2026-06-11 18:00:00'),
+(48,'compactor.read-max-chars','read结果最大字符数','文件读取结果超过此字符数时压缩','2000','2000','int','compactor','字符',500,10000,0,1,'2026-06-11 18:00:00','2026-06-11 18:00:00'),
+(49,'dream.auto-trigger','Dream自动触发开关','里程碑完成时是否自动触发知识提取','true','true','boolean','dream','',NULL,NULL,0,1,'2026-06-11 18:00:00','2026-06-11 18:00:00'),
+(50,'dream.max-extract-items','Dream最大提取条目','单次知识提取的最大条目数','20','20','int','dream','条',5,100,0,1,'2026-06-11 18:00:00','2026-06-11 18:00:00'),
+(51,'goal.judge.enabled','裁判验证开关','是否启用独立裁判验证目标完成','true','true','boolean','goal','',NULL,NULL,0,1,'2026-06-11 18:00:00','2026-06-11 18:00:00'),
+(52,'goal.judge.max-react','裁判最大重评估次数','裁判判定未通过后的最大重评估次数','3','3','int','goal','次',0,10,0,1,'2026-06-11 18:00:00','2026-06-11 18:00:00'),
+(53,'subagent.max-concurrent','最大并发子代理数','每个父代理最多同时运行的子代理数量','5','5','int','subagent','个',1,20,0,1,'2026-06-11 18:00:00','2026-06-11 18:00:00'),
+(54,'subagent.timeout-minutes','子代理超时时间','子代理运行超过此时间自动终止','30','30','int','subagent','分钟',5,180,0,1,'2026-06-11 18:00:00','2026-06-11 18:00:00');
 
 SET FOREIGN_KEY_CHECKS = 1;
+
+-- ===== MiMo V2: 6个新模块权限和常量 =====
+
+-- 新增权限定义
+INSERT IGNORE INTO `permission_definitions` (`permission_key`, `name`, `description`, `category`, `enabled`, `system`, `sort_order`) VALUES
+('PERM_distill:execute', '工作流发现', '执行Distill工作流发现', '知识', 1, 1, 2),
+('PERM_snapshot:view', '快照查看', '查看文件快照', '快照', 1, 1, 1),
+('PERM_snapshot:manage', '快照管理', '创建、恢复、删除快照', '快照', 1, 1, 2),
+('PERM_fork:view', '分叉查看', '查看会话分叉', '会话', 1, 1, 1),
+('PERM_fork:create', '分叉创建', '创建会话分叉', '会话', 1, 1, 2),
+('PERM_fork:manage', '分叉管理', '合并、丢弃会话分叉', '会话', 1, 1, 3),
+('PERM_tool:permission:manage', '工具权限管理', '管理Agent工具权限', 'Agent', 1, 1, 30);
+
+-- ADMIN 角色新增权限
+INSERT IGNORE INTO `role_permissions` (`role_id`, `permission`) VALUES
+(1, 'distill:execute'),
+(1, 'snapshot:view'), (1, 'snapshot:manage'),
+(1, 'fork:view'), (1, 'fork:create'), (1, 'fork:manage'),
+(1, 'tool:permission:manage');
+
+-- PROJECT_MANAGER 角色新增权限
+INSERT IGNORE INTO `role_permissions` (`role_id`, `permission`) VALUES
+(2, 'distill:execute'),
+(2, 'snapshot:view'), (2, 'snapshot:manage'),
+(2, 'fork:view'), (2, 'fork:create');
+
+-- DEVELOPER 角色新增权限
+INSERT IGNORE INTO `role_permissions` (`role_id`, `permission`) VALUES
+(3, 'snapshot:view'), (3, 'fork:view');
+
+-- 新增系统常量
+INSERT IGNORE INTO `system_constants` (`id`, `constant_key`, `display_name`, `description`, `value`, `default_value`, `value_type`, `group_name`, `unit`, `min_value`, `max_value`, `require_restart`, `system_builtin`, `created_at`, `updated_at`) VALUES
+(55,'distill.max-extract-items','Distill最大提取条目','单次工作流发现的最大Skill数量','10','10','int','distill','条',1,50,0,1,'2026-06-11 18:00:00','2026-06-11 18:00:00'),
+(56,'distill.min-repeat-count','Distill最小重复次数','工作流模式至少重复出现此次数才认为可自动化','2','2','int','distill','次',2,10,0,1,'2026-06-11 18:00:00','2026-06-11 18:00:00'),
+(57,'snapshot.retention-days','快照保留天数','快照保留的最大天数，超过自动清理','7','7','int','snapshot','天',1,30,0,1,'2026-06-11 18:00:00','2026-06-11 18:00:00'),
+(58,'snapshot.max-size-mb','快照最大总大小','每个Agent的快照最大总大小','2','2','int','snapshot','MB',1,50,0,1,'2026-06-11 18:00:00','2026-06-11 18:00:00'),
+(59,'task-gate.enabled','任务门禁开关','是否启用任务门禁检查','true','true','boolean','task-gate','',NULL,NULL,0,1,'2026-06-11 18:00:00','2026-06-11 18:00:00'),
+(60,'task-gate.max-react-main','主会话最大门禁反应次数','主会话门禁最大拦截次数，超过放行','3','3','int','task-gate','次',0,10,0,1,'2026-06-11 18:00:00','2026-06-11 18:00:00'),
+(61,'task-gate.max-react-subagent','子代理最大门禁反应次数','子代理门禁最大拦截次数，超过放行','2','2','int','task-gate','次',0,5,0,1,'2026-06-11 18:00:00','2026-06-11 18:00:00'),
+(62,'context.budgeted-injection','预算注入开关','是否启用预算上下文注入','true','true','boolean','context','',NULL,NULL,0,1,'2026-06-11 18:00:00','2026-06-11 18:00:00'),
+(63,'context.total-token-budget','上下文总Token预算','预算注入的总Token数','8000','8000','int','context','tokens',2000,50000,0,1,'2026-06-11 18:00:00','2026-06-11 18:00:00'),
+(64,'fork.max-per-agent','最大分叉数','每个Agent最多同时存在的分叉数','5','5','int','fork','个',1,20,0,1,'2026-06-11 18:00:00','2026-06-11 18:00:00'),
+(65,'fork.default-strategy','默认合并策略','分叉合并时的默认策略','merge','merge','string','fork','',NULL,NULL,0,1,'2026-06-11 18:00:00','2026-06-11 18:00:00');
+
+-- ===== MiMo V2: 快照和分叉表 =====
+
+CREATE TABLE IF NOT EXISTS `session_forks` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `fork_id` VARCHAR(100) NOT NULL,
+    `parent_agent_id` VARCHAR(50) NOT NULL,
+    `fork_agent_id` VARCHAR(100) NOT NULL,
+    `project_id` VARCHAR(100) NOT NULL,
+    `description` VARCHAR(500),
+    `status` VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
+    `message_count` INT DEFAULT 0,
+    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `closed_at` TIMESTAMP NULL,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_fork_id` (`fork_id`),
+    KEY `idx_parent_agent` (`parent_agent_id`),
+    KEY `idx_project` (`project_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `agent_tool_permissions` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `agent_id` VARCHAR(50) NOT NULL,
+    `tool_name` VARCHAR(50) NOT NULL,
+    `pattern` VARCHAR(200) NOT NULL DEFAULT '*',
+    `action` VARCHAR(10) NOT NULL DEFAULT 'ask',
+    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_agent_id` (`agent_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ===== 项目讨论系统 =====
+
+CREATE TABLE IF NOT EXISTS `project_discussions` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `project_id` VARCHAR(100) NOT NULL,
+    `user_id` BIGINT NOT NULL,
+    `username` VARCHAR(50),
+    `title` VARCHAR(200),
+    `status` VARCHAR(30) NOT NULL DEFAULT 'ACTIVE',
+    `meeting_minutes` TEXT,
+    `synced_to_producer` TINYINT(1) DEFAULT 0,
+    `synced_at` TIMESTAMP NULL,
+    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_pd_project` (`project_id`),
+    KEY `idx_pd_user` (`user_id`),
+    KEY `idx_pd_status` (`status`),
+    KEY `idx_pd_updated` (`updated_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `project_discussion_messages` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `discussion_id` BIGINT NOT NULL,
+    `role` VARCHAR(20) NOT NULL,
+    `content` TEXT NOT NULL,
+    `sender` VARCHAR(50),
+    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_pdm_discussion` (`discussion_id`),
+    KEY `idx_pdm_created` (`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

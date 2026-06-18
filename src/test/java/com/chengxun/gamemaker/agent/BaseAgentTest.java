@@ -115,8 +115,9 @@ class BaseAgentTest {
     void testSendMessage() {
         // 准备：运行时 ID = projectId:role = test-project:test
         agent.start();
-        when(cliEngine.sendMessage(eq("test-project:test"), any(), anyString(), eq("test-project"), any(), any(), any(), any()))
-            .thenReturn("Response from AI");
+        when(cliEngine.sendMessageWithTokenUsage(eq("test-project:test"), any(), anyString(), eq("test-project"), any(), any(), any(), any(), anyString()))
+            .thenReturn(new com.chengxun.gamemaker.engine.ClaudeCliEngine.AiCallResult(
+                "Response from AI", 100, 50, 1000, true));
         when(contextManager.loadConversation(eq("test-project:test"), any(), anyString())).thenReturn(new java.util.ArrayList<>());
 
         // 执行

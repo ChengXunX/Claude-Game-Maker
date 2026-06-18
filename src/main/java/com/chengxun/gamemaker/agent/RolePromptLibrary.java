@@ -79,9 +79,13 @@ public class RolePromptLibrary {
         loadRolesFromDatabase();
     }
 
+    /** 角色提示词最大长度（字符数），超出则截断 */
+    private static final int MAX_PROMPT_LENGTH = 4000;
+
     /**
      * 获取角色的系统提示词
      * 优先级：自定义 > 数据库 > 文件 > 通用兜底
+     * 输出超过 MAX_PROMPT_LENGTH 时自动截断
      *
      * @param role 角色标识
      * @return 系统提示词
@@ -89,18 +93,32 @@ public class RolePromptLibrary {
     public String getPrompt(String role) {
         // 1. 自定义角色（最高优先级）
         String prompt = customPrompts.get(role);
-        if (prompt != null) return prompt;
+        if (prompt != null) return truncateIfNeeded(prompt);
 
         // 2. 数据库角色
         prompt = dbPrompts.get(role);
-        if (prompt != null) return prompt;
+        if (prompt != null) return truncateIfNeeded(prompt);
 
         // 3. 文件内置角色
         prompt = builtinPrompts.get(role);
-        if (prompt != null) return prompt;
+        if (prompt != null) return truncateIfNeeded(prompt);
 
         // 4. 通用兜底
-        return buildGenericPrompt(role);
+        return truncateIfNeeded(buildGenericPrompt(role));
+    }
+
+    /**
+     * 截断超长提示词
+     * 保留前 MAX_PROMPT_LENGTH 字符，超出部分丢弃
+     *
+     * @param prompt 原始提示词
+     * @return 截断后的提示词
+     */
+    private String truncateIfNeeded(String prompt) {
+        if (prompt == null || prompt.length() <= MAX_PROMPT_LENGTH) {
+            return prompt;
+        }
+        return prompt.substring(0, MAX_PROMPT_LENGTH) + "\n...(已截断)";
     }
 
     /**

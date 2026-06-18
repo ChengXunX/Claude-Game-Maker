@@ -113,7 +113,7 @@ public class MessageBus implements MessageBusInterface {
             log.debug("Message delivered from {} to {}",
                 message.getFromAgentId(), message.getToAgentId());
         } else {
-            log.warn("Agent not found: {}", message.getToAgentId());
+            log.debug("Agent not found: {}", message.getToAgentId());
         }
     }
 

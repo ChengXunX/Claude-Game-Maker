@@ -397,10 +397,15 @@
       <el-tab-pane label="协作管理" name="collaboration">
         <div class="section-header">
           <h3>协作会话</h3>
-          <el-tag type="info">完成率: {{ formatPercent(collaborationStats.successRate) }}%</el-tag>
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <el-select v-model="selectedCollabProject" placeholder="选择项目" clearable style="width: 200px" @change="loadCollaborationData">
+              <el-option v-for="p in projects" :key="p.id" :label="p.name || p.id" :value="p.id" />
+            </el-select>
+            <el-tag type="info">完成率: {{ formatPercent(collaborationStats.successRate) }}%</el-tag>
+          </div>
         </div>
 
-        <el-table :data="collaborationSessions" stripe>
+        <el-table :data="collaborationSessions" stripe v-loading="loadingCollaboration">
           <el-table-column prop="sessionId" label="会话ID" min-width="200" show-overflow-tooltip />
           <el-table-column prop="projectId" label="项目" width="150" />
           <el-table-column label="参与者" width="200">
@@ -439,9 +444,14 @@
       <el-tab-pane label="质量门禁" name="quality">
         <div class="section-header">
           <h3>质量门禁配置</h3>
-          <el-button type="primary" @click="showAssessDialog">
-            <el-icon><DataAnalysis /></el-icon> 执行质量评估
-          </el-button>
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <el-select v-model="selectedQualityProject" placeholder="选择项目" clearable style="width: 200px" @change="loadQualityData">
+              <el-option v-for="p in projects" :key="p.id" :label="p.name || p.id" :value="p.id" />
+            </el-select>
+            <el-button type="primary" @click="showAssessDialog" :disabled="!selectedQualityProject">
+              <el-icon><DataAnalysis /></el-icon> 执行质量评估
+            </el-button>
+          </div>
         </div>
 
         <el-table :data="qualityGates" stripe>
@@ -546,6 +556,39 @@
           </el-table>
         </div>
       </el-tab-pane>
+
+      <!-- 任务门禁 -->
+      <el-tab-pane label="任务门禁" name="taskgate">
+        <div class="section-header" style="margin-bottom: 16px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+          <span style="font-weight: 600;">任务门禁检查</span>
+          <el-select v-model="gateAgentId" placeholder="选择 Agent" style="width: 200px" size="small">
+            <el-option v-for="a in agentOptions" :key="a.id" :label="`${a.name} (${a.role})`" :value="a.id" />
+          </el-select>
+          <el-select v-model="gateProjectId" placeholder="选择项目" style="width: 200px" size="small" clearable>
+            <el-option v-for="p in projects" :key="p.id" :label="p.name" :value="p.id" />
+          </el-select>
+          <el-button type="primary" size="small" @click="handleCheckTaskGate" :loading="gateLoading">
+            <el-icon><Finished /></el-icon> 检查门禁
+          </el-button>
+        </div>
+        <el-descriptions :column="2" border v-if="gateResult">
+          <el-descriptions-item label="检查结果">
+            <el-tag :type="gateResult.passed ? 'success' : 'danger'" size="large">
+              {{ gateResult.passed ? '通过' : '拦截' }}
+            </el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="消息">{{ gateResult.message }}</el-descriptions-item>
+          <el-descriptions-item label="Agent" v-if="gateAgentId">{{ gateAgentId }}</el-descriptions-item>
+          <el-descriptions-item label="项目" v-if="gateProjectId">{{ gateProjectId }}</el-descriptions-item>
+        </el-descriptions>
+        <div v-if="gateResult?.pendingItems?.length" style="margin-top: 12px;">
+          <el-divider content-position="left">待处理项</el-divider>
+          <el-space wrap>
+            <el-tag v-for="item in gateResult.pendingItems" :key="item" type="warning">{{ item }}</el-tag>
+          </el-space>
+        </div>
+        <el-empty v-if="!gateResult" description="选择 Agent 和项目后执行门禁检查" />
+      </el-tab-pane>
     </el-tabs>
 
     <!-- 质量评估对话框 -->
@@ -646,7 +689,7 @@
  * 权限要求：agents:manage
  */
 import { ref, computed, onMounted } from 'vue'
-import { schedulerApi, projectApi } from '@/api'
+import { schedulerApi, projectApi, taskGateApi } from '@/api'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, User, VideoPlay, Loading, Coffee, Refresh, DataAnalysis, Warning, CircleCheck, Connection } from '@element-plus/icons-vue'
 
@@ -666,6 +709,21 @@ const config = ref({
 // Tab 切换
 const activeTab = ref('monitor')
 
+// 任务门禁
+const gateLoading = ref(false)
+const gateResult = ref(null)
+const gateAgentId = ref('')
+const gateProjectId = ref('')
+
+// 从状态中提取 Agent 选项
+const agentOptions = computed(() => {
+  return (status.value.agents || []).map(a => ({
+    id: a.agentId || a.id,
+    name: a.name || a.agentId || a.id,
+    role: a.role || ''
+  }))
+})
+
 // 搜索和筛选
 const searchKeyword = ref('')
 const filterStatus = ref('')
@@ -684,6 +742,8 @@ const dismissalInfo = ref({ pendingCount: 0, approvedCount: 0, riskPenalties: {}
 // 协作管理相关
 const collaborationStats = ref({})
 const collaborationSessions = ref([])
+const selectedCollabProject = ref('')
+const loadingCollaboration = ref(false)
 
 // 质量门禁相关
 const qualityGates = ref([])
@@ -693,6 +753,7 @@ const assessForm = ref({ projectId: '' })
 const assessmentResult = ref(null)
 const assessmentHistory = ref([])
 const projects = ref([])
+const selectedQualityProject = ref('')
 
 // 筛选后的任务队列
 const filteredTaskQueue = computed(() => {
@@ -837,11 +898,16 @@ const loadIntelligentData = async () => {
     const projectsData = await projectApi.getAll().catch(() => [])
     projects.value = projectsData.data || projectsData || []
 
-    // 加载 Agent 综合评估数据（取第一个项目）
+    // 设置默认选中项目并加载对应数据
     if (projects.value.length > 0) {
+      const defaultProjectId = projects.value[0].id
+      selectedQualityProject.value = defaultProjectId
+      selectedCollabProject.value = defaultProjectId
+
+      // 加载 Agent 综合评估数据
       loadingEvaluations.value = true
       try {
-        const evalData = await schedulerApi.getAgentEvaluations(projects.value[0].id).catch(() => [])
+        const evalData = await schedulerApi.getAgentEvaluations(defaultProjectId).catch(() => [])
         agentEvaluations.value = evalData.data || evalData || []
       } catch (e) {
         console.error('加载 Agent 评估数据失败:', e)
@@ -851,11 +917,22 @@ const loadIntelligentData = async () => {
 
       // 加载质量评估历史
       try {
-        const historyData = await schedulerApi.getQualityAssessmentHistory(projects.value[0].id).catch(() => [])
+        const historyData = await schedulerApi.getQualityAssessmentHistory(defaultProjectId).catch(() => [])
         assessmentHistory.value = historyData.data || historyData || []
       } catch (e) {
         console.error('加载质量评估历史失败:', e)
       }
+
+      // 加载最新质量评估
+      try {
+        const latestData = await schedulerApi.getLatestQualityAssessment(defaultProjectId).catch(() => null)
+        assessmentResult.value = latestData?.data || latestData || null
+      } catch (e) {
+        console.error('加载最新质量评估失败:', e)
+      }
+
+      // 加载协作会话数据
+      loadCollaborationData()
     }
   } catch (e) {
     console.error('加载智能调度数据失败:', e)
@@ -1084,8 +1161,49 @@ const getCompletedSteps = (session) => {
 
 // 质量门禁相关
 const showAssessDialog = () => {
-  assessForm.value.projectId = projects.value[0]?.id || ''
+  assessForm.value.projectId = selectedQualityProject.value || projects.value[0]?.id || ''
   assessDialogVisible.value = true
+}
+
+/** 加载协作管理数据 */
+const loadCollaborationData = async () => {
+  if (!selectedCollabProject.value) {
+    collaborationSessions.value = []
+    collaborationStats.value = {}
+    return
+  }
+  loadingCollaboration.value = true
+  try {
+    const [sessionsData, statsData] = await Promise.all([
+      schedulerApi.getProjectCollaborations(selectedCollabProject.value).catch(() => []),
+      schedulerApi.getCollaborationStats().catch(() => ({}))
+    ])
+    collaborationSessions.value = sessionsData.data || sessionsData || []
+    collaborationStats.value = statsData.data || statsData || {}
+  } catch (e) {
+    console.error('加载协作数据失败:', e)
+  } finally {
+    loadingCollaboration.value = false
+  }
+}
+
+/** 加载质量门禁数据 */
+const loadQualityData = async () => {
+  if (!selectedQualityProject.value) {
+    assessmentHistory.value = []
+    assessmentResult.value = null
+    return
+  }
+  try {
+    const [historyData, latestData] = await Promise.all([
+      schedulerApi.getQualityAssessmentHistory(selectedQualityProject.value).catch(() => []),
+      schedulerApi.getLatestQualityAssessment(selectedQualityProject.value).catch(() => null)
+    ])
+    assessmentHistory.value = historyData.data || historyData || []
+    assessmentResult.value = latestData?.data || latestData || null
+  } catch (e) {
+    console.error('加载质量门禁数据失败:', e)
+  }
 }
 
 const executeAssessment = async () => {
@@ -1140,6 +1258,32 @@ const getQualityLevelText = (level) => {
     'CRITICAL': '严重不足'
   }
   return map[level] || level
+}
+
+/** 检查任务门禁 */
+const handleCheckTaskGate = async () => {
+  if (!gateAgentId.value) {
+    ElMessage.warning('请先选择 Agent')
+    return
+  }
+  gateLoading.value = true
+  gateResult.value = null
+  try {
+    const res = await taskGateApi.check({
+      projectId: gateProjectId.value || '',
+      agentId: gateAgentId.value,
+      isSubAgent: false,
+      currentGateCount: 0
+    })
+    gateResult.value = res.data
+    if (res.data?.passed) {
+      ElMessage.success('门禁检查通过')
+    }
+  } catch (e) {
+    ElMessage.error('门禁检查失败')
+  } finally {
+    gateLoading.value = false
+  }
 }
 
 onMounted(() => {

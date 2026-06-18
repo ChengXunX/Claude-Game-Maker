@@ -279,7 +279,7 @@ public class UserService implements UserDetailsService {
      */
     @Cacheable(value = "users", key = "#id")
     public User getUserById(Long id) {
-        return userRepository.findById(id).orElse(null);
+        return userRepository.findByIdWithRole(id).orElse(null);
     }
 
     /**

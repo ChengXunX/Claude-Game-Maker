@@ -223,15 +223,16 @@ public class AgentHealth {
     }
 
     /**
-     * 检查是否响应缓慢
+     * 检查是否响应缓慢（AI任务阈值：超过5分钟视为缓慢）
      */
     public boolean isSlowResponse() {
-        return avgResponseTimeMs != null && avgResponseTimeMs > 3000;
+        return avgResponseTimeMs != null && avgResponseTimeMs > 300000;
     }
 
     /**
      * 获取健康分数（0-100）
      * 综合评估：错误率、响应时间、连续错误、活跃度
+     * 响应时间阈值针对AI工作负载优化（AI任务通常需要30秒~5分钟）
      */
     public int getHealthScore() {
         int score = 100;
@@ -241,12 +242,11 @@ public class AgentHealth {
         else if (errorRate > 20) score -= 30;
         else if (errorRate > 10) score -= 15;
 
-        // 响应时间扣分
+        // 响应时间扣分（AI任务阈值：10分钟+才扣分）
         if (avgResponseTimeMs != null) {
-            if (avgResponseTimeMs > 10000) score -= 40;
-            else if (avgResponseTimeMs > 5000) score -= 30;
-            else if (avgResponseTimeMs > 3000) score -= 20;
-            else if (avgResponseTimeMs > 1000) score -= 10;
+            if (avgResponseTimeMs > 600000) score -= 40;      // > 10分钟
+            else if (avgResponseTimeMs > 300000) score -= 25;  // > 5分钟
+            else if (avgResponseTimeMs > 120000) score -= 10;  // > 2分钟
         }
 
         // 连续错误扣分

@@ -226,4 +226,94 @@ public class ChatSessionController {
         List<ChatMessage> messages = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
         return ResponseEntity.ok(messages);
     }
+
+    /**
+     * 获取飞书会话列表
+     */
+    @GetMapping("/feishu")
+    @Operation(summary = "获取飞书会话列表")
+    public ResponseEntity<List<Map<String, Object>>> listFeishuSessions(Authentication authentication) {
+        User user = userService.getUserByUsername(authentication.getName());
+        if (user == null) {
+            return ResponseEntity.status(401).build();
+        }
+        List<ChatSession> sessions = sessionRepository.findByUserIdOrderByUpdatedAtDesc(user.getId());
+        // 过滤出飞书来源的会话，并计算消息数
+        List<Map<String, Object>> result = sessions.stream()
+            .filter(s -> "feishu".equals(s.getSource()))
+            .map(s -> {
+                Map<String, Object> map = new java.util.LinkedHashMap<>();
+                map.put("id", s.getId());
+                map.put("title", s.getTitle());
+                map.put("source", s.getSource());
+                map.put("createdAt", s.getCreatedAt());
+                map.put("updatedAt", s.getUpdatedAt());
+                // 计算消息数
+                long msgCount = messageRepository.countBySessionId(s.getId());
+                map.put("messageCount", msgCount);
+                return map;
+            })
+            .toList();
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * 获取飞书会话详情（包含消息）
+     */
+    @GetMapping("/feishu/{sessionId}")
+    @Operation(summary = "获取飞书会话详情")
+    public ResponseEntity<?> getFeishuSession(@PathVariable Long sessionId,
+                                               Authentication authentication) {
+        User user = userService.getUserByUsername(authentication.getName());
+        if (user == null) {
+            return ResponseEntity.status(401).build();
+        }
+
+        ChatSession session = sessionRepository.findById(sessionId).orElse(null);
+        if (session == null || !session.getUserId().equals(user.getId())) {
+            return ResponseEntity.notFound().build();
+        }
+
+        if (!"feishu".equals(session.getSource())) {
+            return ResponseEntity.badRequest().body(Map.of("error", "不是飞书会话"));
+        }
+
+        List<ChatMessage> messages = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
+        Map<String, Object> result = new java.util.LinkedHashMap<>();
+        result.put("id", session.getId());
+        result.put("userId", session.getUserId());
+        result.put("title", session.getTitle());
+        result.put("source", session.getSource());
+        result.put("createdAt", session.getCreatedAt());
+        result.put("updatedAt", session.getUpdatedAt());
+        result.put("messages", messages);
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * 清空飞书会话（重置上下文）
+     */
+    @DeleteMapping("/feishu/{sessionId}/clear")
+    @Operation(summary = "清空飞书会话")
+    public ResponseEntity<?> clearFeishuSession(@PathVariable Long sessionId,
+                                                 Authentication authentication) {
+        User user = userService.getUserByUsername(authentication.getName());
+        if (user == null) {
+            return ResponseEntity.status(401).build();
+        }
+
+        ChatSession session = sessionRepository.findById(sessionId).orElse(null);
+        if (session == null || !session.getUserId().equals(user.getId())) {
+            return ResponseEntity.notFound().build();
+        }
+
+        if (!"feishu".equals(session.getSource())) {
+            return ResponseEntity.badRequest().body(Map.of("error", "不是飞书会话"));
+        }
+
+        // 删除所有消息但保留会话
+        messageRepository.deleteBySessionId(sessionId);
+        log.info("用户 {} 清空飞书会话: {}", user.getUsername(), sessionId);
+        return ResponseEntity.ok(Map.of("success", true, "message", "飞书会话已清空"));
+    }
 }

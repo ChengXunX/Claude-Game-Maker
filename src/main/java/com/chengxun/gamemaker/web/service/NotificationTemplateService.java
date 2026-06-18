@@ -65,13 +65,16 @@ public class NotificationTemplateService {
     private final NotificationTemplateRepository templateRepository;
     private final NotificationRepository notificationRepository;
     private final EmailService emailService;
+    private final SystemConfigService systemConfigService;
 
     public NotificationTemplateService(NotificationTemplateRepository templateRepository,
                                         NotificationRepository notificationRepository,
-                                        @org.springframework.context.annotation.Lazy EmailService emailService) {
+                                        @org.springframework.context.annotation.Lazy EmailService emailService,
+                                        SystemConfigService systemConfigService) {
         this.templateRepository = templateRepository;
         this.notificationRepository = notificationRepository;
         this.emailService = emailService;
+        this.systemConfigService = systemConfigService;
     }
 
     /**
@@ -672,7 +675,7 @@ public class NotificationTemplateService {
             "🔔 需要人工审批\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━\n\n请及时处理！");
         created += createIfAbsent("PRODUCER_WORKFLOW_HUMAN_APPROVAL_NEEDED_EMAIL", "邮件-需要人工审批", Channel.EMAIL, Category.SYSTEM,
             "🔔 需要人工审批: ${title}",
-            "<div style=\"font-family:'Microsoft YaHei',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><div style=\"background:linear-gradient(135deg,#ff922b 0%,#fd7e14 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;\"><h1 style=\"margin:0;font-size:24px;\">🔔 需要人工审批</h1></div><div style=\"background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;\"><p>${content}</p><p style=\"color:#666;margin-top:20px;\">时间：${time}</p></div></div>");
+            "<div style=\"font-family:'Microsoft YaHei',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><div style=\"background:linear-gradient(135deg,#ff922b 0%,#fd7e14 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;\"><h1 style=\"margin:0;font-size:24px;\">🔔 需要人工审批</h1></div><div style=\"background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;\"><div style=\"background:#e8f4fd;padding:12px;border-radius:6px;margin-bottom:15px;border-left:4px solid #2196F3;\"><p style=\"margin:4px 0;font-size:14px;\"><b>项目：</b>${projectName}</p><p style=\"margin:4px 0;font-size:14px;\"><b>创建人：</b>${createdBy}</p><p style=\"margin:4px 0;font-size:14px;\"><b>描述：</b>${projectDescription}</p></div><p>${content}</p><p style=\"color:#666;margin-top:20px;\">时间：${time}</p></div></div>");
         created += createIfAbsent("PRODUCER_WORKFLOW_HUMAN_APPROVAL_NEEDED_FEISHU", "飞书-需要人工审批", Channel.FEISHU, Category.SYSTEM,
             "🔔 需要人工审批: ${title}",
             "**🔔 需要人工审批**\n\n---\n\n${content}\n\n---\n\n请及时处理！");
@@ -685,7 +688,7 @@ public class NotificationTemplateService {
             "👥 招聘审批请求\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━\n\n请审批是否允许招聘该 Agent。");
         created += createIfAbsent("PRODUCER_RECRUIT_APPROVAL_REQUIRED_EMAIL", "邮件-招聘审批请求", Channel.EMAIL, Category.SYSTEM,
             "👥 招聘审批: ${title}",
-            "<div style=\"font-family:'Microsoft YaHei',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><div style=\"background:linear-gradient(135deg,#f06595 0%,#e64980 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;\"><h1 style=\"margin:0;font-size:24px;\">👥 招聘审批请求</h1></div><div style=\"background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;\"><p>${content}</p><p style=\"color:#666;margin-top:20px;\">时间：${time}</p></div></div>");
+            "<div style=\"font-family:'Microsoft YaHei',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><div style=\"background:linear-gradient(135deg,#f06595 0%,#e64980 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;\"><h1 style=\"margin:0;font-size:24px;\">👥 招聘审批请求</h1></div><div style=\"background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;\"><div style=\"background:#e8f4fd;padding:12px;border-radius:6px;margin-bottom:15px;border-left:4px solid #2196F3;\"><p style=\"margin:4px 0;font-size:14px;\"><b>项目：</b>${projectName}</p><p style=\"margin:4px 0;font-size:14px;\"><b>创建人：</b>${createdBy}</p><p style=\"margin:4px 0;font-size:14px;\"><b>描述：</b>${projectDescription}</p></div><p>${content}</p><p style=\"color:#666;margin-top:20px;\">时间：${time}</p></div></div>");
         created += createIfAbsent("PRODUCER_RECRUIT_APPROVAL_REQUIRED_FEISHU", "飞书-招聘审批请求", Channel.FEISHU, Category.SYSTEM,
             "👥 招聘审批: ${title}",
             "**👥 招聘审批请求**\n\n---\n\n${content}\n\n---\n\n请审批是否允许招聘该 Agent。");
@@ -698,21 +701,21 @@ public class NotificationTemplateService {
             "🤖 创建Agent审批请求\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━\n\n请审批。");
         created += createIfAbsent("PRODUCER_CREATE_AGENT_APPROVAL_REQUIRED_EMAIL", "邮件-创建Agent审批", Channel.EMAIL, Category.SYSTEM,
             "🤖 创建Agent审批: ${title}",
-            "<div style=\"font-family:'Microsoft YaHei',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><div style=\"background:linear-gradient(135deg,#845ef7 0%,#7048e8 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;\"><h1 style=\"margin:0;font-size:24px;\">🤖 创建Agent审批</h1></div><div style=\"background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;\"><p>${content}</p><p style=\"color:#666;margin-top:20px;\">时间：${time}</p></div></div>");
+            "<div style=\"font-family:'Microsoft YaHei',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><div style=\"background:linear-gradient(135deg,#845ef7 0%,#7048e8 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;\"><h1 style=\"margin:0;font-size:24px;\">🤖 创建Agent审批</h1></div><div style=\"background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;\"><div style=\"background:#e8f4fd;padding:12px;border-radius:6px;margin-bottom:15px;border-left:4px solid #2196F3;\"><p style=\"margin:4px 0;font-size:14px;\"><b>项目：</b>${projectName}</p><p style=\"margin:4px 0;font-size:14px;\"><b>创建人：</b>${createdBy}</p><p style=\"margin:4px 0;font-size:14px;\"><b>描述：</b>${projectDescription}</p></div><p>${content}</p><p style=\"color:#666;margin-top:20px;\">时间：${time}</p></div></div>");
 
         created += createIfAbsent("PRODUCER_DELIVERY_APPROVAL_SYSTEM", "站内-交付审批", Channel.SYSTEM, Category.SYSTEM,
             "📦 交付审批: ${title}",
             "📦 交付审批请求\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━\n\n请审批是否可以交付。");
         created += createIfAbsent("PRODUCER_DELIVERY_APPROVAL_EMAIL", "邮件-交付审批", Channel.EMAIL, Category.SYSTEM,
             "📦 交付审批: ${title}",
-            "<div style=\"font-family:'Microsoft YaHei',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><div style=\"background:linear-gradient(135deg,#20c997 0%,#12b886 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;\"><h1 style=\"margin:0;font-size:24px;\">📦 交付审批</h1></div><div style=\"background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;\"><p>${content}</p><p style=\"color:#666;margin-top:20px;\">时间：${time}</p></div></div>");
+            "<div style=\"font-family:'Microsoft YaHei',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><div style=\"background:linear-gradient(135deg,#20c997 0%,#12b886 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;\"><h1 style=\"margin:0;font-size:24px;\">📦 交付审批</h1></div><div style=\"background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;\"><div style=\"background:#e8f4fd;padding:12px;border-radius:6px;margin-bottom:15px;border-left:4px solid #2196F3;\"><p style=\"margin:4px 0;font-size:14px;\"><b>项目：</b>${projectName}</p><p style=\"margin:4px 0;font-size:14px;\"><b>创建人：</b>${createdBy}</p><p style=\"margin:4px 0;font-size:14px;\"><b>描述：</b>${projectDescription}</p></div><p>${content}</p><p style=\"color:#666;margin-top:20px;\">时间：${time}</p></div></div>");
 
         created += createIfAbsent("PRODUCER_APPROVAL_REQUIRED_SYSTEM", "站内-需要审批", Channel.SYSTEM, Category.SYSTEM,
             "📋 需要审批: ${title}",
             "📋 需要审批\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━\n\n请及时处理！");
         created += createIfAbsent("PRODUCER_APPROVAL_REQUIRED_EMAIL", "邮件-需要审批", Channel.EMAIL, Category.SYSTEM,
             "📋 需要审批: ${title}",
-            "<div style=\"font-family:'Microsoft YaHei',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><div style=\"background:linear-gradient(135deg,#ff922b 0%,#fd7e14 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;\"><h1 style=\"margin:0;font-size:24px;\">📋 需要审批</h1></div><div style=\"background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;\"><p>${content}</p><p style=\"color:#666;margin-top:20px;\">时间：${time}</p></div></div>");
+            "<div style=\"font-family:'Microsoft YaHei',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><div style=\"background:linear-gradient(135deg,#ff922b 0%,#fd7e14 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;\"><h1 style=\"margin:0;font-size:24px;\">📋 需要审批</h1></div><div style=\"background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;\"><div style=\"background:#e8f4fd;padding:12px;border-radius:6px;margin-bottom:15px;border-left:4px solid #2196F3;\"><p style=\"margin:4px 0;font-size:14px;\"><b>项目：</b>${projectName}</p><p style=\"margin:4px 0;font-size:14px;\"><b>创建人：</b>${createdBy}</p><p style=\"margin:4px 0;font-size:14px;\"><b>描述：</b>${projectDescription}</p></div><p>${content}</p><p style=\"color:#666;margin-top:20px;\">时间：${time}</p></div></div>");
 
         // 审批拒绝类
         created += createIfAbsent("PRODUCER_APPROVAL_REJECTED_SYSTEM", "站内-审批被拒绝", Channel.SYSTEM, Category.SYSTEM,
@@ -720,25 +723,25 @@ public class NotificationTemplateService {
             "❌ 审批被拒绝\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━");
         created += createIfAbsent("PRODUCER_APPROVAL_REJECTED_EMAIL", "邮件-审批被拒绝", Channel.EMAIL, Category.SYSTEM,
             "❌ 审批被拒绝: ${title}",
-            "<h2>❌ 审批被拒绝</h2><p>${content}</p><p><b>时间：</b>${time}</p>");
+            "<div style=\"font-family:'Microsoft YaHei',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><div style=\"background:linear-gradient(135deg,#ff6b6b 0%,#ee5a24 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;\"><h1 style=\"margin:0;font-size:24px;\">❌ 审批被拒绝</h1></div><div style=\"background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;\"><div style=\"background:#e8f4fd;padding:12px;border-radius:6px;margin-bottom:15px;border-left:4px solid #2196F3;\"><p style=\"margin:4px 0;font-size:14px;\"><b>项目：</b>${projectName}</p><p style=\"margin:4px 0;font-size:14px;\"><b>创建人：</b>${createdBy}</p><p style=\"margin:4px 0;font-size:14px;\"><b>描述：</b>${projectDescription}</p></div><p>${content}</p><p style=\"color:#666;margin-top:20px;\">时间：${time}</p></div></div>");
         created += createIfAbsent("PRODUCER_RECRUIT_REJECTED_SYSTEM", "站内-招聘被拒绝", Channel.SYSTEM, Category.SYSTEM,
             "❌ 招聘被拒绝: ${title}",
             "❌ 招聘被拒绝\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━");
         created += createIfAbsent("PRODUCER_RECRUIT_REJECTED_EMAIL", "邮件-招聘被拒绝", Channel.EMAIL, Category.SYSTEM,
             "❌ 招聘被拒绝: ${title}",
-            "<h2>❌ 招聘被拒绝</h2><p>${content}</p><p><b>时间：</b>${time}</p>");
+            "<div style=\"font-family:'Microsoft YaHei',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><div style=\"background:linear-gradient(135deg,#ff6b6b 0%,#ee5a24 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;\"><h1 style=\"margin:0;font-size:24px;\">❌ 招聘被拒绝</h1></div><div style=\"background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;\"><div style=\"background:#e8f4fd;padding:12px;border-radius:6px;margin-bottom:15px;border-left:4px solid #2196F3;\"><p style=\"margin:4px 0;font-size:14px;\"><b>项目：</b>${projectName}</p><p style=\"margin:4px 0;font-size:14px;\"><b>创建人：</b>${createdBy}</p><p style=\"margin:4px 0;font-size:14px;\"><b>描述：</b>${projectDescription}</p></div><p>${content}</p><p style=\"color:#666;margin-top:20px;\">时间：${time}</p></div></div>");
         created += createIfAbsent("PRODUCER_CREATE_AGENT_REJECTED_SYSTEM", "站内-创建Agent被拒绝", Channel.SYSTEM, Category.SYSTEM,
             "❌ 创建Agent被拒绝: ${title}",
             "❌ 创建Agent被拒绝\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━");
         created += createIfAbsent("PRODUCER_CREATE_AGENT_REJECTED_EMAIL", "邮件-创建Agent被拒绝", Channel.EMAIL, Category.SYSTEM,
             "❌ 创建Agent被拒绝: ${title}",
-            "<h2>❌ 创建Agent被拒绝</h2><p>${content}</p><p><b>时间：</b>${time}</p>");
+            "<div style=\"font-family:'Microsoft YaHei',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><div style=\"background:linear-gradient(135deg,#ff6b6b 0%,#ee5a24 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;\"><h1 style=\"margin:0;font-size:24px;\">❌ 创建Agent被拒绝</h1></div><div style=\"background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;\"><div style=\"background:#e8f4fd;padding:12px;border-radius:6px;margin-bottom:15px;border-left:4px solid #2196F3;\"><p style=\"margin:4px 0;font-size:14px;\"><b>项目：</b>${projectName}</p><p style=\"margin:4px 0;font-size:14px;\"><b>创建人：</b>${createdBy}</p><p style=\"margin:4px 0;font-size:14px;\"><b>描述：</b>${projectDescription}</p></div><p>${content}</p><p style=\"color:#666;margin-top:20px;\">时间：${time}</p></div></div>");
         created += createIfAbsent("PRODUCER_DISMISS_REJECTED_SYSTEM", "站内-解雇被拒绝", Channel.SYSTEM, Category.SYSTEM,
             "❌ 解雇被拒绝: ${title}",
             "❌ 解雇被拒绝\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━");
         created += createIfAbsent("PRODUCER_DISMISS_REJECTED_EMAIL", "邮件-解雇被拒绝", Channel.EMAIL, Category.SYSTEM,
             "❌ 解雇被拒绝: ${title}",
-            "<h2>❌ 解雇被拒绝</h2><p>${content}</p><p><b>时间：</b>${time}</p>");
+            "<div style=\"font-family:'Microsoft YaHei',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><div style=\"background:linear-gradient(135deg,#ff6b6b 0%,#ee5a24 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;\"><h1 style=\"margin:0;font-size:24px;\">❌ 解雇被拒绝</h1></div><div style=\"background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;\"><div style=\"background:#e8f4fd;padding:12px;border-radius:6px;margin-bottom:15px;border-left:4px solid #2196F3;\"><p style=\"margin:4px 0;font-size:14px;\"><b>项目：</b>${projectName}</p><p style=\"margin:4px 0;font-size:14px;\"><b>创建人：</b>${createdBy}</p><p style=\"margin:4px 0;font-size:14px;\"><b>描述：</b>${projectDescription}</p></div><p>${content}</p><p style=\"color:#666;margin-top:20px;\">时间：${time}</p></div></div>");
 
         // 审批通过/完成类
         created += createIfAbsent("PRODUCER_RECRUIT_COMPLETED_SYSTEM", "站内-招聘完成", Channel.SYSTEM, Category.SYSTEM,
@@ -746,13 +749,13 @@ public class NotificationTemplateService {
             "✅ 招聘完成\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━");
         created += createIfAbsent("PRODUCER_RECRUIT_COMPLETED_EMAIL", "邮件-招聘完成", Channel.EMAIL, Category.SYSTEM,
             "✅ 招聘完成: ${title}",
-            "<h2>✅ 招聘完成</h2><p>${content}</p><p><b>时间：</b>${time}</p>");
+            "<div style=\"font-family:'Microsoft YaHei',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><div style=\"background:linear-gradient(135deg,#51cf66 0%,#40c057 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;\"><h1 style=\"margin:0;font-size:24px;\">✅ 招聘完成</h1></div><div style=\"background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;\"><div style=\"background:#e8f4fd;padding:12px;border-radius:6px;margin-bottom:15px;border-left:4px solid #2196F3;\"><p style=\"margin:4px 0;font-size:14px;\"><b>项目：</b>${projectName}</p><p style=\"margin:4px 0;font-size:14px;\"><b>创建人：</b>${createdBy}</p><p style=\"margin:4px 0;font-size:14px;\"><b>描述：</b>${projectDescription}</p></div><p>${content}</p><p style=\"color:#666;margin-top:20px;\">时间：${time}</p></div></div>");
         created += createIfAbsent("PRODUCER_DISMISS_REQUEST_SENT_SYSTEM", "站内-解雇请求已发送", Channel.SYSTEM, Category.SYSTEM,
             "📤 解雇请求已发送: ${title}",
             "📤 解雇请求已发送\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━\n\n等待管理员审批。");
         created += createIfAbsent("PRODUCER_DISMISS_REQUEST_SENT_EMAIL", "邮件-解雇请求已发送", Channel.EMAIL, Category.SYSTEM,
             "📤 解雇请求已发送: ${title}",
-            "<h2>📤 解雇请求已发送</h2><p>${content}</p><p>等待管理员审批。</p><p><b>时间：</b>${time}</p>");
+            "<div style=\"font-family:'Microsoft YaHei',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><div style=\"background:linear-gradient(135deg,#ffd43b 0%,#fab005 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;\"><h1 style=\"margin:0;font-size:24px;\">📤 解雇请求已发送</h1></div><div style=\"background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;\"><div style=\"background:#e8f4fd;padding:12px;border-radius:6px;margin-bottom:15px;border-left:4px solid #2196F3;\"><p style=\"margin:4px 0;font-size:14px;\"><b>项目：</b>${projectName}</p><p style=\"margin:4px 0;font-size:14px;\"><b>创建人：</b>${createdBy}</p><p style=\"margin:4px 0;font-size:14px;\"><b>描述：</b>${projectDescription}</p></div><p>${content}</p><p>等待管理员审批。</p><p style=\"color:#666;margin-top:20px;\">时间：${time}</p></div></div>");
 
         // --- Agent 生命周期类（prefKey: agent_status） ---
 
@@ -761,7 +764,7 @@ public class NotificationTemplateService {
             "🤖 Agent已创建\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━");
         created += createIfAbsent("PRODUCER_AGENT_CREATED_EMAIL", "邮件-Agent已创建", Channel.EMAIL, Category.AGENT,
             "🤖 Agent已创建: ${title}",
-            "<div style=\"font-family:'Microsoft YaHei',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><div style=\"background:linear-gradient(135deg,#51cf66 0%,#40c057 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;\"><h1 style=\"margin:0;font-size:24px;\">🤖 Agent已创建</h1></div><div style=\"background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;\"><p>${content}</p><p style=\"color:#666;margin-top:20px;\">时间：${time}</p></div></div>");
+            "<div style=\"font-family:'Microsoft YaHei',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><div style=\"background:linear-gradient(135deg,#51cf66 0%,#40c057 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;\"><h1 style=\"margin:0;font-size:24px;\">🤖 Agent已创建</h1></div><div style=\"background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;\"><div style=\"background:#e8f4fd;padding:12px;border-radius:6px;margin-bottom:15px;border-left:4px solid #2196F3;\"><p style=\"margin:4px 0;font-size:14px;\"><b>项目：</b>${projectName}</p><p style=\"margin:4px 0;font-size:14px;\"><b>创建人：</b>${createdBy}</p><p style=\"margin:4px 0;font-size:14px;\"><b>描述：</b>${projectDescription}</p></div><p>${content}</p><p style=\"color:#666;margin-top:20px;\">时间：${time}</p></div></div>");
         created += createIfAbsent("PRODUCER_AGENT_CREATED_FEISHU", "飞书-Agent已创建", Channel.FEISHU, Category.AGENT,
             "🤖 Agent已创建: ${title}",
             "**🤖 Agent已创建**\n\n---\n\n${content}\n\n---\n\n时间：${time}");
@@ -774,21 +777,21 @@ public class NotificationTemplateService {
             "📊 Agent评估完成\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━");
         created += createIfAbsent("PRODUCER_AGENT_EVALUATED_EMAIL", "邮件-Agent已评估", Channel.EMAIL, Category.AGENT,
             "📊 Agent评估完成: ${title}",
-            "<div style=\"font-family:'Microsoft YaHei',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><div style=\"background:linear-gradient(135deg,#748ffc 0%,#5c7cfa 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;\"><h1 style=\"margin:0;font-size:24px;\">📊 Agent评估完成</h1></div><div style=\"background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;\"><p>${content}</p><p style=\"color:#666;margin-top:20px;\">时间：${time}</p></div></div>");
+            "<div style=\"font-family:'Microsoft YaHei',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><div style=\"background:linear-gradient(135deg,#748ffc 0%,#5c7cfa 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;\"><h1 style=\"margin:0;font-size:24px;\">📊 Agent评估完成</h1></div><div style=\"background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;\"><div style=\"background:#e8f4fd;padding:12px;border-radius:6px;margin-bottom:15px;border-left:4px solid #2196F3;\"><p style=\"margin:4px 0;font-size:14px;\"><b>项目：</b>${projectName}</p><p style=\"margin:4px 0;font-size:14px;\"><b>创建人：</b>${createdBy}</p><p style=\"margin:4px 0;font-size:14px;\"><b>描述：</b>${projectDescription}</p></div><p>${content}</p><p style=\"color:#666;margin-top:20px;\">时间：${time}</p></div></div>");
 
         created += createIfAbsent("PRODUCER_TEAM_OPTIMIZATION_SYSTEM", "站内-团队优化", Channel.SYSTEM, Category.AGENT,
             "🔧 团队优化: ${title}",
             "🔧 团队优化建议\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━");
         created += createIfAbsent("PRODUCER_TEAM_OPTIMIZATION_EMAIL", "邮件-团队优化", Channel.EMAIL, Category.AGENT,
             "🔧 团队优化: ${title}",
-            "<div style=\"font-family:'Microsoft YaHei',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><div style=\"background:linear-gradient(135deg,#845ef7 0%,#7048e8 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;\"><h1 style=\"margin:0;font-size:24px;\">🔧 团队优化建议</h1></div><div style=\"background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;\"><p>${content}</p><p style=\"color:#666;margin-top:20px;\">时间：${time}</p></div></div>");
+            "<div style=\"font-family:'Microsoft YaHei',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><div style=\"background:linear-gradient(135deg,#845ef7 0%,#7048e8 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;\"><h1 style=\"margin:0;font-size:24px;\">🔧 团队优化建议</h1></div><div style=\"background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;\"><div style=\"background:#e8f4fd;padding:12px;border-radius:6px;margin-bottom:15px;border-left:4px solid #2196F3;\"><p style=\"margin:4px 0;font-size:14px;\"><b>项目：</b>${projectName}</p><p style=\"margin:4px 0;font-size:14px;\"><b>创建人：</b>${createdBy}</p><p style=\"margin:4px 0;font-size:14px;\"><b>描述：</b>${projectDescription}</p></div><p>${content}</p><p style=\"color:#666;margin-top:20px;\">时间：${time}</p></div></div>");
 
         created += createIfAbsent("PRODUCER_AUTO_RECRUIT_REQUEST_SYSTEM", "站内-自动招聘请求", Channel.SYSTEM, Category.AGENT,
             "🔄 自动招聘请求: ${title}",
             "🔄 自动招聘请求\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━");
         created += createIfAbsent("PRODUCER_AUTO_RECRUIT_REQUEST_EMAIL", "邮件-自动招聘请求", Channel.EMAIL, Category.AGENT,
             "🔄 自动招聘请求: ${title}",
-            "<div style=\"font-family:'Microsoft YaHei',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><div style=\"background:linear-gradient(135deg,#f06595 0%,#e64980 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;\"><h1 style=\"margin:0;font-size:24px;\">🔄 自动招聘请求</h1></div><div style=\"background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;\"><p>${content}</p><p style=\"color:#666;margin-top:20px;\">时间：${time}</p></div></div>");
+            "<div style=\"font-family:'Microsoft YaHei',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><div style=\"background:linear-gradient(135deg,#f06595 0%,#e64980 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;\"><h1 style=\"margin:0;font-size:24px;\">🔄 自动招聘请求</h1></div><div style=\"background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;\"><div style=\"background:#e8f4fd;padding:12px;border-radius:6px;margin-bottom:15px;border-left:4px solid #2196F3;\"><p style=\"margin:4px 0;font-size:14px;\"><b>项目：</b>${projectName}</p><p style=\"margin:4px 0;font-size:14px;\"><b>创建人：</b>${createdBy}</p><p style=\"margin:4px 0;font-size:14px;\"><b>描述：</b>${projectDescription}</p></div><p>${content}</p><p style=\"color:#666;margin-top:20px;\">时间：${time}</p></div></div>");
 
         // --- 工作流/项目类（prefKey: system） ---
 
@@ -797,25 +800,25 @@ public class NotificationTemplateService {
             "🚀 工作流已启动\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━");
         created += createIfAbsent("PRODUCER_WORKFLOW_STARTED_EMAIL", "邮件-工作流已启动", Channel.EMAIL, Category.SYSTEM,
             "🚀 工作流已启动: ${title}",
-            "<h2>🚀 工作流已启动</h2><p>${content}</p><p><b>时间：</b>${time}</p>");
+            "<div style=\"font-family:'Microsoft YaHei',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><div style=\"background:linear-gradient(135deg,#339af0 0%,#228be6 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;\"><h1 style=\"margin:0;font-size:24px;\">🚀 工作流已启动</h1></div><div style=\"background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;\"><div style=\"background:#e8f4fd;padding:12px;border-radius:6px;margin-bottom:15px;border-left:4px solid #2196F3;\"><p style=\"margin:4px 0;font-size:14px;\"><b>项目：</b>${projectName}</p><p style=\"margin:4px 0;font-size:14px;\"><b>创建人：</b>${createdBy}</p><p style=\"margin:4px 0;font-size:14px;\"><b>描述：</b>${projectDescription}</p></div><p>${content}</p><p style=\"color:#666;margin-top:20px;\">时间：${time}</p></div></div>");
         created += createIfAbsent("PRODUCER_WORKFLOW_CREATED_SYSTEM", "站内-新工作流已创建", Channel.SYSTEM, Category.SYSTEM,
             "📋 新工作流已创建: ${title}",
             "📋 新工作流已创建\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━");
         created += createIfAbsent("PRODUCER_WORKFLOW_CREATED_EMAIL", "邮件-新工作流已创建", Channel.EMAIL, Category.SYSTEM,
             "📋 新工作流已创建: ${title}",
-            "<h2>📋 新工作流已创建</h2><p>${content}</p><p><b>时间：</b>${time}</p>");
+            "<div style=\"font-family:'Microsoft YaHei',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><div style=\"background:linear-gradient(135deg,#339af0 0%,#228be6 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;\"><h1 style=\"margin:0;font-size:24px;\">📋 新工作流已创建</h1></div><div style=\"background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;\"><div style=\"background:#e8f4fd;padding:12px;border-radius:6px;margin-bottom:15px;border-left:4px solid #2196F3;\"><p style=\"margin:4px 0;font-size:14px;\"><b>项目：</b>${projectName}</p><p style=\"margin:4px 0;font-size:14px;\"><b>创建人：</b>${createdBy}</p><p style=\"margin:4px 0;font-size:14px;\"><b>描述：</b>${projectDescription}</p></div><p>${content}</p><p style=\"color:#666;margin-top:20px;\">时间：${time}</p></div></div>");
         created += createIfAbsent("PRODUCER_WORKFLOW_PRODUCER_APPROVED_SYSTEM", "站内-工作流已自动审批", Channel.SYSTEM, Category.SYSTEM,
             "✅ 工作流已自动审批: ${title}",
             "✅ 工作流已自动审批\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━");
         created += createIfAbsent("PRODUCER_WORKFLOW_PRODUCER_APPROVED_EMAIL", "邮件-工作流已自动审批", Channel.EMAIL, Category.SYSTEM,
             "✅ 工作流已自动审批: ${title}",
-            "<h2>✅ 工作流已自动审批</h2><p>${content}</p><p><b>时间：</b>${time}</p>");
+            "<div style=\"font-family:'Microsoft YaHei',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><div style=\"background:linear-gradient(135deg,#51cf66 0%,#40c057 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;\"><h1 style=\"margin:0;font-size:24px;\">✅ 工作流已自动审批</h1></div><div style=\"background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;\"><div style=\"background:#e8f4fd;padding:12px;border-radius:6px;margin-bottom:15px;border-left:4px solid #2196F3;\"><p style=\"margin:4px 0;font-size:14px;\"><b>项目：</b>${projectName}</p><p style=\"margin:4px 0;font-size:14px;\"><b>创建人：</b>${createdBy}</p><p style=\"margin:4px 0;font-size:14px;\"><b>描述：</b>${projectDescription}</p></div><p>${content}</p><p style=\"color:#666;margin-top:20px;\">时间：${time}</p></div></div>");
         created += createIfAbsent("PRODUCER_VERSION_ITERATION_STARTED_SYSTEM", "站内-版本迭代已启动", Channel.SYSTEM, Category.SYSTEM,
             "🔄 版本迭代已启动: ${title}",
             "🔄 版本迭代已启动\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━");
         created += createIfAbsent("PRODUCER_VERSION_ITERATION_STARTED_EMAIL", "邮件-版本迭代已启动", Channel.EMAIL, Category.SYSTEM,
             "🔄 版本迭代已启动: ${title}",
-            "<h2>🔄 版本迭代已启动</h2><p>${content}</p><p><b>时间：</b>${time}</p>");
+            "<div style=\"font-family:'Microsoft YaHei',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><div style=\"background:linear-gradient(135deg,#339af0 0%,#228be6 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;\"><h1 style=\"margin:0;font-size:24px;\">🔄 版本迭代已启动</h1></div><div style=\"background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;\"><div style=\"background:#e8f4fd;padding:12px;border-radius:6px;margin-bottom:15px;border-left:4px solid #2196F3;\"><p style=\"margin:4px 0;font-size:14px;\"><b>项目：</b>${projectName}</p><p style=\"margin:4px 0;font-size:14px;\"><b>创建人：</b>${createdBy}</p><p style=\"margin:4px 0;font-size:14px;\"><b>描述：</b>${projectDescription}</p></div><p>${content}</p><p style=\"color:#666;margin-top:20px;\">时间：${time}</p></div></div>");
 
         // 项目卡点/告警类
         created += createIfAbsent("PRODUCER_MILESTONE_STUCK_SYSTEM", "站内-里程碑卡住", Channel.SYSTEM, Category.SYSTEM,
@@ -823,7 +826,7 @@ public class NotificationTemplateService {
             "⚠️ 里程碑卡住\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━\n\n请关注项目进展。");
         created += createIfAbsent("PRODUCER_MILESTONE_STUCK_EMAIL", "邮件-里程碑卡住", Channel.EMAIL, Category.SYSTEM,
             "⚠️ 里程碑卡住: ${title}",
-            "<div style=\"font-family:'Microsoft YaHei',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><div style=\"background:linear-gradient(135deg,#ff6b6b 0%,#ee5a24 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;\"><h1 style=\"margin:0;font-size:24px;\">⚠️ 里程碑卡住</h1></div><div style=\"background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;\"><p>${content}</p><p style=\"color:#666;margin-top:20px;\">请关注项目进展。时间：${time}</p></div></div>");
+            "<div style=\"font-family:'Microsoft YaHei',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><div style=\"background:linear-gradient(135deg,#ff6b6b 0%,#ee5a24 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;\"><h1 style=\"margin:0;font-size:24px;\">⚠️ 里程碑卡住</h1></div><div style=\"background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;\"><div style=\"background:#e8f4fd;padding:12px;border-radius:6px;margin-bottom:15px;border-left:4px solid #2196F3;\"><p style=\"margin:4px 0;font-size:14px;\"><b>项目：</b>${projectName}</p><p style=\"margin:4px 0;font-size:14px;\"><b>创建人：</b>${createdBy}</p><p style=\"margin:4px 0;font-size:14px;\"><b>描述：</b>${projectDescription}</p></div><p>${content}</p><p style=\"color:#666;margin-top:20px;\">请关注项目进展。时间：${time}</p></div></div>");
         created += createIfAbsent("PRODUCER_MILESTONE_STUCK_FEISHU", "飞书-里程碑卡住", Channel.FEISHU, Category.SYSTEM,
             "⚠️ 里程碑卡住: ${title}",
             "**⚠️ 里程碑卡住**\n\n---\n\n${content}\n\n---\n\n请关注项目进展。");
@@ -831,12 +834,40 @@ public class NotificationTemplateService {
             "⚠️ 里程碑卡住: ${title}",
             "### ⚠️ 里程碑卡住\n\n---\n\n${content}\n\n---\n\n请关注项目进展。");
 
+        // 里程碑完成类
+        created += createIfAbsent("PRODUCER_MILESTONE_COMPLETED_SYSTEM", "站内-里程碑完成", Channel.SYSTEM, Category.SYSTEM,
+            "✅ 里程碑完成: ${title}",
+            "✅ 里程碑完成\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━");
+        created += createIfAbsent("PRODUCER_MILESTONE_COMPLETED_EMAIL", "邮件-里程碑完成", Channel.EMAIL, Category.SYSTEM,
+            "✅ 里程碑完成: ${title}",
+            "<div style=\"font-family:'Microsoft YaHei',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><div style=\"background:linear-gradient(135deg,#51cf66 0%,#40c057 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;\"><h1 style=\"margin:0;font-size:24px;\">✅ 里程碑完成</h1></div><div style=\"background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;\"><div style=\"background:#e8f4fd;padding:12px;border-radius:6px;margin-bottom:15px;border-left:4px solid #2196F3;\"><p style=\"margin:4px 0;font-size:14px;\"><b>项目：</b>${projectName}</p><p style=\"margin:4px 0;font-size:14px;\"><b>创建人：</b>${createdBy}</p><p style=\"margin:4px 0;font-size:14px;\"><b>描述：</b>${projectDescription}</p></div><p>${content}</p><p style=\"color:#666;margin-top:20px;\">时间：${time}</p></div></div>");
+        created += createIfAbsent("PRODUCER_MILESTONE_COMPLETED_FEISHU", "飞书-里程碑完成", Channel.FEISHU, Category.SYSTEM,
+            "✅ 里程碑完成: ${title}",
+            "**✅ 里程碑完成**\n\n---\n\n${content}\n\n---\n\n项目进展顺利！");
+        created += createIfAbsent("PRODUCER_MILESTONE_COMPLETED_DINGTALK", "钉钉-里程碑完成", Channel.DINGTALK, Category.SYSTEM,
+            "✅ 里程碑完成: ${title}",
+            "### ✅ 里程碑完成\n\n---\n\n${content}\n\n---\n\n项目进展顺利！");
+
+        // 所有里程碑完成 / 进入审查阶段
+        created += createIfAbsent("PRODUCER_ALL_MILESTONES_COMPLETED_SYSTEM", "站内-所有里程碑完成", Channel.SYSTEM, Category.SYSTEM,
+            "🎉 所有里程碑完成: ${title}",
+            "🎉 所有里程碑完成\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━\n\n项目进入审查阶段。");
+        created += createIfAbsent("PRODUCER_ALL_MILESTONES_COMPLETED_EMAIL", "邮件-所有里程碑完成", Channel.EMAIL, Category.SYSTEM,
+            "🎉 所有里程碑完成: ${title}",
+            "<div style=\"font-family:'Microsoft YaHei',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><div style=\"background:linear-gradient(135deg,#ffd43b 0%,#fab005 100%);color:#333;padding:20px;border-radius:10px 10px 0 0;text-align:center;\"><h1 style=\"margin:0;font-size:24px;\">🎉 所有里程碑完成</h1></div><div style=\"background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;\"><div style=\"background:#e8f4fd;padding:12px;border-radius:6px;margin-bottom:15px;border-left:4px solid #2196F3;\"><p style=\"margin:4px 0;font-size:14px;\"><b>项目：</b>${projectName}</p><p style=\"margin:4px 0;font-size:14px;\"><b>创建人：</b>${createdBy}</p><p style=\"margin:4px 0;font-size:14px;\"><b>描述：</b>${projectDescription}</p></div><p>${content}</p><p style=\"color:#666;margin-top:20px;\">项目进入审查阶段。时间：${time}</p></div></div>");
+        created += createIfAbsent("PRODUCER_ALL_MILESTONES_COMPLETED_FEISHU", "飞书-所有里程碑完成", Channel.FEISHU, Category.SYSTEM,
+            "🎉 所有里程碑完成: ${title}",
+            "**🎉 所有里程碑完成**\n\n---\n\n${content}\n\n---\n\n项目进入审查阶段！");
+        created += createIfAbsent("PRODUCER_ALL_MILESTONES_COMPLETED_DINGTALK", "钉钉-所有里程碑完成", Channel.DINGTALK, Category.SYSTEM,
+            "🎉 所有里程碑完成: ${title}",
+            "### 🎉 所有里程碑完成\n\n---\n\n${content}\n\n---\n\n项目进入审查阶段！");
+
         created += createIfAbsent("PRODUCER_PROJECT_STUCK_SYSTEM", "站内-项目卡住", Channel.SYSTEM, Category.SYSTEM,
             "🚨 项目卡住: ${title}",
             "🚨 项目卡住\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━\n\n项目进展受阻，请及时干预。");
         created += createIfAbsent("PRODUCER_PROJECT_STUCK_EMAIL", "邮件-项目卡住", Channel.EMAIL, Category.SYSTEM,
             "🚨 项目卡住: ${title}",
-            "<div style=\"font-family:'Microsoft YaHei',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><div style=\"background:linear-gradient(135deg,#ff6b6b 0%,#ee5a24 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;\"><h1 style=\"margin:0;font-size:24px;\">🚨 项目卡住</h1></div><div style=\"background:#fff3cd;padding:20px;border:1px solid #ffc107;border-top:none;border-radius:0 0 10px 10px;\"><p>${content}</p><p style=\"color:#856404;margin-top:20px;\">项目进展受阻，请及时干预。时间：${time}</p></div></div>");
+            "<div style=\"font-family:'Microsoft YaHei',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><div style=\"background:linear-gradient(135deg,#ff6b6b 0%,#ee5a24 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;\"><h1 style=\"margin:0;font-size:24px;\">🚨 项目卡住</h1></div><div style=\"background:#fff3cd;padding:20px;border:1px solid #ffc107;border-top:none;border-radius:0 0 10px 10px;\"><div style=\"background:#e8f4fd;padding:12px;border-radius:6px;margin-bottom:15px;border-left:4px solid #2196F3;\"><p style=\"margin:4px 0;font-size:14px;\"><b>项目：</b>${projectName}</p><p style=\"margin:4px 0;font-size:14px;\"><b>创建人：</b>${createdBy}</p><p style=\"margin:4px 0;font-size:14px;\"><b>描述：</b>${projectDescription}</p></div><p>${content}</p><p style=\"color:#856404;margin-top:20px;\">项目进展受阻，请及时干预。时间：${time}</p></div></div>");
         created += createIfAbsent("PRODUCER_PROJECT_STUCK_FEISHU", "飞书-项目卡住", Channel.FEISHU, Category.SYSTEM,
             "🚨 项目卡住: ${title}",
             "**🚨 项目卡住**\n\n---\n\n${content}\n\n---\n\n项目进展受阻，请及时干预。");
@@ -849,7 +880,7 @@ public class NotificationTemplateService {
             "❌ 定期验证失败\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━");
         created += createIfAbsent("PRODUCER_PERIODIC_VERIFY_FAILED_EMAIL", "邮件-定期验证失败", Channel.EMAIL, Category.SYSTEM,
             "❌ 定期验证失败: ${title}",
-            "<h2>❌ 定期验证失败</h2><p>${content}</p><p><b>时间：</b>${time}</p>");
+            "<div style=\"font-family:'Microsoft YaHei',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><div style=\"background:linear-gradient(135deg,#ff6b6b 0%,#ee5a24 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;\"><h1 style=\"margin:0;font-size:24px;\">❌ 定期验证失败</h1></div><div style=\"background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;\"><div style=\"background:#e8f4fd;padding:12px;border-radius:6px;margin-bottom:15px;border-left:4px solid #2196F3;\"><p style=\"margin:4px 0;font-size:14px;\"><b>项目：</b>${projectName}</p><p style=\"margin:4px 0;font-size:14px;\"><b>创建人：</b>${createdBy}</p><p style=\"margin:4px 0;font-size:14px;\"><b>描述：</b>${projectDescription}</p></div><p>${content}</p><p style=\"color:#666;margin-top:20px;\">时间：${time}</p></div></div>");
 
         // 版本/绩效类
         created += createIfAbsent("PRODUCER_VERSION_STAFFING_ISSUE_SYSTEM", "站内-版本人员配置问题", Channel.SYSTEM, Category.SYSTEM,
@@ -857,25 +888,25 @@ public class NotificationTemplateService {
             "👥 版本人员配置问题\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━");
         created += createIfAbsent("PRODUCER_VERSION_STAFFING_ISSUE_EMAIL", "邮件-版本人员配置问题", Channel.EMAIL, Category.SYSTEM,
             "👥 人员配置问题: ${title}",
-            "<h2>👥 版本人员配置问题</h2><p>${content}</p><p><b>时间：</b>${time}</p>");
+            "<div style=\"font-family:'Microsoft YaHei',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><div style=\"background:linear-gradient(135deg,#ffd43b 0%,#fab005 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;\"><h1 style=\"margin:0;font-size:24px;\">👥 版本人员配置问题</h1></div><div style=\"background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;\"><div style=\"background:#e8f4fd;padding:12px;border-radius:6px;margin-bottom:15px;border-left:4px solid #2196F3;\"><p style=\"margin:4px 0;font-size:14px;\"><b>项目：</b>${projectName}</p><p style=\"margin:4px 0;font-size:14px;\"><b>创建人：</b>${createdBy}</p><p style=\"margin:4px 0;font-size:14px;\"><b>描述：</b>${projectDescription}</p></div><p>${content}</p><p style=\"color:#666;margin-top:20px;\">时间：${time}</p></div></div>");
         created += createIfAbsent("PRODUCER_VERSION_LOW_PERFORMANCE_SYSTEM", "站内-版本低绩效", Channel.SYSTEM, Category.SYSTEM,
             "📉 版本低绩效: ${title}",
             "📉 版本低绩效预警\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━");
         created += createIfAbsent("PRODUCER_VERSION_LOW_PERFORMANCE_EMAIL", "邮件-版本低绩效", Channel.EMAIL, Category.SYSTEM,
             "📉 版本低绩效: ${title}",
-            "<h2>📉 版本低绩效预警</h2><p>${content}</p><p><b>时间：</b>${time}</p>");
+            "<div style=\"font-family:'Microsoft YaHei',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><div style=\"background:linear-gradient(135deg,#ff6b6b 0%,#ee5a24 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;\"><h1 style=\"margin:0;font-size:24px;\">📉 版本低绩效预警</h1></div><div style=\"background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;\"><div style=\"background:#e8f4fd;padding:12px;border-radius:6px;margin-bottom:15px;border-left:4px solid #2196F3;\"><p style=\"margin:4px 0;font-size:14px;\"><b>项目：</b>${projectName}</p><p style=\"margin:4px 0;font-size:14px;\"><b>创建人：</b>${createdBy}</p><p style=\"margin:4px 0;font-size:14px;\"><b>描述：</b>${projectDescription}</p></div><p>${content}</p><p style=\"color:#666;margin-top:20px;\">时间：${time}</p></div></div>");
         created += createIfAbsent("PRODUCER_PROJECT_RULES_GENERATED_SYSTEM", "站内-项目规则已生成", Channel.SYSTEM, Category.SYSTEM,
             "📜 项目规则已生成: ${title}",
             "📜 项目规则已生成\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━");
         created += createIfAbsent("PRODUCER_PROJECT_RULES_GENERATED_EMAIL", "邮件-项目规则已生成", Channel.EMAIL, Category.SYSTEM,
             "📜 项目规则已生成: ${title}",
-            "<h2>📜 项目规则已生成</h2><p>${content}</p><p><b>时间：</b>${time}</p>");
+            "<div style=\"font-family:'Microsoft YaHei',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><div style=\"background:linear-gradient(135deg,#339af0 0%,#228be6 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;\"><h1 style=\"margin:0;font-size:24px;\">📜 项目规则已生成</h1></div><div style=\"background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;\"><div style=\"background:#e8f4fd;padding:12px;border-radius:6px;margin-bottom:15px;border-left:4px solid #2196F3;\"><p style=\"margin:4px 0;font-size:14px;\"><b>项目：</b>${projectName}</p><p style=\"margin:4px 0;font-size:14px;\"><b>创建人：</b>${createdBy}</p><p style=\"margin:4px 0;font-size:14px;\"><b>描述：</b>${projectDescription}</p></div><p>${content}</p><p style=\"color:#666;margin-top:20px;\">时间：${time}</p></div></div>");
         created += createIfAbsent("PRODUCER_TEAM_WARNING_SYSTEM", "站内-团队警告", Channel.SYSTEM, Category.SYSTEM,
             "⚠️ 团队警告: ${title}",
             "⚠️ 团队警告\n\n━━━━━━━━━━━━━━━━━━\n${content}\n━━━━━━━━━━━━━━━━━━");
         created += createIfAbsent("PRODUCER_TEAM_WARNING_EMAIL", "邮件-团队警告", Channel.EMAIL, Category.SYSTEM,
             "⚠️ 团队警告: ${title}",
-            "<h2>⚠️ 团队警告</h2><p>${content}</p><p><b>时间：</b>${time}</p>");
+            "<div style=\"font-family:'Microsoft YaHei',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><div style=\"background:linear-gradient(135deg,#ff6b6b 0%,#ee5a24 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;\"><h1 style=\"margin:0;font-size:24px;\">⚠️ 团队警告</h1></div><div style=\"background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;\"><div style=\"background:#e8f4fd;padding:12px;border-radius:6px;margin-bottom:15px;border-left:4px solid #2196F3;\"><p style=\"margin:4px 0;font-size:14px;\"><b>项目：</b>${projectName}</p><p style=\"margin:4px 0;font-size:14px;\"><b>创建人：</b>${createdBy}</p><p style=\"margin:4px 0;font-size:14px;\"><b>描述：</b>${projectDescription}</p></div><p>${content}</p><p style=\"color:#666;margin-top:20px;\">时间：${time}</p></div></div>");
 
         if (created > 0) {
             log.info("初始化默认通知模板完成，新增 {} 个模板", created);
@@ -1135,6 +1166,19 @@ public class NotificationTemplateService {
         Map<String, String> variables = new HashMap<>();
         variables.put("time", LocalDateTime.now().format(DATETIME_FORMATTER));
         variables.put("systemName", "ChengXun Game Maker");
+        // 从系统配置读取域名，用于模板中的链接跳转
+        try {
+            String domain = systemConfigService.getString("system.domain", "");
+            if (domain != null && !domain.isEmpty()) {
+                // 移除尾部斜杠避免双斜杠
+                variables.put("domain", domain.endsWith("/") ? domain.substring(0, domain.length() - 1) : domain);
+            } else {
+                variables.put("domain", "");
+            }
+        } catch (Exception e) {
+            log.debug("Failed to load system.domain config: {}", e.getMessage());
+            variables.put("domain", "");
+        }
         return variables;
     }
 

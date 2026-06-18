@@ -59,6 +59,57 @@ frontend/src/
     └── workflow/       # 工作流页面
 ```
 
+## 关键开发规范（必须遵守）
+
+### API 权限同步规范
+
+**任何涉及新增或修改 API 端点的操作，必须同步检查并更新权限配置。**
+
+具体要求：
+1. **新增 API**：必须在 `PermissionService` 中定义对应的权限标识，并在数据库 `role_permissions` 表中为相关角色分配该权限
+2. **修改 API 路径或方法**：如果改变了 API 的路径或 HTTP 方法，必须同步更新权限配置中的对应条目
+3. **权限标识命名**：遵循 `模块:操作` 格式，如 `project:create`、`agent:delete`
+4. **默认权限分配**：新增权限需要明确哪些角色（admin/developer/viewer）默认拥有该权限
+5. **前端路由守卫**：如果新增页面级 API，需同步更新 `frontend/src/utils/permission.js` 中的权限映射
+
+检查清单：
+- [ ] `PermissionService` 或权限初始化 SQL 中是否定义了新权限
+- [ ] `role_permissions` 表中是否为相关角色分配了权限
+- [ ] 前端路由和菜单是否正确配置了权限守卫
+
+### AI 助手工具同步规范
+
+**任何涉及新增或修改 API 端点的操作，必须同步检查是否需要更新 AI 助手的工具定义。**
+
+AI 助手的工具注册位于 `src/main/java/com/chengxun/gamemaker/service/AiToolRegistry.java`。
+
+具体要求：
+1. **新增 API**：如果新 API 需要被 AI 助手调用，必须在 `AiToolRegistry.registerDefaultTools()` 中注册对应的工具
+2. **修改 API 参数**：如果 API 的请求参数发生变化，必须同步更新工具定义中的 `ParameterDef`
+3. **修改 API 路径**：如果 API 路径变化，必须更新工具内部调用的 URL
+4. **工具命名**：工具名使用 snake_case，如 `list_projects`、`create_project`
+5. **工具描述**：简洁明了地描述工具功能，供 AI 理解使用场景
+
+### SQL 脚本同步规范
+
+**任何涉及数据库表结构（DDL）或初始化数据（DML）的修改，必须第一时间同步更新所有 SQL 脚本。不能等用户提醒，改完代码立刻同步。**
+
+必须同步的文件清单：
+| 文件 | 用途 |
+|------|------|
+| `sql/sql_create_mysql.sql` | MySQL 建表脚本（生产安装用） |
+| `sql/sql_create_h2.sql` | H2 建表脚本（测试环境用） |
+| `sql/sql_init_data_mysql.sql` | MySQL 初始化数据 |
+| `sql/sql_init_data_h2.sql` | H2 初始化数据 |
+| `src/main/resources/db/schema.sql` | Flyway 基线 schema |
+| `src/main/resources/db/init.sql` | 完整安装脚本（mysqldump 格式） |
+
+额外要求：
+- 如果改动涉及已有表的字段变更，还需新建 `src/main/resources/db/migration/V{n}__{description}.sql` Flyway 迁移脚本
+- H2 和 MySQL 的语法差异需注意（如 `ENGINE=InnoDB` 仅 MySQL 需要，`AUTO_INCREMENT` 写法不同等）
+- 初始化数据中如果包含 SQL 保留字作为字段名，必须用反引号包裹（如 `` `system` ``）
+- **通知模板惯例**：PRODUCER_* 通知模板在 SQL 中只存 FEISHU 渠道，SYSTEM/EMAIL/DINGTALK 由 Java `NotificationTemplateService.initDefaultTemplates()` 运行时自动创建
+
 ## 代码规范
 
 ### 中文注释要求

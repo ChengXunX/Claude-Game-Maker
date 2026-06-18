@@ -156,6 +156,25 @@
               </div>
             </template>
           </el-table-column>
+          <el-table-column label="思维模式" width="200">
+            <template #default="{ row }">
+              <div class="thinking-mode-cell">
+                <el-select
+                  :model-value="row.thinkingMode ?? 3"
+                  style="width: 160px"
+                  @change="(val) => handleThinkingModeChange(row, val)"
+                  :disabled="!hasPermission('agents:manage')"
+                  size="small"
+                >
+                  <el-option :value="1" label="高度严谨" />
+                  <el-option :value="2" label="严谨" />
+                  <el-option :value="3" label="平衡" />
+                  <el-option :value="4" label="创新" />
+                  <el-option :value="5" label="突破" />
+                </el-select>
+              </div>
+            </template>
+          </el-table-column>
           <el-table-column label="操作" width="250" fixed="right">
             <template #default="{ row }">
               <el-button type="primary" size="small" text @click="handleViewDetail(row)">详情</el-button>
@@ -257,6 +276,9 @@
           <el-descriptions-item label="推理深度">
             {{ getDepthLabel(currentAgent.reasoningDepth) }}
           </el-descriptions-item>
+          <el-descriptions-item label="思维模式">
+            {{ getThinkingModeLabel(currentAgent.thinkingMode) }}
+          </el-descriptions-item>
           <el-descriptions-item label="通知目标" v-if="roleDetail.notifyTargets">
             {{ roleDetail.notifyTargets }}
           </el-descriptions-item>
@@ -352,9 +374,8 @@
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="handleUnassignToken" type="danger" v-if="tokenForm.currentTokenName">解绑</el-button>
         <el-button @click="tokenDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="handleAssignToken" :loading="assigningToken">确认分配</el-button>
+        <el-button type="primary" @click="handleAssignToken" :loading="assigningToken">确认应用</el-button>
       </template>
     </el-dialog>
 
@@ -549,6 +570,21 @@ const getDepthLabel = (depth) => {
   return option ? option.label : '未知'
 }
 
+// 思维模式选项
+const thinkingModeOptions = [
+  { value: 1, label: '高度严谨' },
+  { value: 2, label: '严谨' },
+  { value: 3, label: '平衡' },
+  { value: 4, label: '创新' },
+  { value: 5, label: '突破' }
+]
+
+// 获取思维模式标签
+const getThinkingModeLabel = (mode) => {
+  const option = thinkingModeOptions.find(o => o.value === (mode ?? 3))
+  return option ? option.label : '未知'
+}
+
 /** 项目切换 */
 const handleProjectChange = (projectId) => {
   if (projectId) {
@@ -709,6 +745,22 @@ const handleReasoningDepthChange = async (agent, newDepth) => {
   }
 }
 
+/** 设置思维模式 */
+const handleThinkingModeChange = async (agent, newMode) => {
+  try {
+    const result = await agentApi.setThinkingMode(selectedProjectId.value, agent.role, newMode)
+    if (result.success) {
+      ElMessage.success(result.message || '思维模式已更新')
+      agent.thinkingMode = newMode
+    } else {
+      ElMessage.error(result.message || '设置失败')
+    }
+  } catch (error) {
+    ElMessage.error('设置思维模式失败')
+    loadAgents()
+  }
+}
+
 /** 打开 Token 编辑对话框 */
 const handleEditToken = async (agent) => {
   tokenForm.value = {
@@ -737,27 +789,13 @@ const handleAssignToken = async () => {
   assigningToken.value = true
   try {
     await tokenApi.assign(tokenForm.value.tokenId, tokenForm.value.agentId, tokenForm.value.activation)
-    ElMessage.success('Token 已分配')
+    ElMessage.success('Token 已应用到 Agent')
     tokenDialogVisible.value = false
     loadAgents()
   } catch (error) {
     ElMessage.error('分配失败')
   } finally {
     assigningToken.value = false
-  }
-}
-
-/** 解绑 Token */
-const handleUnassignToken = async () => {
-  if (!tokenForm.value.tokenId) return
-  try {
-    await ElMessageBox.confirm('确定要解绑该 Agent 的 Token 吗？', '确认', { type: 'warning' })
-    await tokenApi.unassign(tokenForm.value.tokenId)
-    ElMessage.success('Token 已解绑')
-    tokenDialogVisible.value = false
-    loadAgents()
-  } catch (error) {
-    if (error !== 'cancel') ElMessage.error('解绑失败')
   }
 }
 
@@ -1081,6 +1119,13 @@ onMounted(() => {
 .text-muted {
   color: #909399;
   font-size: 12px;
+}
+
+/* 思维模式单元格 */
+.thinking-mode-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .current-token {

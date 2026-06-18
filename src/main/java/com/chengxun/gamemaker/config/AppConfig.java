@@ -120,6 +120,13 @@ public class AppConfig {
         private String encryptKey;   // 事件订阅加密 key
         private boolean enabled = false;
 
+        /** 审批卡片回调签名密钥（可选，不配置则跳过签名验证） */
+        private String callbackToken;
+        /** 审批卡片回调过期时间（分钟），默认30分钟 */
+        private int callbackExpireMinutes = 30;
+        /** 审批卡片 @指定人 的飞书用户ID列表，逗号分隔 */
+        private String approvalNotifyUserIds;
+
         public String getAppId() { return appId; }
         public void setAppId(String appId) { this.appId = appId; }
 
@@ -140,6 +147,15 @@ public class AppConfig {
 
         public boolean isEnabled() { return enabled; }
         public void setEnabled(boolean enabled) { this.enabled = enabled; }
+
+        public String getCallbackToken() { return callbackToken; }
+        public void setCallbackToken(String callbackToken) { this.callbackToken = callbackToken; }
+
+        public int getCallbackExpireMinutes() { return callbackExpireMinutes; }
+        public void setCallbackExpireMinutes(int callbackExpireMinutes) { this.callbackExpireMinutes = callbackExpireMinutes; }
+
+        public String getApprovalNotifyUserIds() { return approvalNotifyUserIds; }
+        public void setApprovalNotifyUserIds(String approvalNotifyUserIds) { this.approvalNotifyUserIds = approvalNotifyUserIds; }
     }
 
     /**

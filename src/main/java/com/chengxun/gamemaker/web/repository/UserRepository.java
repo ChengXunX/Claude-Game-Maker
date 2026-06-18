@@ -27,6 +27,16 @@ public interface UserRepository extends JpaRepository<User, Long> {
     @Query("SELECT u FROM User u LEFT JOIN FETCH u.role r LEFT JOIN FETCH r.permissions WHERE u.username = :username")
     Optional<User> findByUsernameWithRole(@Param("username") String username);
 
+    /**
+     * 根据ID查找用户，同时加载角色和权限信息
+     * 使用JOIN FETCH避免懒加载问题
+     *
+     * @param id 用户ID
+     * @return 用户信息（包含角色和权限）
+     */
+    @Query("SELECT u FROM User u LEFT JOIN FETCH u.role r LEFT JOIN FETCH r.permissions WHERE u.id = :id")
+    Optional<User> findByIdWithRole(@Param("id") Long id);
+
     boolean existsByUsername(String username);
 
     List<User> findByStatus(User.UserStatus status);

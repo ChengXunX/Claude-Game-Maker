@@ -300,7 +300,14 @@ public class SystemPlannerAgent extends BaseAgent {
     private void processPendingTasks() {
         List<TaskAssignment> pendingTasks = tasks.stream()
             .filter(t -> t.getStatus() == TaskAssignment.TaskStatus.PENDING)
-            .sorted((a, b) -> b.getPriority().compareTo(a.getPriority()))
+            .sorted((a, b) -> {
+                    TaskAssignment.TaskPriority pa = b.getPriority();
+                    TaskAssignment.TaskPriority pb = a.getPriority();
+                    if (pa == null && pb == null) return 0;
+                    if (pa == null) return 1;
+                    if (pb == null) return -1;
+                    return pa.compareTo(pb);
+                })
             .toList();
 
         log.info("SystemPlanner pending tasks: {}, total tasks: {}", pendingTasks.size(), tasks.size());
@@ -322,6 +329,8 @@ public class SystemPlannerAgent extends BaseAgent {
 
         task.setStatus(TaskAssignment.TaskStatus.IN_PROGRESS);
         task.setUpdatedAt(LocalDateTime.now());
+        // 【修复】设置任务开始时间
+        task.setStartedAt(System.currentTimeMillis());
         agentContext.setCurrentTaskId(task.getId());
 
         try {

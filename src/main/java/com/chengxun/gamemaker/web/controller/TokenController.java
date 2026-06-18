@@ -189,21 +189,6 @@ public class TokenController {
         return "redirect:/tokens";
     }
 
-    @PostMapping("/{id}/unassign")
-    public String unassignToken(@PathVariable Long id,
-                               Authentication authentication,
-                               RedirectAttributes redirectAttributes) {
-        try {
-            ApiToken token = tokenService.unassignToken(id);
-            logService.log(getUserId(authentication), "UNASSIGN_TOKEN",
-                token.getName(), "Unassigned from agent", null);
-            redirectAttributes.addFlashAttribute("success", "Token 已取消分配");
-        } catch (Exception e) {
-            redirectAttributes.addFlashAttribute("error", e.getMessage());
-        }
-        return "redirect:/tokens";
-    }
-
     @PostMapping("/{id}/status")
     public String updateStatus(@PathVariable Long id,
                               @RequestParam ApiToken.TokenStatus status,

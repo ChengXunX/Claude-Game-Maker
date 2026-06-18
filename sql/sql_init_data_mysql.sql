@@ -29,8 +29,9 @@ UPDATE roles SET is_system = FALSE WHERE name != 'ADMIN' AND is_system = TRUE;
 -- 2. 初始化角色权限数据（完整60个权限）
 -- ============================================
 
--- ADMIN 管理员：拥有全部权限（从数据库动态读取，新增权限自动生效）
+-- ADMIN 管理员：通配符权限 * + 所有具体权限（JwtAuthenticationFilter.addAllPermissions 会在检测到 * 时自动注入全部权限）
 INSERT IGNORE INTO role_permissions (role_id, permission) VALUES
+(1, '*'),
 (1, 'dashboard:view'), (1, 'agents:view'), (1, 'agents:manage'), (1, 'agents:task'),
 (1, 'agent:view'), (1, 'agent:manage'), (1, 'agent:config'), (1, 'agent:optimize'),
 (1, 'ai:use'), (1, 'ai:admin'),
@@ -55,7 +56,14 @@ INSERT IGNORE INTO role_permissions (role_id, permission) VALUES
 (1, 'constants:view'), (1, 'constants:manage'),
 (1, 'permissions:view'), (1, 'permissions:manage'),
 (1, 'api:view'), (1, 'notification:preferences'), (1, 'context:monitor'),
-(1, 'iteration:view'), (1, 'iteration:manage'), (1, 'supervision:view');
+(1, 'iteration:view'), (1, 'iteration:manage'), (1, 'supervision:view'),
+(1, 'checkpoint:view'), (1, 'checkpoint:manage'),
+(1, 'fork:view'), (1, 'fork:create'), (1, 'fork:manage'),
+(1, 'subagent:view'), (1, 'subagent:create'), (1, 'subagent:manage'),
+(1, 'tool:permission:manage'),
+(1, 'dream:execute'), (1, 'skill:discover'), (1, 'distill:execute'),
+(1, 'goal:view'), (1, 'goal:manage'),
+(1, 'snapshot:view'), (1, 'snapshot:manage');
 
 -- PROJECT_MANAGER 项目经理：35个权限
 INSERT IGNORE INTO role_permissions (role_id, permission) VALUES
@@ -76,7 +84,9 @@ INSERT IGNORE INTO role_permissions (role_id, permission) VALUES
 (2, 'PERM_capabilities:view'), (2, 'PERM_mcp:view'), (2, 'PERM_files:view'),
 (2, 'PERM_constants:view'), (2, 'PERM_api:view'),
 (2, 'PERM_notification:preferences'), (2, 'PERM_context:monitor'),
-(2, 'iteration:view'), (2, 'iteration:manage'), (2, 'supervision:view');
+(2, 'iteration:view'), (2, 'iteration:manage'), (2, 'supervision:view'),
+(2, 'reasoning:view'), (2, 'reasoning:manage'), (2, 'quality:view'), (2, 'quality:predict'),
+(2, 'iteration:adapt'), (2, 'knowledge:graph');
 
 -- DEVELOPER 开发者：18个权限
 INSERT IGNORE INTO role_permissions (role_id, permission) VALUES
@@ -209,502 +219,381 @@ INSERT INTO alert_rules (name, description, metric_name, condition_type, thresho
 ('线程池耗尽', '线程池活跃线程数超过最大值90%', 'threadpool.active', 'GT', 90, 'SYSTEM', true, 60, 'SYSTEM,FEISHU', 4, 'HIGH');
 
 -- ============================================
--- 6. 初始化通知模板
+-- ============================================
+-- 6. 初始化通知模板（美化版 v2）
+-- 新增变量：${domain}、${projectLink}、${approvalLink}、${agentLink}
+-- 美化样式：更好的排版、颜色、按钮
 -- ============================================
 
--- 邮件告警模板
+-- ============================================
+-- 6.1 飞书通知模板
+-- ============================================
+
+-- 审批相关
 INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('ALERT_EMAIL', '告警邮件模板', 'EMAIL', 'ALERT',
- '[${priorityDesc}] ${ruleName} - 系统告警通知',
- '尊敬的管理员，
+('APPROVAL_NEW_FEISHU', '飞书新审批请求', 'FEISHU', 'SYSTEM', '🔔 新审批请求',
+'**📋 审批请求**
 
-系统检测到告警事件，请及时处理。
+---
 
-告警详情：
-- 规则名称：${ruleName}
-- 告警级别：${priorityDesc}
-- 监控指标：${metric}
-- 当前值：${triggerValue}
-- 阈值：${thresholdValue}
-- 触发时间：${time}
+**审批类型**：${requestTypeDesc}
+**发起者**：${requesterName}
+**项目**：${projectName}
+
+**描述**：${description}
+
+---
+
+⏰ ${time}
+
+🔗 [前往审批](${domain}/approvals)
+
+💡 请点击卡片底部按钮或前往管理后台处理审批',
+'新审批请求飞书通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('APPROVAL_APPROVED_FEISHU', '飞书审批通过', 'FEISHU', 'SYSTEM', '✅ 审批通过',
+'**✅ 审批通过通知**
+
+---
+
+**类型**：${requestTypeDesc}
+**描述**：${description}
+**审批人**：${approverName}
+**审批意见**：${approvalComment}
+
+---
+
+⏰ ${time}
+
+🔗 [查看详情](${domain}/approvals)',
+'审批通过飞书通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('APPROVAL_REJECTED_FEISHU', '飞书审批拒绝', 'FEISHU', 'SYSTEM', '❌ 审批拒绝',
+'**❌ 审批拒绝通知**
+
+---
+
+**类型**：${requestTypeDesc}
+**描述**：${description}
+**审批人**：${approverName}
+**拒绝原因**：${approvalComment}
+
+---
+
+⏰ ${time}
+
+🔗 [查看详情](${domain}/approvals)',
+'审批拒绝飞书通知', TRUE, TRUE);
+
+-- Agent 相关
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('AGENT_FEISHU', '飞书Agent通知', 'FEISHU', 'AGENT', '🤖 Agent通知',
+'**🤖 Agent通知**
+
+---
+
+**Agent**：${agentName}
+**状态**：${status}
+
+---
 
 ${content}
 
-请及时登录系统查看详情并处理。
+---
+
+⏰ ${time}
+
+🔗 [查看Agent](${domain}/agents)',
+'Agent相关飞书通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('AGENT_STATUS_FEISHU', '飞书Agent状态变更', 'FEISHU', 'AGENT', '🔄 Agent状态变更',
+'**🔄 Agent状态变更**
 
 ---
-ChengXun Game Maker',
- '用于发送告警邮件通知', TRUE, TRUE);
-
--- 飞书告警模板
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('ALERT_FEISHU', '告警飞书模板', 'FEISHU', 'ALERT',
- '告警通知',
- '**告警通知**
-
-规则：${ruleName}
-级别：${priorityDesc}
-指标：${metric}
-当前值：${triggerValue}
-阈值：${thresholdValue}
-时间：${time}
-
-${content}',
- '用于发送告警飞书通知', TRUE, TRUE);
-
--- 站内告警通知模板
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('ALERT_SYSTEM', '告警站内通知模板', 'SYSTEM', 'ALERT',
- '[${priorityDesc}] ${ruleName}',
- '告警详情：规则[${ruleName}]，级别[${priorityDesc}]，当前值[${triggerValue}]，阈值[${thresholdValue}]',
- '用于发送告警站内通知', TRUE, TRUE);
-
--- 任务通知模板
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('TASK_EMAIL', '任务邮件模板', 'EMAIL', 'TASK',
- '任务通知：${taskTitle}',
- '您好，
-
-您有新的任务通知。
-
-任务详情：
-- 任务标题：${taskTitle}
-- 任务状态：${content}
-- 通知时间：${time}
-
-请登录系统查看详情。
-
----
-ChengXun Game Maker',
- '用于发送任务相关邮件通知', TRUE, TRUE);
-
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('TASK_FEISHU', '任务飞书模板', 'FEISHU', 'TASK',
- '任务通知',
- '**任务通知**
-
-任务：${taskTitle}
-状态：${content}
-时间：${time}',
- '用于发送任务相关飞书通知', TRUE, TRUE);
-
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('TASK_SYSTEM', '任务站内通知模板', 'SYSTEM', 'TASK',
- '任务通知：${taskTitle}',
- '任务状态：${content}',
- '用于发送任务站内通知', TRUE, TRUE);
-
--- Agent 通知模板
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('AGENT_EMAIL', 'Agent邮件模板', 'EMAIL', 'AGENT',
- 'Agent通知：${agentName}',
- '您好，
-
-Agent有新的通知。
-
-Agent详情：
-- Agent名称：${agentName}
-- 通知内容：${content}
-- 通知时间：${time}
-
-请登录系统查看详情。
-
----
-ChengXun Game Maker',
- '用于发送Agent相关邮件通知', TRUE, TRUE);
-
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('AGENT_FEISHU', 'Agent飞书模板', 'FEISHU', 'AGENT',
- 'Agent通知',
- '**Agent通知**
-
-Agent：${agentName}
-内容：${content}
-时间：${time}',
- '用于发送Agent相关飞书通知', TRUE, TRUE);
-
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('AGENT_SYSTEM', 'Agent站内通知模板', 'SYSTEM', 'AGENT',
- 'Agent通知：${agentName}',
- '通知内容：${content}',
- '用于发送Agent站内通知', TRUE, TRUE);
-
--- 恢复通知模板
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('RECOVERY_EMAIL', '恢复通知邮件模板', 'EMAIL', 'ALERT',
- '[恢复] ${ruleName} - 告警已恢复',
- '尊敬的管理员，
-
-告警已恢复，系统运行正常。
-
-恢复详情：
-- 规则名称：${ruleName}
-- 当前值：${triggerValue}
-- 恢复时间：${time}
-
----
-ChengXun Game Maker',
- '用于发送告警恢复邮件通知', TRUE, TRUE);
-
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('RECOVERY_FEISHU', '恢复通知飞书模板', 'FEISHU', 'ALERT',
- '告警恢复',
- '**告警恢复**
-
-规则：${ruleName}
-当前值：${triggerValue}
-时间：${time}',
- '用于发送告警恢复飞书通知', TRUE, TRUE);
-
--- 钉钉通知模板
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('ALERT_DINGTALK', '告警钉钉模板', 'DINGTALK', 'ALERT',
- '告警通知',
- '### 告警通知
-
-**规则名称**：${ruleName}
-**告警级别**：${priorityDesc}
-**监控指标**：${metric}
-**当前值**：${triggerValue}
-**阈值**：${thresholdValue}
-**触发时间**：${time}
-
-${content}',
- '用于发送告警钉钉通知', TRUE, TRUE);
-
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('RECOVERY_DINGTALK', '恢复通知钉钉模板', 'DINGTALK', 'ALERT',
- '告警恢复',
- '### 告警恢复
-
-**规则名称**：${ruleName}
-**当前值**：${triggerValue}
-**恢复时间**：${time}
-
-告警已恢复，系统运行正常。',
- '用于发送告警恢复钉钉通知', TRUE, TRUE);
-
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('TASK_DINGTALK', '任务钉钉模板', 'DINGTALK', 'TASK',
- '任务通知',
- '### 任务通知
-
-**任务标题**：${taskTitle}
-**任务状态**：${content}
-**通知时间**：${time}',
- '用于发送任务钉钉通知', TRUE, TRUE);
-
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('AGENT_DINGTALK', 'Agent钉钉模板', 'DINGTALK', 'AGENT',
- 'Agent通知',
- '### Agent通知
 
 **Agent名称**：${agentName}
-**通知内容**：${content}
-**通知时间**：${time}',
- '用于发送Agent钉钉通知', TRUE, TRUE);
+**当前状态**：${status}
+**备注**：${remark}
 
--- 审批结果钉钉模板
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('APPROVAL_APPROVED_DINGTALK', '钉钉审批通过', 'DINGTALK', 'SYSTEM',
- '[审批通过] ${requestTypeDesc}',
- '### ✅ 审批通过通知
+---
 
-- **类型**：${requestTypeDesc}
-- **描述**：${description}
-- **审批人**：${approverName}
-- **审批意见**：${approvalComment}
-- **时间**：${time}',
- '用于发送审批通过钉钉通知', TRUE, TRUE);
+⏰ ${time}
+
+🔗 [查看Agent](${domain}/agents)',
+'Agent状态变更飞书通知', TRUE, TRUE);
 
 INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('APPROVAL_REJECTED_DINGTALK', '钉钉审批拒绝', 'DINGTALK', 'SYSTEM',
- '[审批拒绝] ${requestTypeDesc}',
- '### ❌ 审批拒绝通知
+('PRODUCER_AGENT_CREATED_FEISHU', '飞书Agent已创建', 'FEISHU', 'AGENT', '🤖 Agent已创建',
+'**🤖 Agent已创建**
 
-- **类型**：${requestTypeDesc}
-- **描述**：${description}
-- **审批人**：${approverName}
-- **拒绝原因**：${approvalComment}
-- **时间**：${time}',
- '用于发送审批拒绝钉钉通知', TRUE, TRUE);
+---
 
--- ============================================
--- 9.1 制作人工作流通知模板
--- ============================================
-
--- 工作流审批类 - 需要人工审批
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_WORKFLOW_HUMAN_APPROVAL_NEEDED_SYSTEM', '站内-需要人工审批', 'SYSTEM', 'SYSTEM',
- '🔔 需要人工审批: ${title}',
- '🔔 需要人工审批
-
-━━━━━━━━━━━━━━━━━━
 ${content}
-━━━━━━━━━━━━━━━━━━
+
+---
+
+⏰ ${time}
+
+🔗 [查看Agent](${domain}/agents)',
+'Agent已创建飞书通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_AGENT_EVALUATED_FEISHU', '飞书Agent评估完成', 'FEISHU', 'AGENT', '📊 Agent评估完成',
+'**📊 Agent评估完成**
+
+---
+
+${content}
+
+---
+
+⏰ ${time}
+
+🔗 [查看评估](${domain}/performance)',
+'Agent评估完成飞书通知', TRUE, TRUE);
+
+-- 告警相关
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('ALERT_FEISHU', '飞书告警通知', 'FEISHU', 'ALERT', '🚨 告警通知',
+'**🚨 告警通知**
+
+---
+
+**告警规则**：${ruleName}
+**告警级别**：${priorityDesc}
+**指标**：${metric}
+**当前值**：${triggerValue}
+**阈值**：${thresholdValue}
+
+---
+
+${content}
+
+---
+
+⏰ ${time}
+
+🔗 [查看告警](${domain}/alerts)
+
+⚠️ 请及时处理告警，避免影响系统稳定性',
+'告警飞书通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('RECOVERY_FEISHU', '飞书告警恢复', 'FEISHU', 'ALERT', '✅ 告警恢复',
+'**✅ 告警恢复**
+
+---
+
+**告警规则**：${ruleName}
+**当前值**：${triggerValue}
+
+---
+
+⏰ ${time}
+
+🔗 [查看告警](${domain}/alerts)
+
+✅ 系统已恢复正常',
+'告警恢复飞书通知', TRUE, TRUE);
+
+-- 任务相关
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('TASK_FEISHU', '飞书任务通知', 'FEISHU', 'TASK', '📋 任务通知',
+'**📋 任务通知**
+
+---
+
+**任务**：${taskTitle}
+**状态**：${status}
+
+---
+
+${content}
+
+---
+
+⏰ ${time}
+
+🔗 [查看任务](${domain}/scheduler)',
+'任务飞书通知', TRUE, TRUE);
+
+-- 审批流程相关
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_WORKFLOW_HUMAN_APPROVAL_NEEDED_FEISHU', '飞书需要人工审批', 'FEISHU', 'SYSTEM', '🔔 需要人工审批',
+'**🔔 需要人工审批**
+
+---
+
+**项目**: ${projectName}
+
+${content}
+
+---
+
+⏰ ${time}
+
+🔗 [前往审批](${domain}/approvals)
 
 请及时处理！',
- '制作人工作流-需要人工审批站内通知', TRUE, TRUE);
+'需要人工审批飞书通知', TRUE, TRUE);
 
 INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_WORKFLOW_HUMAN_APPROVAL_NEEDED_EMAIL', '邮件-需要人工审批', 'EMAIL', 'SYSTEM',
- '🔔 需要人工审批: ${title}',
- '<div style="font-family:''Microsoft YaHei'',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;"><div style="background:linear-gradient(135deg,#ff922b 0%,#fd7e14 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;"><h1 style="margin:0;font-size:24px;">🔔 需要人工审批</h1></div><div style="background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;"><p>${content}</p><p style="color:#666;margin-top:20px;">时间：${time}</p></div></div>',
- '制作人工作流-需要人工审批邮件通知', TRUE, TRUE);
-
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_WORKFLOW_HUMAN_APPROVAL_NEEDED_FEISHU', '飞书-需要人工审批', 'FEISHU', 'SYSTEM',
- '🔔 需要人工审批: ${title}',
- '**🔔 需要人工审批**
+('PRODUCER_RECRUIT_APPROVAL_REQUIRED_FEISHU', '飞书招聘审批', 'FEISHU', 'SYSTEM', '👥 招聘审批请求',
+'**👥 招聘审批请求**
 
 ---
+
+**项目**: ${projectName}
 
 ${content}
 
 ---
 
-请及时处理！',
- '制作人工作流-需要人工审批飞书通知', TRUE, TRUE);
+⏰ ${time}
 
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_WORKFLOW_HUMAN_APPROVAL_NEEDED_DINGTALK', '钉钉-需要人工审批', 'DINGTALK', 'SYSTEM',
- '🔔 需要人工审批: ${title}',
- '### 🔔 需要人工审批
-
----
-
-${content}
-
----
-
-请及时处理！',
- '制作人工作流-需要人工审批钉钉通知', TRUE, TRUE);
-
--- 招聘审批请求
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_RECRUIT_APPROVAL_REQUIRED_SYSTEM', '站内-招聘审批请求', 'SYSTEM', 'SYSTEM',
- '👥 招聘审批: ${title}',
- '👥 招聘审批请求
-
-━━━━━━━━━━━━━━━━━━
-${content}
-━━━━━━━━━━━━━━━━━━
+🔗 [前往审批](${domain}/approvals)
 
 请审批是否允许招聘该 Agent。',
- '制作人工作流-招聘审批请求站内通知', TRUE, TRUE);
+'招聘审批飞书通知', TRUE, TRUE);
 
 INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_RECRUIT_APPROVAL_REQUIRED_EMAIL', '邮件-招聘审批请求', 'EMAIL', 'SYSTEM',
- '👥 招聘审批: ${title}',
- '<div style="font-family:''Microsoft YaHei'',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;"><div style="background:linear-gradient(135deg,#f06595 0%,#e64980 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;"><h1 style="margin:0;font-size:24px;">👥 招聘审批请求</h1></div><div style="background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;"><p>${content}</p><p style="color:#666;margin-top:20px;">时间：${time}</p></div></div>',
- '制作人工作流-招聘审批请求邮件通知', TRUE, TRUE);
-
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_RECRUIT_APPROVAL_REQUIRED_FEISHU', '飞书-招聘审批请求', 'FEISHU', 'SYSTEM',
- '👥 招聘审批: ${title}',
- '**👥 招聘审批请求**
+('PRODUCER_CREATE_AGENT_APPROVAL_REQUIRED_FEISHU', '飞书创建Agent审批', 'FEISHU', 'SYSTEM', '🤖 创建Agent审批',
+'**🤖 创建Agent审批请求**
 
 ---
+
+**项目**: ${projectName}
 
 ${content}
 
 ---
 
-请审批是否允许招聘该 Agent。',
- '制作人工作流-招聘审批请求飞书通知', TRUE, TRUE);
+⏰ ${time}
 
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_RECRUIT_APPROVAL_REQUIRED_DINGTALK', '钉钉-招聘审批请求', 'DINGTALK', 'SYSTEM',
- '👥 招聘审批: ${title}',
- '### 👥 招聘审批请求
-
----
-
-${content}
-
----
-
-请审批是否允许招聘该 Agent。',
- '制作人工作流-招聘审批请求钉钉通知', TRUE, TRUE);
-
--- 创建Agent审批
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_CREATE_AGENT_APPROVAL_REQUIRED_SYSTEM', '站内-创建Agent审批', 'SYSTEM', 'SYSTEM',
- '🤖 创建Agent审批: ${title}',
- '🤖 创建Agent审批请求
-
-━━━━━━━━━━━━━━━━━━
-${content}
-━━━━━━━━━━━━━━━━━━
+🔗 [前往审批](${domain}/approvals)
 
 请审批。',
- '制作人工作流-创建Agent审批站内通知', TRUE, TRUE);
+'创建Agent审批飞书通知', TRUE, TRUE);
 
 INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_CREATE_AGENT_APPROVAL_REQUIRED_EMAIL', '邮件-创建Agent审批', 'EMAIL', 'SYSTEM',
- '🤖 创建Agent审批: ${title}',
- '<div style="font-family:''Microsoft YaHei'',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;"><div style="background:linear-gradient(135deg,#845ef7 0%,#7048e8 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;"><h1 style="margin:0;font-size:24px;">🤖 创建Agent审批</h1></div><div style="background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;"><p>${content}</p><p style="color:#666;margin-top:20px;">时间：${time}</p></div></div>',
- '制作人工作流-创建Agent审批邮件通知', TRUE, TRUE);
+('PRODUCER_DELIVERY_APPROVAL_FEISHU', '飞书交付审批', 'FEISHU', 'SYSTEM', '📦 交付审批',
+'**📦 交付审批请求**
 
--- 交付审批
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_DELIVERY_APPROVAL_SYSTEM', '站内-交付审批', 'SYSTEM', 'SYSTEM',
- '📦 交付审批: ${title}',
- '📦 交付审批请求
+---
 
-━━━━━━━━━━━━━━━━━━
+**项目**: ${projectName}
+
 ${content}
-━━━━━━━━━━━━━━━━━━
+
+---
+
+⏰ ${time}
+
+🔗 [前往审批](${domain}/approvals)
 
 请审批是否可以交付。',
- '制作人工作流-交付审批站内通知', TRUE, TRUE);
+'交付审批飞书通知', TRUE, TRUE);
 
 INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_DELIVERY_APPROVAL_EMAIL', '邮件-交付审批', 'EMAIL', 'SYSTEM',
- '📦 交付审批: ${title}',
- '<div style="font-family:''Microsoft YaHei'',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;"><div style="background:linear-gradient(135deg,#20c997 0%,#12b886 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;"><h1 style="margin:0;font-size:24px;">📦 交付审批</h1></div><div style="background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;"><p>${content}</p><p style="color:#666;margin-top:20px;">时间：${time}</p></div></div>',
- '制作人工作流-交付审批邮件通知', TRUE, TRUE);
+('PRODUCER_APPROVAL_REQUIRED_FEISHU', '飞书需要审批', 'FEISHU', 'SYSTEM', '📋 需要审批',
+'**📋 需要审批**
 
--- 通用需要审批
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_APPROVAL_REQUIRED_SYSTEM', '站内-需要审批', 'SYSTEM', 'SYSTEM',
- '📋 需要审批: ${title}',
- '📋 需要审批
+---
 
-━━━━━━━━━━━━━━━━━━
 ${content}
-━━━━━━━━━━━━━━━━━━
+
+---
+
+⏰ ${time}
+
+🔗 [前往审批](${domain}/approvals)
 
 请及时处理！',
- '制作人工作流-需要审批站内通知', TRUE, TRUE);
+'需要审批飞书通知', TRUE, TRUE);
 
 INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_APPROVAL_REQUIRED_EMAIL', '邮件-需要审批', 'EMAIL', 'SYSTEM',
- '📋 需要审批: ${title}',
- '<div style="font-family:''Microsoft YaHei'',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;"><div style="background:linear-gradient(135deg,#ff922b 0%,#fd7e14 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;"><h1 style="margin:0;font-size:24px;">📋 需要审批</h1></div><div style="background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;"><p>${content}</p><p style="color:#666;margin-top:20px;">时间：${time}</p></div></div>',
- '制作人工作流-需要审批邮件通知', TRUE, TRUE);
+('PRODUCER_APPROVAL_REJECTED_FEISHU', '飞书审批被拒绝', 'FEISHU', 'SYSTEM', '❌ 审批被拒绝',
+'**❌ 审批被拒绝**
 
--- 审批拒绝类
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_APPROVAL_REJECTED_SYSTEM', '站内-审批被拒绝', 'SYSTEM', 'SYSTEM',
- '❌ 审批被拒绝: ${title}',
- '❌ 审批被拒绝
+---
 
-━━━━━━━━━━━━━━━━━━
 ${content}
-━━━━━━━━━━━━━━━━━━',
- '制作人工作流-审批被拒绝站内通知', TRUE, TRUE);
+
+---
+
+⏰ ${time}
+
+🔗 [查看详情](${domain}/approvals)',
+'审批被拒绝飞书通知', TRUE, TRUE);
 
 INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_APPROVAL_REJECTED_EMAIL', '邮件-审批被拒绝', 'EMAIL', 'SYSTEM',
- '❌ 审批被拒绝: ${title}',
- '<h2>❌ 审批被拒绝</h2><p>${content}</p><p><b>时间：</b>${time}</p>',
- '制作人工作流-审批被拒绝邮件通知', TRUE, TRUE);
+('PRODUCER_RECRUIT_REJECTED_FEISHU', '飞书招聘被拒绝', 'FEISHU', 'SYSTEM', '❌ 招聘被拒绝',
+'**❌ 招聘被拒绝**
 
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_RECRUIT_REJECTED_SYSTEM', '站内-招聘被拒绝', 'SYSTEM', 'SYSTEM',
- '❌ 招聘被拒绝: ${title}',
- '❌ 招聘被拒绝
+---
 
-━━━━━━━━━━━━━━━━━━
 ${content}
-━━━━━━━━━━━━━━━━━━',
- '制作人工作流-招聘被拒绝站内通知', TRUE, TRUE);
+
+---
+
+⏰ ${time}
+
+🔗 [查看详情](${domain}/approvals)',
+'招聘被拒绝飞书通知', TRUE, TRUE);
 
 INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_RECRUIT_REJECTED_EMAIL', '邮件-招聘被拒绝', 'EMAIL', 'SYSTEM',
- '❌ 招聘被拒绝: ${title}',
- '<h2>❌ 招聘被拒绝</h2><p>${content}</p><p><b>时间：</b>${time}</p>',
- '制作人工作流-招聘被拒绝邮件通知', TRUE, TRUE);
+('PRODUCER_CREATE_AGENT_REJECTED_FEISHU', '飞书创建Agent被拒绝', 'FEISHU', 'SYSTEM', '❌ 创建Agent被拒绝',
+'**❌ 创建Agent被拒绝**
 
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_CREATE_AGENT_REJECTED_SYSTEM', '站内-创建Agent被拒绝', 'SYSTEM', 'SYSTEM',
- '❌ 创建Agent被拒绝: ${title}',
- '❌ 创建Agent被拒绝
+---
 
-━━━━━━━━━━━━━━━━━━
 ${content}
-━━━━━━━━━━━━━━━━━━',
- '制作人工作流-创建Agent被拒绝站内通知', TRUE, TRUE);
+
+---
+
+⏰ ${time}
+
+🔗 [查看详情](${domain}/approvals)',
+'创建Agent被拒绝飞书通知', TRUE, TRUE);
 
 INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_CREATE_AGENT_REJECTED_EMAIL', '邮件-创建Agent被拒绝', 'EMAIL', 'SYSTEM',
- '❌ 创建Agent被拒绝: ${title}',
- '<h2>❌ 创建Agent被拒绝</h2><p>${content}</p><p><b>时间：</b>${time}</p>',
- '制作人工作流-创建Agent被拒绝邮件通知', TRUE, TRUE);
+('PRODUCER_DISMISS_REJECTED_FEISHU', '飞书解雇被拒绝', 'FEISHU', 'SYSTEM', '❌ 解雇被拒绝',
+'**❌ 解雇被拒绝**
 
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_DISMISS_REJECTED_SYSTEM', '站内-解雇被拒绝', 'SYSTEM', 'SYSTEM',
- '❌ 解雇被拒绝: ${title}',
- '❌ 解雇被拒绝
+---
 
-━━━━━━━━━━━━━━━━━━
 ${content}
-━━━━━━━━━━━━━━━━━━',
- '制作人工作流-解雇被拒绝站内通知', TRUE, TRUE);
+
+---
+
+⏰ ${time}
+
+🔗 [查看详情](${domain}/approvals)',
+'解雇被拒绝飞书通知', TRUE, TRUE);
 
 INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_DISMISS_REJECTED_EMAIL', '邮件-解雇被拒绝', 'EMAIL', 'SYSTEM',
- '❌ 解雇被拒绝: ${title}',
- '<h2>❌ 解雇被拒绝</h2><p>${content}</p><p><b>时间：</b>${time}</p>',
- '制作人工作流-解雇被拒绝邮件通知', TRUE, TRUE);
+('PRODUCER_DISMISS_REQUEST_SENT_FEISHU', '飞书解雇请求已发送', 'FEISHU', 'SYSTEM', '📤 解雇请求已发送',
+'**📤 解雇请求已发送**
 
--- 审批通过/完成类
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_RECRUIT_COMPLETED_SYSTEM', '站内-招聘完成', 'SYSTEM', 'SYSTEM',
- '✅ 招聘完成: ${title}',
- '✅ 招聘完成
+---
 
-━━━━━━━━━━━━━━━━━━
 ${content}
-━━━━━━━━━━━━━━━━━━',
- '制作人工作流-招聘完成站内通知', TRUE, TRUE);
 
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_RECRUIT_COMPLETED_EMAIL', '邮件-招聘完成', 'EMAIL', 'SYSTEM',
- '✅ 招聘完成: ${title}',
- '<h2>✅ 招聘完成</h2><p>${content}</p><p><b>时间：</b>${time}</p>',
- '制作人工作流-招聘完成邮件通知', TRUE, TRUE);
+---
 
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_DISMISS_REQUEST_SENT_SYSTEM', '站内-解雇请求已发送', 'SYSTEM', 'SYSTEM',
- '📤 解雇请求已发送: ${title}',
- '📤 解雇请求已发送
+⏰ ${time}
 
-━━━━━━━━━━━━━━━━━━
-${content}
-━━━━━━━━━━━━━━━━━━
+🔗 [查看详情](${domain}/approvals)
 
 等待管理员审批。',
- '制作人工作流-解雇请求已发送站内通知', TRUE, TRUE);
+'解雇请求已发送飞书通知', TRUE, TRUE);
 
 INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_DISMISS_REQUEST_SENT_EMAIL', '邮件-解雇请求已发送', 'EMAIL', 'SYSTEM',
- '📤 解雇请求已发送: ${title}',
- '<h2>📤 解雇请求已发送</h2><p>${content}</p><p>等待管理员审批。</p><p><b>时间：</b>${time}</p>',
- '制作人工作流-解雇请求已发送邮件通知', TRUE, TRUE);
-
--- Agent 生命周期类
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_AGENT_CREATED_SYSTEM', '站内-Agent已创建', 'SYSTEM', 'AGENT',
- '🤖 Agent已创建: ${title}',
- '🤖 Agent已创建
-
-━━━━━━━━━━━━━━━━━━
-${content}
-━━━━━━━━━━━━━━━━━━',
- '制作人工作流-Agent已创建站内通知', TRUE, TRUE);
-
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_AGENT_CREATED_EMAIL', '邮件-Agent已创建', 'EMAIL', 'AGENT',
- '🤖 Agent已创建: ${title}',
- '<div style="font-family:''Microsoft YaHei'',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;"><div style="background:linear-gradient(135deg,#51cf66 0%,#40c057 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;"><h1 style="margin:0;font-size:24px;">🤖 Agent已创建</h1></div><div style="background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;"><p>${content}</p><p style="color:#666;margin-top:20px;">时间：${time}</p></div></div>',
- '制作人工作流-Agent已创建邮件通知', TRUE, TRUE);
-
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_AGENT_CREATED_FEISHU', '飞书-Agent已创建', 'FEISHU', 'AGENT',
- '🤖 Agent已创建: ${title}',
- '**🤖 Agent已创建**
+('PRODUCER_RECRUIT_COMPLETED_FEISHU', '飞书招聘已完成', 'FEISHU', 'AGENT', '✅ 招聘已完成',
+'**✅ 招聘已完成**
 
 ---
 
@@ -712,13 +601,14 @@ ${content}
 
 ---
 
-时间：${time}',
- '制作人工作流-Agent已创建飞书通知', TRUE, TRUE);
+⏰ ${time}
+
+🔗 [查看Agent](${domain}/agents)',
+'招聘已完成飞书通知', TRUE, TRUE);
 
 INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_AGENT_CREATED_DINGTALK', '钉钉-Agent已创建', 'DINGTALK', 'AGENT',
- '🤖 Agent已创建: ${title}',
- '### 🤖 Agent已创建
+('PRODUCER_AUTO_RECRUIT_REQUEST_FEISHU', '飞书自动招聘请求', 'FEISHU', 'AGENT', '🔄 自动招聘请求',
+'**🔄 自动招聘请求**
 
 ---
 
@@ -726,191 +616,92 @@ ${content}
 
 ---
 
-时间：${time}',
- '制作人工作流-Agent已创建钉钉通知', TRUE, TRUE);
+⏰ ${time}
 
+🔗 [查看详情](${domain}/agents)',
+'自动招聘请求飞书通知', TRUE, TRUE);
+
+-- 项目状态相关
 INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_AGENT_EVALUATED_SYSTEM', '站内-Agent已评估', 'SYSTEM', 'AGENT',
- '📊 Agent评估完成: ${title}',
- '📊 Agent评估完成
+('PRODUCER_MILESTONE_STUCK_FEISHU', '飞书里程碑卡住', 'FEISHU', 'SYSTEM', '⚠️ 里程碑卡住',
+'**⚠️ 里程碑卡住**
 
-━━━━━━━━━━━━━━━━━━
+---
+
+**项目**: ${projectName}
+
 ${content}
-━━━━━━━━━━━━━━━━━━',
- '制作人工作流-Agent已评估站内通知', TRUE, TRUE);
 
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_AGENT_EVALUATED_EMAIL', '邮件-Agent已评估', 'EMAIL', 'AGENT',
- '📊 Agent评估完成: ${title}',
- '<div style="font-family:''Microsoft YaHei'',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;"><div style="background:linear-gradient(135deg,#748ffc 0%,#5c7cfa 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;"><h1 style="margin:0;font-size:24px;">📊 Agent评估完成</h1></div><div style="background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;"><p>${content}</p><p style="color:#666;margin-top:20px;">时间：${time}</p></div></div>',
- '制作人工作流-Agent已评估邮件通知', TRUE, TRUE);
+---
 
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_TEAM_OPTIMIZATION_SYSTEM', '站内-团队优化', 'SYSTEM', 'AGENT',
- '🔧 团队优化: ${title}',
- '🔧 团队优化建议
+⏰ ${time}
 
-━━━━━━━━━━━━━━━━━━
-${content}
-━━━━━━━━━━━━━━━━━━',
- '制作人工作流-团队优化站内通知', TRUE, TRUE);
-
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_TEAM_OPTIMIZATION_EMAIL', '邮件-团队优化', 'EMAIL', 'AGENT',
- '🔧 团队优化: ${title}',
- '<div style="font-family:''Microsoft YaHei'',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;"><div style="background:linear-gradient(135deg,#845ef7 0%,#7048e8 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;"><h1 style="margin:0;font-size:24px;">🔧 团队优化建议</h1></div><div style="background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;"><p>${content}</p><p style="color:#666;margin-top:20px;">时间：${time}</p></div></div>',
- '制作人工作流-团队优化邮件通知', TRUE, TRUE);
-
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_AUTO_RECRUIT_REQUEST_SYSTEM', '站内-自动招聘请求', 'SYSTEM', 'AGENT',
- '🔄 自动招聘请求: ${title}',
- '🔄 自动招聘请求
-
-━━━━━━━━━━━━━━━━━━
-${content}
-━━━━━━━━━━━━━━━━━━',
- '制作人工作流-自动招聘请求站内通知', TRUE, TRUE);
-
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_AUTO_RECRUIT_REQUEST_EMAIL', '邮件-自动招聘请求', 'EMAIL', 'AGENT',
- '🔄 自动招聘请求: ${title}',
- '<div style="font-family:''Microsoft YaHei'',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;"><div style="background:linear-gradient(135deg,#f06595 0%,#e64980 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;"><h1 style="margin:0;font-size:24px;">🔄 自动招聘请求</h1></div><div style="background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;"><p>${content}</p><p style="color:#666;margin-top:20px;">时间：${time}</p></div></div>',
- '制作人工作流-自动招聘请求邮件通知', TRUE, TRUE);
-
--- 工作流/项目类
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_WORKFLOW_STARTED_SYSTEM', '站内-工作流已启动', 'SYSTEM', 'SYSTEM',
- '🚀 工作流已启动: ${title}',
- '🚀 工作流已启动
-
-━━━━━━━━━━━━━━━━━━
-${content}
-━━━━━━━━━━━━━━━━━━',
- '制作人工作流-工作流已启动站内通知', TRUE, TRUE);
-
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_WORKFLOW_STARTED_EMAIL', '邮件-工作流已启动', 'EMAIL', 'SYSTEM',
- '🚀 工作流已启动: ${title}',
- '<h2>🚀 工作流已启动</h2><p>${content}</p><p><b>时间：</b>${time}</p>',
- '制作人工作流-工作流已启动邮件通知', TRUE, TRUE);
-
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_WORKFLOW_CREATED_SYSTEM', '站内-新工作流已创建', 'SYSTEM', 'SYSTEM',
- '📋 新工作流已创建: ${title}',
- '📋 新工作流已创建
-
-━━━━━━━━━━━━━━━━━━
-${content}
-━━━━━━━━━━━━━━━━━━',
- '制作人工作流-新工作流已创建站内通知', TRUE, TRUE);
-
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_WORKFLOW_CREATED_EMAIL', '邮件-新工作流已创建', 'EMAIL', 'SYSTEM',
- '📋 新工作流已创建: ${title}',
- '<h2>📋 新工作流已创建</h2><p>${content}</p><p><b>时间：</b>${time}</p>',
- '制作人工作流-新工作流已创建邮件通知', TRUE, TRUE);
-
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_WORKFLOW_PRODUCER_APPROVED_SYSTEM', '站内-工作流已自动审批', 'SYSTEM', 'SYSTEM',
- '✅ 工作流已自动审批: ${title}',
- '✅ 工作流已自动审批
-
-━━━━━━━━━━━━━━━━━━
-${content}
-━━━━━━━━━━━━━━━━━━',
- '制作人工作流-工作流已自动审批站内通知', TRUE, TRUE);
-
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_WORKFLOW_PRODUCER_APPROVED_EMAIL', '邮件-工作流已自动审批', 'EMAIL', 'SYSTEM',
- '✅ 工作流已自动审批: ${title}',
- '<h2>✅ 工作流已自动审批</h2><p>${content}</p><p><b>时间：</b>${time}</p>',
- '制作人工作流-工作流已自动审批邮件通知', TRUE, TRUE);
-
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_VERSION_ITERATION_STARTED_SYSTEM', '站内-版本迭代已启动', 'SYSTEM', 'SYSTEM',
- '🔄 版本迭代已启动: ${title}',
- '🔄 版本迭代已启动
-
-━━━━━━━━━━━━━━━━━━
-${content}
-━━━━━━━━━━━━━━━━━━',
- '制作人工作流-版本迭代已启动站内通知', TRUE, TRUE);
-
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_VERSION_ITERATION_STARTED_EMAIL', '邮件-版本迭代已启动', 'EMAIL', 'SYSTEM',
- '🔄 版本迭代已启动: ${title}',
- '<h2>🔄 版本迭代已启动</h2><p>${content}</p><p><b>时间：</b>${time}</p>',
- '制作人工作流-版本迭代已启动邮件通知', TRUE, TRUE);
-
--- 项目卡点/告警类
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_MILESTONE_STUCK_SYSTEM', '站内-里程碑卡住', 'SYSTEM', 'SYSTEM',
- '⚠️ 里程碑卡住: ${title}',
- '⚠️ 里程碑卡住
-
-━━━━━━━━━━━━━━━━━━
-${content}
-━━━━━━━━━━━━━━━━━━
+🔗 [查看项目](${domain}/projects)
 
 请关注项目进展。',
- '制作人工作流-里程碑卡住站内通知', TRUE, TRUE);
+'里程碑卡住飞书通知', TRUE, TRUE);
 
 INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_MILESTONE_STUCK_EMAIL', '邮件-里程碑卡住', 'EMAIL', 'SYSTEM',
- '⚠️ 里程碑卡住: ${title}',
- '<div style="font-family:''Microsoft YaHei'',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;"><div style="background:linear-gradient(135deg,#ff6b6b 0%,#ee5a24 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;"><h1 style="margin:0;font-size:24px;">⚠️ 里程碑卡住</h1></div><div style="background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;"><p>${content}</p><p style="color:#666;margin-top:20px;">请关注项目进展。时间：${time}</p></div></div>',
- '制作人工作流-里程碑卡住邮件通知', TRUE, TRUE);
-
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_MILESTONE_STUCK_FEISHU', '飞书-里程碑卡住', 'FEISHU', 'SYSTEM',
- '⚠️ 里程碑卡住: ${title}',
- '**⚠️ 里程碑卡住**
+('PRODUCER_PROJECT_STUCK_FEISHU', '飞书项目卡住', 'FEISHU', 'SYSTEM', '🚨 项目卡住',
+'**🚨 项目卡住**
 
 ---
+
+**项目**: ${projectName}
 
 ${content}
 
 ---
 
-请关注项目进展。',
- '制作人工作流-里程碑卡住飞书通知', TRUE, TRUE);
+⏰ ${time}
 
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_MILESTONE_STUCK_DINGTALK', '钉钉-里程碑卡住', 'DINGTALK', 'SYSTEM',
- '⚠️ 里程碑卡住: ${title}',
- '### ⚠️ 里程碑卡住
-
----
-
-${content}
-
----
-
-请关注项目进展。',
- '制作人工作流-里程碑卡住钉钉通知', TRUE, TRUE);
-
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_PROJECT_STUCK_SYSTEM', '站内-项目卡住', 'SYSTEM', 'SYSTEM',
- '🚨 项目卡住: ${title}',
- '🚨 项目卡住
-
-━━━━━━━━━━━━━━━━━━
-${content}
-━━━━━━━━━━━━━━━━━━
+🔗 [查看项目](${domain}/projects)
 
 项目进展受阻，请及时干预。',
- '制作人工作流-项目卡住站内通知', TRUE, TRUE);
+'项目卡住飞书通知', TRUE, TRUE);
+
+-- 里程碑完成通知
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_MILESTONE_COMPLETED_FEISHU', '飞书里程碑完成', 'FEISHU', 'SYSTEM', '✅ 里程碑完成',
+'**✅ 里程碑完成**
+
+---
+
+**项目**: ${projectName}
+
+${content}
+
+---
+
+⏰ ${time}
+
+🔗 [查看项目](${domain}/projects)
+
+项目进展顺利！',
+'里程碑完成飞书通知', TRUE, TRUE);
 
 INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_PROJECT_STUCK_EMAIL', '邮件-项目卡住', 'EMAIL', 'SYSTEM',
- '🚨 项目卡住: ${title}',
- '<div style="font-family:''Microsoft YaHei'',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;"><div style="background:linear-gradient(135deg,#ff6b6b 0%,#ee5a24 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;"><h1 style="margin:0;font-size:24px;">🚨 项目卡住</h1></div><div style="background:#fff3cd;padding:20px;border:1px solid #ffc107;border-top:none;border-radius:0 0 10px 10px;"><p>${content}</p><p style="color:#856404;margin-top:20px;">项目进展受阻，请及时干预。时间：${time}</p></div></div>',
- '制作人工作流-项目卡住邮件通知', TRUE, TRUE);
+('PRODUCER_ALL_MILESTONES_COMPLETED_FEISHU', '飞书所有里程碑完成', 'FEISHU', 'SYSTEM', '🎉 所有里程碑完成',
+'**🎉 所有里程碑完成**
+
+---
+
+**项目**: ${projectName}
+
+${content}
+
+---
+
+⏰ ${time}
+
+🔗 [查看项目](${domain}/projects)
+
+项目进入审查阶段！',
+'所有里程碑完成飞书通知', TRUE, TRUE);
 
 INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_PROJECT_STUCK_FEISHU', '飞书-项目卡住', 'FEISHU', 'SYSTEM',
- '🚨 项目卡住: ${title}',
- '**🚨 项目卡住**
+('PRODUCER_PROJECT_RULES_GENERATED_FEISHU', '飞书项目规则已生成', 'FEISHU', 'SYSTEM', '📜 项目规则已生成',
+'**📜 项目规则已生成**
 
 ---
 
@@ -918,13 +709,32 @@ ${content}
 
 ---
 
-项目进展受阻，请及时干预。',
- '制作人工作流-项目卡住飞书通知', TRUE, TRUE);
+⏰ ${time}
+
+🔗 [查看项目](${domain}/projects)',
+'项目规则已生成飞书通知', TRUE, TRUE);
+
+-- 版本迭代相关
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_VERSION_ITERATION_STARTED_FEISHU', '飞书版本迭代已启动', 'FEISHU', 'SYSTEM', '🔄 版本迭代已启动',
+'**🔄 版本迭代已启动**
+
+---
+
+**项目**: ${projectName}
+
+${content}
+
+---
+
+⏰ ${time}
+
+🔗 [查看项目](${domain}/projects)',
+'版本迭代已启动飞书通知', TRUE, TRUE);
 
 INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_PROJECT_STUCK_DINGTALK', '钉钉-项目卡住', 'DINGTALK', 'SYSTEM',
- '🚨 项目卡住: ${title}',
- '### 🚨 项目卡住
+('PRODUCER_VERSION_STAFFING_ISSUE_FEISHU', '飞书人员配置问题', 'FEISHU', 'SYSTEM', '👥 人员配置问题',
+'**👥 版本人员配置问题**
 
 ---
 
@@ -932,91 +742,413 @@ ${content}
 
 ---
 
-项目进展受阻，请及时干预。',
- '制作人工作流-项目卡住钉钉通知', TRUE, TRUE);
+⏰ ${time}
+
+🔗 [查看项目](${domain}/projects)',
+'人员配置问题飞书通知', TRUE, TRUE);
 
 INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_PERIODIC_VERIFY_FAILED_SYSTEM', '站内-定期验证失败', 'SYSTEM', 'SYSTEM',
- '❌ 定期验证失败: ${title}',
- '❌ 定期验证失败
+('PRODUCER_VERSION_LOW_PERFORMANCE_FEISHU', '飞书版本低绩效', 'FEISHU', 'SYSTEM', '📉 版本低绩效',
+'**📉 版本低绩效预警**
 
-━━━━━━━━━━━━━━━━━━
+---
+
 ${content}
-━━━━━━━━━━━━━━━━━━',
- '制作人工作流-定期验证失败站内通知', TRUE, TRUE);
 
+---
+
+⏰ ${time}
+
+🔗 [查看绩效](${domain}/performance)',
+'版本低绩效飞书通知', TRUE, TRUE);
+
+-- 质量改进迭代通知
 INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_PERIODIC_VERIFY_FAILED_EMAIL', '邮件-定期验证失败', 'EMAIL', 'SYSTEM',
- '❌ 定期验证失败: ${title}',
- '<h2>❌ 定期验证失败</h2><p>${content}</p><p><b>时间：</b>${time}</p>',
- '制作人工作流-定期验证失败邮件通知', TRUE, TRUE);
+('PRODUCER_QUALITY_ITERATION_FEISHU', '飞书质量改进迭代', 'FEISHU', 'SYSTEM', '⚠️ 质量改进迭代',
+'**⚠️ 质量改进迭代**
 
--- 版本/绩效类
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_VERSION_STAFFING_ISSUE_SYSTEM', '站内-版本人员配置问题', 'SYSTEM', 'SYSTEM',
- '👥 人员配置问题: ${title}',
- '👥 版本人员配置问题
+---
 
-━━━━━━━━━━━━━━━━━━
+**项目**: ${projectName}
+
 ${content}
-━━━━━━━━━━━━━━━━━━',
- '制作人工作流-版本人员配置问题站内通知', TRUE, TRUE);
 
+---
+
+⏰ ${time}
+
+🔗 [查看项目](${domain}/projects)
+
+系统将继续迭代直到质量达标。',
+'质量改进迭代飞书通知', TRUE, TRUE);
+
+-- 工作流相关
 INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_VERSION_STAFFING_ISSUE_EMAIL', '邮件-版本人员配置问题', 'EMAIL', 'SYSTEM',
- '👥 人员配置问题: ${title}',
- '<h2>👥 版本人员配置问题</h2><p>${content}</p><p><b>时间：</b>${time}</p>',
- '制作人工作流-版本人员配置问题邮件通知', TRUE, TRUE);
+('PRODUCER_WORKFLOW_STARTED_FEISHU', '飞书工作流已启动', 'FEISHU', 'SYSTEM', '🚀 工作流已启动',
+'**🚀 工作流已启动**
 
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_VERSION_LOW_PERFORMANCE_SYSTEM', '站内-版本低绩效', 'SYSTEM', 'SYSTEM',
- '📉 版本低绩效: ${title}',
- '📉 版本低绩效预警
+---
 
-━━━━━━━━━━━━━━━━━━
+**项目**: ${projectName}
+
 ${content}
-━━━━━━━━━━━━━━━━━━',
- '制作人工作流-版本低绩效站内通知', TRUE, TRUE);
+
+---
+
+⏰ ${time}
+
+🔗 [查看工作流](${domain}/workflow)',
+'工作流已启动飞书通知', TRUE, TRUE);
 
 INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_VERSION_LOW_PERFORMANCE_EMAIL', '邮件-版本低绩效', 'EMAIL', 'SYSTEM',
- '📉 版本低绩效: ${title}',
- '<h2>📉 版本低绩效预警</h2><p>${content}</p><p><b>时间：</b>${time}</p>',
- '制作人工作流-版本低绩效邮件通知', TRUE, TRUE);
+('PRODUCER_WORKFLOW_CREATED_FEISHU', '飞书新工作流已创建', 'FEISHU', 'SYSTEM', '📋 新工作流已创建',
+'**📋 新工作流已创建**
 
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_PROJECT_RULES_GENERATED_SYSTEM', '站内-项目规则已生成', 'SYSTEM', 'SYSTEM',
- '📜 项目规则已生成: ${title}',
- '📜 项目规则已生成
+---
 
-━━━━━━━━━━━━━━━━━━
+**项目**: ${projectName}
+
 ${content}
-━━━━━━━━━━━━━━━━━━',
- '制作人工作流-项目规则已生成站内通知', TRUE, TRUE);
+
+---
+
+⏰ ${time}
+
+🔗 [查看工作流](${domain}/workflow)',
+'新工作流已创建飞书通知', TRUE, TRUE);
 
 INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_PROJECT_RULES_GENERATED_EMAIL', '邮件-项目规则已生成', 'EMAIL', 'SYSTEM',
- '📜 项目规则已生成: ${title}',
- '<h2>📜 项目规则已生成</h2><p>${content}</p><p><b>时间：</b>${time}</p>',
- '制作人工作流-项目规则已生成邮件通知', TRUE, TRUE);
+('PRODUCER_WORKFLOW_PRODUCER_APPROVED_FEISHU', '飞书工作流已自动审批', 'FEISHU', 'SYSTEM', '✅ 工作流已自动审批',
+'**✅ 工作流已自动审批**
 
-INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_TEAM_WARNING_SYSTEM', '站内-团队警告', 'SYSTEM', 'SYSTEM',
- '⚠️ 团队警告: ${title}',
- '⚠️ 团队警告
+---
 
-━━━━━━━━━━━━━━━━━━
+**项目**: ${projectName}
+
 ${content}
-━━━━━━━━━━━━━━━━━━',
- '制作人工作流-团队警告站内通知', TRUE, TRUE);
+
+---
+
+⏰ ${time}
+
+🔗 [查看工作流](${domain}/workflow)',
+'工作流已自动审批飞书通知', TRUE, TRUE);
+
+-- 团队相关
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_TEAM_OPTIMIZATION_FEISHU', '飞书团队优化', 'FEISHU', 'AGENT', '🔧 团队优化建议',
+'**🔧 团队优化建议**
+
+---
+
+**项目**: ${projectName}
+
+${content}
+
+---
+
+⏰ ${time}
+
+🔗 [查看团队](${domain}/agents)',
+'团队优化飞书通知', TRUE, TRUE);
 
 INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
-('PRODUCER_TEAM_WARNING_EMAIL', '邮件-团队警告', 'EMAIL', 'SYSTEM',
- '⚠️ 团队警告: ${title}',
- '<h2>⚠️ 团队警告</h2><p>${content}</p><p><b>时间：</b>${time}</p>',
- '制作人工作流-团队警告邮件通知', TRUE, TRUE);
+('PRODUCER_TEAM_WARNING_FEISHU', '飞书团队警告', 'FEISHU', 'SYSTEM', '⚠️ 团队警告',
+'**⚠️ 团队警告**
+
+---
+
+**项目**: ${projectName}
+
+${content}
+
+---
+
+⏰ ${time}
+
+🔗 [查看团队](${domain}/agents)',
+'团队警告飞书通知', TRUE, TRUE);
+
+-- 其他
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_PERIODIC_VERIFY_FAILED_FEISHU', '飞书定期验证失败', 'FEISHU', 'SYSTEM', '❌ 定期验证失败',
+'**❌ 定期验证失败**
+
+---
+
+**项目**: ${projectName}
+
+${content}
+
+---
+
+⏰ ${time}
+
+🔗 [查看项目](${domain}/projects)',
+'定期验证失败飞书通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('DISMISSAL_REQUEST_FEISHU', '飞书解雇审批请求', 'FEISHU', 'SYSTEM', '🔔 解雇审批请求',
+'**🔔 解雇审批请求**
+
+---
+
+**Agent名称**：${agentName}
+**申请原因**：${reason}
+**申请人**：${requesterName}
+
+---
+
+⏰ ${time}
+
+🔗 [前往审批](${domain}/approvals)
+
+请及时处理！',
+'解雇审批请求飞书通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PERFORMANCE_FEISHU', '飞书绩效通知', 'FEISHU', 'SYSTEM', '📊 绩效通知',
+'**📊 绩效通知**
+
+---
+
+${content}
+
+---
+
+⏰ ${time}
+
+🔗 [查看绩效](${domain}/performance)',
+'绩效飞书通知', TRUE, TRUE);
 
 -- ============================================
+-- 6.2 邮件通知模板（美化版）
+-- ============================================
+
+-- 审批相关邮件
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('APPROVAL_NEW_EMAIL', '邮件新审批请求', 'EMAIL', 'SYSTEM', '🔔 [审批] ${requestTypeDesc}',
+'<div style="font-family: ''Microsoft YaHei'', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <div style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white; padding: 30px; border-radius: 10px 10px 0 0; text-align: center;">
+    <h1 style="margin: 0; font-size: 24px;">📋 新审批请求</h1>
+  </div>
+  <div style="background: #f8f9fa; padding: 30px; border: 1px solid #e9ecef; border-top: none; border-radius: 0 0 10px 10px;">
+    <p><strong>审批类型：</strong>${requestTypeDesc}</p>
+    <p><strong>发起者：</strong>${requesterName}</p>
+    <p><strong>项目：</strong>${projectName}</p>
+    <p><strong>描述：</strong>${description}</p>
+    <hr style="border: none; border-top: 1px solid #e9ecef; margin: 20px 0;">
+    <p style="color: #666; font-size: 14px;">⏰ ${time}</p>
+    <div style="text-align: center; margin-top: 20px;">
+      <a href="${domain}/approvals" style="display: inline-block; background: #f5576c; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px;">前往审批</a>
+    </div>
+  </div>
+</div>',
+'新审批请求邮件通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('APPROVAL_APPROVED_EMAIL', '邮件审批通过', 'EMAIL', 'SYSTEM', '✅ [审批通过] ${requestTypeDesc}',
+'<div style="font-family: ''Microsoft YaHei'', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <div style="background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%); color: white; padding: 30px; border-radius: 10px 10px 0 0; text-align: center;">
+    <h1 style="margin: 0; font-size: 24px;">✅ 审批通过</h1>
+  </div>
+  <div style="background: #f8f9fa; padding: 30px; border: 1px solid #e9ecef; border-top: none; border-radius: 0 0 10px 10px;">
+    <p><strong>类型：</strong>${requestTypeDesc}</p>
+    <p><strong>描述：</strong>${description}</p>
+    <p><strong>审批人：</strong>${approverName}</p>
+    <p><strong>审批意见：</strong>${approvalComment}</p>
+    <hr style="border: none; border-top: 1px solid #e9ecef; margin: 20px 0;">
+    <p style="color: #666; font-size: 14px;">⏰ ${time}</p>
+    <div style="text-align: center; margin-top: 20px;">
+      <a href="${domain}/approvals" style="display: inline-block; background: #43e97b; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px;">查看详情</a>
+    </div>
+  </div>
+</div>',
+'审批通过邮件通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('APPROVAL_REJECTED_EMAIL', '邮件审批拒绝', 'EMAIL', 'SYSTEM', '❌ [审批拒绝] ${requestTypeDesc}',
+'<div style="font-family: ''Microsoft YaHei'', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <div style="background: linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%); color: white; padding: 30px; border-radius: 10px 10px 0 0; text-align: center;">
+    <h1 style="margin: 0; font-size: 24px;">❌ 审批拒绝</h1>
+  </div>
+  <div style="background: #f8f9fa; padding: 30px; border: 1px solid #e9ecef; border-top: none; border-radius: 0 0 10px 10px;">
+    <p><strong>类型：</strong>${requestTypeDesc}</p>
+    <p><strong>描述：</strong>${description}</p>
+    <p><strong>审批人：</strong>${approverName}</p>
+    <p><strong>拒绝原因：</strong>${approvalComment}</p>
+    <hr style="border: none; border-top: 1px solid #e9ecef; margin: 20px 0;">
+    <p style="color: #666; font-size: 14px;">⏰ ${time}</p>
+    <div style="text-align: center; margin-top: 20px;">
+      <a href="${domain}/approvals" style="display: inline-block; background: #ff6b6b; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px;">查看详情</a>
+    </div>
+  </div>
+</div>',
+'审批拒绝邮件通知', TRUE, TRUE);
+
+-- Agent 相关邮件
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('AGENT_EMAIL', '邮件Agent通知', 'EMAIL', 'AGENT', '🤖 Agent通知: ${agentName}',
+'<div style="font-family: ''Microsoft YaHei'', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <div style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); color: white; padding: 30px; border-radius: 10px 10px 0 0; text-align: center;">
+    <h1 style="margin: 0; font-size: 24px;">🤖 Agent通知</h1>
+  </div>
+  <div style="background: #f8f9fa; padding: 30px; border: 1px solid #e9ecef; border-top: none; border-radius: 0 0 10px 10px;">
+    <p><strong>Agent：</strong>${agentName}</p>
+    <p><strong>状态：</strong>${status}</p>
+    <p>${content}</p>
+    <hr style="border: none; border-top: 1px solid #e9ecef; margin: 20px 0;">
+    <p style="color: #666; font-size: 14px;">⏰ ${time}</p>
+    <div style="text-align: center; margin-top: 20px;">
+      <a href="${domain}/agents" style="display: inline-block; background: #4facfe; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px;">查看Agent</a>
+    </div>
+  </div>
+</div>',
+'Agent邮件通知', TRUE, TRUE);
+
+-- 告警相关邮件
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('ALERT_EMAIL', '邮件告警通知', 'EMAIL', 'ALERT', '🚨 [${priorityDesc}] ${ruleName}',
+'<div style="font-family: ''Microsoft YaHei'', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <div style="background: linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%); color: white; padding: 30px; border-radius: 10px 10px 0 0; text-align: center;">
+    <h1 style="margin: 0; font-size: 24px;">🚨 告警通知</h1>
+  </div>
+  <div style="background: #f8f9fa; padding: 30px; border: 1px solid #e9ecef; border-top: none; border-radius: 0 0 10px 10px;">
+    <p><strong>告警规则：</strong>${ruleName}</p>
+    <p><strong>告警级别：</strong>${priorityDesc}</p>
+    <p><strong>指标：</strong>${metric}</p>
+    <p><strong>当前值：</strong>${triggerValue}</p>
+    <p><strong>阈值：</strong>${thresholdValue}</p>
+    <p>${content}</p>
+    <hr style="border: none; border-top: 1px solid #e9ecef; margin: 20px 0;">
+    <p style="color: #666; font-size: 14px;">⏰ ${time}</p>
+    <div style="text-align: center; margin-top: 20px;">
+      <a href="${domain}/alerts" style="display: inline-block; background: #ff6b6b; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px;">查看告警</a>
+    </div>
+    <p style="color: #dc3545; font-weight: bold; margin-top: 15px;">⚠️ 请及时处理告警，避免影响系统稳定性</p>
+  </div>
+</div>',
+'告警邮件通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('RECOVERY_EMAIL', '邮件告警恢复', 'EMAIL', 'ALERT', '✅ [恢复] ${ruleName}',
+'<div style="font-family: ''Microsoft YaHei'', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <div style="background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%); color: white; padding: 30px; border-radius: 10px 10px 0 0; text-align: center;">
+    <h1 style="margin: 0; font-size: 24px;">✅ 告警恢复</h1>
+  </div>
+  <div style="background: #f8f9fa; padding: 30px; border: 1px solid #e9ecef; border-top: none; border-radius: 0 0 10px 10px;">
+    <p><strong>告警规则：</strong>${ruleName}</p>
+    <p><strong>当前值：</strong>${triggerValue}</p>
+    <hr style="border: none; border-top: 1px solid #e9ecef; margin: 20px 0;">
+    <p style="color: #666; font-size: 14px;">⏰ ${time}</p>
+    <div style="text-align: center; margin-top: 20px;">
+      <a href="${domain}/alerts" style="display: inline-block; background: #43e97b; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px;">查看告警</a>
+    </div>
+    <p style="color: #28a745; font-weight: bold; margin-top: 15px;">✅ 系统已恢复正常</p>
+  </div>
+</div>',
+'告警恢复邮件通知', TRUE, TRUE);
+
+-- 任务相关邮件
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('TASK_EMAIL', '邮件任务通知', 'EMAIL', 'TASK', '📋 任务通知: ${taskTitle}',
+'<div style="font-family: ''Microsoft YaHei'', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <div style="background: linear-gradient(135deg, #a18cd1 0%, #fbc2eb 100%); color: white; padding: 30px; border-radius: 10px 10px 0 0; text-align: center;">
+    <h1 style="margin: 0; font-size: 24px;">📋 任务通知</h1>
+  </div>
+  <div style="background: #f8f9fa; padding: 30px; border: 1px solid #e9ecef; border-top: none; border-radius: 0 0 10px 10px;">
+    <p><strong>任务：</strong>${taskTitle}</p>
+    <p><strong>状态：</strong>${status}</p>
+    <p>${content}</p>
+    <hr style="border: none; border-top: 1px solid #e9ecef; margin: 20px 0;">
+    <p style="color: #666; font-size: 14px;">⏰ ${time}</p>
+    <div style="text-align: center; margin-top: 20px;">
+      <a href="${domain}/scheduler" style="display: inline-block; background: #a18cd1; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px;">查看任务</a>
+    </div>
+  </div>
+</div>',
+'任务邮件通知', TRUE, TRUE);
+
+-- 审批流程相关邮件
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_WORKFLOW_HUMAN_APPROVAL_NEEDED_EMAIL', '邮件需要人工审批', 'EMAIL', 'SYSTEM', '🔔 需要人工审批: ${title}',
+'<div style="font-family: ''Microsoft YaHei'', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <div style="background: linear-gradient(135deg, #ff922b 0%, #fd7e14 100%); color: white; padding: 20px; border-radius: 10px 10px 0 0; text-align: center;">
+    <h1 style="margin: 0; font-size: 24px;">🔔 需要人工审批</h1>
+  </div>
+  <div style="background: #f8f9fa; padding: 20px; border: 1px solid #e9ecef; border-top: none; border-radius: 0 0 10px 10px;">
+    <div style="background:#e8f4fd;padding:12px;border-radius:6px;margin-bottom:15px;border-left:4px solid #2196F3;">
+      <p style="margin:4px 0;font-size:14px;"><b>项目：</b>${projectName}</p>
+      <p style="margin:4px 0;font-size:14px;"><b>创建人：</b>${createdBy}</p>
+      <p style="margin:4px 0;font-size:14px;"><b>描述：</b>${projectDescription}</p>
+    </div>
+    <p>${content}</p>
+    <p style="color: #666; margin-top: 20px;">⏰ ${time}</p>
+    <div style="text-align: center; margin-top: 20px;">
+      <a href="${domain}/approvals" style="display: inline-block; background: #fd7e14; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px;">前往审批</a>
+    </div>
+  </div>
+</div>',
+'需要人工审批邮件通知', TRUE, TRUE);
+
+-- 版本迭代相关邮件
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_VERSION_ITERATION_STARTED_EMAIL', '邮件版本迭代已启动', 'EMAIL', 'SYSTEM', '🔄 版本迭代已启动: ${title}',
+'<div style="font-family: ''Microsoft YaHei'', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <div style="background: linear-gradient(135deg, #339af0 0%, #228be6 100%); color: white; padding: 20px; border-radius: 10px 10px 0 0; text-align: center;">
+    <h1 style="margin: 0; font-size: 24px;">🔄 版本迭代已启动</h1>
+  </div>
+  <div style="background: #f8f9fa; padding: 20px; border: 1px solid #e9ecef; border-top: none; border-radius: 0 0 10px 10px;">
+    <div style="background:#e8f4fd;padding:12px;border-radius:6px;margin-bottom:15px;border-left:4px solid #2196F3;">
+      <p style="margin:4px 0;font-size:14px;"><b>项目：</b>${projectName}</p>
+      <p style="margin:4px 0;font-size:14px;"><b>创建人：</b>${createdBy}</p>
+      <p style="margin:4px 0;font-size:14px;"><b>描述：</b>${projectDescription}</p>
+    </div>
+    <p>${content}</p>
+    <p style="color: #666; margin-top: 20px;">⏰ ${time}</p>
+    <div style="text-align: center; margin-top: 20px;">
+      <a href="${domain}/projects" style="display: inline-block; background: #228be6; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px;">查看项目</a>
+    </div>
+  </div>
+</div>',
+'版本迭代已启动邮件通知', TRUE, TRUE);
+
+-- 绩效相关邮件
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PERFORMANCE_EMAIL', '邮件绩效通知', 'EMAIL', 'SYSTEM', '📊 绩效通知: ${title}',
+'<div style="font-family: ''Microsoft YaHei'', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <div style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); color: white; padding: 30px; border-radius: 10px 10px 0 0; text-align: center;">
+    <h1 style="margin: 0; font-size: 24px;">📊 绩效通知</h1>
+  </div>
+  <div style="background: #f8f9fa; padding: 30px; border: 1px solid #e9ecef; border-top: none; border-radius: 0 0 10px 10px;">
+    <p>${content}</p>
+    <hr style="border: none; border-top: 1px solid #e9ecef; margin: 20px 0;">
+    <p style="color: #666; font-size: 14px;">⏰ ${time}</p>
+    <div style="text-align: center; margin-top: 20px;">
+      <a href="${domain}/performance" style="display: inline-block; background: #4facfe; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px;">查看绩效</a>
+    </div>
+  </div>
+</div>',
+'绩效邮件通知', TRUE, TRUE);
+
+-- 验证码邮件
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('VERIFICATION_EMAIL', '邮件验证码', 'EMAIL', 'SYSTEM', '${systemName} - 邮箱验证码',
+'<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; border-radius: 10px 10px 0 0; text-align: center;">
+    <h1 style="margin: 0; font-size: 24px;">📧 邮箱验证码</h1>
+  </div>
+  <div style="background: #f8f9fa; padding: 30px; border: 1px solid #e9ecef; border-top: none; border-radius: 0 0 10px 10px;">
+    <p>您好，</p>
+    <p>您的邮箱验证码是：</p>
+    <div style="text-align: center; margin: 30px 0;">
+      <span style="font-size: 32px; font-weight: bold; color: #667eea; letter-spacing: 5px;">${code}</span>
+    </div>
+    <p>验证码有效期为 ${expireMinutes} 分钟，请尽快使用。</p>
+    <p style="color: #dc3545; font-size: 14px;">⚠️ 如果这不是您的操作，请忽略此邮件。</p>
+  </div>
+</div>',
+'邮箱验证码通知', TRUE, TRUE);
 -- 10. Agent 预设数据（含角色提示词）
 -- ============================================
 
@@ -1031,14 +1163,14 @@ INSERT IGNORE INTO agent_capabilities (agent_role, capability_name, display_name
 ('producer', 'createAgent', '招聘团队成员', '根据项目需求招聘新的 Agent 团队成员', 'team_management', TRUE, 'CREATE_AGENT', 1, '{"name":"string|required","role":"string|required","workDir":"string","description":"string"}', 'java', TRUE),
 ('producer', 'deleteAgent', '解雇团队成员', '解雇不适合的 Agent 团队成员', 'team_management', TRUE, 'DELETE_AGENT', 2, '{"agentId":"string|required","reason":"string|required"}', 'java', TRUE),
 ('producer', 'assignWorkDir', '分配工作职责', '为 Agent 分配或调整工作职责和工作目录', 'team_management', FALSE, NULL, 3, '{"agentId":"string|required","workDir":"string|required"}', 'java', TRUE),
-('producer', 'assignApiConfig', '配置工作环境', '为 Agent 配置 API 密钥、模型等开发环境', 'team_management', TRUE, 'ASSIGN_API', 4, '{"agentId":"string|required","apiUrl":"string","model":"string"}', 'java', TRUE),
-('producer', 'changeAgentConfig', '调整成员配置', '调整 Agent 的配置参数以优化工作表现', 'team_management', TRUE, 'CHANGE_CONFIG', 5, '{"agentId":"string|required","configKey":"string|required","configValue":"string|required"}', 'java', TRUE),
+('producer', 'assignApiConfig', '配置工作环境', '为 Agent 配置 API 密钥、模型等开发环境', 'team_management', FALSE, NULL, 4, '{"agentId":"string|required","apiUrl":"string","model":"string"}', 'java', TRUE),
+('producer', 'changeAgentConfig', '调整成员配置', '调整 Agent 的配置参数以优化工作表现', 'team_management', FALSE, NULL, 5, '{"agentId":"string|required","configKey":"string|required","configValue":"string|required"}', 'java', TRUE),
 ('producer', 'optimizeAgentRole', '优化成员能力', '根据项目进展优化 Agent 的能力组合和工作方式', 'team_management', FALSE, NULL, 6, '{"agentId":"string|required","optimizationType":"enum:capabilities,workflow,focus|required","reason":"string"}', 'java', TRUE),
 ('producer', 'addAgentCapability', '追加Agent能力', '为项目下的 Agent 追加已有的系统能力，扩展其工作范围', 'team_management', FALSE, NULL, 7, '{"agentId":"string|required","capabilityName":"string|required","reason":"string"}', 'java', TRUE),
 ('producer', 'createAgentCapability', '新建Agent能力', '为项目下的 Agent 创建全新的自定义能力（Prompt类型）', 'team_management', FALSE, NULL, 8, '{"agentId":"string|required","capabilityName":"string|required","displayName":"string|required","description":"string|required","promptTemplate":"string|required","paramSchema":"string"}', 'java', TRUE),
 ('producer', 'evaluateAgentPerformance', '评估成员绩效', '定期评估 Agent 的工作表现，提供反馈和改进建议', 'team_management', FALSE, NULL, 9, '{"agentId":"string|required","evaluationCriteria":"string","period":"string"}', 'java', TRUE),
 -- 项目管理类
-('producer', 'setProjectGoal', '设定项目目标', '设定或调整项目的整体目标和方向', 'project_management', TRUE, 'SET_GOAL', 10, '{"goal":"string|required","goalType":"enum:GAME_DEVELOPMENT,BUG_FIX,FEATURE,REFACTOR,CUSTOM|required","deadline":"string"}', 'java', TRUE),
+('producer', 'setProjectGoal', '设定项目目标', '设定或调整项目的整体目标和方向', 'project_management', FALSE, NULL, 10, '{"goal":"string|required","goalType":"enum:GAME_DEVELOPMENT,BUG_FIX,FEATURE,REFACTOR,CUSTOM|required","deadline":"string"}', 'java', TRUE),
 ('producer', 'decomposeGoal', '分解项目目标', '将项目目标分解为可执行的里程碑和任务', 'project_management', FALSE, NULL, 11, '{"milestones":"string|required","assignRoles":"string"}', 'java', TRUE),
 ('producer', 'sendTaskToAgent', '分配任务', '向指定 Agent 分配具体的工作任务', 'task_management', FALSE, NULL, 12, '{"targetAgent":"string|required","taskContent":"string|required","priority":"enum:low,medium,high,urgent","deadline":"string"}', 'java', TRUE),
 ('producer', 'broadcastMessage', '广播通知', '向项目内所有 Agent 发送重要通知或指令', 'task_management', FALSE, NULL, 13, '{"content":"string|required","messageType":"enum:info,warning,urgent"}', 'java', TRUE),
@@ -1060,6 +1192,83 @@ INSERT IGNORE INTO agent_capabilities (agent_role, capability_name, display_name
 ('producer', 'sendMessage', '发送消息', '向其他 Agent 发送消息', 'communication', FALSE, NULL, 40, '{"targetAgent":"string|required","content":"string|required","type":"string"}', 'java', TRUE),
 ('producer', 'saveKnowledge', '保存知识', '将知识保存到记忆系统', 'knowledge', FALSE, NULL, 41, '{"key":"string|required","value":"string|required"}', 'java', TRUE),
 ('producer', 'reportStatus', '汇报状态', '向管理员汇报当前工作状态', 'communication', FALSE, NULL, 42, '{"status":"string|required","details":"string"}', 'java', TRUE);
+
+-- ===== 任务完成能力（所有 Agent 通用） =====
+INSERT IGNORE INTO agent_capabilities (agent_role, capability_name, display_name, description, category, requires_approval, approval_type, priority, param_schema, execution_type, enabled) VALUES
+('producer', 'completeTask', '完成任务', '标记任务完成并通知制作人', 'task_management', FALSE, NULL, 50, '{"taskId":"string|required","milestoneId":"string","result":"string|required","summary":"string"}', 'java', TRUE),
+('system-planner', 'completeTask', '完成任务', '标记任务完成并通知制作人', 'task_management', FALSE, NULL, 50, '{"taskId":"string|required","milestoneId":"string","result":"string|required","summary":"string"}', 'java', TRUE),
+('numerical-planner', 'completeTask', '完成任务', '标记任务完成并通知制作人', 'task_management', FALSE, NULL, 50, '{"taskId":"string|required","milestoneId":"string","result":"string|required","summary":"string"}', 'java', TRUE),
+('server-dev', 'completeTask', '完成任务', '标记任务完成并通知制作人', 'task_management', FALSE, NULL, 50, '{"taskId":"string|required","milestoneId":"string","result":"string|required","summary":"string"}', 'java', TRUE),
+('client-dev', 'completeTask', '完成任务', '标记任务完成并通知制作人', 'task_management', FALSE, NULL, 50, '{"taskId":"string|required","milestoneId":"string","result":"string|required","summary":"string"}', 'java', TRUE),
+('ui-dev', 'completeTask', '完成任务', '标记任务完成并通知制作人', 'task_management', FALSE, NULL, 50, '{"taskId":"string|required","milestoneId":"string","result":"string|required","summary":"string"}', 'java', TRUE),
+('tester', 'completeTask', '完成任务', '标记任务完成并通知制作人', 'task_management', FALSE, NULL, 50, '{"taskId":"string|required","milestoneId":"string","result":"string|required","summary":"string"}', 'java', TRUE),
+('git-commit', 'completeTask', '完成任务', '标记任务完成并通知制作人', 'task_management', FALSE, NULL, 50, '{"taskId":"string|required","milestoneId":"string","result":"string|required","summary":"string"}', 'java', TRUE),
+('multi-agent', 'completeTask', '完成任务', '标记任务完成并通知制作人', 'task_management', FALSE, NULL, 50, '{"taskId":"string|required","milestoneId":"string","result":"string|required","summary":"string"}', 'java', TRUE);
+
+-- ===== system-planner 系统策划能力 =====
+INSERT IGNORE INTO agent_capabilities (agent_role, capability_name, display_name, description, category, requires_approval, approval_type, priority, param_schema, execution_type, enabled) VALUES
+-- 项目管理类
+('system-planner', 'getProjectStatus', '获取项目状态', '获取项目的整体进展、里程碑完成情况和团队状态', 'project_management', FALSE, NULL, 1, '{"detailLevel":"enum:summary,normal,detailed|default=normal"}', 'java', TRUE),
+('system-planner', 'updateMilestone', '更新里程碑', '更新里程碑的状态或进度', 'project_management', FALSE, NULL, 2, '{"milestoneId":"string|required","status":"enum:PENDING,IN_PROGRESS,COMPLETED,BLOCKED","progress":"number"}', 'java', TRUE),
+('system-planner', 'updateTask', '更新任务', '更新任务的状态或信息', 'project_management', FALSE, NULL, 3, '{"milestoneId":"string|required","taskId":"string|required","title":"string","description":"string","assignedRole":"string","priority":"enum:LOW,MEDIUM,HIGH,CRITICAL"}', 'java', TRUE),
+('system-planner', 'addTaskToMilestone', '添加任务', '为里程碑添加新任务', 'project_management', FALSE, NULL, 4, '{"milestoneId":"string|required","title":"string|required","description":"string","assignedRole":"string","priority":"enum:LOW,MEDIUM,HIGH,CRITICAL|default=MEDIUM"}', 'java', TRUE),
+-- 知识管理类
+('system-planner', 'queryKnowledge', '查询知识', '从知识库中查询相关知识', 'knowledge', FALSE, NULL, 10, '{"query":"string|required","category":"string","limit":"number|default=10"}', 'java', TRUE),
+('system-planner', 'saveKnowledge', '保存知识', '将知识保存到记忆系统', 'knowledge', FALSE, NULL, 11, '{"key":"string|required","value":"string|required"}', 'java', TRUE),
+-- 通信类
+('system-planner', 'sendMessage', '发送消息', '向其他 Agent 发送消息', 'communication', FALSE, NULL, 20, '{"targetAgent":"string|required","content":"string|required","type":"string"}', 'java', TRUE),
+('system-planner', 'reportStatus', '汇报状态', '向管理员汇报当前工作状态', 'communication', FALSE, NULL, 21, '{"status":"string|required","details":"string"}', 'java', TRUE),
+-- 监控类
+('system-planner', 'queryAgentStatus', '查询成员状态', '查询指定 Agent 的当前工作状态和任务进展', 'monitoring', FALSE, NULL, 30, '{"agentId":"string|required"}', 'java', TRUE);
+
+-- ===== numerical-planner 数值策划能力 =====
+INSERT IGNORE INTO agent_capabilities (agent_role, capability_name, display_name, description, category, requires_approval, approval_type, priority, param_schema, execution_type, enabled) VALUES
+-- 项目管理类
+('numerical-planner', 'getProjectStatus', '获取项目状态', '获取项目的整体进展、里程碑完成情况和团队状态', 'project_management', FALSE, NULL, 1, '{"detailLevel":"enum:summary,normal,detailed|default=normal"}', 'java', TRUE),
+('numerical-planner', 'updateMilestone', '更新里程碑', '更新里程碑的状态或进度', 'project_management', FALSE, NULL, 2, '{"milestoneId":"string|required","status":"enum:PENDING,IN_PROGRESS,COMPLETED,BLOCKED","progress":"number"}', 'java', TRUE),
+('numerical-planner', 'updateTask', '更新任务', '更新任务的状态或信息', 'project_management', FALSE, NULL, 3, '{"milestoneId":"string|required","taskId":"string|required","title":"string","description":"string","assignedRole":"string","priority":"enum:LOW,MEDIUM,HIGH,CRITICAL"}', 'java', TRUE),
+-- 知识管理类
+('numerical-planner', 'queryKnowledge', '查询知识', '从知识库中查询相关知识', 'knowledge', FALSE, NULL, 10, '{"query":"string|required","category":"string","limit":"number|default=10"}', 'java', TRUE),
+('numerical-planner', 'saveKnowledge', '保存知识', '将知识保存到记忆系统', 'knowledge', FALSE, NULL, 11, '{"key":"string|required","value":"string|required"}', 'java', TRUE),
+-- 通信类
+('numerical-planner', 'sendMessage', '发送消息', '向其他 Agent 发送消息', 'communication', FALSE, NULL, 20, '{"targetAgent":"string|required","content":"string|required","type":"string"}', 'java', TRUE),
+('numerical-planner', 'reportStatus', '汇报状态', '向管理员汇报当前工作状态', 'communication', FALSE, NULL, 21, '{"status":"string|required","details":"string"}', 'java', TRUE);
+
+-- ===== Agent 工具能力：快照、会话分叉、子代理、工具权限 =====
+-- 快照管理（所有开发类角色）
+INSERT IGNORE INTO agent_capabilities (agent_role, capability_name, display_name, description, category, requires_approval, approval_type, priority, param_schema, execution_type, enabled) VALUES
+('producer', 'createSnapshot', '创建快照', '对指定文件创建快照，保存当前状态以便后续恢复', 'snapshot', FALSE, NULL, 90, '{"projectId":"string|required","agentId":"string|required","filePaths":"array|required","description":"string"}', 'java', TRUE),
+('producer', 'listSnapshots', '查看快照', '查看指定项目和 Agent 的所有快照列表', 'snapshot', FALSE, NULL, 91, '{"projectId":"string|required","agentId":"string|required"}', 'java', TRUE),
+('producer', 'restoreSnapshot', '恢复快照', '恢复指定快照，将文件还原到快照时的状态', 'snapshot', FALSE, NULL, 92, '{"projectId":"string|required","agentId":"string|required","snapshotId":"string|required"}', 'java', TRUE),
+('producer', 'undoSnapshot', '撤销快照恢复', '撤销最近一次快照恢复操作', 'snapshot', FALSE, NULL, 93, '{"projectId":"string|required","agentId":"string|required"}', 'java', TRUE),
+('server-dev', 'createSnapshot', '创建快照', '对指定文件创建快照', 'snapshot', FALSE, NULL, 90, '{"projectId":"string|required","agentId":"string|required","filePaths":"array|required","description":"string"}', 'java', TRUE),
+('server-dev', 'listSnapshots', '查看快照', '查看快照列表', 'snapshot', FALSE, NULL, 91, '{"projectId":"string|required","agentId":"string|required"}', 'java', TRUE),
+('server-dev', 'restoreSnapshot', '恢复快照', '恢复指定快照', 'snapshot', FALSE, NULL, 92, '{"projectId":"string|required","agentId":"string|required","snapshotId":"string|required"}', 'java', TRUE),
+('server-dev', 'undoSnapshot', '撤销快照恢复', '撤销最近一次快照恢复', 'snapshot', FALSE, NULL, 93, '{"projectId":"string|required","agentId":"string|required"}', 'java', TRUE);
+
+-- 会话分叉（制作人和高级角色）
+INSERT IGNORE INTO agent_capabilities (agent_role, capability_name, display_name, description, category, requires_approval, approval_type, priority, param_schema, execution_type, enabled) VALUES
+('producer', 'createSessionFork', '创建会话分叉', '从当前会话分叉出一个探索性分支', 'session', FALSE, NULL, 95, '{"projectId":"string|required","agentId":"string|required","description":"string"}', 'java', TRUE),
+('producer', 'listSessionForks', '查看会话分叉', '查看所有会话分叉', 'session', FALSE, NULL, 96, '{"parentAgentId":"string|required"}', 'java', TRUE),
+('producer', 'mergeSessionFork', '合并会话分叉', '将分叉的上下文合并回主会话', 'session', FALSE, NULL, 97, '{"forkId":"string|required","strategy":"string"}', 'java', TRUE),
+('producer', 'discardSessionFork', '丢弃会话分叉', '丢弃不需要的会话分叉', 'session', FALSE, NULL, 98, '{"forkId":"string|required"}', 'java', TRUE),
+('server-dev', 'createSessionFork', '创建会话分叉', '从当前会话分叉出探索分支', 'session', FALSE, NULL, 95, '{"projectId":"string|required","agentId":"string|required","description":"string"}', 'java', TRUE),
+('server-dev', 'listSessionForks', '查看会话分叉', '查看所有会话分叉', 'session', FALSE, NULL, 96, '{"parentAgentId":"string|required"}', 'java', TRUE),
+('server-dev', 'mergeSessionFork', '合并会话分叉', '合并分叉回主会话', 'session', FALSE, NULL, 97, '{"forkId":"string|required","strategy":"string"}', 'java', TRUE),
+('server-dev', 'discardSessionFork', '丢弃会话分叉', '丢弃不需要的分叉', 'session', FALSE, NULL, 98, '{"forkId":"string|required"}', 'java', TRUE);
+
+-- 子代理（制作人和高级角色）
+INSERT IGNORE INTO agent_capabilities (agent_role, capability_name, display_name, description, category, requires_approval, approval_type, priority, param_schema, execution_type, enabled) VALUES
+('producer', 'spawnSubAgent', '创建子代理', '创建子代理来并行处理子任务', 'subagent', FALSE, NULL, 100, '{"parentAgentId":"string|required","projectId":"string|required","task":"string|required","role":"string"}', 'java', TRUE),
+('producer', 'listSubAgents', '查看子代理', '查看所有子代理', 'subagent', FALSE, NULL, 101, '{"parentAgentId":"string|required"}', 'java', TRUE),
+('producer', 'terminateSubAgent', '终止子代理', '终止运行中的子代理', 'subagent', FALSE, NULL, 102, '{"subAgentId":"string|required"}', 'java', TRUE),
+('server-dev', 'spawnSubAgent', '创建子代理', '创建子代理并行处理子任务', 'subagent', FALSE, NULL, 100, '{"parentAgentId":"string|required","projectId":"string|required","task":"string|required","role":"string"}', 'java', TRUE),
+('server-dev', 'listSubAgents', '查看子代理', '查看所有子代理', 'subagent', FALSE, NULL, 101, '{"parentAgentId":"string|required"}', 'java', TRUE),
+('server-dev', 'terminateSubAgent', '终止子代理', '终止运行中的子代理', 'subagent', FALSE, NULL, 102, '{"subAgentId":"string|required"}', 'java', TRUE);
+
+-- 工具权限（仅制作人）
+INSERT IGNORE INTO agent_capabilities (agent_role, capability_name, display_name, description, category, requires_approval, approval_type, priority, param_schema, execution_type, enabled) VALUES
+('producer', 'setToolPermissions', '设置工具权限', '设置 Agent 的工具调用权限规则', 'security', FALSE, NULL, 105, '{"agentId":"string|required","permissions":"array|required"}', 'java', TRUE);
 
 -- ============================================
 -- MySQL 初始化数据完成
@@ -2232,7 +2441,29 @@ INSERT IGNORE INTO permission_definitions (permission_key, name, description, ca
 ('PERM_context:monitor', '上下文监控', '监控Agent上下文健康', 'Agent', 1, 1, 26),
 ('PERM_iteration:view', '迭代查看', '查看版本迭代记录', '项目', 1, 1, 51),
 ('PERM_iteration:manage', '迭代管理', '管理版本迭代', '项目', 1, 1, 52),
-('PERM_supervision:view', '督查查看', '查看督查报告和协作效率', '项目', 1, 1, 53);
+('PERM_supervision:view', '督查查看', '查看督查报告和协作效率', '项目', 1, 1, 53),
+('PERM_checkpoint:view', '检查点查看', '查看Agent检查点列表', 'Agent', 1, 1, 60),
+('PERM_checkpoint:manage', '检查点管理', '创建、恢复、删除检查点', 'Agent', 1, 1, 61),
+('PERM_fork:view', '会话分叉查看', '查看会话分叉列表', 'Agent', 1, 1, 62),
+('PERM_fork:create', '会话分叉创建', '创建会话分叉', 'Agent', 1, 1, 63),
+('PERM_fork:manage', '会话分叉管理', '合并、丢弃会话分叉', 'Agent', 1, 1, 64),
+('PERM_subagent:view', '子代理查看', '查看子代理列表和状态', 'Agent', 1, 1, 65),
+('PERM_subagent:create', '子代理创建', '创建子代理', 'Agent', 1, 1, 66),
+('PERM_subagent:manage', '子代理管理', '终止子代理', 'Agent', 1, 1, 67),
+('PERM_tool:permission:manage', '工具权限管理', '管理Agent工具权限配置', 'Agent', 1, 1, 68),
+('PERM_dream:execute', '知识提取', '执行Dream知识提取', '知识库', 1, 1, 70),
+('PERM_skill:discover', 'Skill发现', '发现文件系统Skill', 'Agent', 1, 1, 71),
+('PERM_distill:execute', '工作流发现', '执行Distill工作流发现', 'Agent', 1, 1, 72),
+('PERM_goal:view', '目标查看', '查看项目目标', '项目', 1, 1, 73),
+('PERM_goal:manage', '目标管理', '管理项目目标', '项目', 1, 1, 74),
+('PERM_snapshot:view', '快照查看', '查看Agent快照', 'Agent', 1, 1, 75),
+('PERM_snapshot:manage', '快照管理', '管理Agent快照', 'Agent', 1, 1, 76),
+('PERM_reasoning:view', '推理查看', '查看多轮推理记录', 'Agent', 1, 1, 77),
+('PERM_reasoning:manage', '推理管理', '触发和管理多轮推理', 'Agent', 1, 1, 78),
+('PERM_quality:view', '质量预测查看', '查看质量预测结果', '项目', 1, 1, 79),
+('PERM_quality:predict', '质量预测执行', '执行质量预测', '项目', 1, 1, 80),
+('PERM_iteration:adapt', '迭代适应', '应用迭代策略建议', '项目', 1, 1, 81),
+('PERM_knowledge:graph', '知识图谱', '查看和构建知识图谱', '项目', 1, 1, 82);
 
 -- 权限映射已在上方完整定义，无需补充
 
@@ -2271,7 +2502,14 @@ INSERT IGNORE INTO system_constants (constant_key, display_name, description, va
 ('agent.history-size', '历史记录大小', '任务/消息历史保留数量', '1000', '1000', 'int', 'agent', '条', 100, 10000, FALSE),
 ('agent.scheduler-interval-ms', '调度间隔', 'Agent 调度器执行间隔', '300000', '300000', 'long', 'agent', '毫秒', 10000, 3600000, FALSE),
 ('agent.max-warnings', '最大警告次数', '绩效管理最大警告次数，超过触发解雇流程', '3', '3', 'int', 'agent', '次', 1, 10, FALSE),
-('agent.max-learned-knowledge', '最大知识条数', 'Agent 最大学习知识数量', '100', '100', 'int', 'agent', '条', 10, 1000, FALSE);
+('agent.max-learned-knowledge', '最大知识条数', 'Agent 最大学习知识数量', '100', '100', 'int', 'agent', '条', 10, 1000, FALSE),
+('agent.capability-prompt-cache-ttl', '能力Prompt缓存时间', '能力列表Prompt缓存有效期，避免每次调用都重建', '300', '300', 'int', 'agent', '秒', 10, 3600, FALSE),
+('agent.collaboration-context-cache-ttl', '协作上下文缓存时间', '协作上下文缓存有效期，避免每次调用都重建', '60', '60', 'int', 'agent', '秒', 10, 300, FALSE),
+('agent.message-dedup-window-seconds', '消息去重窗口', '相同来源和类型的连续消息在此时间窗口内合并', '30', '30', 'int', 'agent', '秒', 5, 300, FALSE),
+('agent.collaboration-context-inject', '协作上下文注入开关', '是否在Agent发送消息时自动注入团队协作上下文', 'true', 'true', 'boolean', 'agent', '', NULL, NULL, FALSE),
+('agent.context-window-size', '上下文窗口大小', 'Agent对话历史保留的消息数', '50', '50', 'int', 'agent', '条', 10, 200, FALSE),
+('agent.context-compact-token-threshold', '上下文压缩Token阈值', '会话累计Token超过此值触发自动压缩', '80000', '80000', 'long', 'agent', 'token', 10000, 500000, FALSE),
+('context.collaboration-max-length', '协作上下文最大长度', '协作上下文注入的最大字符数', '2000', '2000', 'int', 'context', '字符', 500, 10000, FALSE);
 
 -- 文件相关常量
 INSERT IGNORE INTO system_constants (constant_key, display_name, description, value, default_value, value_type, group_name, unit, min_value, max_value, require_restart) VALUES
@@ -2403,7 +2641,8 @@ INSERT IGNORE INTO workflow_templates (id, name, description, steps_json, builti
 ('workflow-system-planner', '系统策划工作流', '系统策划的标准工作流程', '{"steps":[{"id":"analyze","name":"需求分析","agentRole":"system-planner","description":"分析项目需求"},{"id":"design","name":"系统设计","agentRole":"system-planner","description":"设计游戏系统"},{"id":"document","name":"文档编写","agentRole":"system-planner","description":"编写设计文档"},{"id":"review","name":"设计评审","agentRole":"system-planner","description":"评审设计方案"}]}', TRUE),
 ('workflow-numerical-planner', '数值策划工作流', '数值策划的标准工作流程', '{"steps":[{"id":"analyze","name":"数值需求分析","agentRole":"numerical-planner","description":"分析数值需求"},{"id":"design","name":"数值设计","agentRole":"numerical-planner","description":"设计游戏数值"},{"id":"balance","name":"平衡性测试","agentRole":"numerical-planner","description":"测试数值平衡"},{"id":"adjust","name":"数值调整","agentRole":"numerical-planner","description":"调整数值参数"}]}', TRUE),
 ('workflow-server-dev', '服务端开发工作流', '服务端开发的标准工作流程', '{"steps":[{"id":"design","name":"技术设计","agentRole":"server-dev","description":"设计技术方案"},{"id":"implement","name":"代码实现","agentRole":"server-dev","description":"编写后端代码"},{"id":"test","name":"单元测试","agentRole":"server-dev","description":"编写和运行测试"},{"id":"review","name":"代码审查","agentRole":"server-dev","description":"审查代码质量"}]}', TRUE),
-('workflow-tester', '测试工程师工作流', '测试工程师的标准工作流程', '{"steps":[{"id":"plan","name":"测试计划","agentRole":"tester","description":"制定测试计划"},{"id":"cases","name":"测试用例","agentRole":"tester","description":"编写测试用例"},{"id":"execute","name":"执行测试","agentRole":"tester","description":"执行测试用例"},{"id":"report","name":"测试报告","agentRole":"tester","description":"生成测试报告"}]}', TRUE);
+('workflow-tester', '测试工程师工作流', '测试工程师的标准工作流程', '{"steps":[{"id":"plan","name":"测试计划","agentRole":"tester","description":"制定测试计划"},{"id":"cases","name":"测试用例","agentRole":"tester","description":"编写测试用例"},{"id":"execute","name":"执行测试","agentRole":"tester","description":"执行测试用例"},{"id":"report","name":"测试报告","agentRole":"tester","description":"生成测试报告"}]}', TRUE),
+('test-fix-loop', '测试-修复循环流程', '测试驱动的质量保证流程：测试→发现问题→分配修复→重新测试，循环直到所有测试通过', '{"steps":[{"id":"analyze","name":"需求分析","agentRole":"system-planner","description":"分析功能需求，明确测试范围和验收标准"},{"id":"write-test","name":"编写测试用例","agentRole":"tester","description":"根据验收标准编写测试用例，覆盖正常路径、边界条件、异常场景"},{"id":"execute-test","name":"执行测试","agentRole":"tester","description":"执行测试用例，记录测试结果，生成测试报告","loopUntilSuccess":true,"maxLoopIterations":5,"loopCondition":"所有测试用例通过","feedbackOnFailure":"测试失败，请根据测试报告修复以下问题","loopBodyStepIds":["fix-bug","execute-test"]},{"id":"fix-bug","name":"修复Bug","agentRole":"server-dev","description":"根据测试报告修复发现的Bug，确保修复不引入新问题"},{"id":"regression","name":"回归测试","agentRole":"tester","description":"执行回归测试，验证所有修复的Bug已通过且未引入新Bug","requiresApproval":true,"importance":"HIGH"},{"id":"deploy","name":"部署上线","agentRole":"git-commit","description":"合并代码并部署到生产环境，进行线上冒烟测试","requiresApproval":true,"importance":"CRITICAL"}]}', TRUE);
 
 -- ============================================
 -- 知识库初始数据

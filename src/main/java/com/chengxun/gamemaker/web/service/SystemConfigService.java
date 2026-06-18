@@ -256,6 +256,34 @@ public class SystemConfigService {
         if (feishuChatId != null && !feishuChatId.isEmpty()) {
             appConfig.getFeishu().setChatId(feishuChatId);
         }
+        String feishuEncryptKey = getString("feishu.encrypt.key", null);
+        if (feishuEncryptKey != null && !feishuEncryptKey.isEmpty()) {
+            appConfig.getFeishu().setEncryptKey(feishuEncryptKey);
+            log.info("启动同步: feishu.encrypt.key 已加载");
+        }
+        String feishuVerifyToken = getString("feishu.verify.token", null);
+        if (feishuVerifyToken != null && !feishuVerifyToken.isEmpty()) {
+            appConfig.getFeishu().setVerifyToken(feishuVerifyToken);
+            log.info("启动同步: feishu.verify.token 已加载");
+        }
+        String feishuCallbackToken = getString("feishu.callback.token", null);
+        if (feishuCallbackToken != null && !feishuCallbackToken.isEmpty()) {
+            appConfig.getFeishu().setCallbackToken(feishuCallbackToken);
+            log.info("启动同步: feishu.callback.token 已加载");
+        }
+        String feishuCallbackExpire = getString("feishu.callback.expire.minutes", null);
+        if (feishuCallbackExpire != null && !feishuCallbackExpire.isEmpty()) {
+            try {
+                appConfig.getFeishu().setCallbackExpireMinutes(Integer.parseInt(feishuCallbackExpire));
+            } catch (NumberFormatException e) {
+                log.warn("飞书回调过期时间配置格式错误: {}", feishuCallbackExpire);
+            }
+        }
+        String feishuApprovalNotifyUserIds = getString("feishu.approval.notify.user.ids", null);
+        if (feishuApprovalNotifyUserIds != null && !feishuApprovalNotifyUserIds.isEmpty()) {
+            appConfig.getFeishu().setApprovalNotifyUserIds(feishuApprovalNotifyUserIds);
+            log.info("启动同步: feishu.approval.notify.user.ids 已加载");
+        }
 
         // 同步钉钉配置
         String dingtalkEnabled = getString("dingtalk.enabled", null);

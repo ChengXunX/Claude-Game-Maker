@@ -59,9 +59,9 @@ public interface AgentHealthRepository extends JpaRepository<AgentHealth, Long> 
     List<AgentHealth> findAgentsNeedingRestart();
 
     /**
-     * 查找响应缓慢的Agent
+     * 查找响应缓慢的Agent（AI任务阈值：超过5分钟视为缓慢）
      */
-    @Query("SELECT h FROM AgentHealth h WHERE h.avgResponseTimeMs > 3000")
+    @Query("SELECT h FROM AgentHealth h WHERE h.avgResponseTimeMs > 300000")
     List<AgentHealth> findSlowAgents();
 
     /**

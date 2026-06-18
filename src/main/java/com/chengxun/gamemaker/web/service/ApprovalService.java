@@ -124,6 +124,20 @@ public class ApprovalService {
     }
 
     /**
+     * 检查是否存在待审批的重复请求
+     * 用于去重：避免 Agent 反复调用同一能力时创建大量重复审批
+     *
+     * @param projectId   项目 ID
+     * @param requesterId 请求者 ID
+     * @param requestType 请求类型
+     * @return 是否存在待审批请求
+     */
+    public boolean hasPendingRequest(String projectId, String requesterId, String requestType) {
+        return approvalRepository.existsByProjectIdAndRequesterIdAndRequestTypeAndStatus(
+            projectId, requesterId, requestType, ApprovalRequest.ApprovalStatus.PENDING);
+    }
+
+    /**
      * 解析发起者名称
      * 根据requesterId判断是用户还是Agent，返回对应的名称
      */
@@ -161,6 +175,7 @@ public class ApprovalService {
 
     /**
      * 审批请求
+     * 核心状态更新在独立事务中执行（REQUIRES_NEW），确保即使后续副作用失败也不会回滚
      *
      * @param requestId 审批请求 ID
      * @param approverId 审批者 ID
@@ -169,8 +184,76 @@ public class ApprovalService {
      * @param comment 审批意见
      * @return 更新后的审批请求
      */
+    @org.springframework.transaction.annotation.Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
     public ApprovalRequest approve(Long requestId, String approverId, String approverName,
                                    boolean approved, String comment) {
+        // 第一步：在独立事务中保存审批状态（不受后续操作影响）
+        ApprovalRequest saved = saveApprovalDecision(requestId, approverId, approverName, approved, comment);
+
+        // 第二步：执行副作用操作（全部 try-catch，失败不影响审批状态）
+        String type = saved.getRequestType();
+
+        if (approved) {
+            // 审批通过：执行对应操作
+            try {
+                executeApprovedRequest(saved);
+            } catch (Exception e) {
+                log.error("执行审批通过操作失败（审批状态不受影响）: {}", e.getMessage(), e);
+            }
+        } else {
+            // 审批拒绝：交付拒绝触发改进迭代
+            if ("DELIVERY".equals(type)) {
+                try {
+                    handleDeliveryRejection(saved);
+                } catch (Exception e) {
+                    log.error("处理交付拒绝失败（审批状态不受影响）: {}", e.getMessage(), e);
+                }
+            }
+        }
+
+        // 通知 Producer 审批结果
+        try {
+            if (approvalCallbackService != null) {
+                String requestData = saved.getRequestData();
+                String approvalType = "CREATE_AGENT".equals(type) ? "CREATE_AGENT" : type;
+                approvalCallbackService.registerApprovalRequest(
+                    saved.getId().toString(), saved.getRequesterId(), approvalType,
+                    requestData != null ? requestData : "");
+                approvalCallbackService.onApprovalCompleted(saved.getId().toString(), approved, comment);
+            }
+        } catch (Exception e) {
+            log.warn("审批回调通知失败: {}", e.getMessage());
+        }
+
+        // 通知请求者审批结果
+        try {
+            notifyRequester(saved);
+        } catch (Exception e) {
+            log.warn("通知请求者失败: {}", e.getMessage());
+        }
+
+        log.info("Approval request {} {} by {}", requestId,
+            approved ? "approved" : "rejected", approverName);
+
+        // 记录审批指标
+        try {
+            if (metricsService != null) {
+                metricsService.recordApproval();
+            }
+        } catch (Exception e) {
+            log.debug("记录审批指标失败: {}", e.getMessage());
+        }
+
+        return saved;
+    }
+
+    /**
+     * 在独立事务中保存审批决策
+     * 使用 REQUIRES_NEW 确保审批状态持久化不受外层事务影响
+     */
+    @org.springframework.transaction.annotation.Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
+    public ApprovalRequest saveApprovalDecision(Long requestId, String approverId, String approverName,
+                                                 boolean approved, String comment) {
         ApprovalRequest request = approvalRepository.findById(requestId)
             .orElseThrow(() -> new RuntimeException("审批请求不存在"));
 
@@ -188,41 +271,37 @@ public class ApprovalService {
         request.setApproverName(approverName);
         request.setApprovalComment(comment);
         request.setApprovedAt(LocalDateTime.now());
+        request.setStatus(approved ? ApprovalRequest.ApprovalStatus.APPROVED : ApprovalRequest.ApprovalStatus.REJECTED);
 
-        if (approved) {
-            request.setStatus(ApprovalRequest.ApprovalStatus.APPROVED);
-            // 执行审批通过的操作
-            executeApprovedRequest(request);
-        } else {
-            request.setStatus(ApprovalRequest.ApprovalStatus.REJECTED);
-        }
+        return approvalRepository.save(request);
+    }
 
-        // 通知 Producer 审批结果（通过 ApprovalCallbackService）
-        if (approvalCallbackService != null) {
-            try {
-                String requestData = request.getRequestData();
-                String approvalType = "CREATE_AGENT".equals(request.getRequestType()) ? "CREATE_AGENT" : request.getRequestType();
-                approvalCallbackService.registerApprovalRequest(
-                    request.getId().toString(), request.getRequesterId(), approvalType,
-                    requestData != null ? requestData : "");
-                approvalCallbackService.onApprovalCompleted(request.getId().toString(), approved, comment);
-            } catch (Exception e) {
-                log.warn("审批回调通知失败: {}", e.getMessage());
+    /**
+     * 处理交付审批被拒绝
+     * 通知 ProducerAgent 触发自动改进迭代
+     *
+     * @param request 被拒绝的审批请求
+     */
+    private void handleDeliveryRejection(ApprovalRequest request) {
+        try {
+            String projectId = request.getProjectId();
+            String rejectReason = request.getApprovalComment() != null ? request.getApprovalComment() : "未提供具体原因";
+
+            // 查找项目的 ProducerAgent
+            if (agentManager != null) {
+                var agents = agentManager.getAgentsByProject(projectId);
+                for (var agent : agents) {
+                    if (agent instanceof com.chengxun.gamemaker.agent.ProducerAgent producer) {
+                        log.info("交付被拒绝，通知 ProducerAgent 触发改进迭代: project={}", projectId);
+                        producer.handleDeliveryRejection(rejectReason);
+                        return;
+                    }
+                }
             }
+            log.warn("未找到项目 {} 的 ProducerAgent，无法触发交付改进迭代", projectId);
+        } catch (Exception e) {
+            log.error("处理交付拒绝失败: {}", e.getMessage(), e);
         }
-
-        ApprovalRequest saved = approvalRepository.save(request);
-
-        // 通知请求者审批结果
-        notifyRequester(saved);
-
-        log.info("Approval request {} {} by {}", requestId,
-            approved ? "approved" : "rejected", approverName);
-
-        // 记录审批指标
-        metricsService.recordApproval();
-
-        return saved;
     }
 
     /**
@@ -470,31 +549,34 @@ public class ApprovalService {
 
             log.info("项目交付审批通过: requestId={}, projectId={}", request.getId(), projectId);
 
-            // 更新项目状态为已交付
+            // 更新项目状态为已交付 + 目标完成
             if (projectId != null && projectManager != null) {
                 var project = projectManager.getProject(projectId);
                 if (project != null) {
                     project.setStatus(com.chengxun.gamemaker.model.GameProject.ProjectStatus.DELIVERED);
+                    project.setGoalStatus(com.chengxun.gamemaker.model.GameProject.GoalStatus.COMPLETED);
                     project.setDeliveredAt(LocalDateTime.now());
                     projectManager.saveProjectConfig(project);
-                    log.info("项目已标记为交付完成: projectId={}", projectId);
+                    log.info("项目已标记为交付完成: projectId={}, goalStatus=COMPLETED", projectId);
                 }
             }
 
-            // 通知制作人项目已交付
-            String requesterId = request.getRequesterId();
-            if (agentManager != null) {
-                Agent agent = agentManager.getAgent(requesterId);
-                if (agent instanceof com.chengxun.gamemaker.agent.ProducerAgent producer) {
-                    // 使用 onApprovalCompleted 方法通知制作人
-                    producer.onApprovalCompleted(request.getId().toString(), true,
-                        "项目交付已获老板批准，项目正式交付完成！");
-                    log.info("已通知制作人项目交付完成: agentId={}", requesterId);
+            // 停止项目内所有 Agent
+            if (agentManager != null && projectId != null) {
+                var agents = agentManager.getAgentsByProject(projectId);
+                int stoppedCount = 0;
+                for (Agent agent : agents) {
+                    if (agent.isAlive()) {
+                        agent.stop();
+                        stoppedCount++;
+                        log.info("已停止Agent: {} ({})", agent.getName(), agent.getRole());
+                    }
                 }
+                log.info("交付审批通过，已停止 {} 个项目 Agent", stoppedCount);
             }
 
             // 发送通知
-            sendApprovalResultNotification(request, true, "项目交付已批准");
+            sendApprovalResultNotification(request, true, "项目交付已批准，所有Agent已停止");
 
         } catch (Exception e) {
             log.error("项目交付审批执行失败: {}", e.getMessage(), e);
@@ -651,14 +733,15 @@ public class ApprovalService {
                 }
             }
 
-            java.util.Map<String, String> variables = java.util.Map.of(
-                "requestType", request.getRequestType() != null ? request.getRequestType() : "",
-                "requestTypeDesc", getRequestTypeDesc(request.getRequestType()),
-                "requesterName", requesterName != null ? requesterName : request.getRequesterId(),
-                "description", request.getDescription() != null ? request.getDescription() : "",
-                "projectName", request.getProjectId() != null ? request.getProjectId() : "",
-                "title", "新的审批请求"
-            );
+            java.util.Map<String, String> variables = new java.util.HashMap<>();
+            variables.put("requestType", request.getRequestType() != null ? request.getRequestType() : "");
+            variables.put("requestTypeDesc", getRequestTypeDesc(request.getRequestType()));
+            variables.put("requesterName", requesterName != null ? requesterName : request.getRequesterId());
+            variables.put("description", request.getDescription() != null ? request.getDescription() : "");
+            variables.put("projectName", request.getProjectId() != null ? request.getProjectId() : "");
+            variables.put("title", "新的审批请求");
+            // 包含 requestId，使飞书卡片按钮能正确关联审批请求
+            variables.put("requestId", String.valueOf(request.getId()));
 
             // 使用模板通知所有管理员
             if (notificationService != null) {

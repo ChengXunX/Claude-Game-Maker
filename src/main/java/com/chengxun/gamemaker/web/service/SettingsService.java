@@ -259,6 +259,20 @@ public class SettingsService {
                 appConfig.getFeishu().setEncryptKey(feishuEncryptKey);
             }
 
+            String feishuCallbackToken = configService.getString("feishu.callback.token", null);
+            if (feishuCallbackToken != null && !feishuCallbackToken.isEmpty()) {
+                appConfig.getFeishu().setCallbackToken(feishuCallbackToken);
+            }
+
+            String feishuCallbackExpire = configService.getString("feishu.callback.expire.minutes", null);
+            if (feishuCallbackExpire != null && !feishuCallbackExpire.isEmpty()) {
+                try {
+                    appConfig.getFeishu().setCallbackExpireMinutes(Integer.parseInt(feishuCallbackExpire));
+                } catch (NumberFormatException e) {
+                    // ignore
+                }
+            }
+
             // 钉钉配置
             String dingtalkEnabled = configService.getString("dingtalk.enabled", null);
             if (dingtalkEnabled != null) {
@@ -320,6 +334,16 @@ public class SettingsService {
     public void saveFeishuSettings(boolean enabled, String appId, String appSecret,
                                    String webhookUrl, String chatId,
                                    String verifyToken, String encryptKey) {
+        saveFeishuSettings(enabled, appId, appSecret, webhookUrl, chatId, verifyToken, encryptKey, null, null);
+    }
+
+    /**
+     * 保存飞书配置（含审批回调安全配置）
+     */
+    public void saveFeishuSettings(boolean enabled, String appId, String appSecret,
+                                   String webhookUrl, String chatId,
+                                   String verifyToken, String encryptKey,
+                                   String callbackToken, Integer callbackExpireMinutes) {
         // 保存到数据库
         configService.setConfig("feishu.enabled", String.valueOf(enabled));
         appConfig.getFeishu().setEnabled(enabled);
@@ -347,6 +371,14 @@ public class SettingsService {
         if (encryptKey != null) {
             configService.setConfig("feishu.encrypt.key", encryptKey);
             appConfig.getFeishu().setEncryptKey(encryptKey);
+        }
+        if (callbackToken != null) {
+            configService.setConfig("feishu.callback.token", callbackToken);
+            appConfig.getFeishu().setCallbackToken(callbackToken);
+        }
+        if (callbackExpireMinutes != null) {
+            configService.setConfig("feishu.callback.expire.minutes", String.valueOf(callbackExpireMinutes));
+            appConfig.getFeishu().setCallbackExpireMinutes(callbackExpireMinutes);
         }
 
         log.info("Feishu settings saved to database: enabled={}", enabled);

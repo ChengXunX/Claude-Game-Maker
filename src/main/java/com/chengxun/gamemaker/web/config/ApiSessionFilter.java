@@ -26,7 +26,7 @@ import java.io.IOException;
  * @since 1.0.0
  */
 @Component
-@Order(Ordered.HIGHEST_PRECEDENCE + 5)
+@Order(Ordered.HIGHEST_PRECEDENCE + 1)  // 确保在 SessionRepositoryFilter 之前执行
 public class ApiSessionFilter extends OncePerRequestFilter {
 
     private static final Logger log = LoggerFactory.getLogger(ApiSessionFilter.class);

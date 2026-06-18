@@ -38,11 +38,11 @@ public class AgentHealthService {
     /** 最大连续错误次数，超过后自动重启 */
     private static final int MAX_CONSECUTIVE_ERRORS = 10;
 
-    /** 响应时间阈值（毫秒），超过后标记为警告 */
-    private static final long RESPONSE_TIME_WARNING_THRESHOLD = 3000;
+    /** 响应时间阈值（毫秒），超过后标记为警告（AI任务通常需要1-5分钟，2分钟内算正常） */
+    private static final long RESPONSE_TIME_WARNING_THRESHOLD = 120000;
 
     /** 响应时间阈值（毫秒），超过后标记为不健康 */
-    private static final long RESPONSE_TIME_UNHEALTHY_THRESHOLD = 5000;
+    private static final long RESPONSE_TIME_UNHEALTHY_THRESHOLD = 300000;
 
     @Autowired
     private AgentHealthRepository healthRepository;
@@ -398,14 +398,15 @@ public class AgentHealthService {
             unhealthyScore += 2;
         }
 
-        // 3. 响应时间检查
+        // 3. 响应时间检查（AI任务需要较长时间，阈值设置更宽松）
+        //    正常AI任务: 30s~2min, 警告: 5~10min, 不健康: >10min
         if (health.getAvgResponseTimeMs() != null) {
-            if (health.getAvgResponseTimeMs() > 10000) {
-                unhealthyScore += 4; // 响应极慢
-            } else if (health.getAvgResponseTimeMs() > 5000) {
-                unhealthyScore += 2;
-            } else if (health.getAvgResponseTimeMs() > 3000) {
-                unhealthyScore += 1;
+            if (health.getAvgResponseTimeMs() > 600000) {
+                unhealthyScore += 4; // 超过10分钟，响应极慢
+            } else if (health.getAvgResponseTimeMs() > 300000) {
+                unhealthyScore += 2; // 超过5分钟，偏慢
+            } else if (health.getAvgResponseTimeMs() > 120000) {
+                unhealthyScore += 1; // 超过2分钟，轻微警告
             }
         }
 

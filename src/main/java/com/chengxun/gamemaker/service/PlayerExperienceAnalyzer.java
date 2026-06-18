@@ -1,17 +1,26 @@
 package com.chengxun.gamemaker.service;
 
 import com.chengxun.gamemaker.model.GameProject;
+import com.chengxun.gamemaker.web.entity.GameVerifyResult;
+import com.chengxun.gamemaker.web.repository.GameVerifyResultRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import java.io.File;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 玩家体验分析器
+ * 玩家体验分析器（混合评分版）
  * 从玩家视角评估游戏设计，提供趣味度评分和改进建议
+ *
+ * 三层评分机制：
+ * 1. 关键词层 — 基于项目目标描述的关键词匹配（快速，基准分）
+ * 2. 代码特征层 — 扫描项目目录中的实际文件（音效、图片、关卡配置等）
+ * 3. AI 深度层 — 复用 GameRuntimeVerifier.analyzeQuality() 的持久化结果
  *
  * 评估维度：
  * 1. 核心循环吸引力 — 游戏核心玩法是否足够有趣、让人上瘾
@@ -31,6 +40,25 @@ public class PlayerExperienceAnalyzer {
     /** 项目体验评分缓存：projectId -> FunScore */
     private final Map<String, FunScore> scoreCache = new ConcurrentHashMap<>();
 
+    @Autowired
+    private GameVerifyResultRepository verifyResultRepository;
+
+    /** 音效文件扩展名 */
+    private static final String[] AUDIO_EXTENSIONS = {".mp3", ".wav", ".ogg", ".flac", ".aac", ".m4a"};
+    /** 图片/精灵文件扩展名 */
+    private static final String[] IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".svg", ".gif", ".webp", ".bmp"};
+    /** 动画/特效文件名关键词 */
+    private static final String[] ANIMATION_KEYWORDS = {"animation", "anim", "effect", "particle", "特效", "动画", "sprite"};
+    /** 关卡/地图文件名关键词 */
+    private static final String[] LEVEL_KEYWORDS = {"level", "stage", "map", "关卡", "地图", "scene", "chapter"};
+    /** UI 相关文件名关键词 */
+    private static final String[] UI_KEYWORDS = {"ui", "hud", "menu", "界面", "dialog", "panel", "widget"};
+    /** 排除的目录 */
+    private static final String[] EXCLUDED_DIRS = {
+        "node_modules", ".git", ".claude", "target", "build", "dist",
+        "__pycache__", ".idea", ".vscode", ".gradle", ".mvn", ".game-maker"
+    };
+
     /**
      * 趣味度评分结果
      */
@@ -44,6 +72,8 @@ public class PlayerExperienceAnalyzer {
         private List<String> painPoints = new ArrayList<>();
         private List<String> improvements = new ArrayList<>();
         private LocalDateTime analyzedAt;
+        /** 数据来源标识：KEYWORD=纯关键词, CODE_FEATURE=含代码特征, AI_DEEP=含AI深度分析 */
+        private String dataSource = "KEYWORD";
 
         public FunScore() {
             this.analyzedAt = LocalDateTime.now();
@@ -67,6 +97,8 @@ public class PlayerExperienceAnalyzer {
         public List<String> getImprovements() { return improvements; }
         public void setImprovements(List<String> improvements) { this.improvements = improvements; }
         public LocalDateTime getAnalyzedAt() { return analyzedAt; }
+        public String getDataSource() { return dataSource; }
+        public void setDataSource(String dataSource) { this.dataSource = dataSource; }
 
         /**
          * 计算综合分（加权平均）
@@ -83,6 +115,9 @@ public class PlayerExperienceAnalyzer {
         /**
          * 格式化为可读文本
          */
+        /** 最大输出长度（字符数） */
+        private static final int MAX_OUTPUT_LENGTH = 500;
+
         public String toReadableText() {
             StringBuilder sb = new StringBuilder();
             sb.append("## 玩家体验评分\n\n");
@@ -93,29 +128,42 @@ public class PlayerExperienceAnalyzer {
             sb.append(String.format("- 进度感: %d/100\n", progressionScore));
             sb.append(String.format("- 新颖度: %d/100\n\n", noveltyScore));
 
+            // 痛点最多显示 3 条
             if (!painPoints.isEmpty()) {
                 sb.append("### 预测痛点\n");
-                for (String point : painPoints) {
-                    sb.append("- ").append(point).append("\n");
+                int limit = Math.min(painPoints.size(), 3);
+                for (int i = 0; i < limit; i++) {
+                    sb.append("- ").append(painPoints.get(i)).append("\n");
                 }
                 sb.append("\n");
             }
 
+            // 改进建议最多显示 3 条
             if (!improvements.isEmpty()) {
-                sb.append("### 改进建议（按影响度排序）\n");
-                for (int i = 0; i < improvements.size(); i++) {
+                sb.append("### 改进建议\n");
+                int limit = Math.min(improvements.size(), 3);
+                for (int i = 0; i < limit; i++) {
                     sb.append(String.format("%d. %s\n", i + 1, improvements.get(i)));
                 }
                 sb.append("\n");
             }
 
-            return sb.toString();
+            // 截断保护
+            String result = sb.toString();
+            if (result.length() > MAX_OUTPUT_LENGTH) {
+                result = result.substring(0, MAX_OUTPUT_LENGTH) + "\n...(已截断)";
+            }
+            return result;
         }
     }
 
     /**
-     * 分析项目的玩家体验
-     * 基于项目目标、游戏类型、当前进度进行评估
+     * 分析项目的玩家体验（混合评分）
+     *
+     * 评分流程：
+     * 1. 关键词基准分（原有逻辑）
+     * 2. 代码特征修正（扫描实际项目文件）
+     * 3. AI 深度分析叠加（读取 DB 中的最新分析结果）
      *
      * @param project 项目对象
      * @return 趣味度评分
@@ -136,20 +184,22 @@ public class PlayerExperienceAnalyzer {
         String goal = project.getGoal() != null ? project.getGoal() : "";
         String lowerGoal = goal.toLowerCase();
 
-        // 1. 核心循环评分 — 基于游戏类型和目标描述判断
+        // ===== 第 1 层：关键词基准分 =====
         score.setCoreLoopScore(evaluateCoreLoop(lowerGoal, project));
-
-        // 2. 挑战感评分
         score.setChallengeScore(evaluateChallenge(lowerGoal, project));
-
-        // 3. 奖励反馈评分
         score.setRewardScore(evaluateReward(lowerGoal, project));
-
-        // 4. 进度感评分
         score.setProgressionScore(evaluateProgression(lowerGoal, project));
-
-        // 5. 新颖度评分
         score.setNoveltyScore(evaluateNovelty(lowerGoal, project));
+        score.setDataSource("KEYWORD");
+
+        // ===== 第 2 层：代码特征修正 =====
+        String workDir = project.getWorkDir();
+        if (workDir != null && !workDir.isEmpty() && new File(workDir).isDirectory()) {
+            applyCodeFeatureBonus(score, workDir, lowerGoal);
+        }
+
+        // ===== 第 3 层：AI 深度分析叠加 =====
+        applyAIAnalysisScore(score, projectId);
 
         // 计算综合分
         score.calculateOverall();
@@ -163,6 +213,256 @@ public class PlayerExperienceAnalyzer {
         scoreCache.put(projectId, score);
         return score;
     }
+
+    // ===== 第 2 层：代码特征扫描 =====
+
+    /**
+     * 扫描项目目录中的实际文件，用代码特征修正关键词基准分
+     * 修正幅度：每个检测项 +5~+15 分，总修正不超过 +30 分/维度
+     *
+     * @param score 当前评分（会被就地修改）
+     * @param workDir 项目工作目录
+     * @param lowerGoal 项目目标（小写）
+     */
+    private void applyCodeFeatureBonus(FunScore score, String workDir, String lowerGoal) {
+        File dir = new File(workDir);
+
+        // 音效文件 → 奖励反馈 +12
+        int audioCount = countFilesByExtensions(dir, AUDIO_EXTENSIONS, 4);
+        if (audioCount > 0) {
+            score.setRewardScore(clamp(score.getRewardScore() + Math.min(audioCount * 3, 12)));
+            log.debug("代码特征: 发现 {} 个音效文件, 奖励反馈+{}", audioCount, Math.min(audioCount * 3, 12));
+        }
+
+        // 图片/精灵文件 → 核心循环 +10, 奖励反馈 +8
+        int imageCount = countFilesByExtensions(dir, IMAGE_EXTENSIONS, 4);
+        if (imageCount > 5) {
+            score.setCoreLoopScore(clamp(score.getCoreLoopScore() + Math.min(imageCount / 3, 10)));
+            score.setRewardScore(clamp(score.getRewardScore() + Math.min(imageCount / 4, 8)));
+            log.debug("代码特征: 发现 {} 个图片文件, 核心循环+{}, 奖励反馈+{}",
+                imageCount, Math.min(imageCount / 3, 10), Math.min(imageCount / 4, 8));
+        }
+
+        // 关卡/地图配置文件 → 挑战感 +15
+        int levelCount = countFilesByKeywords(dir, LEVEL_KEYWORDS, 4);
+        if (levelCount > 0) {
+            score.setChallengeScore(clamp(score.getChallengeScore() + Math.min(levelCount * 5, 15)));
+            log.debug("代码特征: 发现 {} 个关卡配置, 挑战感+{}", levelCount, Math.min(levelCount * 5, 15));
+        }
+
+        // 动画/特效文件 → 奖励反馈 +10
+        int animCount = countFilesByKeywords(dir, ANIMATION_KEYWORDS, 4);
+        if (animCount > 0) {
+            score.setRewardScore(clamp(score.getRewardScore() + Math.min(animCount * 3, 10)));
+            log.debug("代码特征: 发现 {} 个动画/特效文件, 奖励反馈+{}", animCount, Math.min(animCount * 3, 10));
+        }
+
+        // UI 相关文件 → 核心循环 +8
+        int uiCount = countFilesByKeywords(dir, UI_KEYWORDS, 4);
+        if (uiCount > 0) {
+            score.setCoreLoopScore(clamp(score.getCoreLoopScore() + Math.min(uiCount * 2, 8)));
+            log.debug("代码特征: 发现 {} 个UI文件, 核心循环+{}", uiCount, Math.min(uiCount * 2, 8));
+        }
+
+        // 源代码文件数量 → 核心循环 +5（有实际代码产出）
+        int sourceCount = countSourceFiles(dir, 4);
+        if (sourceCount > 3) {
+            score.setCoreLoopScore(clamp(score.getCoreLoopScore() + 5));
+            log.debug("代码特征: 发现 {} 个源代码文件, 核心循环+5", sourceCount);
+        }
+
+        // 目录结构深度 → 进度感 +10
+        int maxDepth = getMaxDepth(dir, 0, 5);
+        if (maxDepth >= 3) {
+            score.setProgressionScore(clamp(score.getProgressionScore() + 10));
+            log.debug("代码特征: 目录深度 {}, 进度感+10", maxDepth);
+        } else if (maxDepth >= 2) {
+            score.setProgressionScore(clamp(score.getProgressionScore() + 5));
+            log.debug("代码特征: 目录深度 {}, 进度感+5", maxDepth);
+        }
+
+        // 配置文件多样性 → 新颖度 +8
+        int configTypes = countConfigFileTypes(dir, 4);
+        if (configTypes >= 3) {
+            score.setNoveltyScore(clamp(score.getNoveltyScore() + 8));
+            log.debug("代码特征: {} 种配置文件类型, 新颖度+8", configTypes);
+        }
+    }
+
+    // ===== 第 3 层：AI 深度分析 =====
+
+    /**
+     * 从数据库加载最新的 AI 深度分析结果，叠加到体验评分上
+     * AI 分数权重 40%，当前分数权重 60%
+     *
+     * @param score 当前评分（会被就地修改）
+     * @param projectId 项目 ID
+     */
+    private void applyAIAnalysisScore(FunScore score, String projectId) {
+        try {
+            Optional<GameVerifyResult> latest = verifyResultRepository
+                .findFirstByProjectIdAndVerifyTypeOrderByVerifiedAtDesc(projectId, "DEEP");
+
+            if (latest.isEmpty()) {
+                log.debug("无 AI 深度分析结果: project={}", projectId);
+                return;
+            }
+
+            GameVerifyResult result = latest.get();
+
+            // 检查是否在 24 小时内
+            if (result.getVerifiedAt().plusHours(24).isBefore(LocalDateTime.now())) {
+                log.debug("AI 深度分析结果已过期: project={}, verifiedAt={}", projectId, result.getVerifiedAt());
+                return;
+            }
+
+            // 检查是否有有效分数
+            if (result.getOverallScore() == null || result.getOverallScore() == 0) {
+                log.debug("AI 深度分析结果无有效分数: project={}", projectId);
+                return;
+            }
+
+            // AI 不能运行 → 直接大幅扣分
+            if (result.getRunnableScore() != null && result.getRunnableScore() < 30) {
+                score.setCoreLoopScore(clamp(Math.min(score.getCoreLoopScore(), 20)));
+                score.setChallengeScore(clamp(Math.min(score.getChallengeScore(), 20)));
+                score.setRewardScore(clamp(Math.min(score.getRewardScore(), 15)));
+                score.setDataSource("AI_DEEP");
+                log.info("AI 分析: 游戏不可运行(runnable={}), 大幅降分", result.getRunnableScore());
+                return;
+            }
+
+            // 维度映射 + 加权融合 (AI 40%, 当前 60%)
+            int aiCoreLoop = result.getPlayableScore() != null ? result.getPlayableScore() : 50;
+            int aiChallenge = result.getCompletenessScore() != null ? result.getCompletenessScore() : 50;
+            int aiReward = result.getUiuxScore() != null ? result.getUiuxScore() : 50;
+            int aiProgression = result.getCompletenessScore() != null ? result.getCompletenessScore() : 50;
+            int aiNovelty = result.getOverallScore() != null ? result.getOverallScore() : 50;
+
+            score.setCoreLoopScore(clamp((int)(score.getCoreLoopScore() * 0.6 + aiCoreLoop * 0.4)));
+            score.setChallengeScore(clamp((int)(score.getChallengeScore() * 0.6 + aiChallenge * 0.4)));
+            score.setRewardScore(clamp((int)(score.getRewardScore() * 0.6 + aiReward * 0.4)));
+            score.setProgressionScore(clamp((int)(score.getProgressionScore() * 0.6 + aiProgression * 0.4)));
+            score.setNoveltyScore(clamp((int)(score.getNoveltyScore() * 0.6 + aiNovelty * 0.4)));
+            score.setDataSource("AI_DEEP");
+
+            log.info("AI 深度分析已融合: project={}, overall={}, playable={}, uiux={}",
+                projectId, result.getOverallScore(), result.getPlayableScore(), result.getUiuxScore());
+
+        } catch (Exception e) {
+            log.debug("加载 AI 深度分析结果失败: {}", e.getMessage());
+        }
+    }
+
+    // ===== 文件扫描工具方法 =====
+
+    /**
+     * 按扩展名统计文件数量
+     */
+    private int countFilesByExtensions(File dir, String[] extensions, int maxDepth) {
+        if (maxDepth < 0 || dir == null) return 0;
+        int count = 0;
+        File[] files = dir.listFiles();
+        if (files == null) return 0;
+        for (File file : files) {
+            if (file.isDirectory() && !isExcludedDir(file.getName())) {
+                count += countFilesByExtensions(file, extensions, maxDepth - 1);
+            } else if (file.isFile()) {
+                String name = file.getName().toLowerCase();
+                for (String ext : extensions) {
+                    if (name.endsWith(ext)) { count++; break; }
+                }
+            }
+        }
+        return count;
+    }
+
+    /**
+     * 按文件名关键词统计文件数量
+     */
+    private int countFilesByKeywords(File dir, String[] keywords, int maxDepth) {
+        if (maxDepth < 0 || dir == null) return 0;
+        int count = 0;
+        File[] files = dir.listFiles();
+        if (files == null) return 0;
+        for (File file : files) {
+            if (file.isDirectory() && !isExcludedDir(file.getName())) {
+                count += countFilesByKeywords(file, keywords, maxDepth - 1);
+            } else if (file.isFile()) {
+                String name = file.getName().toLowerCase();
+                for (String kw : keywords) {
+                    if (name.contains(kw)) { count++; break; }
+                }
+            }
+        }
+        return count;
+    }
+
+    /**
+     * 统计源代码文件数量
+     */
+    private int countSourceFiles(File dir, int maxDepth) {
+        String[] sourceExts = {".js", ".ts", ".py", ".java", ".html", ".css", ".vue",
+            ".gd", ".cs", ".cpp", ".c", ".lua", ".dart", ".swift", ".kt"};
+        return countFilesByExtensions(dir, sourceExts, maxDepth);
+    }
+
+    /**
+     * 统计配置文件类型多样性
+     */
+    private int countConfigFileTypes(File dir, int maxDepth) {
+        Set<String> types = new HashSet<>();
+        collectConfigTypes(dir, 0, maxDepth, types);
+        return types.size();
+    }
+
+    private void collectConfigTypes(File dir, int depth, int maxDepth, Set<String> types) {
+        if (depth > maxDepth || dir == null) return;
+        File[] files = dir.listFiles();
+        if (files == null) return;
+        for (File file : files) {
+            if (file.isDirectory() && !isExcludedDir(file.getName())) {
+                collectConfigTypes(file, depth + 1, maxDepth, types);
+            } else if (file.isFile()) {
+                String name = file.getName().toLowerCase();
+                if (name.endsWith(".json")) types.add("json");
+                else if (name.endsWith(".yaml") || name.endsWith(".yml")) types.add("yaml");
+                else if (name.endsWith(".xml")) types.add("xml");
+                else if (name.endsWith(".toml")) types.add("toml");
+                else if (name.endsWith(".ini") || name.endsWith(".cfg")) types.add("ini");
+                else if (name.endsWith(".conf") || name.endsWith(".config")) types.add("conf");
+            }
+        }
+    }
+
+    /**
+     * 获取目录最大深度
+     */
+    private int getMaxDepth(File dir, int currentDepth, int maxDepth) {
+        if (currentDepth >= maxDepth || dir == null) return currentDepth;
+        int deepest = currentDepth;
+        File[] files = dir.listFiles();
+        if (files == null) return currentDepth;
+        for (File file : files) {
+            if (file.isDirectory() && !isExcludedDir(file.getName())) {
+                deepest = Math.max(deepest, getMaxDepth(file, currentDepth + 1, maxDepth));
+            }
+        }
+        return deepest;
+    }
+
+    private boolean isExcludedDir(String name) {
+        for (String excluded : EXCLUDED_DIRS) {
+            if (name.equals(excluded)) return true;
+        }
+        return false;
+    }
+
+    private int clamp(int value) {
+        return Math.min(100, Math.max(0, value));
+    }
+
+    // ===== 原有关键词评估方法 =====
 
     /**
      * 评估核心循环吸引力

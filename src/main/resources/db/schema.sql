@@ -306,6 +306,8 @@ CREATE TABLE IF NOT EXISTS api_tokens (
     assigned_agent_name VARCHAR(100),
     usage_count INT DEFAULT 0,
     total_tokens_used BIGINT DEFAULT 0,
+    provider_type VARCHAR(30) DEFAULT 'ANTHROPIC',
+    resource_type VARCHAR(20) DEFAULT 'TEXT',
     description VARCHAR(500),
     status VARCHAR(20) DEFAULT 'ACTIVE',
     created_by VARCHAR(50),
@@ -446,7 +448,7 @@ CREATE TABLE IF NOT EXISTS agent_logs (
     agent_name VARCHAR(100),
     action VARCHAR(50),
     level VARCHAR(20) DEFAULT 'INFO',
-    summary VARCHAR(200),
+    summary TEXT,
     detail TEXT,
     project_id VARCHAR(100),
     task_id VARCHAR(100),
@@ -796,13 +798,34 @@ CREATE TABLE IF NOT EXISTS agent_mcp_bindings (
 CREATE TABLE IF NOT EXISTS mcp_servers (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(100) NOT NULL,
-    server_type VARCHAR(50) NOT NULL,
-    endpoint VARCHAR(500) NOT NULL,
     description TEXT,
-    config TEXT,
+    transport_type VARCHAR(20) NOT NULL,
+    command VARCHAR(500),
+    args TEXT,
+    env TEXT,
+    url VARCHAR(500),
+    headers TEXT,
+    ai_api_key VARCHAR(500),
+    ai_api_url VARCHAR(500),
+    ai_model VARCHAR(100),
+    category VARCHAR(50),
+    auth_mode VARCHAR(20) DEFAULT 'env',
+    auth_header_name VARCHAR(100) DEFAULT 'Authorization',
+    required_params TEXT,
     enabled TINYINT(1) NOT NULL DEFAULT 1,
+    template TINYINT(1) NOT NULL DEFAULT 0,
+    template_key VARCHAR(50),
+    project_id VARCHAR(100),
+    tool_count INT NOT NULL DEFAULT 0,
+    last_test_at TIMESTAMP NULL,
+    last_test_result VARCHAR(500),
+    connected TINYINT(1) NOT NULL DEFAULT 0,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY idx_mcp_server_template_key (template_key),
+    INDEX idx_mcp_server_project (project_id),
+    INDEX idx_mcp_server_enabled (enabled),
+    INDEX idx_mcp_server_name (name)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- MCP 工具表
@@ -813,6 +836,8 @@ CREATE TABLE IF NOT EXISTS mcp_tools (
     display_name VARCHAR(100),
     description TEXT,
     input_schema TEXT,
+    default_params TEXT,
+    param_hints TEXT,
     enabled TINYINT(1) NOT NULL DEFAULT 1,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_mt_server (server_id)
@@ -1133,4 +1158,53 @@ CREATE TABLE IF NOT EXISTS agent_presets (
     config TEXT,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================
+-- MiMo Code v3.0.0 特性表
+-- ============================================================
+
+-- 记忆全文搜索索引表
+CREATE TABLE IF NOT EXISTS memory_fts (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    project_id VARCHAR(100) NOT NULL,
+    agent_id VARCHAR(50) NOT NULL,
+    category VARCHAR(50) NOT NULL,
+    memory_key VARCHAR(200) NOT NULL,
+    content TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_memory_fts (project_id, agent_id, category, memory_key),
+    FULLTEXT KEY ft_content (content)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ===== MiMo V2: 快照和分叉表 =====
+
+CREATE TABLE IF NOT EXISTS `session_forks` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `fork_id` VARCHAR(100) NOT NULL,
+    `parent_agent_id` VARCHAR(50) NOT NULL,
+    `fork_agent_id` VARCHAR(100) NOT NULL,
+    `project_id` VARCHAR(100) NOT NULL,
+    `description` VARCHAR(500),
+    `status` VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
+    `message_count` INT DEFAULT 0,
+    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `closed_at` TIMESTAMP NULL,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_fork_id` (`fork_id`),
+    KEY `idx_parent_agent` (`parent_agent_id`),
+    KEY `idx_project` (`project_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `agent_tool_permissions` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `agent_id` VARCHAR(50) NOT NULL,
+    `tool_name` VARCHAR(50) NOT NULL,
+    `pattern` VARCHAR(200) NOT NULL DEFAULT '*',
+    `action` VARCHAR(10) NOT NULL DEFAULT 'ask',
+    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_agent_id` (`agent_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

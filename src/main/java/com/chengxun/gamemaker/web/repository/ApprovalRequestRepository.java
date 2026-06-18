@@ -73,4 +73,10 @@ public interface ApprovalRequestRepository extends JpaRepository<ApprovalRequest
      * 查找项目的所有审批请求（不限状态）
      */
     List<ApprovalRequest> findByProjectIdOrderByCreatedAtDesc(String projectId);
+
+    /**
+     * 检查是否存在指定项目+请求者+类型的待审批请求（用于去重）
+     */
+    boolean existsByProjectIdAndRequesterIdAndRequestTypeAndStatus(
+        String projectId, String requesterId, String requestType, ApprovalRequest.ApprovalStatus status);
 }

@@ -59,7 +59,7 @@ class CapabilityRegistryTest {
     @Test
     void testGetCapability_Found() {
         when(capabilityRepository.findByCapabilityNameAndAgentRoleAndProjectIdIsNull("createAgent", "producer"))
-            .thenReturn(Optional.of(testCapability));
+            .thenReturn(java.util.List.of(testCapability));
 
         AgentCapability result = capabilityRegistry.getCapability("producer", "createAgent");
 
@@ -70,7 +70,7 @@ class CapabilityRegistryTest {
     @Test
     void testGetCapability_NotFound() {
         when(capabilityRepository.findByCapabilityNameAndAgentRoleAndProjectIdIsNull("unknown", "producer"))
-            .thenReturn(Optional.empty());
+            .thenReturn(java.util.List.of());
 
         AgentCapability result = capabilityRegistry.getCapability("producer", "unknown");
 
@@ -81,7 +81,7 @@ class CapabilityRegistryTest {
     void testGetCapability_Disabled() {
         testCapability.setEnabled(false);
         when(capabilityRepository.findByCapabilityNameAndAgentRoleAndProjectIdIsNull("createAgent", "producer"))
-            .thenReturn(Optional.of(testCapability));
+            .thenReturn(java.util.List.of(testCapability));
 
         AgentCapability result = capabilityRegistry.getCapability("producer", "createAgent");
 
@@ -91,7 +91,7 @@ class CapabilityRegistryTest {
     @Test
     void testIsCapabilityEnabled() {
         when(capabilityRepository.findByCapabilityNameAndAgentRoleAndProjectIdIsNull("createAgent", "producer"))
-            .thenReturn(Optional.of(testCapability));
+            .thenReturn(java.util.List.of(testCapability));
 
         assertTrue(capabilityRegistry.isCapabilityEnabled("producer", "createAgent"));
     }
@@ -100,7 +100,7 @@ class CapabilityRegistryTest {
     void testValidateParams_Valid() {
         testCapability.setParamSchema("{\"name\":\"string|required\",\"role\":\"string\"}");
         when(capabilityRepository.findByCapabilityNameAndAgentRoleAndProjectIdIsNull("createAgent", "producer"))
-            .thenReturn(Optional.of(testCapability));
+            .thenReturn(java.util.List.of(testCapability));
 
         var result = capabilityRegistry.validateParams("producer", "createAgent",
             java.util.Map.of("name", "test", "role", "server-dev"));
@@ -112,7 +112,7 @@ class CapabilityRegistryTest {
     void testValidateParams_MissingRequired() {
         testCapability.setParamSchema("{\"name\":\"string|required\"}");
         when(capabilityRepository.findByCapabilityNameAndAgentRoleAndProjectIdIsNull("createAgent", "producer"))
-            .thenReturn(Optional.of(testCapability));
+            .thenReturn(java.util.List.of(testCapability));
 
         var result = capabilityRegistry.validateParams("producer", "createAgent",
             java.util.Map.of("role", "server-dev"));

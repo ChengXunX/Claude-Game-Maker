@@ -2,6 +2,7 @@ package com.chengxun.gamemaker.web.service;
 
 import com.chengxun.gamemaker.agent.Agent;
 import com.chengxun.gamemaker.manager.AgentManager;
+import com.chengxun.gamemaker.model.AgentMessage;
 import com.chengxun.gamemaker.model.TaskAssignment;
 import com.chengxun.gamemaker.web.entity.*;
 import com.chengxun.gamemaker.web.repository.*;
@@ -520,6 +521,222 @@ public class WorkflowEngine {
         codeQuickFix.addStep(qfTest);
         codeQuickFix.addStep(qfDeploy);
 
+        // ===== 13. TDD 测试驱动开发流程 =====
+        // 先写测试再写代码，确保代码质量和测试覆盖率
+        WorkflowTemplate tddFlow = new WorkflowTemplate("tdd-flow", "TDD 测试驱动开发流程",
+            "测试驱动开发流程：先写失败测试 → 写最少代码通过 → 重构 → 验证。适合对质量要求高的核心功能开发");
+        // 步骤1：需求分析 — 明确要实现的功能和验收标准
+        WorkflowStep tddAnalyze = new WorkflowStep("analyze", "需求分析", "system-planner",
+            "分析功能需求，明确验收标准和测试用例设计方向。输出：功能规格、验收标准列表");
+        // 步骤2：编写失败测试 — 先写测试（RED 阶段）
+        WorkflowStep tddWriteTest = new WorkflowStep("write-test", "编写失败测试", "tester",
+            "根据验收标准编写测试用例，确保所有测试当前都是失败状态（RED）。测试应覆盖：正常路径、边界条件、异常场景。\n" +
+            "输出：测试代码文件、测试执行结果（预期全部失败）");
+        tddWriteTest.addDependency("analyze");
+        // 步骤3：编写最少代码通过测试（GREEN 阶段）
+        WorkflowStep tddWriteCode = new WorkflowStep("write-code", "编写代码通过测试", "server-dev",
+            "编写最少的代码让所有测试通过（GREEN）。不要过度设计，只关注让测试通过。\n" +
+            "要求：所有测试必须通过，不能修改测试来适应代码");
+        tddWriteCode.addDependency("write-test");
+        // 步骤4：重构 — 优化代码质量（REFACTOR 阶段）
+        WorkflowStep tddRefactor = new WorkflowStep("refactor", "重构优化", "server-dev",
+            "在测试保护下重构代码：消除重复、提升可读性、优化性能。重构后所有测试必须仍然通过。\n" +
+            "原则：不改变外部行为，只改善内部结构");
+        tddRefactor.addDependency("write-code");
+        // 步骤5：验证 — 确保测试全部通过且覆盖率达标
+        WorkflowStep tddVerify = new WorkflowStep("verify", "验证测试通过", "tester",
+            "验证所有测试通过，检查测试覆盖率是否达标（建议 ≥80%）。执行回归测试确保未引入新问题。\n" +
+            "输出：测试报告、覆盖率报告");
+        tddVerify.addDependency("refactor");
+        tddVerify.setRequiresApproval(true);
+        tddVerify.setImportance("HIGH");
+        tddFlow.addStep(tddAnalyze);
+        tddFlow.addStep(tddWriteTest);
+        tddFlow.addStep(tddWriteCode);
+        tddFlow.addStep(tddRefactor);
+        tddFlow.addStep(tddVerify);
+
+        // ===== 14. 调试修复流程 =====
+        // 系统化的 Bug 调查和修复流程，确保问题彻底解决
+        WorkflowTemplate debugFlow = new WorkflowTemplate("debug-flow", "调试修复流程",
+            "系统化的 Bug 修复流程：复现 → 诊断 → 修复 → 验证 → 文档化。适合排查复杂问题");
+        // 步骤1：复现问题
+        WorkflowStep dbgReproduce = new WorkflowStep("reproduce", "复现问题", "tester",
+            "复现 Bug 并记录复现步骤：\n" +
+            "1. 描述预期行为和实际行为\n" +
+            "2. 记录复现步骤（越详细越好）\n" +
+            "3. 记录环境信息（OS、版本、配置）\n" +
+            "4. 确认复现率（必现/偶现）\n" +
+            "输出：复现报告、日志截图");
+        // 步骤2：诊断根因
+        WorkflowStep dbgDiagnose = new WorkflowStep("diagnose", "诊断根因", "server-dev",
+            "分析 Bug 根因：\n" +
+            "1. 查看错误日志和堆栈跟踪\n" +
+            "2. 使用代码诊断能力定位问题代码\n" +
+            "3. 分析调用链和数据流\n" +
+            "4. 确定根本原因（不是表面现象）\n" +
+            "输出：根因分析报告、问题代码定位");
+        dbgDiagnose.addDependency("reproduce");
+        // 步骤3：实施修复
+        WorkflowStep dbgFix = new WorkflowStep("fix", "实施修复", "server-dev",
+            "实施最小化修复：\n" +
+            "1. 只修复根因，不做无关改动\n" +
+            "2. 确保修复不引入新问题\n" +
+            "3. 添加防御性代码（如需要）\n" +
+            "输出：修复代码、修改说明");
+        dbgFix.addDependency("diagnose");
+        // 步骤4：验证修复
+        WorkflowStep dbgVerify = new WorkflowStep("verify", "验证修复", "tester",
+            "验证修复有效性：\n" +
+            "1. 按复现步骤验证 Bug 已修复\n" +
+            "2. 执行回归测试确保无新问题\n" +
+            "3. 测试相关功能未受影响\n" +
+            "输出：验证报告");
+        dbgVerify.addDependency("fix");
+        dbgVerify.setRequiresApproval(true);
+        dbgVerify.setImportance("HIGH");
+        // 步骤5：文档化
+        WorkflowStep dbgDocument = new WorkflowStep("document", "文档化", "system-planner",
+            "记录问题和解决方案：\n" +
+            "1. 更新 Bug 追踪记录\n" +
+            "2. 记录根因和修复方案到知识库\n" +
+            "3. 如需要，更新相关设计文档\n" +
+            "输出：知识库条目、文档更新");
+        dbgDocument.addDependency("verify");
+        debugFlow.addStep(dbgReproduce);
+        debugFlow.addStep(dbgDiagnose);
+        debugFlow.addStep(dbgFix);
+        debugFlow.addStep(dbgVerify);
+        debugFlow.addStep(dbgDocument);
+
+        // ===== 15. 代码审查流程（增强版） =====
+        // 标准化的代码审查流程，包含准备、审查、修复、批准、合并
+        WorkflowTemplate reviewFlow = new WorkflowTemplate("review-flow", "代码审查流程（增强版）",
+            "标准化的代码审查流程：准备 → 审查 → 修复 → 批准 → 合并。确保代码质量");
+        // 步骤1：准备审查材料
+        WorkflowStep rvPrepare = new WorkflowStep("prepare", "准备审查", "server-dev",
+            "准备代码审查材料：\n" +
+            "1. 整理代码变更（diff）\n" +
+            "2. 编写变更说明（为什么改、改了什么）\n" +
+            "3. 标注重点审查区域\n" +
+            "4. 确保代码已通过本地测试\n" +
+            "输出：变更说明、代码 diff");
+        // 步骤2：执行审查
+        WorkflowStep rvReview = new WorkflowStep("review", "执行审查", "server-dev",
+            "对代码进行专业审查，关注：\n" +
+            "1. 正确性：逻辑是否正确、边界条件是否处理\n" +
+            "2. 安全性：是否有注入、越权、信息泄露风险\n" +
+            "3. 性能：是否有性能瓶颈、不必要的开销\n" +
+            "4. 可维护性：命名、结构、注释是否清晰\n" +
+            "5. 测试覆盖：是否有对应测试、测试是否充分\n" +
+            "输出：审查意见（通过/有条件通过/不通过）");
+        rvReview.addDependency("prepare");
+        rvReview.setRequiresApproval(true);
+        rvReview.setImportance("HIGH");
+        // 步骤3：修复审查意见
+        WorkflowStep rvFix = new WorkflowStep("fix-review", "修复审查意见", "server-dev",
+            "根据审查意见修复代码：\n" +
+            "1. 逐条处理审查意见\n" +
+            "2. 对不同意的意见说明理由\n" +
+            "3. 修复后重新运行测试\n" +
+            "输出：修复后的代码、意见处理说明");
+        rvFix.addDependency("review");
+        // 步骤4：最终批准
+        WorkflowStep rvApprove = new WorkflowStep("approve", "最终批准", "server-dev",
+            "最终确认：\n" +
+            "1. 验证所有审查意见已处理\n" +
+            "2. 确认代码质量达标\n" +
+            "3. 批准合并\n" +
+            "输出：批准决定");
+        rvApprove.addDependency("fix-review");
+        rvApprove.setRequiresApproval(true);
+        rvApprove.setImportance("HIGH");
+        // 步骤5：合并部署
+        WorkflowStep rvMerge = new WorkflowStep("merge", "合并代码", "git-commit",
+            "合并审查通过的代码：\n" +
+            "1. 合并到目标分支\n" +
+            "2. 触发 CI/CD 流水线\n" +
+            "3. 确认构建成功\n" +
+            "输出：合并结果、构建状态");
+        rvMerge.addDependency("approve");
+        reviewFlow.addStep(rvPrepare);
+        reviewFlow.addStep(rvReview);
+        reviewFlow.addStep(rvFix);
+        reviewFlow.addStep(rvApprove);
+        reviewFlow.addStep(rvMerge);
+
+        // ===== 16. 测试-修复循环流程 =====
+        // 测试驱动的质量保证流程：测试→发现问题→分配修复→重新测试，循环直到所有测试通过
+        WorkflowTemplate testFixLoop = new WorkflowTemplate("test-fix-loop", "测试-修复循环流程",
+            "测试驱动的质量保证流程：测试→发现问题→分配修复→重新测试，循环直到所有测试通过。适合需要高质量保证的功能开发");
+        // 步骤1：需求分析 — 明确测试范围和验收标准
+        WorkflowStep tfAnalyze = new WorkflowStep("analyze", "需求分析", "system-planner",
+            "分析功能需求，明确：\n" +
+            "1. 测试范围：哪些功能需要测试\n" +
+            "2. 验收标准：什么情况下算测试通过\n" +
+            "3. 测试策略：功能测试、边界测试、异常测试\n" +
+            "输出：测试范围文档、验收标准列表");
+        // 步骤2：编写测试用例
+        WorkflowStep tfWriteTest = new WorkflowStep("write-test", "编写测试用例", "tester",
+            "根据验收标准编写测试用例：\n" +
+            "1. 正常路径测试：验证功能按预期工作\n" +
+            "2. 边界条件测试：验证边界值处理\n" +
+            "3. 异常场景测试：验证错误处理\n" +
+            "4. 集成测试：验证模块间交互\n" +
+            "输出：测试用例代码、测试数据");
+        tfWriteTest.addDependency("analyze");
+        // 步骤3：执行测试（循环步骤）
+        WorkflowStep tfExecuteTest = new WorkflowStep("execute-test", "执行测试", "tester",
+            "执行测试用例，记录测试结果：\n" +
+            "1. 运行所有测试用例\n" +
+            "2. 记录通过/失败的测试\n" +
+            "3. 分析失败原因\n" +
+            "4. 生成测试报告\n" +
+            "输出：测试报告、失败用例列表");
+        tfExecuteTest.addDependency("write-test");
+        // 配置为循环步骤
+        tfExecuteTest.setLoopUntilSuccess(true);
+        tfExecuteTest.setMaxLoopIterations(5);
+        tfExecuteTest.setLoopCondition("所有测试用例通过");
+        tfExecuteTest.setFeedbackOnFailure("测试失败，请根据测试报告修复以下问题");
+        tfExecuteTest.setLoopBodyStepIds(List.of("fix-bug", "execute-test"));
+        // 步骤4：修复Bug（循环体内的步骤）
+        WorkflowStep tfFixBug = new WorkflowStep("fix-bug", "修复Bug", "server-dev",
+            "根据测试报告修复发现的Bug：\n" +
+            "1. 分析失败的测试用例\n" +
+            "2. 定位问题代码\n" +
+            "3. 实施修复\n" +
+            "4. 确保修复不引入新问题\n" +
+            "输出：修复代码、修改说明");
+        tfFixBug.addDependency("execute-test");
+        // 步骤5：回归测试
+        WorkflowStep tfRegression = new WorkflowStep("regression", "回归测试", "tester",
+            "执行回归测试，验证：\n" +
+            "1. 所有修复的Bug已验证通过\n" +
+            "2. 未引入新的Bug\n" +
+            "3. 系统整体稳定性\n" +
+            "输出：回归测试报告");
+        tfRegression.addDependency("fix-bug");
+        tfRegression.setRequiresApproval(true);
+        tfRegression.setImportance("HIGH");
+        // 步骤6：部署上线
+        WorkflowStep tfDeploy = new WorkflowStep("deploy", "部署上线", "git-commit",
+            "合并代码并部署到生产环境：\n" +
+            "1. 合并所有修复代码\n" +
+            "2. 触发构建流水线\n" +
+            "3. 部署到生产环境\n" +
+            "4. 进行线上冒烟测试\n" +
+            "输出：部署结果、线上验证报告");
+        tfDeploy.addDependency("regression");
+        tfDeploy.setRequiresApproval(true);
+        tfDeploy.setImportance("CRITICAL");
+        testFixLoop.addStep(tfAnalyze);
+        testFixLoop.addStep(tfWriteTest);
+        testFixLoop.addStep(tfExecuteTest);
+        testFixLoop.addStep(tfFixBug);
+        testFixLoop.addStep(tfRegression);
+        testFixLoop.addStep(tfDeploy);
+
         // 注册所有模板
         registerTemplate(standard);
         registerTemplate(serverOnly);
@@ -533,6 +750,10 @@ public class WorkflowEngine {
         registerTemplate(codeDevFull);
         registerTemplate(planningQuick);
         registerTemplate(codeQuickFix);
+        registerTemplate(tddFlow);
+        registerTemplate(debugFlow);
+        registerTemplate(reviewFlow);
+        registerTemplate(testFixLoop);
 
         // 持久化内置模板到数据库（如果不存在）
         persistBuiltinTemplates();
@@ -864,10 +1085,46 @@ public class WorkflowEngine {
         execution.setInputData(inputData);
         updateStepExecutionInputData(instance.getId(), step.getId(), inputData);
 
-        // 选择Agent
-        Agent agent = agentMatchStrategy.selectBestAgent(step.getAgentRole(), instance.getProjectId());
+        // 选择Agent（支持等待重试，允许 Agent 并行处理多个工作流步骤）
+        Agent agent = null;
+        int maxRetries = 10;       // 最多重试 10 次
+        long retryIntervalMs = 30000; // 每次等待 30 秒
+        boolean triedAutoStart = false;
+        for (int i = 0; i < maxRetries; i++) {
+            agent = agentMatchStrategy.selectBestAgent(step.getAgentRole(), instance.getProjectId());
+            if (agent != null) break;
+
+            // 首次重试时尝试自动启动已停止的 Agent
+            if (!triedAutoStart) {
+                triedAutoStart = true;
+                boolean started = tryAutoStartAgent(step.getAgentRole(), instance.getProjectId());
+                if (started) {
+                    log.info("已自动启动 {} 角色的Agent，等待就绪...", step.getAgentRole());
+                    try { Thread.sleep(5000); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); break; }
+                    agent = agentMatchStrategy.selectBestAgent(step.getAgentRole(), instance.getProjectId());
+                    if (agent != null) break;
+                }
+            }
+
+            if (i < maxRetries - 1) {
+                log.info("暂无可用Agent ({})，等待重试 {}/{}...", step.getAgentRole(), i + 1, maxRetries);
+                try {
+                    Thread.sleep(retryIntervalMs);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+        }
         if (agent == null) {
-            handleStepFailure(instance, step, execution, "没有可用的Agent: " + step.getAgentRole());
+            // 尝试备用角色（如 system-planner 不可用时尝试 producer）
+            agent = findFallbackAgent(step.getAgentRole(), instance.getProjectId());
+            if (agent != null) {
+                log.warn("使用备用Agent: {} (角色: {}) 替代 {}", agent.getId(), agent.getRole(), step.getAgentRole());
+            }
+        }
+        if (agent == null) {
+            handleStepFailure(instance, step, execution, "没有可用的Agent: " + step.getAgentRole() + "（已重试" + maxRetries + "次）");
             return;
         }
         execution.setAgentId(agent.getId());
@@ -887,6 +1144,64 @@ public class WorkflowEngine {
             log.error("步骤执行异常: {} (实例: {})", step.getId(), instance.getId(), e);
             handleStepFailure(instance, step, execution, e.getMessage());
         }
+    }
+
+    /**
+     * 尝试自动启动已停止的 Agent
+     * 当工作流找不到可用 Agent 时，检查是否有同角色的已停止 Agent 并尝试启动
+     *
+     * @param requiredRole 需要的角色
+     * @param projectId 项目ID
+     * @return 是否成功启动了至少一个 Agent
+     */
+    private boolean tryAutoStartAgent(String requiredRole, String projectId) {
+        if (agentManager == null || projectId == null) return false;
+        try {
+            List<Agent> agents = agentManager.getAgentsByProject(projectId);
+            for (Agent agent : agents) {
+                if (requiredRole.equals(agent.getRole()) && !agent.isAlive()) {
+                    log.info("自动启动已停止的Agent: {} (角色: {})", agent.getId(), agent.getRole());
+                    agent.start();
+                    return true;
+                }
+            }
+        } catch (Exception e) {
+            log.warn("自动启动Agent失败: {}", e.getMessage());
+        }
+        return false;
+    }
+
+    /**
+     * 查找可用 Agent（放宽条件）
+     * 当指定角色的 Agent 不可用时，尝试查找任何可用的 Agent
+     * 适用于角色自定义、无法硬编码映射的场景
+     *
+     * @param requiredRole 需要的角色
+     * @param projectId 项目ID
+     * @return 可用 Agent，无可用时返回 null
+     */
+    private Agent findFallbackAgent(String requiredRole, String projectId) {
+        if (agentManager == null || projectId == null) return null;
+
+        List<Agent> agents = agentManager.getAgentsByProject(projectId);
+
+        // 优先查找同角色的 Agent（不检查负载）
+        for (Agent agent : agents) {
+            if (requiredRole.equals(agent.getRole()) && agent.isAlive()) {
+                log.info("找到同角色Agent: {} (角色: {})", agent.getId(), agent.getRole());
+                return agent;
+            }
+        }
+
+        // 其次查找任何空闲的 Agent
+        for (Agent agent : agents) {
+            if (agent.isAlive() && !agent.isBusy()) {
+                log.warn("使用空闲Agent替代: {} (角色: {} 替代 {})", agent.getId(), agent.getRole(), requiredRole);
+                return agent;
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -1109,10 +1424,16 @@ public class WorkflowEngine {
     }
 
     /**
-     * 处理步骤失败（支持重试）
+     * 处理步骤失败（支持重试和循环）
      */
     private void handleStepFailure(WorkflowInstance instance, WorkflowStep step,
                                      StepExecution execution, String error) {
+        // 如果是循环步骤，检查是否应该继续循环
+        if (step.isLoopUntilSuccess()) {
+            handleLoopStepFailure(instance, step, execution, error);
+            return;
+        }
+
         int currentRetry = execution.getRetryCount() != null ? execution.getRetryCount() : 0;
         int maxRetries = step.getMaxRetries() > 0 ? step.getMaxRetries() : 3;
 
@@ -1151,6 +1472,139 @@ public class WorkflowEngine {
             // 工作流失败
             failWorkflow(instance, "步骤 " + step.getName() + " 失败: " + error);
         }
+    }
+
+    /**
+     * 处理循环步骤失败
+     * 当循环步骤的某次迭代失败时：
+     * 1. 发送反馈给相关 Agent（开发者/策划）
+     * 2. 检查是否达到最大循环次数
+     * 3. 如果未达到，重新执行循环体
+     */
+    private void handleLoopStepFailure(WorkflowInstance instance, WorkflowStep step,
+                                        StepExecution execution, String error) {
+        int currentIteration = execution.getRetryCount() != null ? execution.getRetryCount() : 0;
+        int maxIterations = step.getMaxLoopIterations() > 0 ? step.getMaxLoopIterations() : 5;
+
+        currentIteration++;
+        execution.setRetryCount(currentIteration);
+
+        log.info("循环步骤迭代: {} (实例: {}, 迭代: {}/{})", step.getId(), instance.getId(), currentIteration, maxIterations);
+
+        // 发送反馈给相关 Agent
+        sendLoopFeedback(instance, step, error, currentIteration);
+
+        if (currentIteration < maxIterations) {
+            // 继续循环：重置步骤状态并重新执行
+            execution.setStatus(StepStatus.RUNNING);
+            execution.setError(null);
+            updateStepExecution(instance.getId(), step.getId(), "RUNNING", null, null, null, currentIteration);
+
+            Map<String, Object> loopDetail = new HashMap<>();
+            loopDetail.put("iteration", currentIteration);
+            loopDetail.put("maxIterations", maxIterations);
+            loopDetail.put("error", error);
+            auditService.logSystem(instance.getId(), step.getId(), "LOOP_ITERATION", loopDetail);
+
+            // 重新执行循环体
+            executeLoopBody(instance, step, currentIteration);
+        } else {
+            // 达到最大循环次数，标记失败
+            execution.setStatus(StepStatus.FAILED);
+            execution.setError("循环达到最大次数 (" + maxIterations + "): " + error);
+            execution.setCompletedAt(LocalDateTime.now());
+
+            updateStepExecution(instance.getId(), step.getId(), "FAILED", null, null,
+                "循环达到最大次数 (" + maxIterations + "): " + error, null);
+
+            Map<String, Object> failDetail = new HashMap<>();
+            failDetail.put("iterations", currentIteration);
+            failDetail.put("maxIterations", maxIterations);
+            failDetail.put("finalError", error);
+            auditService.logSystem(instance.getId(), step.getId(), WorkflowAuditService.ACTION_STEP_FAILED, failDetail);
+
+            failWorkflow(instance, "循环步骤 " + step.getName() + " 达到最大次数: " + error);
+        }
+    }
+
+    /**
+     * 发送循环反馈给相关 Agent
+     * 将测试失败信息发送给开发者或策划，通知他们修复问题
+     */
+    private void sendLoopFeedback(WorkflowInstance instance, WorkflowStep step, String error, int iteration) {
+        String feedback = step.getFeedbackOnFailure();
+        if (feedback == null || feedback.isEmpty()) {
+            feedback = "测试未通过，需要修复";
+        }
+
+        String feedbackMessage = String.format(
+            "【循环测试反馈】第 %d 次迭代\n\n" +
+            "步骤: %s\n" +
+            "问题: %s\n" +
+            "期望: %s\n\n" +
+            "请修复后重新测试。",
+            iteration, step.getName(), error,
+            step.getLoopCondition() != null ? step.getLoopCondition() : "满足测试要求"
+        );
+
+        // 查找项目中的开发者和策划 Agent，分配修复任务
+        List<Agent> agents = agentManager.getAgentsByProject(instance.getProjectId());
+        for (Agent agent : agents) {
+            if (agent.isAlive() && !agent.getRole().equals(step.getAgentRole())) {
+                try {
+                    // 通过任务分配机制发送反馈
+                    TaskAssignment feedbackTask = new TaskAssignment();
+                    feedbackTask.setId(UUID.randomUUID().toString());
+                    feedbackTask.setTitle("循环测试反馈 - " + step.getName());
+                    feedbackTask.setDescription(feedbackMessage);
+                    feedbackTask.setAssignerId("workflow-engine");
+                    feedbackTask.setStatus(TaskAssignment.TaskStatus.PENDING);
+                    agent.assignTask(feedbackTask);
+                    log.info("发送循环反馈给 {}: {}", agent.getId(), step.getName());
+                } catch (Exception e) {
+                    log.warn("发送循环反馈失败: {}", e.getMessage());
+                }
+            }
+        }
+    }
+
+    /**
+     * 执行循环体
+     * 重新执行循环步骤的主体逻辑
+     */
+    private void executeLoopBody(WorkflowInstance instance, WorkflowStep step, int iteration) {
+        log.info("执行循环体: {} (迭代: {})", step.getId(), iteration);
+
+        // 查找并执行循环体中的步骤
+        List<String> loopBodyStepIds = step.getLoopBodyStepIds();
+        if (loopBodyStepIds != null && !loopBodyStepIds.isEmpty()) {
+            // 执行循环体中的每个步骤
+            for (String bodyStepId : loopBodyStepIds) {
+                WorkflowStep bodyStep = findStepById(instance, bodyStepId);
+                if (bodyStep != null) {
+                    executeSingleStep(instance, bodyStep);
+                }
+            }
+        } else {
+            // 如果没有定义循环体，重新执行当前步骤
+            executeSingleStep(instance, step);
+        }
+    }
+
+    /**
+     * 查找工作流中的步骤
+     */
+    private WorkflowStep findStepById(WorkflowInstance instance, String stepId) {
+        // 从工作流模板中查找步骤
+        WorkflowTemplate template = templates.get(instance.getTemplateId());
+        if (template != null) {
+            for (WorkflowStep step : template.getSteps()) {
+                if (step.getId().equals(stepId)) {
+                    return step;
+                }
+            }
+        }
+        return null;
     }
 
     // ===== 审批机制 =====
@@ -1887,6 +2341,18 @@ public class WorkflowEngine {
         /** 审批级别：AUTO(自动), PRODUCER(制作人审批), HUMAN(人工审批) */
         private String approvalLevel;
 
+        // ===== 循环步骤配置 =====
+        /** 是否为循环步骤（测试-修复循环） */
+        private boolean loopUntilSuccess;
+        /** 最大循环次数 */
+        private int maxLoopIterations = 5;
+        /** 循环条件描述（用于判断是否继续循环） */
+        private String loopCondition;
+        /** 失败时的反馈描述（发送给开发者/策划） */
+        private String feedbackOnFailure;
+        /** 循环体中的步骤 ID 列表（测试步骤、修复步骤等） */
+        private List<String> loopBodyStepIds;
+
         public WorkflowStep(String id, String name, String agentRole, String taskDescription) {
             this.id = id;
             this.name = name;
@@ -1899,6 +2365,7 @@ public class WorkflowEngine {
             this.maxRetries = 3;
             this.importance = "MEDIUM";  // 默认中等重要程度
             this.approvalLevel = "PRODUCER";  // 默认制作人审批
+            this.loopBodyStepIds = new ArrayList<>();
         }
 
         /**
@@ -1922,6 +2389,11 @@ public class WorkflowEngine {
         public int getMaxRetries() { return maxRetries; }
         public String getImportance() { return importance; }
         public String getApprovalLevel() { return approvalLevel; }
+        public boolean isLoopUntilSuccess() { return loopUntilSuccess; }
+        public int getMaxLoopIterations() { return maxLoopIterations; }
+        public String getLoopCondition() { return loopCondition; }
+        public String getFeedbackOnFailure() { return feedbackOnFailure; }
+        public List<String> getLoopBodyStepIds() { return loopBodyStepIds; }
 
         public void addDependency(String stepId) { dependencies.add(stepId); }
         public void setParallel(boolean parallel) { this.parallel = parallel; }
@@ -1930,6 +2402,11 @@ public class WorkflowEngine {
         public void setMaxRetries(int maxRetries) { this.maxRetries = maxRetries; }
         public void setImportance(String importance) { this.importance = importance; }
         public void setApprovalLevel(String approvalLevel) { this.approvalLevel = approvalLevel; }
+        public void setLoopUntilSuccess(boolean loopUntilSuccess) { this.loopUntilSuccess = loopUntilSuccess; }
+        public void setMaxLoopIterations(int maxLoopIterations) { this.maxLoopIterations = maxLoopIterations; }
+        public void setLoopCondition(String loopCondition) { this.loopCondition = loopCondition; }
+        public void setFeedbackOnFailure(String feedbackOnFailure) { this.feedbackOnFailure = feedbackOnFailure; }
+        public void setLoopBodyStepIds(List<String> loopBodyStepIds) { this.loopBodyStepIds = loopBodyStepIds; }
     }
 
     /** 工作流实例 */

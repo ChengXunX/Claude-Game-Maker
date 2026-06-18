@@ -86,6 +86,15 @@ public class CapabilityExecutionEngine {
     @Autowired(required = false)
     private VersionIterationService versionIterationService;
 
+    @Autowired(required = false)
+    private ResourceAssetService resourceAssetService;
+
+    @Autowired(required = false)
+    private com.chengxun.gamemaker.engine.ResourceGenerationEngine resourceEngine;
+
+    @Autowired(required = false)
+    private McpService mcpService;
+
     /**
      * 能力执行器注册表
      * key: capabilityName
@@ -211,15 +220,25 @@ public class CapabilityExecutionEngine {
 
     /**
      * 处理需要审批的能力调用
+     * 自动去重：如果已存在相同项目+请求者+类型的待审批请求，不重复创建
      */
     private CapabilityResult handleApproval(Agent agent, AgentCapability capDef,
                                              CapabilityCall call, String projectId) {
         try {
+            String requestType = capDef.getApprovalType() != null ? capDef.getApprovalType() : capDef.getCapabilityName();
+
+            // 去重：检查是否已有相同类型的待审批请求
+            boolean exists = approvalService.hasPendingRequest(projectId, agent.getId(), requestType);
+            if (exists) {
+                log.debug("已有待审批的 {} 请求，跳过重复创建: agent={}", requestType, agent.getId());
+                return CapabilityResult.pendingApproval(null);
+            }
+
             String paramsJson = objectMapper.writeValueAsString(call.getParams());
             var approvalRequest = approvalService.createRequest(
                 projectId,
                 agent.getId(),
-                capDef.getApprovalType() != null ? capDef.getApprovalType() : capDef.getCapabilityName(),
+                requestType,
                 paramsJson,
                 call.getReason() != null ? call.getReason()
                     : String.format("Agent %s 请求执行: %s", agent.getId(), capDef.getDisplayName())
@@ -441,8 +460,11 @@ public class CapabilityExecutionEngine {
             case "saveKnowledge" -> {
                 String key = getParam(params, "key", "");
                 String value = getParam(params, "value", "");
+                if (key.isEmpty() || value.isEmpty()) {
+                    yield CapabilityResult.failed("缺少必填参数: key 或 value");
+                }
                 agent.saveKnowledge(key, value);
-                yield CapabilityResult.success("知识已保存");
+                yield CapabilityResult.success("知识已保存: " + key);
             }
             case "compactContext" -> {
                 if (agent instanceof BaseAgent ba) {
@@ -523,7 +545,62 @@ public class CapabilityExecutionEngine {
         executors.put("sendTaskToAgent", (agent, params) -> {
             String target = getParam(params, "targetAgent", "");
             String content = getParam(params, "taskContent", "");
-            AgentMessage taskMsg = AgentMessage.createTask(agent.getId(), target, content);
+            String taskTitle = getParam(params, "taskTitle",
+                content.length() > 50 ? content.substring(0, 50) : content);
+
+            // 注入任务交接上下文（设计意图、技术约束、历史经验）
+            String enrichedContent = content;
+            if (knowledgeEvolutionService != null || projectBoard != null) {
+                try {
+                    String projectId = agent instanceof BaseAgent ba && ba.getCurrentProject() != null
+                        ? ba.getCurrentProject().getId() : null;
+                    String targetRole = target.contains(":") ? target.split(":")[1] : target;
+
+                    StringBuilder handoff = new StringBuilder();
+                    handoff.append(content);
+
+                    // 从 ProjectBoard 获取相关上下文
+                    if (projectBoard != null && projectId != null) {
+                        ProjectBoard.BoardData board = projectBoard.getBoard(projectId);
+                        if (board != null) {
+                            // 当前版本目标
+                            String currentGoal = (String) board.sharedContext.get("current_goal");
+                            if (currentGoal != null && !currentGoal.isEmpty()) {
+                                handoff.append("\n\n## 版本目标\n").append(currentGoal);
+                            }
+                            // 验收标准
+                            String criteria = (String) board.sharedContext.get("verification_criteria");
+                            if (criteria != null && !criteria.isEmpty()) {
+                                handoff.append("\n\n## 验收标准\n").append(criteria);
+                            }
+                            // 活跃阻塞项
+                            List<ProjectBoard.Blocker> blockers = board.blockers.stream()
+                                .filter(b -> !b.resolved).toList();
+                            if (!blockers.isEmpty()) {
+                                handoff.append("\n\n## ⚠️ 当前阻塞项\n");
+                                for (ProjectBoard.Blocker b : blockers) {
+                                    handoff.append(String.format("- [%s] %s\n", b.severity, b.description));
+                                }
+                            }
+                        }
+                    }
+
+                    enrichedContent = handoff.toString();
+                } catch (Exception e) {
+                    log.debug("Failed to enrich task context: {}", e.getMessage());
+                }
+            }
+
+            // 确保 target 包含项目前缀（如 "client-dev" -> "project-xxx:client-dev"）
+            String resolvedTarget = target;
+            if (!target.contains(":")) {
+                String pid = agent instanceof BaseAgent ba && ba.getCurrentProject() != null
+                    ? ba.getCurrentProject().getId() : null;
+                if (pid != null) {
+                    resolvedTarget = pid + ":" + target;
+                }
+            }
+            AgentMessage taskMsg = AgentMessage.createTask(agent.getId(), resolvedTarget, enrichedContent);
             agent.sendMessage(taskMsg);
             return CapabilityResult.success("任务已发送给 " + target);
         });
@@ -2161,8 +2238,12 @@ public class CapabilityExecutionEngine {
         executors.put("updateDocuments", (agent, params) -> {
             String docType = getParam(params, "documentType", "design");
             String content = getParam(params, "content", "");
-            agent.saveKnowledge("document_" + docType, content);
-            return CapabilityResult.success("文档已更新");
+            if (docType.isEmpty() || content.isEmpty()) {
+                return CapabilityResult.failed("缺少必填参数: documentType 或 content");
+            }
+            // 直接使用 docType 作为 key，不加前缀，确保与 loadKnowledge 的 key 一致
+            agent.saveKnowledge(docType, content);
+            return CapabilityResult.success("文档已更新: " + docType);
         });
 
         // 目录配置管理能力
@@ -2615,6 +2696,82 @@ public class CapabilityExecutionEngine {
             }
         });
 
+        // 为里程碑添加任务（干预时新增需求）
+        executors.put("addTaskToMilestone", (agent, params) -> {
+            String milestoneId = getParam(params, "milestoneId", "");
+            String title = getParam(params, "title", "");
+            String description = getParam(params, "description", "");
+            String assignedRole = getParam(params, "assignedRole", "");
+            String priority = getParam(params, "priority", "MEDIUM");
+
+            if (milestoneId.isEmpty() || title.isEmpty()) {
+                return CapabilityResult.failed("缺少必填参数: milestoneId 和 title");
+            }
+
+            String projectId = agent instanceof BaseAgent ba && ba.getCurrentProject() != null
+                ? ba.getCurrentProject().getId() : null;
+            if (projectId == null) return CapabilityResult.failed("无法确定项目 ID");
+
+            try {
+                if (goalService != null) {
+                    GameProject.MilestoneTask task = goalService.addTask(
+                        projectId, milestoneId, title, description, assignedRole, priority);
+
+                    // 【优化4】任务添加后自动通知负责 Agent 执行
+                    if (assignedRole != null && !assignedRole.isEmpty() && agentManager != null) {
+                        String targetAgentId = projectId + ":" + assignedRole;
+                        Agent targetAgent = agentManager.getAgent(targetAgentId);
+                        if (targetAgent != null && targetAgent.isAlive()) {
+                            String taskContent = String.format(
+                                "[新增任务 - 来自干预]\n\n里程碑: %s\n任务: %s\n优先级: %s\n\n描述: %s",
+                                milestoneId, title, priority, description != null ? description : "无");
+                            AgentMessage taskMsg = AgentMessage.createTask(agent.getId(), targetAgentId, taskContent);
+                            targetAgent.receiveMessage(taskMsg);
+                            return CapabilityResult.success(String.format(
+                                "任务已添加并通知 %s: %s (ID: %s)", assignedRole, title, task.getId()));
+                        }
+                    }
+                    return CapabilityResult.success(String.format("任务已添加到里程碑 [%s]: %s (ID: %s, 角色: %s)",
+                        milestoneId, title, task.getId(), assignedRole));
+                }
+                return CapabilityResult.failed("GoalService 未注入");
+            } catch (Exception e) {
+                return CapabilityResult.failed("添加任务失败: " + e.getMessage());
+            }
+        });
+
+        // 更新任务信息（干预时修改现有任务）
+        executors.put("updateTask", (agent, params) -> {
+            String milestoneId = getParam(params, "milestoneId", "");
+            String taskId = getParam(params, "taskId", "");
+            String title = getParam(params, "title", "");
+            String description = getParam(params, "description", "");
+            String assignedRole = getParam(params, "assignedRole", "");
+            String priority = getParam(params, "priority", "");
+
+            if (milestoneId.isEmpty() || taskId.isEmpty()) {
+                return CapabilityResult.failed("缺少必填参数: milestoneId 和 taskId");
+            }
+
+            String projectId = agent instanceof BaseAgent ba && ba.getCurrentProject() != null
+                ? ba.getCurrentProject().getId() : null;
+            if (projectId == null) return CapabilityResult.failed("无法确定项目 ID");
+
+            try {
+                if (goalService != null) {
+                    boolean updated = goalService.updateTask(
+                        projectId, milestoneId, taskId, title, description, assignedRole, priority);
+                    if (updated) {
+                        return CapabilityResult.success("任务已更新: " + taskId);
+                    }
+                    return CapabilityResult.failed("任务不存在: " + taskId);
+                }
+                return CapabilityResult.failed("GoalService 未注入");
+            } catch (Exception e) {
+                return CapabilityResult.failed("更新任务失败: " + e.getMessage());
+            }
+        });
+
         executors.put("selectWorkflow", (agent, params) -> {
             String criteria = getParam(params, "criteria", "");
             if (agent instanceof ProducerAgent producer) {
@@ -2622,6 +2779,54 @@ public class CapabilityExecutionEngine {
                 return CapabilityResult.success("推荐工作流: " + String.join(", ", templates));
             }
             return CapabilityResult.failed("只有制作人可以选择工作流");
+        });
+
+        // ===== 资源生成能力 =====
+
+        // 生成音乐
+        executors.put("generateMusic", (agent, params) -> {
+            return executeResourceGeneration(agent, params,
+                com.chengxun.gamemaker.engine.ResourceGenerationEngine.ResourceType.AUDIO_MUSIC);
+        });
+
+        // 生成音效
+        executors.put("generateSoundEffect", (agent, params) -> {
+            return executeResourceGeneration(agent, params,
+                com.chengxun.gamemaker.engine.ResourceGenerationEngine.ResourceType.AUDIO_SFX);
+        });
+
+        // 生成精灵图/贴图
+        executors.put("generateSprite", (agent, params) -> {
+            return executeResourceGeneration(agent, params,
+                com.chengxun.gamemaker.engine.ResourceGenerationEngine.ResourceType.IMAGE_SPRITE);
+        });
+
+        // 生成 UI 素材
+        executors.put("generateUIAsset", (agent, params) -> {
+            return executeResourceGeneration(agent, params,
+                com.chengxun.gamemaker.engine.ResourceGenerationEngine.ResourceType.IMAGE_UI);
+        });
+
+        // 调用 MCP 工具（通用外部工具调用）
+        executors.put("callMcpTool", (agent, params) -> {
+            String toolName = getParam(params, "toolName", "");
+            String arguments = getParam(params, "arguments", "");
+            if (toolName.isEmpty()) {
+                return CapabilityResult.failed("缺少必填参数: toolName");
+            }
+            if (mcpService == null) {
+                return CapabilityResult.failed("MCP 服务不可用");
+            }
+            try {
+                // 传入 agentId，让 McpService 自动注入 Token 配置
+                String result = mcpService.invokeTool(toolName, arguments, agent.getId());
+                if (result.startsWith("错误：") || result.startsWith("错误:")) {
+                    return CapabilityResult.failed(result);
+                }
+                return CapabilityResult.success("MCP 工具调用结果:\n" + result);
+            } catch (Exception e) {
+                return CapabilityResult.failed("MCP 工具调用异常: " + e.getMessage());
+            }
         });
 
         executors.put("startWorkflow", (agent, params) -> {
@@ -2861,6 +3066,121 @@ public class CapabilityExecutionEngine {
             }
         });
 
+        // ===== 知识管理能力 =====
+        executors.put("saveKnowledge", (agent, params) -> {
+            String key = getParam(params, "key", "");
+            String value = getParam(params, "value", "");
+            if (key.isEmpty() || value.isEmpty()) {
+                return CapabilityResult.failed("缺少必填参数: key 或 value");
+            }
+            if (agent instanceof BaseAgent ba) {
+                ba.saveKnowledge(key, value);
+                return CapabilityResult.success("知识已保存: " + key);
+            }
+            return CapabilityResult.failed("Agent 不支持知识保存");
+        });
+
+        executors.put("loadKnowledge", (agent, params) -> {
+            String key = getParam(params, "key", "");
+            if (key.isEmpty()) {
+                return CapabilityResult.failed("缺少必填参数: key");
+            }
+            if (agent instanceof BaseAgent ba) {
+                String value = ba.loadKnowledge(key);
+                if (value != null) {
+                    return CapabilityResult.success("知识内容: " + value);
+                }
+                // 知识不存在不是错误，返回成功但提示内容为空，让 Agent 继续工作
+                return CapabilityResult.success("知识库中暂无 [" + key + "] 的内容，请先通过 saveKnowledge 保存或 queryKnowledge 查询");
+            }
+            return CapabilityResult.failed("Agent 不支持知识加载");
+        });
+
+        executors.put("queryKnowledge", (agent, params) -> {
+            String query = getParam(params, "query", "");
+            String category = getParam(params, "category", "");
+            if (query.isEmpty()) {
+                return CapabilityResult.failed("缺少必填参数: query");
+            }
+            // queryKnowledge 通过知识进化服务实现，这里返回提示让 Agent 使用其他方式查询
+            return CapabilityResult.success("知识查询功能已激活，请在上下文中查找相关信息");
+        });
+
+        // ===== 任务执行能力 =====
+        executors.put("executeTask", (agent, params) -> {
+            String taskDescription = getParam(params, "taskDescription", "");
+            if (taskDescription.isEmpty()) {
+                return CapabilityResult.failed("缺少必填参数: taskDescription");
+            }
+            // executeTask 是一个声明性能力，实际执行由 Agent 的工作流处理
+            // 这里返回成功，让 Agent 继续执行后续步骤
+            return CapabilityResult.success("任务已接收: " + taskDescription);
+        });
+
+        // ===== 任务完成能力 =====
+        // Agent 完成任务后调用此能力，更新任务状态并通知制作人
+        executors.put("completeTask", (agent, params) -> {
+            String milestoneId = getParam(params, "milestoneId", "");
+            String taskId = getParam(params, "taskId", "");
+            String result = getParam(params, "result", "任务已完成");
+            String summary = getParam(params, "summary", "");
+
+            if (taskId.isEmpty()) {
+                return CapabilityResult.failed("缺少必填参数: taskId");
+            }
+
+            String projectId = agent instanceof BaseAgent ba && ba.getCurrentProject() != null
+                ? ba.getCurrentProject().getId() : null;
+            if (projectId == null) {
+                return CapabilityResult.failed("无法确定项目 ID");
+            }
+
+            try {
+                // 1. 更新任务状态
+                if (goalService != null) {
+                    // 如果没有提供 milestoneId，尝试从任务 ID 查找
+                    if (milestoneId.isEmpty()) {
+                        milestoneId = goalService.findMilestoneIdByTaskId(projectId, taskId);
+                    }
+
+                    if (milestoneId != null && !milestoneId.isEmpty()) {
+                        goalService.updateTaskStatus(projectId, milestoneId, taskId,
+                            GameProject.MilestoneStatus.COMPLETED, result);
+                        log.info("任务状态已更新为 COMPLETED: taskId={}, milestoneId={}", taskId, milestoneId);
+                    } else {
+                        log.warn("无法找到任务所属的里程碑: taskId={}", taskId);
+                    }
+                }
+
+                // 2. 通知制作人任务完成
+                String producerId = projectId + ":producer";
+                Agent producer = agentManager.getAgent(producerId);
+                if (producer != null && producer.isAlive()) {
+                    String notifyContent = String.format(
+                        "## 任务完成通知\n\n" +
+                        "**执行者**: %s\n" +
+                        "**任务ID**: %s\n" +
+                        "**里程碑**: %s\n\n" +
+                        "**完成结果**:\n%s\n\n" +
+                        "**工作总结**:\n%s",
+                        agent.getId(), taskId,
+                        milestoneId != null ? milestoneId : "未关联",
+                        result,
+                        summary != null && !summary.isEmpty() ? summary : "无"
+                    );
+                    AgentMessage notifyMsg = AgentMessage.createTask(
+                        agent.getId(), producerId, notifyContent);
+                    producer.receiveMessage(notifyMsg);
+                    log.info("已通知制作人任务完成: agent={}, taskId={}", agent.getId(), taskId);
+                }
+
+                return CapabilityResult.success("任务已完成并通知制作人: " + taskId);
+            } catch (Exception e) {
+                log.error("完成任务失败: taskId={}", taskId, e);
+                return CapabilityResult.failed("完成任务失败: " + e.getMessage());
+            }
+        });
+
         log.info("Registered {} default capability executors", executors.size());
     }
 
@@ -2914,6 +3234,55 @@ public class CapabilityExecutionEngine {
         }
     }
 
+    // ===== 资源生成辅助 =====
+
+    /**
+     * 执行资源生成的通用逻辑
+     * 从 Agent 的 Token 配置中获取 API 信息，调用 ResourceAssetService 生成并保存资源
+     */
+    private CapabilityResult executeResourceGeneration(Agent agent, Map<String, Object> params,
+                                                         com.chengxun.gamemaker.engine.ResourceGenerationEngine.ResourceType resourceType) {
+        String prompt = getParam(params, "prompt", "");
+        if (prompt.isEmpty()) {
+            return CapabilityResult.failed("缺少必填参数: prompt");
+        }
+
+        String projectId = agent instanceof BaseAgent ba && ba.getCurrentProject() != null
+            ? ba.getCurrentProject().getId() : null;
+        if (projectId == null) return CapabilityResult.failed("无法确定项目 ID");
+
+        if (resourceAssetService == null) {
+            return CapabilityResult.failed("资源生成服务不可用");
+        }
+
+        // 从 Agent 的 Token 配置获取 API 信息
+        String apiUrl = null;
+        String apiKey = null;
+        String model = null;
+        if (agent instanceof BaseAgent ba) {
+            apiUrl = ba.getDefinition().getApiUrl();
+            apiKey = ba.getDefinition().getApiKey();
+            model = ba.getDefinition().getModel();
+        }
+
+        // 构建请求
+        com.chengxun.gamemaker.engine.ResourceGenerationEngine.ResourceRequest request =
+            com.chengxun.gamemaker.engine.ResourceGenerationEngine.ResourceRequest.of(resourceType, prompt, apiUrl, apiKey);
+        request.model = model;
+        request.params.putAll(params);
+
+        // 执行生成
+        com.chengxun.gamemaker.engine.ResourceGenerationEngine.ResourceResult result =
+            resourceAssetService.generateAndSave(projectId, request);
+
+        if (result.success) {
+            String fileName = result.filePath.contains("/") ?
+                result.filePath.substring(result.filePath.lastIndexOf("/") + 1) : result.filePath;
+            return CapabilityResult.success(String.format("资源已生成: %s (%s)", fileName, result.mimeType));
+        }
+        return CapabilityResult.failed("资源生成失败: " + result.error);
+    }
+
     // ===== 工具方法 =====
 
     @SuppressWarnings("unchecked")
@@ -2922,6 +3291,13 @@ public class CapabilityExecutionEngine {
         Object value = params.get(key);
         if (value == null) return defaultValue;
         try {
+            // 类型兼容处理：当 AI 传入的类型与期望类型不匹配时自动转换
+            if (defaultValue instanceof String && !(value instanceof String)) {
+                return (T) String.valueOf(value);
+            }
+            if (defaultValue instanceof Boolean && value instanceof String s) {
+                return (T) Boolean.valueOf("true".equalsIgnoreCase(s));
+            }
             return (T) value;
         } catch (ClassCastException e) {
             return defaultValue;

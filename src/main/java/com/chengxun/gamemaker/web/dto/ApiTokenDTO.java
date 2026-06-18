@@ -16,8 +16,6 @@ public class ApiTokenDTO {
     private String model;
     private Integer maxTokens;
     private String status;
-    private String assignedAgentId;
-    private String assignedAgentName;
     private Long usageCount;
     private Long totalTokensUsed;
     private LocalDateTime lastUsedAt;
@@ -41,8 +39,6 @@ public class ApiTokenDTO {
         dto.setModel(token.getModel());
         dto.setMaxTokens(token.getMaxTokens());
         dto.setStatus(token.getStatus() != null ? token.getStatus().name() : null);
-        dto.setAssignedAgentId(token.getAssignedAgentId());
-        dto.setAssignedAgentName(token.getAssignedAgentName());
         dto.setUsageCount(token.getUsageCount());
         dto.setTotalTokensUsed(token.getTotalTokensUsed());
         dto.setLastUsedAt(token.getLastUsedAt());
@@ -50,7 +46,7 @@ public class ApiTokenDTO {
         dto.setDescription(token.getDescription());
         dto.setCreatedBy(token.getCreatedBy());
         dto.setCreatedAt(token.getCreatedAt());
-        dto.setAssigned(token.isAssigned());
+        dto.setAssigned(token.isInUse());
         return dto;
     }
 
@@ -75,12 +71,6 @@ public class ApiTokenDTO {
 
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
-
-    public String getAssignedAgentId() { return assignedAgentId; }
-    public void setAssignedAgentId(String assignedAgentId) { this.assignedAgentId = assignedAgentId; }
-
-    public String getAssignedAgentName() { return assignedAgentName; }
-    public void setAssignedAgentName(String assignedAgentName) { this.assignedAgentName = assignedAgentName; }
 
     public Long getUsageCount() { return usageCount; }
     public void setUsageCount(Long usageCount) { this.usageCount = usageCount; }

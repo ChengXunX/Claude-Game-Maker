@@ -53,6 +53,9 @@ public class KnowledgeEvolutionService {
     /** 已学习的模式 */
     private final Map<String, LearnedPattern> learnedPatterns = new ConcurrentHashMap<>();
 
+    /** 进化次数计数器 */
+    private final java.util.concurrent.atomic.AtomicInteger evolutionCount = new java.util.concurrent.atomic.AtomicInteger(0);
+
     public KnowledgeEvolutionService(GameKnowledgeBase knowledgeBase,
                                      GameTemplateService templateService,
                                      MemoryManager memoryManager,
@@ -168,6 +171,9 @@ public class KnowledgeEvolutionService {
         // 记录模板使用
         knowledgeBase.recordTemplateUsage(templateId, gameDescription, success, 0);
 
+        // 记录游戏学习事件
+        knowledgeBase.recordGameLearning(templateId, gameDescription, success);
+
         if (success) {
             // 提取成功模式
             GamePattern pattern = extractGamePattern(gameDescription, generatedCode, templateId);
@@ -239,10 +245,16 @@ public class KnowledgeEvolutionService {
             // 保存学习到的模式
             saveLearnedPatterns();
 
-            log.info("知识库整理完成");
+            evolutionCount.incrementAndGet();
+
+            // 记录进化使用事件
+            knowledgeBase.recordEvolution("organize", "知识库整理完成，累计 " + evolutionCount.get() + " 次", true);
+
+            log.info("知识库整理完成，累计进化次数: {}", evolutionCount.get());
 
         } catch (Exception e) {
             log.error("整理知识库失败", e);
+            knowledgeBase.recordEvolution("organize", "知识库整理失败: " + e.getMessage(), false);
         }
     }
 
@@ -272,10 +284,16 @@ public class KnowledgeEvolutionService {
             // 保存学习到的模式（每次进化后都保存，不等凌晨 2 点）
             saveLearnedPatterns();
 
-            log.info("知识自进化完成");
+            evolutionCount.incrementAndGet();
+
+            // 记录进化使用事件
+            knowledgeBase.recordEvolution("self_evolve", "自进化完成，累计 " + evolutionCount.get() + " 次", true);
+
+            log.info("知识自进化完成，累计进化次数: {}", evolutionCount.get());
 
         } catch (Exception e) {
             log.error("知识自进化失败", e);
+            knowledgeBase.recordEvolution("self_evolve", "自进化失败: " + e.getMessage(), false);
         }
     }
 
@@ -812,23 +830,29 @@ public class KnowledgeEvolutionService {
 
     /**
      * 合并重复知识
+     * 委托给 GameKnowledgeBase 执行解决方案去重合并
      */
     private void mergeDuplicateKnowledge() {
-        log.debug("合并重复知识...");
+        log.info("合并重复解决方案...");
+        knowledgeBase.mergeDuplicateSolutions();
     }
 
     /**
      * 清理过期知识
+     * 委托给 GameKnowledgeBase 执行过期归档
      */
     private void cleanupExpiredKnowledge() {
-        log.debug("清理过期知识...");
+        log.info("归档过期解决方案...");
+        knowledgeBase.archiveExpiredSolutions();
     }
 
     /**
      * 优化知识索引
+     * 委托给 GameKnowledgeBase 生成精华摘要
      */
     private void optimizeKnowledgeIndex() {
-        log.debug("优化知识索引...");
+        log.info("生成精华摘要...");
+        knowledgeBase.generateEssences();
     }
 
     /**
@@ -967,50 +991,63 @@ public class KnowledgeEvolutionService {
      * @param agentRole Agent 角色（用于角色相关知识过滤）
      * @return 格式化的知识文本，可直接注入 prompt
      */
+    /** 知识查询最大输出长度 */
+    private static final int MAX_KNOWLEDGE_QUERY_LENGTH = 1000;
+
     public String queryRelevantKnowledge(String query, String agentRole) {
         if (query == null || query.isEmpty()) return "";
 
         StringBuilder knowledge = new StringBuilder();
         String lowerQuery = query.toLowerCase();
 
-        // 1. 搜索已学习的模式
+        // 1. 搜索已学习的模式（最多 3 条）
         List<LearnedPattern> matchedPatterns = learnedPatterns.values().stream()
             .filter(p -> {
                 String key = p.getKey().toLowerCase();
                 return lowerQuery.contains(key) || key.contains(lowerQuery.split("\\s+")[0]);
             })
             .sorted((a, b) -> Integer.compare(b.getFrequency(), a.getFrequency()))
-            .limit(5)
+            .limit(3)
             .toList();
 
         if (!matchedPatterns.isEmpty()) {
-            knowledge.append("### Learned Patterns\n\n");
+            knowledge.append("### 学习到的模式\n\n");
             for (LearnedPattern pattern : matchedPatterns) {
-                knowledge.append(String.format("- **%s** (frequency: %d, sources: %s)\n",
-                    pattern.getKey(), pattern.getFrequency(), String.join(", ", pattern.getSources())));
+                knowledge.append(String.format("- **%s** (频率: %d)\n",
+                    pattern.getKey(), pattern.getFrequency()));
             }
             knowledge.append("\n");
         }
 
-        // 2. 搜索解决方案
+        // 2. 搜索解决方案（优先使用精华摘要，fallback 到 Top 3 精选方案）
         Map<String, List<GameKnowledgeBase.Solution>> allSolutions = knowledgeBase.getAllSolutions();
         for (Map.Entry<String, List<GameKnowledgeBase.Solution>> entry : allSolutions.entrySet()) {
             String problemType = entry.getKey();
             if (lowerQuery.contains(problemType.toLowerCase()) || problemType.toLowerCase().contains(lowerQuery.split("\\s+")[0])) {
-                List<GameKnowledgeBase.Solution> sols = entry.getValue();
-                if (!sols.isEmpty()) {
-                    knowledge.append("### Known Solutions: ").append(problemType).append("\n\n");
-                    for (GameKnowledgeBase.Solution sol : sols.stream().limit(3).toList()) {
-                        knowledge.append(String.format("- **%s**: %s\n",
-                            sol.getProblemDescription().length() > 80 ? sol.getProblemDescription().substring(0, 80) + "..." : sol.getProblemDescription(),
-                            sol.getSolution().length() > 200 ? sol.getSolution().substring(0, 200) + "..." : sol.getSolution()));
+                // 先尝试精华摘要
+                String essence = knowledgeBase.getEssence(problemType);
+                if (essence != null && !essence.isEmpty()) {
+                    knowledge.append("### 已知方案: ").append(problemType).append(" (精华)\n\n");
+                    // 精华内容已较精简，取前 500 字符
+                    String trimmed = essence.length() > 500 ? essence.substring(0, 500) + "..." : essence;
+                    knowledge.append(trimmed).append("\n\n");
+                } else {
+                    // fallback 到精选 Top 3
+                    List<GameKnowledgeBase.Solution> topSols = knowledgeBase.getTopSolutions(problemType, 3);
+                    if (!topSols.isEmpty()) {
+                        knowledge.append("### 已知方案: ").append(problemType).append("\n\n");
+                        for (GameKnowledgeBase.Solution sol : topSols) {
+                            knowledge.append(String.format("- **%s**: %s\n",
+                                sol.getProblemDescription().length() > 60 ? sol.getProblemDescription().substring(0, 60) + "..." : sol.getProblemDescription(),
+                                sol.getSolution().length() > 150 ? sol.getSolution().substring(0, 150) + "..." : sol.getSolution()));
+                        }
+                        knowledge.append("\n");
                     }
-                    knowledge.append("\n");
                 }
             }
         }
 
-        // 3. 搜索最佳实践
+        // 3. 搜索最佳实践（最多 2 条）
         List<GameKnowledgeBase.BestPractice> matchedPractices = knowledgeBase.getAllBestPractices().stream()
             .filter(bp -> {
                 String combined = (bp.getCategory() + " " + bp.getTitle() + " " + bp.getContent()).toLowerCase();
@@ -1019,20 +1056,25 @@ public class KnowledgeEvolutionService {
                 }
                 return false;
             })
-            .limit(3)
+            .limit(2)
             .toList();
 
         if (!matchedPractices.isEmpty()) {
-            knowledge.append("### Best Practices\n\n");
+            knowledge.append("### 最佳实践\n\n");
             for (GameKnowledgeBase.BestPractice bp : matchedPractices) {
                 knowledge.append(String.format("- **%s** (%s): %s\n",
                     bp.getTitle(), bp.getCategory(),
-                    bp.getContent().length() > 200 ? bp.getContent().substring(0, 200) + "..." : bp.getContent()));
+                    bp.getContent().length() > 150 ? bp.getContent().substring(0, 150) + "..." : bp.getContent()));
             }
             knowledge.append("\n");
         }
 
-        return knowledge.toString();
+        // 总体截断保护
+        String result = knowledge.toString();
+        if (result.length() > MAX_KNOWLEDGE_QUERY_LENGTH) {
+            result = result.substring(0, MAX_KNOWLEDGE_QUERY_LENGTH) + "\n...(已截断)";
+        }
+        return result;
     }
 
     /**
@@ -1263,20 +1305,27 @@ public class KnowledgeEvolutionService {
     public String queryVerificationKnowledge(String query) {
         StringBuilder knowledge = new StringBuilder();
 
-        // 1. 查询验证相关的解决方案
+        // 1. 查询验证相关的解决方案（优先精华，fallback 精选）
         Map<String, List<GameKnowledgeBase.Solution>> allSolutions = knowledgeBase.getAllSolutions();
         for (Map.Entry<String, List<GameKnowledgeBase.Solution>> entry : allSolutions.entrySet()) {
             String problemType = entry.getKey();
             if (problemType.contains("game_") || problemType.contains("verification")) {
-                List<GameKnowledgeBase.Solution> solutions = entry.getValue();
-                if (!solutions.isEmpty()) {
-                    knowledge.append(String.format("### %s\n\n", problemType));
-                    for (GameKnowledgeBase.Solution sol : solutions.stream().limit(3).toList()) {
-                        knowledge.append(String.format("- **问题**: %s\n  **解决方案**: %s\n\n",
-                            sol.getProblemDescription().length() > 100
-                                ? sol.getProblemDescription().substring(0, 100) + "..." : sol.getProblemDescription(),
-                            sol.getSolution().length() > 200
-                                ? sol.getSolution().substring(0, 200) + "..." : sol.getSolution()));
+                String essence = knowledgeBase.getEssence(problemType);
+                if (essence != null && !essence.isEmpty()) {
+                    knowledge.append(String.format("### %s (精华)\n\n", problemType));
+                    String trimmed = essence.length() > 400 ? essence.substring(0, 400) + "..." : essence;
+                    knowledge.append(trimmed).append("\n\n");
+                } else {
+                    List<GameKnowledgeBase.Solution> topSols = knowledgeBase.getTopSolutions(problemType, 3);
+                    if (!topSols.isEmpty()) {
+                        knowledge.append(String.format("### %s\n\n", problemType));
+                        for (GameKnowledgeBase.Solution sol : topSols) {
+                            knowledge.append(String.format("- **问题**: %s\n  **解决方案**: %s\n\n",
+                                sol.getProblemDescription().length() > 100
+                                    ? sol.getProblemDescription().substring(0, 100) + "..." : sol.getProblemDescription(),
+                                sol.getSolution().length() > 200
+                                    ? sol.getSolution().substring(0, 200) + "..." : sol.getSolution()));
+                        }
                     }
                 }
             }
@@ -1466,6 +1515,20 @@ public class KnowledgeEvolutionService {
     }
 
     /**
+     * 记录 Dream 知识提取结果
+     * 更新已处理文档计数，使前端能正确显示提取结果
+     *
+     * @param agentId Agent ID
+     * @param projectId 项目 ID
+     * @param savedCount 保存的知识条数
+     */
+    public void recordDreamExtraction(String agentId, String projectId, int savedCount) {
+        String key = "dream_" + projectId + "_" + agentId;
+        processedDocuments.put(key, String.valueOf(System.currentTimeMillis()));
+        log.info("Dream 提取已记录: agent={}, project={}, saved={}", agentId, projectId, savedCount);
+    }
+
+    /**
      * 获取知识进化统计信息
      *
      * @return 统计数据 Map
@@ -1479,6 +1542,7 @@ public class KnowledgeEvolutionService {
         stats.put("processedDocumentsCount", processedDocuments.size());
         stats.put("learnedSkillsCount", skillManager.getAllGlobalSkills().stream()
             .filter(s -> "learned".equals(s.getCategory())).count());
+        stats.put("evolutionCount", evolutionCount.get());
         return stats;
     }
 
@@ -1927,19 +1991,26 @@ public class KnowledgeEvolutionService {
             experience.append("\n");
         }
 
-        // 5. 搜索失败教训
+        // 5. 搜索失败教训（优先精华，fallback 精选）
         Map<String, List<GameKnowledgeBase.Solution>> allSolutions = knowledgeBase.getAllSolutions();
         for (Map.Entry<String, List<GameKnowledgeBase.Solution>> entry : allSolutions.entrySet()) {
             if (entry.getKey().toLowerCase().contains(lowerType) || lowerType.contains(entry.getKey().toLowerCase())) {
-                List<GameKnowledgeBase.Solution> solutions = entry.getValue();
-                if (!solutions.isEmpty()) {
-                    experience.append("### 同类项目失败教训\n\n");
-                    for (GameKnowledgeBase.Solution sol : solutions.stream().limit(2).toList()) {
-                        experience.append(String.format("- 问题: %s\n  解决: %s\n",
-                            sol.getProblemDescription().length() > 80 ? sol.getProblemDescription().substring(0, 80) + "..." : sol.getProblemDescription(),
-                            sol.getSolution().length() > 150 ? sol.getSolution().substring(0, 150) + "..." : sol.getSolution()));
+                String essence = knowledgeBase.getEssence(entry.getKey());
+                if (essence != null && !essence.isEmpty()) {
+                    experience.append("### 同类项目经验 (精华)\n\n");
+                    String trimmed = essence.length() > 300 ? essence.substring(0, 300) + "..." : essence;
+                    experience.append(trimmed).append("\n\n");
+                } else {
+                    List<GameKnowledgeBase.Solution> topSols = knowledgeBase.getTopSolutions(entry.getKey(), 2);
+                    if (!topSols.isEmpty()) {
+                        experience.append("### 同类项目失败教训\n\n");
+                        for (GameKnowledgeBase.Solution sol : topSols) {
+                            experience.append(String.format("- 问题: %s\n  解决: %s\n",
+                                sol.getProblemDescription().length() > 80 ? sol.getProblemDescription().substring(0, 80) + "..." : sol.getProblemDescription(),
+                                sol.getSolution().length() > 150 ? sol.getSolution().substring(0, 150) + "..." : sol.getSolution()));
+                        }
+                        experience.append("\n");
                     }
-                    experience.append("\n");
                 }
             }
         }
@@ -1955,32 +2026,50 @@ public class KnowledgeEvolutionService {
      * @param currentProjectId 当前项目ID
      * @return 格式化的模式摘要
      */
+    /** 跨项目模式摘要最大长度 */
+    private static final int MAX_PATTERN_SUMMARY_LENGTH = 800;
+
     public String buildCrossProjectPatternSummary(String gameType, String currentProjectId) {
         StringBuilder summary = new StringBuilder();
 
-        // 获取跨项目知识推荐
+        // 获取跨项目知识推荐（最多 3 条）
         List<CrossProjectKnowledge> recommendations = getCrossProjectKnowledge(
             currentProjectId, gameType, gameType);
 
         if (!recommendations.isEmpty()) {
             summary.append("### 跨项目成功模式\n\n");
-            summary.append("**以下是其他同类项目的成功经验，请参考：**\n\n");
-            for (CrossProjectKnowledge knowledge : recommendations) {
+            int limit = Math.min(recommendations.size(), 3);
+            for (int i = 0; i < limit; i++) {
+                CrossProjectKnowledge knowledge = recommendations.get(i);
+
+                // 跳过无效的知识记录
+                if (knowledge.patternType == null || knowledge.description == null) {
+                    continue;
+                }
+
+                String desc = knowledge.description.length() > 80
+                    ? knowledge.description.substring(0, 80) + "..." : knowledge.description;
                 summary.append(String.format("- **%s** (频率: %d): %s\n",
-                    knowledge.patternType, knowledge.frequency,
-                    knowledge.description != null && knowledge.description.length() > 100
-                        ? knowledge.description.substring(0, 100) + "..." : knowledge.description));
+                    knowledge.patternType, knowledge.frequency, desc));
             }
             summary.append("\n");
         }
 
-        // 添加相似项目经验
+        // 添加相似项目经验（截断保护）
         String similarExperiences = querySimilarProjectExperiences(gameType, currentProjectId);
         if (!similarExperiences.isEmpty()) {
+            if (similarExperiences.length() > 500) {
+                similarExperiences = similarExperiences.substring(0, 500) + "...";
+            }
             summary.append(similarExperiences);
         }
 
-        return summary.toString();
+        // 总体截断保护
+        String result = summary.toString();
+        if (result.length() > MAX_PATTERN_SUMMARY_LENGTH) {
+            result = result.substring(0, MAX_PATTERN_SUMMARY_LENGTH) + "\n...(已截断)";
+        }
+        return result;
     }
 
     /**

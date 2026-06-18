@@ -90,10 +90,12 @@ public class SecurityConfig {
                 .requestMatchers("/api/install/**").permitAll() // 安装向导允许匿名访问
                 .requestMatchers("/api/internal/**").permitAll() // 内部API允许匿名访问（MCP服务器使用）
                 .requestMatchers("/feishu/**").permitAll() // 飞书webhook允许匿名访问
+                .requestMatchers("/api/feishu/**").permitAll() // 飞书回调API允许匿名访问
                 .requestMatchers("/dingtalk/**").permitAll() // 钉钉配置允许匿名访问
                 .requestMatchers("/api/dingtalk/**").permitAll() // 钉钉配置允许匿名访问
                 .requestMatchers("/api/dingtalk-bot/**").permitAll() // 钉钉机器人回调允许匿名访问
                 .requestMatchers("/ws/**").permitAll() // WebSocket允许匿名访问
+                .requestMatchers("/error").permitAll() // 错误页面允许匿名访问（SSE async dispatch需要）
                 .anyRequest().authenticated() // 其他API需要认证
             )
             .sessionManagement(session -> session

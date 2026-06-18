@@ -40,10 +40,22 @@ public class AgentContext {
         public AgentContext build() { return ctx; }
     }
 
+    /** 工作记忆最大条目数（宽松限制，避免丢失重要信息） */
+    private static final int MAX_WORKING_MEMORY_SIZE = 50;
+
     public void addWorkingMemory(String key, String value) {
+        if (key == null || value == null) return;
+
+        // 不截断值，保留完整信息给 Agent 参考
+
+        // 移除同 key 的旧条目
         workingMemory.removeIf(item -> item.getKey().equals(key));
+
+        // 添加新条目
         workingMemory.add(new WorkingMemoryItem(key, value, LocalDateTime.now()));
-        if (workingMemory.size() > 50) {
+
+        // 只在超出限制时清理最旧的条目
+        while (workingMemory.size() > MAX_WORKING_MEMORY_SIZE) {
             workingMemory.remove(0);
         }
     }

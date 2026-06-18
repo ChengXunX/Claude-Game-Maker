@@ -31,7 +31,7 @@
           </div>
           <div class="stat-info">
             <div class="stat-value">{{ stats.assigned || 0 }}</div>
-            <div class="stat-label">已绑定</div>
+            <div class="stat-label">使用中</div>
           </div>
         </el-card>
       </el-col>
@@ -70,9 +70,21 @@
         </el-table-column>
         <el-table-column prop="apiUrl" label="API URL" min-width="160" show-overflow-tooltip />
         <el-table-column prop="model" label="模型" width="130" />
+        <el-table-column label="类型" width="100">
+          <template #default="{ row }">
+            <el-tag :type="getResourceTypeTag(row.resourceType || 'TEXT')" size="small">
+              {{ getResourceTypeLabel(row.resourceType || 'TEXT') }}
+            </el-tag>
+          </template>
+        </el-table-column>
         <el-table-column label="上下文窗口" width="100">
           <template #default="{ row }">
             {{ formatContextWindow(row.contextWindow) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="最大Token" width="100">
+          <template #default="{ row }">
+            {{ formatContextWindow(row.maxTokens) }}
           </template>
         </el-table-column>
         <el-table-column label="适用角色" min-width="150">
@@ -104,10 +116,36 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="绑定 Agent" width="130">
+        <el-table-column label="配额" width="200">
           <template #default="{ row }">
-            <span v-if="row.assignedAgentName">{{ row.assignedAgentName }}</span>
-            <span v-else class="text-muted">未绑定</span>
+            <div v-if="row.quotaType === 'UNLIMITED'" class="quota-info">
+              <el-tag type="success" size="small">无限制</el-tag>
+            </div>
+            <div v-else class="quota-info">
+              <div class="quota-bar">
+                <el-progress
+                  :percentage="getQuotaPercent(row)"
+                  :color="getQuotaColor(row)"
+                  :stroke-width="8"
+                  :show-text="false"
+                />
+              </div>
+              <span class="quota-text">
+                {{ row.quotaType === 'SLIDING_WINDOW' ? '窗口' : '总量' }}:
+                {{ formatTokens(getQuotaRemaining(row)) }} / {{ formatTokens(row.quotaTotal) }}
+              </span>
+              <span v-if="row.windowSeconds > 0" class="quota-window">
+                ({{ Math.floor(row.windowSeconds / 3600) }}h窗口)
+              </span>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="并发" width="80">
+          <template #default="{ row }">
+            <span v-if="row.maxConcurrentAgents > 0" :class="getConcurrentClass(row)">
+              {{ row._currentConcurrent || 0 }}/{{ row.maxConcurrentAgents }}
+            </span>
+            <span v-else class="text-muted">不限</span>
           </template>
         </el-table-column>
         <el-table-column label="用量" width="100">
@@ -119,8 +157,7 @@
         <el-table-column label="操作" width="200" fixed="right">
           <template #default="{ row }">
             <el-button type="primary" size="small" text @click="openEditDialog(row)">编辑</el-button>
-            <el-button v-if="!row.assignedAgentId" type="success" size="small" text @click="openAssignDialog(row)">分配</el-button>
-            <el-button v-else type="warning" size="small" text @click="handleUnassign(row)">解绑</el-button>
+            <el-button type="success" size="small" text @click="openAssignDialog(row)">应用到Agent</el-button>
             <el-button type="danger" size="small" text @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
@@ -192,6 +229,55 @@
           </el-radio-group>
           <div class="form-tip">Agent 专用 Token 不会分配给 AI 助手，AI 助手专用 Token 不会分配给 Agent</div>
         </el-form-item>
+        <el-form-item label="提供商类型">
+          <el-select v-model="tokenForm.providerType" style="width: 100%" @change="onProviderChange">
+            <el-option value="ANTHROPIC" label="Anthropic Claude" />
+            <el-option value="OPENAI_COMPATIBLE" label="OpenAI 兼容（DeepSeek/MiniMax/智谱等）" />
+            <el-option value="SUNO" label="Suno 音乐生成" />
+            <el-option value="ELEVENLABS" label="ElevenLabs 音效生成" />
+            <el-option value="DALL_E" label="DALL-E 图片生成" />
+            <el-option value="STABILITY" label="Stability AI (Stable Diffusion)" />
+            <el-option value="ZHIPU_IMAGE" label="智谱图片生成" />
+            <el-option value="CUSTOM_RESOURCE" label="自定义资源 API" />
+          </el-select>
+          <div class="form-tip">选择 Token 对应的 AI 服务提供商</div>
+        </el-form-item>
+        <el-form-item label="内容类型">
+          <el-radio-group v-model="tokenForm.resourceType">
+            <el-radio value="TEXT">文本/代码</el-radio>
+            <el-radio value="AUDIO">音频</el-radio>
+            <el-radio value="IMAGE">图片</el-radio>
+            <el-radio value="MULTIMODAL">多模态</el-radio>
+          </el-radio-group>
+          <div class="form-tip">文本/代码用于代码类 Agent，音频/图片用于资源类 Agent（audio-dev、tech-artist、ui-dev）</div>
+        </el-form-item>
+        <el-divider content-position="left">配额设置</el-divider>
+        <el-form-item label="配额类型">
+          <el-select v-model="tokenForm.quotaType" style="width: 100%">
+            <el-option value="UNLIMITED" label="无限制" />
+            <el-option value="TOTAL" label="总量配额" />
+            <el-option value="SLIDING_WINDOW" label="滑动窗口" />
+          </el-select>
+          <div class="form-tip">
+            <span v-if="tokenForm.quotaType === 'UNLIMITED'">不限制使用量，适合无配额限制的平台</span>
+            <span v-else-if="tokenForm.quotaType === 'TOTAL'">设置总配额量，用完即止（如月度配额）</span>
+            <span v-else>滑动窗口内限额，窗口过后自动恢复（如火山引擎5小时窗口）</span>
+          </div>
+        </el-form-item>
+        <el-form-item v-if="tokenForm.quotaType !== 'UNLIMITED'" label="配额总量">
+          <el-input-number v-model="tokenForm.quotaTotal" :min="1000" :step="10000" style="width: 100%" />
+          <div class="form-tip">Token 数量上限</div>
+        </el-form-item>
+        <el-form-item v-if="tokenForm.quotaType === 'SLIDING_WINDOW'" label="窗口时长">
+          <el-input-number v-model="tokenForm.windowHours" :min="1" :max="168" :step="1" />
+          <span style="margin-left: 8px">小时</span>
+          <div class="form-tip">滑动窗口时长，窗口内的使用量不超过配额总量</div>
+        </el-form-item>
+        <el-form-item label="最大并发">
+          <el-input-number v-model="tokenForm.maxConcurrentAgents" :min="0" :max="20" />
+          <span style="margin-left: 8px">个 Agent（0=不限）</span>
+          <div class="form-tip">同时使用该 Token 的最大 Agent 数量，防止并发过高导致卡顿</div>
+        </el-form-item>
         <el-form-item label="描述">
           <el-input v-model="tokenForm.description" type="textarea" :rows="2" placeholder="备注信息" />
         </el-form-item>
@@ -203,8 +289,11 @@
       </template>
     </el-dialog>
 
-    <!-- 分配对话框 -->
-    <el-dialog v-model="assignDialogVisible" title="分配 Token 给 Agent" width="500px">
+    <!-- 应用到 Agent 对话框（池化模式） -->
+    <el-dialog v-model="assignDialogVisible" title="应用 Token 到 Agent" width="500px">
+      <el-alert type="info" :closable="false" style="margin-bottom: 16px">
+        池化模式：Token 可以同时被多个 Agent 使用，不做排他绑定
+      </el-alert>
       <el-form :model="assignForm" label-width="120px">
         <el-form-item label="Token">
           <el-input :value="assignForm.tokenName" disabled />
@@ -234,7 +323,7 @@
       </el-form>
       <template #footer>
         <el-button @click="assignDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="handleAssignSubmit" :loading="assigning">确认分配</el-button>
+        <el-button type="primary" @click="handleAssignSubmit" :loading="assigning">确认应用</el-button>
       </template>
     </el-dialog>
   </div>
@@ -262,7 +351,9 @@ const activePlatform = ref('')
 
 const tokenForm = ref({
   name: '', apiKey: '', apiUrl: '', model: '', maxTokens: 4096, contextWindow: 200000,
-  agentTagsArray: [], priority: 10, description: '', purpose: 'AGENT'
+  agentTagsArray: [], priority: 10, description: '', purpose: 'AGENT',
+  providerType: 'ANTHROPIC', resourceType: 'TEXT',
+  quotaType: 'UNLIMITED', quotaTotal: 0, windowHours: 5, maxConcurrentAgents: 0
 })
 
 // 分配对话框
@@ -427,6 +518,14 @@ const getRoleLabel = (role) => {
   return found ? found.label : role
 }
 
+const getResourceTypeLabel = (type) => ({
+  TEXT: '文本', AUDIO: '音频', IMAGE: '图片', MULTIMODAL: '多模态'
+}[type] || type)
+
+const getResourceTypeTag = (type) => ({
+  TEXT: '', AUDIO: 'warning', IMAGE: 'success', MULTIMODAL: 'info'
+}[type] || 'info')
+
 const getPriorityType = (p) => {
   if (!p || p >= 10) return 'info'
   if (p <= 3) return 'danger'
@@ -447,9 +546,43 @@ const getPurposeType = (purpose) => {
 const parseTags = (tags) => tags ? tags.split(',').map(t => t.trim()).filter(t => t) : []
 
 const formatTokens = (n) => {
+  if (n === -1 || n === null || n === undefined) return '-'
   if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M'
   if (n >= 1000) return (n / 1000).toFixed(1) + 'K'
   return String(n)
+}
+
+/** 获取 Token 余量百分比（0-100） */
+const getQuotaPercent = (row) => {
+  if (!row.quotaTotal || row.quotaTotal <= 0) return 100
+  const remaining = getQuotaRemaining(row)
+  return Math.min(100, Math.round(remaining / row.quotaTotal * 100))
+}
+
+/** 获取 Token 剩余量 */
+const getQuotaRemaining = (row) => {
+  if (row.quotaType === 'UNLIMITED') return -1
+  if (!row.quotaTotal) return 0
+  if (row.quotaType === 'TOTAL') return Math.max(0, row.quotaTotal - (row.totalTokensUsed || 0))
+  // SLIDING_WINDOW: 简化展示，实际余量由后端计算
+  return row.quotaTotal
+}
+
+/** 获取余量进度条颜色 */
+const getQuotaColor = (row) => {
+  const percent = getQuotaPercent(row)
+  if (percent > 50) return '#67c23a'
+  if (percent > 20) return '#e6a23c'
+  return '#f56c6c'
+}
+
+/** 获取并发状态样式 */
+const getConcurrentClass = (row) => {
+  if (!row.maxConcurrentAgents) return ''
+  const current = row._currentConcurrent || 0
+  if (current >= row.maxConcurrentAgents) return 'text-danger'
+  if (current >= row.maxConcurrentAgents * 0.8) return 'text-warning'
+  return ''
 }
 
 const formatContextWindow = (n) => {
@@ -492,7 +625,9 @@ const openCreateDialog = () => {
   activePlatform.value = ''
   tokenForm.value = {
     name: '', apiKey: '', apiUrl: '', model: '', maxTokens: 4096, contextWindow: 200000,
-    agentTagsArray: [], priority: 10, description: '', purpose: 'AGENT'
+    agentTagsArray: [], priority: 10, description: '', purpose: 'AGENT',
+    providerType: 'ANTHROPIC', resourceType: 'TEXT',
+    quotaType: 'UNLIMITED', quotaTotal: 0, windowHours: 5, maxConcurrentAgents: 0
   }
   dialogVisible.value = true
 }
@@ -512,7 +647,13 @@ const openEditDialog = (token) => {
     agentTagsArray: parseTags(token.agentTags),
     priority: token.priority || 10,
     description: token.description || '',
-    purpose: token.purpose || 'AGENT'
+    purpose: token.purpose || 'AGENT',
+    providerType: token.providerType || 'ANTHROPIC',
+    resourceType: token.resourceType || 'TEXT',
+    quotaType: token.quotaType || 'UNLIMITED',
+    quotaTotal: token.quotaTotal || 0,
+    windowHours: token.windowSeconds ? Math.floor(token.windowSeconds / 3600) : 5,
+    maxConcurrentAgents: token.maxConcurrentAgents || 0
   }
   dialogVisible.value = true
 }
@@ -525,9 +666,11 @@ const handleSave = async () => {
   try {
     const data = {
       ...tokenForm.value,
-      agentTags: tokenForm.value.agentTagsArray.join(',')
+      agentTags: tokenForm.value.agentTagsArray.join(','),
+      windowSeconds: (tokenForm.value.windowHours || 0) * 3600
     }
     delete data.agentTagsArray
+    delete data.windowHours
 
     if (isEdit.value) {
       if (!data.apiKey) delete data.apiKey
@@ -567,11 +710,34 @@ const handleTestConnection = async () => {
   }
 }
 
+// 提供商变更时自动设置内容类型和默认值
+const onProviderChange = (provider) => {
+  const presets = {
+    ANTHROPIC: { resourceType: 'TEXT', apiUrl: 'https://api.anthropic.com', model: 'claude-sonnet-4-20250514' },
+    OPENAI_COMPATIBLE: { resourceType: 'TEXT', apiUrl: '', model: '' },
+    SUNO: { resourceType: 'AUDIO', apiUrl: 'https://api.suno.ai', model: '' },
+    ELEVENLABS: { resourceType: 'AUDIO', apiUrl: 'https://api.elevenlabs.io', model: 'eleven_multilingual_v2' },
+    DALL_E: { resourceType: 'IMAGE', apiUrl: 'https://api.openai.com', model: 'dall-e-3' },
+    STABILITY: { resourceType: 'IMAGE', apiUrl: 'https://api.stability.ai', model: 'stable-diffusion-xl-1024-v1-0' },
+    ZHIPU_IMAGE: { resourceType: 'IMAGE', apiUrl: 'https://open.bigmodel.cn', model: 'cogview-3' },
+    CUSTOM_RESOURCE: { resourceType: 'IMAGE' }
+  }
+  const preset = presets[provider]
+  if (preset) {
+    // 只在内容类型还是默认值 TEXT 时才自动设置，用户已手动选择的不覆盖
+    if (tokenForm.value.resourceType === 'TEXT' || !tokenForm.value.resourceType) {
+      tokenForm.value.resourceType = preset.resourceType
+    }
+    if (preset.apiUrl && !tokenForm.value.apiUrl) tokenForm.value.apiUrl = preset.apiUrl
+    if (preset.model && !tokenForm.value.model) tokenForm.value.model = preset.model
+  }
+}
+
 const openAssignDialog = (token) => {
   assignForm.value = {
     tokenId: token.id,
     tokenName: token.name,
-    agentId: token.assignedAgentId || '',
+    agentId: '',
     activation: 'immediate'
   }
   assignDialogVisible.value = true
@@ -582,24 +748,13 @@ const handleAssignSubmit = async () => {
   assigning.value = true
   try {
     await tokenApi.assign(assignForm.value.tokenId, assignForm.value.agentId, assignForm.value.activation)
-    ElMessage.success('Token 已分配')
+    ElMessage.success('Token 已应用到 Agent')
     assignDialogVisible.value = false
     loadData()
   } catch (e) {
-    ElMessage.error('分配失败')
+    ElMessage.error('操作失败')
   } finally {
     assigning.value = false
-  }
-}
-
-const handleUnassign = async (token) => {
-  try {
-    await ElMessageBox.confirm(`确定要解绑 Token "${token.name}" 吗？`, '确认', { type: 'warning' })
-    await tokenApi.unassign(token.id)
-    ElMessage.success('已解绑')
-    loadData()
-  } catch (e) {
-    if (e !== 'cancel') ElMessage.error('操作失败')
   }
 }
 
@@ -649,4 +804,12 @@ onMounted(() => loadData())
   .stat-value { font-size: 20px; }
   .card-header { flex-direction: column; align-items: flex-start; }
 }
+.quota-info { display: flex; flex-direction: column; gap: 4px; }
+.quota-bar { width: 100%; }
+.quota-bar :deep(.el-progress-bar__outer) { border-radius: 4px; }
+.quota-bar :deep(.el-progress-bar__inner) { border-radius: 4px; }
+.quota-text { font-size: 11px; color: #606266; }
+.quota-window { font-size: 11px; color: #909399; }
+.text-danger { color: #f56c6c; font-weight: bold; }
+.text-warning { color: #e6a23c; }
 </style>

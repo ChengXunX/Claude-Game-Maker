@@ -136,6 +136,12 @@ const routes = [
         meta: { title: '项目列表', icon: 'Folder', group: '项目管理', permission: 'projects:view' }
       },
       {
+        path: 'projects/:projectId/supervision',
+        name: 'SupervisionReport',
+        component: () => import('@/views/projects/supervision.vue'),
+        meta: { title: '督查报告', hidden: true }
+      },
+      {
         path: 'game-templates',
         name: 'GameTemplates',
         component: () => import('@/views/game-templates/index.vue'),
@@ -152,6 +158,30 @@ const routes = [
         name: 'KnowledgeEvolution',
         component: () => import('@/views/knowledge-evolution/index.vue'),
         meta: { title: '知识进化', icon: 'MagicStick', group: '项目管理', permission: 'projects:manage' }
+      },
+      {
+        path: 'knowledge-graph',
+        name: 'KnowledgeGraph',
+        component: () => import('@/views/knowledge-graph/index.vue'),
+        meta: { title: '知识图谱', icon: 'Share', group: '项目管理', permission: 'knowledge:graph' }
+      },
+      {
+        path: 'quality-prediction',
+        name: 'QualityPrediction',
+        component: () => import('@/views/quality-prediction/index.vue'),
+        meta: { title: '质量预测', icon: 'TrendCharts', group: '项目管理', permission: 'quality:view' }
+      },
+      {
+        path: 'iteration-adapt',
+        name: 'IterationAdapt',
+        component: () => import('@/views/iteration-adapt/index.vue'),
+        meta: { title: '迭代适应', icon: 'MagicStick', group: '项目管理', permission: 'iteration:view' }
+      },
+      {
+        path: 'multi-turn',
+        name: 'MultiTurn',
+        component: () => import('@/views/multi-turn/index.vue'),
+        meta: { title: '多轮推理', icon: 'Connection', group: 'Agent管理', permission: 'reasoning:view' }
       },
       {
         path: 'code/:projectId',

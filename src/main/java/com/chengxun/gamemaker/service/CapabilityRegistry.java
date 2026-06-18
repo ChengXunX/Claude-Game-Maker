@@ -36,6 +36,9 @@ public class CapabilityRegistry {
 
     private static final Logger log = LoggerFactory.getLogger(CapabilityRegistry.class);
 
+    /** JSON 解析器 */
+    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper = new com.fasterxml.jackson.databind.ObjectMapper();
+
     /** 读写锁，保护缓存的并发访问 */
     private final ReadWriteLock lock = new ReentrantReadWriteLock();
 
@@ -57,6 +60,34 @@ public class CapabilityRegistry {
 
     /** 能力变更历史记录 */
     private final List<CapabilityChangeRecord> changeHistory = new ArrayList<>();
+
+    /** 能力变更监听器列表（用于 PromptCacheService 等组件感知变更） */
+    private final List<java.util.function.Consumer<String>> changeListeners = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    /**
+     * 注册能力变更监听器
+     * 当能力定义发生变更时，监听器收到变更的角色名称
+     *
+     * @param listener 监听器函数，参数为变更的 agentRole
+     */
+    public void addChangeListener(java.util.function.Consumer<String> listener) {
+        changeListeners.add(listener);
+    }
+
+    /**
+     * 通知所有监听器能力已变更
+     *
+     * @param agentRole 变更的角色
+     */
+    private void notifyChangeListeners(String agentRole) {
+        for (java.util.function.Consumer<String> listener : changeListeners) {
+            try {
+                listener.accept(agentRole);
+            } catch (Exception e) {
+                log.debug("Change listener error: {}", e.getMessage());
+            }
+        }
+    }
 
     public CapabilityRegistry(AgentCapabilityRepository capabilityRepository) {
         this.capabilityRepository = capabilityRepository;
@@ -120,11 +151,11 @@ public class CapabilityRegistry {
                 return projectCap.get();
             }
         }
-        // 再查全局
-        Optional<AgentCapability> globalCap = capabilityRepository
+        // 再查全局（可能存在重复记录，取第一条）
+        List<AgentCapability> globalCaps = capabilityRepository
             .findByCapabilityNameAndAgentRoleAndProjectIdIsNull(capabilityName, agentRole);
-        if (globalCap.isPresent() && globalCap.get().isEnabled()) {
-            return globalCap.get();
+        if (!globalCaps.isEmpty() && globalCaps.get(0).isEnabled()) {
+            return globalCaps.get(0);
         }
         return null;
     }
@@ -211,20 +242,16 @@ public class CapabilityRegistry {
 
         List<String> errors = new ArrayList<>();
         try {
-            // 解析 paramSchema: {"name":"string|required","role":"enum:server-dev,client-dev|required"}
-            // 简化实现：只检查必填参数
+            // 使用 JSON 解析避免 enum 值中的逗号干扰
             String schema = cap.getParamSchema();
-            if (schema.contains("required")) {
-                // 提取 required 字段名
-                String[] parts = schema.replace("{", "").replace("}", "").split(",");
-                for (String part : parts) {
-                    part = part.trim();
-                    if (part.contains("required")) {
-                        // 提取字段名
-                        String fieldName = part.split(":")[0].trim()
-                            .replace("\"", "").replace("'", "").trim();
-                        if (fieldName.isEmpty()) continue;
-
+            if (schema != null && schema.contains("required")) {
+                com.fasterxml.jackson.databind.JsonNode schemaNode = objectMapper.readTree(schema);
+                java.util.Iterator<String> fieldNames = schemaNode.fieldNames();
+                while (fieldNames.hasNext()) {
+                    String fieldName = fieldNames.next();
+                    String typeDef = schemaNode.get(fieldName).asText();
+                    // 只检查标记为 required 的字段
+                    if (typeDef.contains("required")) {
                         if (params == null || !params.containsKey(fieldName) || params.get(fieldName) == null) {
                             errors.add("缺少必填参数: " + fieldName);
                         }
@@ -332,6 +359,9 @@ public class CapabilityRegistry {
         notifyAgentsCapabilityChanged(saved.getAgentRole(), saved.getProjectId(),
             isNew ? "新增" : "更新", saved.getCapabilityName());
 
+        // 通知 PromptCacheService 等监听器
+        notifyChangeListeners(saved.getAgentRole());
+
         return saved;
     }
 
@@ -358,6 +388,9 @@ public class CapabilityRegistry {
         notifyAgentsCapabilityChanged(saved.getAgentRole(), saved.getProjectId(),
             action, saved.getCapabilityName());
 
+        // 通知 PromptCacheService 等监听器
+        notifyChangeListeners(saved.getAgentRole());
+
         return saved;
     }
 
@@ -383,6 +416,9 @@ public class CapabilityRegistry {
 
         // 通知相关 Agent
         notifyAgentsCapabilityChanged(role, projectId, "删除", capName);
+
+        // 通知 PromptCacheService 等监听器
+        notifyChangeListeners(role);
     }
 
     /**

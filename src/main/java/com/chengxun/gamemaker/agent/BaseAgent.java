@@ -80,6 +80,24 @@ public abstract class BaseAgent implements Agent {
     /** 事件总线 - 通过setter注入，用于发布和订阅事件 */
     protected com.chengxun.gamemaker.service.EventBus eventBus;
 
+    /** Token 预算控制 - 通过setter注入 */
+    protected com.chengxun.gamemaker.service.TokenBudgetService tokenBudgetService;
+
+    /** Prompt 缓存服务 - 通过setter注入 */
+    protected com.chengxun.gamemaker.service.PromptCacheService promptCacheService;
+
+    /** 消息去重合并器 - 通过setter注入 */
+    protected com.chengxun.gamemaker.service.MessageDeduplicator messageDeduplicator;
+
+    /** 系统配置服务 - 通过setter注入，用于读取运行时配置 */
+    protected com.chengxun.gamemaker.web.service.SystemConfigService configService;
+
+    /** 协作增强服务 - 通过setter注入 */
+    protected com.chengxun.gamemaker.service.CollaborationEnhancer collaborationEnhancer;
+
+    /** 会话累计 Token 数（用于触发自动压缩） */
+    protected volatile long sessionTokenCount = 0;
+
     /**
      * 消息到达回调
      * 当收到新消息时触发，用于事件驱动的即时任务处理
@@ -97,6 +115,9 @@ public abstract class BaseAgent implements Agent {
     protected volatile boolean busy = false;
     protected volatile boolean running = false;
 
+    /** OpenAI 兼容引擎（可选注入，用于 MiniMax 等非 Anthropic API） */
+    protected com.chengxun.gamemaker.engine.OpenAiCompatibleEngine openAiEngine;
+
     protected BaseAgent(AgentDefinition definition,
                        ClaudeCliEngine cliEngine,
                        MessageBus messageBus,
@@ -111,6 +132,11 @@ public abstract class BaseAgent implements Agent {
         this.memoryManager = memoryManager;
         this.skillManager = skillManager;
         this.projectManager = projectManager;
+    }
+
+    /** 设置 OpenAI 兼容引擎 */
+    public void setOpenAiEngine(com.chengxun.gamemaker.engine.OpenAiCompatibleEngine openAiEngine) {
+        this.openAiEngine = openAiEngine;
     }
 
     /**
@@ -191,6 +217,31 @@ public abstract class BaseAgent implements Agent {
 
     public void setEventBus(com.chengxun.gamemaker.service.EventBus eventBus) {
         this.eventBus = eventBus;
+    }
+
+    /** 设置 Token 预算控制 */
+    public void setTokenBudgetService(com.chengxun.gamemaker.service.TokenBudgetService tokenBudgetService) {
+        this.tokenBudgetService = tokenBudgetService;
+    }
+
+    /** 设置 Prompt 缓存服务 */
+    public void setPromptCacheService(com.chengxun.gamemaker.service.PromptCacheService promptCacheService) {
+        this.promptCacheService = promptCacheService;
+    }
+
+    /** 设置消息去重合并器 */
+    public void setMessageDeduplicator(com.chengxun.gamemaker.service.MessageDeduplicator messageDeduplicator) {
+        this.messageDeduplicator = messageDeduplicator;
+    }
+
+    /** 设置系统配置服务 */
+    public void setConfigService(com.chengxun.gamemaker.web.service.SystemConfigService configService) {
+        this.configService = configService;
+    }
+
+    /** 设置协作增强服务 */
+    public void setCollaborationEnhancer(com.chengxun.gamemaker.service.CollaborationEnhancer collaborationEnhancer) {
+        this.collaborationEnhancer = collaborationEnhancer;
     }
 
     /**
@@ -696,44 +747,90 @@ public abstract class BaseAgent implements Agent {
 
     @Override
     public String sendMessage(String message) {
+        return sendMessageInternal(message, true);
+    }
+
+    /**
+     * 调用 AI 但不保存到对话历史，也不处理能力调用
+     * 用于内部辅助功能（如生成 checklist、任务分解），避免污染主对话上下文
+     *
+     * @param message 消息内容
+     * @return AI 响应
+     */
+    protected String callAiDirect(String message) {
+        return sendMessageInternal(message, false, true);
+    }
+
+    private String sendMessageInternal(String message, boolean saveToConversation) {
+        return sendMessageInternal(message, saveToConversation, false);
+    }
+
+    private String sendMessageInternal(String message, boolean saveToConversation, boolean skipCapabilityProcessing) {
         if (!running) {
             return "Agent is not running";
+        }
+
+        // 检查 Token 预算
+        if (tokenBudgetService != null && !tokenBudgetService.checkBudget(getId())) {
+            log.warn("Agent {} 已超出 Token 预算，暂停调用", getId());
+            return "Token 预算已用完，请联系管理员增加配额。";
         }
 
         busy = true;
         long startTime = System.currentTimeMillis();
         try {
 
-            // 注入推理深度指令
-            int depth = definition.getReasoningDepth();
-            String depthInstruction = AgentDefinition.getReasoningDepthInstruction(depth);
+            // 构建系统指令（推理深度 + 思维模式，合并为一个指令）
+            String systemInstruction = buildSystemInstruction();
 
-            // 注入能力列表 prompt（如果能力系统可用）
-            String capabilityPrompt = buildCapabilityPrompt();
-            String enhancedMessage = depthInstruction + "\n\n" + capabilityPrompt + "\n\n" + message;
+            // 注入能力列表 prompt（使用缓存）
+            String capabilityPrompt = buildCapabilityPromptCached();
 
-            saveConversationMessage("user", message);
+            // 注入协作上下文（使用缓存）
+            String collaborationContext = buildCollaborationContextPromptCached();
 
-            // 生成 MCP 配置
-            String mcpConfig = null;
-            if (mcpService != null) {
-                String projectId = getProjectId();
-                if (projectId != null) {
-                    mcpConfig = mcpService.generateMcpConfig(getRole(), projectId);
-                }
+            // 组装增强消息：系统指令 + 能力 + 协作上下文 + 原始消息
+            StringBuilder enhanced = new StringBuilder();
+            if (!systemInstruction.isEmpty()) {
+                enhanced.append(systemInstruction).append("\n\n");
+            }
+            if (!capabilityPrompt.isEmpty()) {
+                enhanced.append(capabilityPrompt).append("\n\n");
+            }
+            if (!collaborationContext.isEmpty()) {
+                enhanced.append(collaborationContext).append("\n\n");
+            }
+            enhanced.append(message);
+            String enhancedMessage = enhanced.toString();
+
+            if (saveToConversation) {
+                saveConversationMessage("user", message);
             }
 
+            // 生成 MCP 配置（使用缓存）
+            String mcpConfig = buildMcpConfigCached();
+
             String sessionId = definition.getSessionId();
-            String response = cliEngine.sendMessage(
-                getId(),
-                sessionId,
-                enhancedMessage,
-                definition.getWorkDir(),
-                definition.getApiKey(),
-                definition.getApiUrl(),
-                definition.getModel(),
-                mcpConfig
-            );
+
+            // 根据 API URL 选择引擎：OpenAI 兼容 API 使用专用引擎，Anthropic API 使用 Claude CLI
+            com.chengxun.gamemaker.engine.ClaudeCliEngine.AiCallResult aiResult;
+            String apiUrl = definition.getApiUrl();
+            String apiKey = definition.getApiKey();
+            String model = definition.getModel();
+
+            if (openAiEngine != null && com.chengxun.gamemaker.engine.OpenAiCompatibleEngine.isOpenAiCompatible(apiUrl)) {
+                // OpenAI 兼容 API（MiniMax、DeepSeek 等）：直接调用，不经过 Claude CLI
+                aiResult = openAiEngine.sendMessage(getId(), enhancedMessage, apiKey, apiUrl, model);
+            } else {
+                // Anthropic API：使用 Claude CLI
+                String effort = AgentDefinition.reasoningDepthToEffort(definition.getReasoningDepth());
+                aiResult = cliEngine.sendMessageWithTokenUsage(
+                    getId(), sessionId, enhancedMessage,
+                    definition.getWorkDir(), apiKey,
+                    apiUrl, model, mcpConfig, effort
+                );
+            }
+            String response = aiResult.response;
 
             String newSessionId = cliEngine.getSessionId(getId());
             if (newSessionId != null && !newSessionId.equals(sessionId)) {
@@ -747,20 +844,27 @@ public abstract class BaseAgent implements Agent {
                 contextMonitor.updateActivityTime(getId());
             }
 
-            // 记录 AI 调用完成（含输入输出详情）
+            // 记录 AI 调用完成
             long duration = System.currentTimeMillis() - startTime;
             int respLen = response != null ? response.length() : 0;
             String logInput = message.length() > 5000 ? message.substring(0, 5000) + "\n...[截断，总长: " + message.length() + "]" : message;
             String logOutput = response != null && response.length() > 10000
                 ? response.substring(0, 10000) + "\n...[截断，总长: " + response.length() + "]" : response;
-            logAiCall(String.format("AI 调用完成，输入长度: %d，响应长度: %d，耗时: %dms", message.length(), respLen, duration),
+            String tokenSource = aiResult.hasPreciseTokens ? "精确" : "估算";
+            logAiCall(String.format("AI 调用完成，输入长度: %d，响应长度: %d，耗时: %dms，Token(%s): 入=%d 出=%d",
+                message.length(), respLen, duration, tokenSource, aiResult.inputTokens, aiResult.outputTokens),
                 logInput, logOutput, duration);
 
-            // 记录 Token 消耗（估算：中文约2字符/token，英文约4字符/token）
-            recordTokenUsage(message.length(), respLen);
+            // 使用精确 Token 数据记录消耗
+            recordTokenUsagePrecise(aiResult.inputTokens, aiResult.outputTokens);
 
-            // 解析 Claude 输出中的能力调用
-            response = processCapabilityActions(response);
+            // 累计会话 Token 数
+            sessionTokenCount += aiResult.inputTokens + aiResult.outputTokens;
+
+            // 解析 Claude 输出中的能力调用（callAiDirect 模式跳过）
+            if (!skipCapabilityProcessing) {
+                response = processCapabilityActions(response);
+            }
 
             // 检测 AI 响应中的权限错误，自动通知管理员
             detectAndNotifyPermissionErrors(response);
@@ -769,6 +873,9 @@ public abstract class BaseAgent implements Agent {
 
             agentContext.addWorkingMemory("last_message", message.length() > 100 ? message.substring(0, 100) : message);
             agentContext.addWorkingMemory("last_response", response.length() > 100 ? response.substring(0, 100) : response);
+
+            // 基于 token 计数的自动压缩触发
+            autoCompactByTokenCount();
 
             return response;
         } finally {
@@ -779,6 +886,10 @@ public abstract class BaseAgent implements Agent {
     /** 对话消息保存的同步锁 */
     private final Object conversationLock = new Object();
 
+    /**
+     * 保存对话消息
+     * 保存后自动检查窗口大小，超出时裁剪旧消息
+     */
     protected void saveConversationMessage(String role, String content) {
         synchronized (conversationLock) {
             ContextManager.ConversationMessage msg = new ContextManager.ConversationMessage(role, content);
@@ -787,6 +898,17 @@ public abstract class BaseAgent implements Agent {
             List<ContextManager.ConversationMessage> messages = contextManager.loadConversation(getId(), currentProject, currentConversationId);
             messages.add(msg);
             contextManager.saveConversation(getId(), currentProject, currentConversationId, messages);
+
+            // 窗口截断：超过阈值时裁剪旧消息
+            int windowSize = 50;
+            if (configService != null) {
+                windowSize = configService.getInt(
+                    com.chengxun.gamemaker.config.SystemConstants.AGENT_CONTEXT_WINDOW_SIZE, 50);
+            }
+
+            if (messages.size() > windowSize + 10) {
+                contextManager.trimConversation(getId(), currentProject, currentConversationId, windowSize);
+            }
         }
     }
 
@@ -1051,6 +1173,8 @@ public abstract class BaseAgent implements Agent {
     public void saveKnowledge(String key, String value) {
         if (currentProject != null) {
             memoryManager.saveMemory(currentProject, getId(), "knowledge", key, value);
+        } else {
+            log.warn("saveKnowledge 失败: Agent {} 的 currentProject 为空，key={} 未保存", getId(), key);
         }
     }
 
@@ -1062,9 +1186,26 @@ public abstract class BaseAgent implements Agent {
     }
 
     public void saveExperience(String key, String value) {
-        if (currentProject != null) {
-            memoryManager.saveMemory(currentProject, getId(), "experiences", key, value);
-            agentContext.addLearnedPattern(key);
+        if (currentProject == null) return;
+        if (key == null || key.isEmpty()) return;
+        if (value == null || value.isEmpty()) return;
+
+        // 过滤掉包含 null 的无效经验
+        if (key.contains("null") || value.contains("null")) {
+            log.debug("Skipping experience with null content: key={}", key);
+            return;
+        }
+
+        memoryManager.saveMemory(currentProject, getId(), "experiences", key, value);
+        agentContext.addLearnedPattern(key);
+
+        // 跨 Agent 经验共享：将经验同步给同项目其他 Agent
+        if (collaborationEnhancer != null) {
+            try {
+                collaborationEnhancer.shareExperience(currentProject.getId(), getId(), key, value);
+            } catch (Exception e) {
+                log.debug("Failed to share experience: {}", e.getMessage());
+            }
         }
     }
 
@@ -1252,6 +1393,15 @@ public abstract class BaseAgent implements Agent {
             issues != null ? issues : "无"
         );
 
+        // 记录任务产出到 ProjectBoard（任务依赖传递）
+        if (collaborationEnhancer != null && currentProject != null) {
+            try {
+                collaborationEnhancer.recordTaskOutput(currentProject.getId(), getId(), taskTitle, output);
+            } catch (Exception e) {
+                log.debug("Failed to record task output: {}", e.getMessage());
+            }
+        }
+
         // 发送给ProducerAgent
         String producerId = getProjectId() + ":producer";
         AgentMessage message = AgentMessage.builder()
@@ -1357,9 +1507,22 @@ public abstract class BaseAgent implements Agent {
         log.info("Compacting context for agent: {}", getId());
         String summary = contextCompactor.compactContext(getId(), currentProject, currentConversationId);
 
+        // 清除 Claude CLI 会话，下次调用将创建全新会话
+        // 否则 --resume sessionId 会恢复整个历史，压缩无效
+        definition.setSessionId(null);
+        if (agentContext != null) {
+            agentContext.setSessionId(null);
+        }
+
+        // 关闭旧的 CLI 进程，下次调用将创建全新会话
+        if (cliEngine != null) {
+            cliEngine.destroyProcess(getId());
+        }
+
         // 开始新的对话
         startNewConversation();
 
+        log.info("Context compacted and session reset for agent: {}", getId());
         return summary;
     }
 
@@ -1499,7 +1662,8 @@ public abstract class BaseAgent implements Agent {
             sb.append("\n");
         }
 
-        // 注入关联技能的 prompt 内容
+        // 注入关联技能摘要（只注入名称+描述+触发词，不注入完整 prompt 模板）
+        // 完整 prompt 模板在技能匹配时由 buildSkillPrompt 按需注入
         if (!allRelatedSkillIds.isEmpty() && skillManager != null) {
             StringBuilder skillSection = new StringBuilder();
             for (String skillId : allRelatedSkillIds) {
@@ -1508,18 +1672,19 @@ public abstract class BaseAgent implements Agent {
                     Map<String, Skill> projectSkills = skillManager.getProjectSkills(projectId);
                     skill = projectSkills.get(skillId);
                 }
-                if (skill != null && skill.getPrompt() != null && !skill.getPrompt().isEmpty()) {
-                    skillSection.append(String.format("\n#### 技能: %s\n", skill.getName()));
-                    if (skill.getDescription() != null) {
-                        skillSection.append(skill.getDescription()).append("\n\n");
+                if (skill != null) {
+                    skillSection.append(String.format("- %s: %s", skill.getName(),
+                        skill.getDescription() != null ? skill.getDescription() : skill.getName()));
+                    if (skill.getTriggerPattern() != null) {
+                        skillSection.append(String.format(" (触发: %s)", skill.getTriggerPattern()));
                     }
-                    skillSection.append(skill.getPrompt()).append("\n");
+                    skillSection.append("\n");
                 }
             }
 
             if (skillSection.length() > 0) {
-                sb.append("### 关联技能参考\n\n");
-                sb.append("以下技能与你的能力相关，请在执行时参考：\n");
+                sb.append("### 关联技能\n\n");
+                sb.append("以下技能与你的能力相关，执行时参考：\n");
                 sb.append(skillSection);
                 sb.append("\n");
             }
@@ -1531,7 +1696,185 @@ public abstract class BaseAgent implements Agent {
         sb.append("- 可以在一次回复中调用多个能力\n");
         sb.append("- 如果不需要调用能力，直接输出普通文本即可\n\n");
 
+        // 注入 MCP 工具列表（如果 Agent 绑定了 MCP 工具）
+        if (mcpService != null && projectId != null) {
+            String mcpToolPrompt = mcpService.buildMcpToolPrompt(getRole(), projectId);
+            if (!mcpToolPrompt.isEmpty()) {
+                sb.append(mcpToolPrompt);
+            }
+        }
+
         return sb.toString();
+    }
+
+    /**
+     * 构建能力列表 prompt（带缓存）
+     * 使用 PromptCacheService 缓存结果，避免每次 sendMessage 都重建
+     * 能力变更时缓存自动失效
+     *
+     * @return 缓存的能力 prompt
+     */
+    protected String buildCapabilityPromptCached() {
+        if (promptCacheService == null || capabilityRegistry == null) {
+            return buildCapabilityPrompt();
+        }
+
+        String projectId = currentProject != null ? currentProject.getId() : null;
+        String cached = promptCacheService.getCachedCapabilityPrompt(getRole(), projectId);
+        if (cached != null) {
+            return cached;
+        }
+
+        // 缓存未命中，重建并缓存
+        String prompt = buildCapabilityPrompt();
+        if (!prompt.isEmpty()) {
+            promptCacheService.cacheCapabilityPrompt(getRole(), projectId, prompt);
+        }
+        return prompt;
+    }
+
+    /**
+     * 构建系统指令（推理深度 + 思维模式）
+     * 合并推理深度和思维模式为一个指令，减少重复注入
+     *
+     * @return 系统指令字符串
+     */
+    protected String buildSystemInstruction() {
+        int depth = definition.getReasoningDepth();
+        int mode = definition.getThinkingMode();
+
+        StringBuilder sb = new StringBuilder();
+
+        // 推理深度指令
+        String depthInstruction = AgentDefinition.getReasoningDepthInstruction(depth);
+        if (depthInstruction != null && !depthInstruction.isEmpty()) {
+            sb.append(depthInstruction);
+        }
+
+        // 思维模式指令
+        String modeInstruction = AgentDefinition.getThinkingModeInstruction(mode);
+        if (modeInstruction != null && !modeInstruction.isEmpty()) {
+            if (sb.length() > 0) {
+                sb.append("\n\n");
+            }
+            sb.append(modeInstruction);
+        }
+
+        return sb.toString();
+    }
+
+    /**
+     * 构建协作上下文注入 prompt（带缓存）
+     * 使用 PromptCacheService 缓存结果，避免每次 sendMessage 都重建
+     *
+     * @return 缓存的协作上下文 prompt
+     */
+    protected String buildCollaborationContextPromptCached() {
+        if (promptCacheService == null) {
+            return buildCollaborationContextPrompt();
+        }
+
+        String projectId = getProjectId();
+        if (projectId == null) {
+            return buildCollaborationContextPrompt();
+        }
+
+        String cached = promptCacheService.getCachedCollaborationContext(getRole(), projectId);
+        if (cached != null) {
+            return cached;
+        }
+
+        // 缓存未命中，重建并缓存
+        String prompt = buildCollaborationContextPrompt();
+        if (!prompt.isEmpty()) {
+            promptCacheService.cacheCollaborationContext(getRole(), projectId, prompt);
+        }
+        return prompt;
+    }
+
+    /**
+     * 构建协作上下文注入 prompt
+     * 整合三大协作增强：
+     * 1. 团队状态（ProjectBoard）
+     * 2. 游戏开发知识（CollaborationEnhancer）
+     * 3. 团队成员最新产出（任务依赖传递）
+     *
+     * @return 协作上下文 prompt，如果不可用或未启用则返回空字符串
+     */
+    protected String buildCollaborationContextPrompt() {
+        if (projectBoard == null) return "";
+
+        String projectId = getProjectId();
+        if (projectId == null) return "";
+
+        try {
+            StringBuilder fullContext = new StringBuilder();
+
+            // 1. 团队状态（原有功能）
+            String teamContext = projectBoard.buildAgentContext(projectId, getId(), eventBus);
+            if (teamContext != null && !teamContext.isEmpty()) {
+                fullContext.append(teamContext);
+            }
+
+            // 2. 游戏开发知识注入
+            if (collaborationEnhancer != null) {
+                String gameKnowledge = collaborationEnhancer.buildGameKnowledgeContext(projectId, getRole());
+                if (!gameKnowledge.isEmpty()) {
+                    fullContext.append(gameKnowledge);
+                }
+
+                // 3. 团队成员最新产出（任务依赖传递）
+                String taskOutput = collaborationEnhancer.buildTaskOutputContext(projectId, getId());
+                if (!taskOutput.isEmpty()) {
+                    fullContext.append(taskOutput);
+                }
+            }
+
+            if (fullContext.length() == 0) return "";
+
+            // 从 SystemConfigService 读取最大长度
+            int maxLength = 2000;
+            if (configService != null) {
+                maxLength = configService.getInt(
+                    com.chengxun.gamemaker.config.SystemConstants.CONTEXT_COLLABORATION_MAX_LENGTH, 2000);
+            }
+
+            String result = fullContext.toString();
+            if (result.length() > maxLength) {
+                result = result.substring(0, maxLength) + "\n...(协作上下文已截断)";
+            }
+
+            return result;
+        } catch (Exception e) {
+            log.debug("Failed to build collaboration context: {}", e.getMessage());
+            return "";
+        }
+    }
+
+    /**
+     * 构建 MCP 配置（带缓存）
+     * 使用 PromptCacheService 缓存 MCP 配置，避免每次调用都重新生成
+     *
+     * @return MCP 配置 JSON，不可用返回 null
+     */
+    protected String buildMcpConfigCached() {
+        if (mcpService == null) return null;
+
+        String projectId = getProjectId();
+        if (projectId == null) return null;
+
+        // 尝试从缓存获取
+        if (promptCacheService != null) {
+            String cached = promptCacheService.getCachedMcpConfig(getRole(), projectId);
+            if (cached != null) return cached;
+        }
+
+        // 缓存未命中，重新生成
+        String mcpConfig = mcpService.generateMcpConfig(getRole(), projectId);
+        if (mcpConfig != null && promptCacheService != null) {
+            promptCacheService.cacheMcpConfig(getRole(), projectId, mcpConfig);
+        }
+        return mcpConfig;
     }
 
     /**
@@ -1598,6 +1941,9 @@ public abstract class BaseAgent implements Agent {
 
     // ===== SKILL 相关 =====
 
+    /** 技能 prompt 注入最大长度 */
+    private static final int MAX_SKILL_PROMPT_LENGTH = 800;
+
     protected String buildSkillPrompt(String taskDescription) {
         String projectId = currentProject != null ? currentProject.getId() : null;
         List<Skill> matchedSkills = skillManager.matchSkills(taskDescription, projectId);
@@ -1606,14 +1952,27 @@ public abstract class BaseAgent implements Agent {
         }
 
         StringBuilder sb = new StringBuilder("\n## 可用技能\n\n");
-        sb.append("以下是与当前任务相关的技能，请参考使用：\n\n");
 
+        // 只注入摘要（名称+描述+触发词），不注入完整 prompt 模板
+        // 完整 prompt 模板在技能实际被触发时才加载
         for (Skill skill : matchedSkills) {
-            sb.append(skill.toPromptSection()).append("\n");
+            sb.append(String.format("- **%s**: %s", skill.getName(),
+                skill.getDescription() != null ? skill.getDescription() : ""));
+            if (skill.getTriggerPattern() != null) {
+                sb.append(String.format(" (触发: %s)", skill.getTriggerPattern()));
+            }
+            sb.append("\n");
             skillManager.recordSkillUsage(skill.getId(), projectId);
         }
 
-        return sb.toString();
+        sb.append("\n技能详情请参考项目技能目录。\n");
+
+        // 截断保护
+        String result = sb.toString();
+        if (result.length() > MAX_SKILL_PROMPT_LENGTH) {
+            result = result.substring(0, MAX_SKILL_PROMPT_LENGTH) + "...";
+        }
+        return result;
     }
 
     protected void tryLearnSkill(String taskDescription, String result) {
@@ -1714,45 +2073,69 @@ public abstract class BaseAgent implements Agent {
     // ===== Token 消耗记录 =====
 
     /**
-     * 记录 Token 消耗
-     * 基于输入输出字符数估算 Token 用量，并更新到绑定的 Token 记录
-     * 如果 Agent 没有绑定 Token，尝试自动分配一个
+     * 记录精确 Token 消耗
+     * 使用 Claude CLI 返回的真实 token 数据，同时更新 Token 绑定记录和预算服务
      *
-     * @param inputChars  输入字符数
-     * @param outputChars 输出字符数
+     * @param inputTokens  输入 Token 数（精确值或估算值）
+     * @param outputTokens 输出 Token 数（精确值或估算值）
      */
-    private void recordTokenUsage(int inputChars, int outputChars) {
-        if (apiTokenService == null) return;
+    private void recordTokenUsagePrecise(long inputTokens, long outputTokens) {
+        long totalTokens = inputTokens + outputTokens;
+        if (totalTokens <= 0) return;
 
-        try {
-            // 估算 Token 数量：中文约2字符/token，英文约4字符/token，取平均值约3
-            long estimatedTokens = (inputChars + outputChars) / 3;
-            if (estimatedTokens <= 0) return;
-
-            // 查找当前 Agent 绑定的 Token
-            com.chengxun.gamemaker.web.entity.ApiToken token =
-                apiTokenService.getActiveTokenForAgent(getId());
-
-            // 如果没有绑定 Token，尝试自动分配
-            if (token == null && agentManagerRef != null) {
-                token = autoAssignTokenIfNeeded();
+        // 更新 Token 使用记录（池化模式：按角色查找最佳 Token）
+        if (apiTokenService != null) {
+            try {
+                com.chengxun.gamemaker.web.entity.ApiToken token =
+                    apiTokenService.findBestTokenForRole(getRole());
+                if (token == null && agentManagerRef != null) {
+                    token = autoAssignTokenIfNeeded();
+                }
+                if (token != null) {
+                    apiTokenService.recordUsage(token.getId(), totalTokens);
+                }
+            } catch (Exception e) {
+                log.debug("Failed to record token usage: {}", e.getMessage());
             }
+        }
 
-            if (token != null) {
-                apiTokenService.recordUsage(token.getId(), estimatedTokens);
-                log.debug("Token usage recorded: agent={}, token={}, estimated={}",
-                    getId(), token.getName(), estimatedTokens);
-            }
-        } catch (Exception e) {
-            log.debug("Failed to record token usage: {}", e.getMessage());
+        // 更新 Token 预算服务
+        if (tokenBudgetService != null) {
+            tokenBudgetService.recordUsage(getId(), inputTokens, outputTokens);
         }
     }
 
     /**
-     * 自动分配 Token（如果当前 Agent 没有绑定）
-     * 从 Token 池中查找匹配角色的最佳可用 Token 并绑定
+     * 基于 token 计数触发自动压缩
+     * 当会话累计 token 超过阈值时，自动执行上下文压缩
+     */
+    private void autoCompactByTokenCount() {
+        if (contextCompactor == null || currentProject == null) return;
+
+        try {
+            // 从 SystemConfigService 读取阈值
+            long threshold = 80000;
+            if (configService != null) {
+                threshold = configService.getInt(
+                    com.chengxun.gamemaker.config.SystemConstants.CONTEXT_COMPACT_TOKEN_THRESHOLD, 80000);
+            }
+
+            if (sessionTokenCount >= threshold) {
+                log.info("Session token count ({}) exceeded threshold ({}), auto-compacting for agent: {}",
+                    sessionTokenCount, threshold, getId());
+                compactContext();
+                sessionTokenCount = 0;
+            }
+        } catch (Exception e) {
+            log.debug("Auto compact by token count failed: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * 自动从 Token 池获取可用 Token（池化模式，不做排他绑定）
+     * 多个 Agent 可以共享同一个 Token 池
      *
-     * @return 分配到的 Token，如果没有可用 Token 则返回 null
+     * @return 匹配的 Token，如果没有可用 Token 则返回 null
      */
     private com.chengxun.gamemaker.web.entity.ApiToken autoAssignTokenIfNeeded() {
         if (apiTokenService == null) return null;
@@ -1762,21 +2145,17 @@ public abstract class BaseAgent implements Agent {
                 apiTokenService.findBestTokenForRole(getRole());
             if (token == null) return null;
 
-            // 绑定 Token 到当前 Agent
-            token.setAssignedAgentId(getId());
-            token.setAssignedAgentName(getName());
-            apiTokenService.saveToken(token);
-
-            // 将 Token 配置应用到 Agent Definition
+            // 池化模式：将 Token 配置应用到 Agent Definition，记录使用的 Token ID
             if (token.getApiKey() != null) definition.setApiKey(token.getApiKey());
             if (token.getApiUrl() != null) definition.setApiUrl(token.getApiUrl());
             if (token.getModel() != null) definition.setModel(token.getModel());
+            definition.setAssignedTokenId(token.getId());
 
-            log.info("Auto-assigned token '{}' to agent {} (role: {})",
+            log.info("Auto-allocated token '{}' to agent {} (role: {}, pool mode)",
                 token.getName(), getId(), getRole());
             return token;
         } catch (Exception e) {
-            log.debug("Failed to auto-assign token for agent {}: {}", getId(), e.getMessage());
+            log.debug("Failed to auto-allocate token for agent {}: {}", getId(), e.getMessage());
             return null;
         }
     }

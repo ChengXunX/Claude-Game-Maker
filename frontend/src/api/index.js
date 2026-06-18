@@ -106,7 +106,9 @@ export const agentApi = {
   sendTask: (projectId, agentRole, data) => api.post(`/agents/project/${projectId}/${agentRole}/task`, data),
   query: (projectId, agentRole, data) => api.post(`/agents/project/${projectId}/${agentRole}/query`, data),
   getReasoningDepth: (projectId, agentRole) => api.get(`/agents/project/${projectId}/${agentRole}/reasoning-depth`),
-  setReasoningDepth: (projectId, agentRole, depth) => api.put(`/agents/project/${projectId}/${agentRole}/reasoning-depth`, { reasoningDepth: depth })
+  setReasoningDepth: (projectId, agentRole, depth) => api.put(`/agents/project/${projectId}/${agentRole}/reasoning-depth`, { reasoningDepth: depth }),
+  setThinkingMode: (projectId, agentRole, thinkingMode) => api.put(`/agents/project/${projectId}/${agentRole}/thinking-mode`, { thinkingMode }),
+  getThinkingMode: (projectId, agentRole) => api.get(`/agents/project/${projectId}/${agentRole}/thinking-mode`)
 }
 
 export const projectApi = {
@@ -133,7 +135,13 @@ export const projectApi = {
   getRollbackableVersions: (id) => api.get(`/projects/api/${id}/rollbackable-versions`),
   getVersionComparison: (id, version1, version2) => api.get(`/projects/api/${id}/version-comparison`, { params: { version1, version2 } }),
   exportIterationReport: (id) => api.get(`/projects/api/${id}/export-iteration-report`, { responseType: 'blob' }),
-  getIterationTemplates: () => api.get('/projects/api/iteration-templates')
+  getIterationTemplates: () => api.get('/projects/api/iteration-templates'),
+  // 管理员版本迭代指令
+  getVersionInstruction: (id) => api.get(`/projects/api/${id}/version-instruction`),
+  saveVersionInstruction: (id, instruction) => api.post(`/projects/api/${id}/version-instruction`, { instruction }),
+  // 数据清理
+  cleanData: (id) => api.post(`/projects/api/${id}/clean-data`),
+  resetMilestones: (id) => api.post(`/projects/api/${id}/reset-milestones`)
 }
 
 // ===== 游戏模板管理 API =====
@@ -192,7 +200,7 @@ export const tokenApi = {
   update: (id, data) => api.put(`/tokens/${id}`, data),
   delete: (id) => api.delete(`/tokens/${id}`),
   assign: (id, agentId, activation) => api.post(`/tokens/${id}/assign`, { agentId, activation: activation || 'immediate' }),
-  unassign: (id) => api.post(`/tokens/${id}/unassign`),
+  getQuota: (id) => api.get(`/tokens/${id}/quota`),
   getStats: () => api.get('/tokens/stats'),
   getAgents: () => api.get('/tokens/agents'),
   testConnection: (data) => api.post('/configs/test-ai-connection', data, { timeout: 30000 })
@@ -553,7 +561,11 @@ export const chatSessionApi = {
   update: (id, data) => api.put(`/chat/sessions/${id}`, data),
   delete: (id) => api.delete(`/chat/sessions/${id}`),
   getMessages: (sessionId) => api.get(`/chat/sessions/${sessionId}/messages`),
-  addMessage: (sessionId, data) => api.post(`/chat/sessions/${sessionId}/messages`, data)
+  addMessage: (sessionId, data) => api.post(`/chat/sessions/${sessionId}/messages`, data),
+  // 飞书会话相关
+  getFeishuSessions: () => api.get('/chat/sessions/feishu'),
+  getFeishuSession: (id) => api.get(`/chat/sessions/feishu/${id}`),
+  clearFeishuSession: (id) => api.delete(`/chat/sessions/feishu/${id}/clear`)
 }
 
 // ===== 能力管理 API =====
@@ -615,3 +627,125 @@ export const projectAgentConfigApi = {
   savePerformanceWeights: (projectId, agentRole, weights) => api.put(`/projects/${projectId}/agents/${agentRole}/performance-weights`, weights)
 }
 
+// ===== Agent 工具 API =====
+
+// 检查点管理
+export const checkpointApi = {
+  list: (projectId, agentId) => api.get(`/agent-tools/checkpoints/${projectId}/${agentId}`),
+  get: (projectId, agentId, timestamp) => api.get(`/agent-tools/checkpoints/${projectId}/${agentId}/${timestamp}`),
+  create: (data) => api.post('/agent-tools/checkpoints', data),
+  restore: (projectId, agentId, timestamp) => api.post(`/agent-tools/checkpoints/${projectId}/${agentId}/${timestamp}/restore`),
+  delete: (projectId, agentId, timestamp) => api.delete(`/agent-tools/checkpoints/${projectId}/${agentId}/${timestamp}`)
+}
+
+// 记忆全文搜索
+export const memorySearchApi = {
+  search: (projectId, agentId, query) => api.get('/agent-tools/memory/search', { params: { projectId, agentId, query } }),
+  searchGlobal: (agentId, query) => api.get('/agent-tools/memory/search/global', { params: { agentId, query } }),
+  rebuildIndex: (data) => api.post('/agent-tools/memory/rebuild-index', data)
+}
+
+// Dream 知识提取
+export const dreamApi = {
+  trigger: (data) => api.post('/agent-tools/dream/trigger', data)
+}
+
+// 裁判评估
+export const goalJudgeApi = {
+  evaluate: (data) => api.post('/agent-tools/goal-judge/evaluate', data)
+}
+
+// 子代理管理
+export const subAgentApi = {
+  spawn: (data) => api.post('/agent-tools/sub-agents/spawn', data),
+  list: (parentAgentId) => api.get(`/agent-tools/sub-agents/${parentAgentId}`),
+  terminate: (subAgentId) => api.post(`/agent-tools/sub-agents/${subAgentId}/terminate`),
+  stats: () => api.get('/agent-tools/sub-agents/stats')
+}
+
+// Skill 文件发现
+export const skillDiscoveryApi = {
+  discover: (projectId) => api.get(`/agent-tools/skills/discover/${projectId}`)
+}
+
+// Distill 工作流发现
+export const distillApi = {
+  trigger: (data) => api.post('/agent-tools/distill/trigger', data)
+}
+
+// 快照回滚
+export const snapshotApi = {
+  list: (projectId, agentId) => api.get(`/agent-tools/snapshots/${projectId}/${agentId}`),
+  create: (data) => api.post('/agent-tools/snapshots', data),
+  restore: (projectId, agentId, snapshotId) => api.post(`/agent-tools/snapshots/${projectId}/${agentId}/${snapshotId}/restore`),
+  undo: (projectId, agentId) => api.post(`/agent-tools/snapshots/${projectId}/${agentId}/undo`),
+  delete: (projectId, agentId, snapshotId) => api.delete(`/agent-tools/snapshots/${projectId}/${agentId}/${snapshotId}`)
+}
+
+// 任务门禁
+export const taskGateApi = {
+  check: (data) => api.post('/agent-tools/task-gate/check', data)
+}
+
+// 预算上下文注入
+export const budgetedContextApi = {
+  get: (data) => api.post('/agent-tools/context/budgeted', data)
+}
+
+// Agent 工具权限
+export const toolPermissionApi = {
+  get: (agentId) => api.get(`/agent-tools/tool-permissions/${agentId}`),
+  set: (agentId, data) => api.post(`/agent-tools/tool-permissions/${agentId}`, data)
+}
+
+// 会话分叉
+export const sessionForkApi = {
+  create: (data) => api.post('/agent-tools/forks', data),
+  list: (parentAgentId) => api.get(`/agent-tools/forks/${parentAgentId}`),
+  merge: (forkId, strategy) => api.post(`/agent-tools/forks/${forkId}/merge?strategy=${strategy || 'merge'}`),
+  discard: (forkId) => api.post(`/agent-tools/forks/${forkId}/discard`)
+}
+
+/** 飞书集成 API */
+export const feishuApi = {
+  /** 生成飞书绑定验证码 */
+  generateBindCode: () => api.post('/feishu/bind-code'),
+  /** 查询飞书绑定状态 */
+  getBindStatus: () => api.get('/feishu/bind-status'),
+  /** 解绑飞书 */
+  unbind: () => api.post('/feishu/unbind')
+}
+
+
+// ===== 知识图谱 API =====
+export const knowledgeGraphApi = {
+  getGraph: (projectId) => api.get(`/knowledge-graph/${projectId}`),
+  getNodes: (projectId) => api.get(`/knowledge-graph/${projectId}/nodes`),
+  getEdges: (projectId) => api.get(`/knowledge-graph/${projectId}/edges`),
+  getNeighbors: (projectId, nodeId) => api.get(`/knowledge-graph/${projectId}/neighbors/${nodeId}`),
+  search: (projectId, keyword) => api.get(`/knowledge-graph/${projectId}/search`, { params: { keyword } }),
+  build: (projectId) => api.post(`/knowledge-graph/${projectId}/build`),
+  getStats: (projectId) => api.get(`/knowledge-graph/${projectId}/stats`)
+}
+
+// ===== 质量预测 API =====
+export const qualityPredictionApi = {
+  getLatest: (projectId) => api.get(`/quality-prediction/${projectId}`),
+  predict: (projectId) => api.post(`/quality-prediction/${projectId}/predict`),
+  getHistory: (projectId) => api.get(`/quality-prediction/${projectId}/history`)
+}
+
+// ===== 迭代适应 API =====
+export const iterationAdaptApi = {
+  getRecommendation: (projectId) => api.get(`/iteration-adapt/recommendation/${projectId}`),
+  apply: (projectId) => api.post(`/iteration-adapt/apply/${projectId}`),
+  getHistory: (projectId) => api.get(`/iteration-adapt/history/${projectId}`)
+}
+
+// ===== 多轮推理 API =====
+export const multiTurnApi = {
+  reason: (data) => api.post('/multi-turn/reason', data),
+  getStatus: (recordId) => api.get(`/multi-turn/status/${recordId}`),
+  getStats: (projectId) => api.get(`/multi-turn/stats/${projectId}`),
+  getHistory: (projectId) => api.get(`/multi-turn/history/${projectId}`)
+}

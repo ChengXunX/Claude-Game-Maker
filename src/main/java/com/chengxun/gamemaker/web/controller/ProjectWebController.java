@@ -8,6 +8,7 @@ import com.chengxun.gamemaker.manager.ProjectManager;
 import com.chengxun.gamemaker.model.AgentDefinition;
 import com.chengxun.gamemaker.model.GameProject;
 import com.chengxun.gamemaker.service.GoalService;
+import com.chengxun.gamemaker.service.PlayerExperienceAnalyzer;
 import com.chengxun.gamemaker.service.TemplateService;
 import com.chengxun.gamemaker.service.VersionIterationService;
 import jakarta.servlet.http.HttpServletResponse;
@@ -42,7 +43,7 @@ import java.util.*;
  * @since 1.0.0
  */
 @Controller
-@RequestMapping({"/projects", "/api/projects"})
+@RequestMapping("/api/projects")
 public class ProjectWebController {
 
     private static final Logger log = LoggerFactory.getLogger(ProjectWebController.class);
@@ -308,11 +309,58 @@ public class ProjectWebController {
 
     // ===== API接口 =====
 
+    /**
+     * 获取所有项目列表（精简版，不包含完整的里程碑和任务数据）
+     * 避免大量任务数据导致序列化失败
+     */
     @GetMapping("/api/all")
     @ResponseBody
     @PreAuthorize("hasAuthority('PERM_projects:view')")
-    public ResponseEntity<List<GameProject>> getAllProjects() {
-        return ResponseEntity.ok(projectManager.getAllProjects());
+    public ResponseEntity<List<Map<String, Object>>> getAllProjects() {
+        List<GameProject> projects = projectManager.getAllProjects();
+        List<Map<String, Object>> result = new ArrayList<>();
+
+        for (GameProject p : projects) {
+            Map<String, Object> summary = new HashMap<>();
+            summary.put("id", p.getId());
+            summary.put("name", p.getName());
+            summary.put("description", p.getDescription());
+            summary.put("workDir", p.getWorkDir());
+            summary.put("status", p.getStatus());
+            summary.put("version", p.getVersion());
+            summary.put("goal", p.getGoal());
+            summary.put("goalStatus", p.getGoalStatus());
+            summary.put("goalProgress", p.getGoalProgress());
+            summary.put("running", p.isRunning());
+            summary.put("createdAt", p.getCreatedAt());
+            summary.put("lastActiveAt", p.getLastActiveAt());
+            summary.put("templateId", p.getTemplateId());
+
+            // 里程碑摘要（不包含详细任务）
+            List<Map<String, Object>> milestoneSummary = new ArrayList<>();
+            if (p.getMilestones() != null) {
+                for (GameProject.GoalMilestone m : p.getMilestones()) {
+                    Map<String, Object> ms = new HashMap<>();
+                    ms.put("id", m.getId());
+                    ms.put("title", m.getTitle());
+                    ms.put("status", m.getStatus());
+                    ms.put("progress", m.getProgress());
+                    ms.put("assignedAgentRole", m.getAssignedAgentRole());
+                    ms.put("taskCount", m.getTasks() != null ? m.getTasks().size() : 0);
+                    milestoneSummary.add(ms);
+                }
+            }
+            summary.put("milestones", milestoneSummary);
+            summary.put("milestoneCount", milestoneSummary.size());
+
+            // 管理员指令状态
+            summary.put("hasInstruction", p.hasPendingInstruction());
+            summary.put("instructionSubmittedAt", p.getInstructionSubmittedAt());
+
+            result.add(summary);
+        }
+
+        return ResponseEntity.ok(result);
     }
 
     @GetMapping("/api/{projectId}")
@@ -544,6 +592,185 @@ public class ProjectWebController {
         }
         List<GameProject.GoalMilestone> milestones = goalService.getMilestones(projectId);
         return ResponseEntity.ok(milestones);
+    }
+
+    /**
+     * 提交管理员版本迭代指令
+     * 管理员可以在版本迭代前给出指导，系统会在迭代决策时参考
+     *
+     * @param projectId 项目 ID
+     * @param request 包含 instruction 字段的请求体
+     * @return 操作结果
+     */
+    @PostMapping("/api/{projectId}/version-instruction")
+    @ResponseBody
+    @PreAuthorize("hasAuthority('PERM_projects:manage')")
+    public ResponseEntity<Map<String, Object>> submitVersionInstruction(
+            @PathVariable String projectId,
+            @RequestBody Map<String, String> request,
+            Authentication authentication) {
+        User user = userService.getUserByUsername(authentication.getName());
+        if (!permissionService.hasProjectAccess(user, projectId, ProjectMember.ProjectRole.MANAGER)) {
+            return ResponseEntity.status(403).body(Map.of("success", false, "message", "无权限操作"));
+        }
+
+        GameProject project = projectManager.getProject(projectId);
+        if (project == null) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "项目不存在"));
+        }
+
+        String instruction = request.get("instruction");
+        if (instruction == null || instruction.trim().isEmpty()) {
+            // 清空指令
+            project.setVersionIterationInstruction(null);
+            project.setInstructionSubmittedAt(null);
+            project.setInstructionConsumed(false);
+        } else {
+            project.setVersionIterationInstruction(instruction.trim());
+            project.setInstructionSubmittedAt(LocalDateTime.now());
+            project.setInstructionConsumed(false);
+        }
+
+        projectManager.saveProjectConfig(project);
+
+        log.info("管理员提交版本迭代指令: projectId={}, user={}, instruction={}",
+            projectId, user.getUsername(),
+            instruction != null ? instruction.substring(0, Math.min(instruction.length(), 50)) + "..." : "(清空)");
+
+        return ResponseEntity.ok(Map.of(
+            "success", true,
+            "message", instruction != null && !instruction.trim().isEmpty() ? "指令已提交，将在下次版本迭代时参考" : "指令已清空"
+        ));
+    }
+
+    /**
+     * 获取当前版本迭代指令
+     *
+     * @param projectId 项目 ID
+     * @return 当前指令信息
+     */
+    @GetMapping("/api/{projectId}/version-instruction")
+    @ResponseBody
+    @PreAuthorize("hasAuthority('PERM_projects:view')")
+    public ResponseEntity<Map<String, Object>> getVersionInstruction(@PathVariable String projectId) {
+        GameProject project = projectManager.getProject(projectId);
+        if (project == null) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "项目不存在"));
+        }
+
+        return ResponseEntity.ok(Map.of(
+            "success", true,
+            "instruction", project.getVersionIterationInstruction() != null ? project.getVersionIterationInstruction() : "",
+            "submittedAt", project.getInstructionSubmittedAt() != null ? project.getInstructionSubmittedAt().toString() : "",
+            "consumed", project.isInstructionConsumed()
+        ));
+    }
+
+    /**
+     * 清理项目脏数据
+     * - 修正不合理的任务工时（超过168小时的截断）
+     * - 清理重复任务
+     * - 修正里程碑状态不一致
+     *
+     * @param projectId 项目 ID
+     * @return 清理结果
+     */
+    @PostMapping("/api/{projectId}/clean-data")
+    @ResponseBody
+    @PreAuthorize("hasAuthority('PERM_projects:manage')")
+    public ResponseEntity<Map<String, Object>> cleanProjectData(
+            @PathVariable String projectId,
+            Authentication authentication) {
+        User user = userService.getUserByUsername(authentication.getName());
+        if (!permissionService.hasProjectAccess(user, projectId, ProjectMember.ProjectRole.MANAGER)) {
+            return ResponseEntity.status(403).body(Map.of("success", false, "message", "无权限操作"));
+        }
+
+        GameProject project = projectManager.getProject(projectId);
+        if (project == null) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "项目不存在"));
+        }
+
+        int fixedTasks = 0;
+        int fixedMilestones = 0;
+        int removedDuplicates = 0;
+
+        // 1. 修正不合理的任务工时
+        for (GameProject.GoalMilestone milestone : project.getMilestones()) {
+            if (milestone.getTasks() == null) continue;
+
+            for (GameProject.MilestoneTask task : milestone.getTasks()) {
+                // 截断过大的工时
+                if (task.getEstimatedHours() > 168) {
+                    task.setEstimatedHours(168);
+                    fixedTasks++;
+                }
+            }
+
+            // 2. 修正里程碑状态不一致
+            if (milestone.getTasks() != null && !milestone.getTasks().isEmpty()) {
+                long completedCount = milestone.getTasks().stream()
+                    .filter(t -> t.getStatus() == GameProject.MilestoneStatus.COMPLETED)
+                    .count();
+
+                // 如果所有任务都完成了，但里程碑没标记完成
+                if (completedCount == milestone.getTasks().size()
+                    && milestone.getStatus() != GameProject.MilestoneStatus.COMPLETED) {
+                    milestone.setStatus(GameProject.MilestoneStatus.COMPLETED);
+                    milestone.setProgress(100);
+                    fixedMilestones++;
+                }
+            }
+        }
+
+        // 保存清理后的项目
+        projectManager.saveProjectConfig(project);
+
+        log.info("项目数据清理完成: projectId={}, fixedTasks={}, fixedMilestones={}",
+            projectId, fixedTasks, fixedMilestones);
+
+        return ResponseEntity.ok(Map.of(
+            "success", true,
+            "message", "数据清理完成",
+            "fixedTasks", fixedTasks,
+            "fixedMilestones", fixedMilestones
+        ));
+    }
+
+    /**
+     * 重置版本里程碑
+     * 清空当前版本的所有里程碑和任务，让制作人重新规划
+     *
+     * @param projectId 项目 ID
+     * @return 操作结果
+     */
+    @PostMapping("/api/{projectId}/reset-milestones")
+    @ResponseBody
+    @PreAuthorize("hasAuthority('PERM_projects:manage')")
+    public ResponseEntity<Map<String, Object>> resetMilestones(
+            @PathVariable String projectId,
+            Authentication authentication) {
+        User user = userService.getUserByUsername(authentication.getName());
+        if (!permissionService.hasProjectAccess(user, projectId, ProjectMember.ProjectRole.OWNER)) {
+            return ResponseEntity.status(403).body(Map.of("success", false, "message", "无权限操作，需要项目所有者"));
+        }
+
+        GameProject project = projectManager.getProject(projectId);
+        if (project == null) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "项目不存在"));
+        }
+
+        int oldCount = project.getMilestones().size();
+        project.getMilestones().clear();
+        project.setGoalStatus(GameProject.GoalStatus.NOT_STARTED);
+        projectManager.saveProjectConfig(project);
+
+        log.info("里程碑已重置: projectId={}, 清除了 {} 个里程碑", projectId, oldCount);
+
+        return ResponseEntity.ok(Map.of(
+            "success", true,
+            "message", "已清除 " + oldCount + " 个里程碑，制作人将在下一个工作周期重新规划"
+        ));
     }
 
     /**
@@ -1056,6 +1283,9 @@ public class ProjectWebController {
     @Autowired(required = false)
     private com.chengxun.gamemaker.web.service.SystemConfigService systemConfigService;
 
+    @Autowired(required = false)
+    private PlayerExperienceAnalyzer playerExperienceAnalyzer;
+
     /**
      * 获取项目看板数据
      */
@@ -1348,7 +1578,7 @@ public class ProjectWebController {
 
     /**
      * 获取玩家体验评分
-     * 返回5维度趣味度评分和改进建议
+     * 使用 PlayerExperienceAnalyzer 混合评分（关键词+代码特征+AI深度分析）
      */
     @GetMapping("/api/{projectId}/player-experience")
     @ResponseBody
@@ -1363,17 +1593,7 @@ public class ProjectWebController {
         result.put("projectId", projectId);
         result.put("projectName", project.getName());
 
-        // 从ProducerAgent的工作记忆中获取玩家体验评分
-        Agent producer = agentManager.getAgent(projectId, "producer");
-        if (producer instanceof com.chengxun.gamemaker.agent.ProducerAgent producerAgent) {
-            // 通过知识库获取玩家体验数据
-            String funScoreData = producerAgent.loadKnowledge("player_experience_score");
-            if (funScoreData != null) {
-                result.put("funScoreData", funScoreData);
-            }
-        }
-
-        // 基于项目状态计算基础体验指标
+        // 功能完成度（基于里程碑任务）
         List<GameProject.GoalMilestone> milestones = project.getMilestones();
         int totalFeatures = 0;
         int completedFeatures = 0;
@@ -1384,73 +1604,41 @@ public class ProjectWebController {
                     .filter(t -> t.getStatus() == GameProject.MilestoneStatus.COMPLETED).count();
             }
         }
-
         result.put("totalFeatures", totalFeatures);
         result.put("completedFeatures", completedFeatures);
         result.put("featureCompleteness", totalFeatures > 0 ? (double) completedFeatures / totalFeatures * 100 : 0);
 
-        // 基于里程碑类型估算各维度分数
-        String goal = project.getGoal() != null ? project.getGoal().toLowerCase() : "";
-        int coreLoopScore = estimateCoreLoopScore(goal, milestones);
-        int challengeScore = estimateChallengeScore(goal, milestones);
-        int rewardScore = estimateRewardScore(goal, milestones);
-        int progressionScore = totalFeatures > 0 ? (int) ((double) completedFeatures / totalFeatures * 100) : 0;
-        int noveltyScore = estimateNoveltyScore(goal);
+        // 使用 PlayerExperienceAnalyzer 获取混合评分
+        if (playerExperienceAnalyzer != null) {
+            PlayerExperienceAnalyzer.FunScore funScore = playerExperienceAnalyzer.analyzeProject(project);
 
-        Map<String, Integer> dimensionScores = new HashMap<>();
-        dimensionScores.put("coreLoop", coreLoopScore);
-        dimensionScores.put("challenge", challengeScore);
-        dimensionScores.put("reward", rewardScore);
-        dimensionScores.put("progression", progressionScore);
-        dimensionScores.put("novelty", noveltyScore);
-        result.put("dimensionScores", dimensionScores);
-        result.put("overallScore", (coreLoopScore + challengeScore + rewardScore + progressionScore + noveltyScore) / 5);
-
-        // 改进建议
-        List<String> improvements = new ArrayList<>();
-        if (coreLoopScore < 60) improvements.add("核心循环需要增强：增加玩法深度和可重复性");
-        if (challengeScore < 60) improvements.add("挑战感不足：设计渐进式难度曲线");
-        if (rewardScore < 60) improvements.add("奖励反馈不够：为玩家行为添加即时反馈");
-        if (progressionScore < 60) improvements.add("进度感薄弱：增加可视化进度系统");
-        if (noveltyScore < 60) improvements.add("新颖度不够：加入差异化特性");
-        result.put("improvements", improvements);
+            Map<String, Integer> dimensionScores = new HashMap<>();
+            dimensionScores.put("coreLoop", funScore.getCoreLoopScore());
+            dimensionScores.put("challenge", funScore.getChallengeScore());
+            dimensionScores.put("reward", funScore.getRewardScore());
+            dimensionScores.put("progression", funScore.getProgressionScore());
+            dimensionScores.put("novelty", funScore.getNoveltyScore());
+            result.put("dimensionScores", dimensionScores);
+            result.put("overallScore", funScore.getOverallScore());
+            result.put("improvements", funScore.getImprovements());
+            result.put("painPoints", funScore.getPainPoints());
+            result.put("dataSource", funScore.getDataSource());
+        } else {
+            // 降级：纯关键词估算
+            String goal = project.getGoal() != null ? project.getGoal().toLowerCase() : "";
+            Map<String, Integer> dimensionScores = new HashMap<>();
+            dimensionScores.put("coreLoop", 50);
+            dimensionScores.put("challenge", 50);
+            dimensionScores.put("reward", 50);
+            dimensionScores.put("progression", 50);
+            dimensionScores.put("novelty", 50);
+            result.put("dimensionScores", dimensionScores);
+            result.put("overallScore", 50);
+            result.put("improvements", List.of());
+            result.put("dataSource", "FALLBACK");
+        }
 
         return ResponseEntity.ok(result);
-    }
-
-    /** 估算核心循环分数 */
-    private int estimateCoreLoopScore(String goal, List<GameProject.GoalMilestone> milestones) {
-        // 基于游戏类型和里程碑复杂度估算
-        int base = 50;
-        if (containsAny(goal, "射击", "shooter", "动作", "action")) base += 20;
-        if (containsAny(goal, "rpg", "角色扮演")) base += 15;
-        if (containsAny(goal, "策略", "塔防")) base += 15;
-        if (milestones.size() >= 3) base += 10; // 有多个里程碑说明玩法有深度
-        return Math.min(100, base);
-    }
-
-    /** 估算挑战感分数 */
-    private int estimateChallengeScore(String goal, List<GameProject.GoalMilestone> milestones) {
-        int base = 55;
-        if (containsAny(goal, "难度", "挑战", "hardcore")) base += 20;
-        if (milestones.size() >= 5) base += 10; // 里程碑多说明难度递进设计好
-        return Math.min(100, base);
-    }
-
-    /** 估算奖励反馈分数 */
-    private int estimateRewardScore(String goal, List<GameProject.GoalMilestone> milestones) {
-        int base = 50;
-        if (containsAny(goal, "收集", "养成", "成长")) base += 20;
-        if (containsAny(goal, "社交", "竞技")) base += 15;
-        return Math.min(100, base);
-    }
-
-    /** 估算新颖度分数 */
-    private int estimateNoveltyScore(String goal) {
-        int base = 45;
-        if (containsAny(goal, "创新", "roguelike", "沙盒", "sandbox", "开放世界")) base += 25;
-        if (containsAny(goal, "多人", "联机", "pvp")) base += 15;
-        return Math.min(100, base);
     }
 
     /** 判断字符串是否包含任一关键词 */

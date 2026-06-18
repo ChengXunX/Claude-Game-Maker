@@ -144,6 +144,7 @@ public class NotificationService {
             case AGENT -> "agent_status";
             case SUCCESS -> "performance";
             case INFO -> "project";
+            case WORKFLOW -> "workflow";
             case SYSTEM -> "system";
         };
     }
@@ -174,12 +175,29 @@ public class NotificationService {
     }
 
     /**
-     * 发送飞书通知
+     * 发送飞书卡片通知
      */
     private void sendFeishuNotification(String title, String content) {
         if (feishuService.isEnabled()) {
-            feishuService.sendMessage(String.format("**%s**\n\n%s", title, content));
+            feishuService.sendCardMessage(feishuService.getDefaultChatId(), title, "blue", content);
         }
+    }
+
+    /**
+     * 根据通知类型解析卡片颜色
+     */
+    private String resolveCardColor(NotificationType type) {
+        if (type == null) return "blue";
+        return switch (type) {
+            case ERROR -> "red";
+            case WARNING -> "orange";
+            case SUCCESS -> "green";
+            case APPROVAL -> "purple";
+            case TASK -> "turquoise";
+            case AGENT -> "indigo";
+            case WORKFLOW -> "cyan";
+            case SYSTEM, INFO -> "blue";
+        };
     }
 
     /**
@@ -462,14 +480,21 @@ public class NotificationService {
                             Map<String, String> rendered = templateService.renderTemplate(templateCode + "_EMAIL", variables);
                             emailSubject = rendered.getOrDefault("subject", emailSubject);
                             emailContent = rendered.getOrDefault("content", emailContent);
+                            log.debug("邮件模板渲染成功: templateCode={}, subject={}, contentLength={}",
+                                templateCode + "_EMAIL", emailSubject, emailContent != null ? emailContent.length() : 0);
                         } catch (Exception te) {
+                            log.warn("邮件模板 {} 渲染失败，尝试备用模板: {}", templateCode + "_EMAIL", te.getMessage());
                             try {
                                 Map<String, String> rendered = templateService.renderTemplate(templateCode, variables);
                                 emailSubject = rendered.getOrDefault("subject", emailSubject);
                                 emailContent = rendered.getOrDefault("content", emailContent);
                             } catch (Exception te2) {
-                                // 模板不存在，使用变量中的内容
+                                log.warn("备用模板 {} 也渲染失败: {}", templateCode, te2.getMessage());
                             }
+                        }
+                        if (emailContent == null || emailContent.isEmpty()) {
+                            log.warn("邮件内容为空，跳过发送: templateCode={}, admin={}", templateCode, admin.getUsername());
+                            continue;
                         }
                         emailService.sendGeneralEmail(email, emailSubject, emailContent);
                     }
@@ -484,7 +509,30 @@ public class NotificationService {
             if (feishuService.isEnabled()) {
                 Map<String, String> rendered = templateService.renderTemplate(templateCode + "_FEISHU", variables);
                 if (!rendered.isEmpty() && rendered.get("content") != null && !rendered.get("content").isEmpty()) {
-                    feishuService.sendMessage(rendered.get("content"));
+                    String feishuSubject = rendered.getOrDefault("subject", "通知");
+                    String feishuColor = resolveCardColor(type);
+                    // 审批相关模板使用带按钮的卡片
+                    if (isApprovalTemplate(templateCode)) {
+                        String requestIdStr = variables.get("requestId");
+                        Long requestId = null;
+                        if (requestIdStr != null) {
+                            try { requestId = Long.parseLong(requestIdStr); } catch (NumberFormatException ignored) {}
+                        }
+                        if (requestId != null) {
+                            // 有 requestId 时使用正式审批卡片（带签名验证）
+                            feishuService.sendApprovalCard(
+                                feishuService.getDefaultChatId(), feishuSubject,
+                                rendered.get("content"), requestId);
+                        } else {
+                            // 无 requestId 时使用普通带按钮卡片
+                            String actionId = variables.getOrDefault("actionId", templateCode);
+                            feishuService.sendCardMessageWithApprovalButtons(
+                                feishuService.getDefaultChatId(), feishuSubject, feishuColor,
+                                rendered.get("content"), actionId);
+                        }
+                    } else {
+                        feishuService.sendCardMessage(feishuService.getDefaultChatId(), feishuSubject, feishuColor, rendered.get("content"));
+                    }
                 }
             }
         } catch (Exception e) {
@@ -567,7 +615,15 @@ public class NotificationService {
                 }
                 String content = rendered.getOrDefault("content", "");
                 if (content != null && !content.isEmpty()) {
-                    feishuService.sendMessage(content);
+                    // 审批相关模板使用带按钮的卡片
+                    if (isApprovalTemplate(templateCode)) {
+                        String subject = rendered.getOrDefault("subject", "通知");
+                        String actionId = variables.getOrDefault("requestId", templateCode);
+                        feishuService.sendCardMessageWithApprovalButtons(
+                            feishuService.getDefaultChatId(), subject, "orange", content, actionId);
+                    } else {
+                        feishuService.sendMessage(content);
+                    }
                 }
             }
 
@@ -587,5 +643,19 @@ public class NotificationService {
         } catch (Exception e) {
             log.error("Failed to notify user {}: {}", userId, e.getMessage());
         }
+    }
+
+    /**
+     * 判断模板编码是否为审批相关模板
+     * 审批模板需要在飞书卡片中显示同意/拒绝按钮
+     *
+     * @param templateCode 模板编码
+     * @return 是否为审批模板
+     */
+    private boolean isApprovalTemplate(String templateCode) {
+        if (templateCode == null) return false;
+        String upper = templateCode.toUpperCase();
+        return upper.contains("APPROVAL") || upper.contains("RECRUIT")
+            || upper.contains("DELIVERY") || upper.contains("DISMISS");
     }
 }

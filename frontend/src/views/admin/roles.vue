@@ -122,7 +122,16 @@ const permissionTree = [
     children: [
       { id: 'agents:view', label: '查看 Agent', description: '查看 Agent 列表和状态' },
       { id: 'agents:manage', label: '管理 Agent', description: '启动、停止、重启 Agent' },
-      { id: 'agents:task', label: '发送任务', description: '向 Agent 发送任务和指令' }
+      { id: 'agents:task', label: '发送任务', description: '向 Agent 发送任务和指令' },
+      { id: 'checkpoint:view', label: '查看检查点', description: '查看 Agent 检查点列表' },
+      { id: 'checkpoint:manage', label: '管理检查点', description: '创建、恢复、删除检查点' },
+      { id: 'fork:view', label: '查看会话分叉', description: '查看会话分叉列表' },
+      { id: 'fork:create', label: '创建会话分叉', description: '创建会话分叉' },
+      { id: 'fork:manage', label: '管理会话分叉', description: '合并、丢弃会话分叉' },
+      { id: 'subagent:view', label: '查看子代理', description: '查看子代理列表' },
+      { id: 'subagent:create', label: '创建子代理', description: '创建子代理' },
+      { id: 'subagent:manage', label: '管理子代理', description: '终止子代理' },
+      { id: 'tool:permission:manage', label: '工具权限管理', description: '管理 Agent 工具权限' }
     ]
   },
   {

@@ -24,8 +24,43 @@ public class AgentDefinition {
     private String projectId;
     /** 运行时 ID（由 projectId + role 组成，全局唯一，格式: projectId:role） */
     private String runtimeId;
+    /** 当前使用的 Token ID（池化模式下记录实际分配的 Token） */
+    private Long assignedTokenId;
     /** 推理深度 1-5: 1=快速 2=标准 3=深入 4=全面 5=极致 */
     private int reasoningDepth = 3;
+
+    /** 思维模式 1-5: 控制AI的思维风格和约束程度
+     *  1=高度严谨: 极度保守、精确执行、零风险容忍
+     *  2=严谨: 稳健保守、注重规范、最小风险
+     *  3=平衡: 兼顾效率与质量、适度灵活（默认）
+     *  4=创新: 鼓励创意、接受适度风险、探索新方案
+     *  5=突破: 大胆突破、颠覆常规、追求极致创意
+     */
+    private int thinkingMode = 3;
+
+    /**
+     * 根据角色获取默认思维模式
+     * 开发类角色默认偏严谨，策划类角色默认偏创新
+     *
+     * @param role Agent 角色
+     * @return 默认思维模式 1-5
+     */
+    public static int getDefaultThinkingMode(String role) {
+        if (role == null) return 3;
+        return switch (role) {
+            // 开发类：严谨精确
+            case "server-dev", "client-dev", "ui-dev" -> 2;
+            case "git-commit" -> 1;
+            // 测试验证：严谨
+            case "verification" -> 2;
+            // 策划类：创新探索
+            case "system-planner", "numerical-planner" -> 4;
+            // 制作人：平衡（需要协调+规划+适度创新）
+            case "producer" -> 3;
+            // 默认：平衡
+            default -> 3;
+        };
+    }
 
     // ===== 自定义标签系统 =====
 
@@ -111,6 +146,89 @@ public class AgentDefinition {
             default -> getReasoningDepthInstruction(3);
         };
     }
+
+    /**
+     * 将推理深度映射到 Claude CLI 的 --effort 参数
+     * CLI 支持: low, medium, high, xhigh, max
+     *
+     * @param depth 推理深度 1-5
+     * @return CLI effort 级别字符串
+     */
+    public static String reasoningDepthToEffort(int depth) {
+        return switch (depth) {
+            case 1 -> "low";
+            case 2 -> "medium";
+            case 3 -> "high";
+            case 4 -> "xhigh";
+            case 5 -> "max";
+            default -> "high";
+        };
+    }
+
+    /** 思维模式描述 */
+    public static String getThinkingModeLabel(int mode) {
+        return switch (mode) {
+            case 1 -> "高度严谨 (Ultra-Rigorous)";
+            case 2 -> "严谨 (Rigorous)";
+            case 3 -> "平衡 (Balanced)";
+            case 4 -> "创新 (Creative)";
+            case 5 -> "突破 (Breakthrough)";
+            default -> "平衡 (Balanced)";
+        };
+    }
+
+    /**
+     * 获取思维模式对应的系统指令
+     * 通过 prompt 层面控制 AI 的思维风格，弥补 CLI 不支持 temperature 的不足
+     *
+     * @param mode 思维模式 1-5
+     * @return 注入到系统提示词中的思维风格指令
+     */
+    public static String getThinkingModeInstruction(int mode) {
+        return switch (mode) {
+            case 1 -> "[思维模式: 高度严谨]\n" +
+                "你的思维必须极度严谨和保守：\n" +
+                "- 每一步决策都要有明确依据，不做任何未经验证的假设\n" +
+                "- 严格遵循既有规范和最佳实践，不引入未经验证的新方案\n" +
+                "- 代码修改必须最小化，只改必要的部分\n" +
+                "- 优先选择最成熟、最稳定的技术方案\n" +
+                "- 对任何风险零容忍，宁可保守也不冒险";
+
+            case 2 -> "[思维模式: 严谨]\n" +
+                "你的思维应当稳健保守：\n" +
+                "- 注重规范和标准，遵循项目既有模式\n" +
+                "- 决策前充分评估风险，选择经过验证的方案\n" +
+                "- 代码修改要有明确目的，避免不必要的变更\n" +
+                "- 优先保证正确性和稳定性，其次考虑效率\n" +
+                "- 遇到不确定时，选择更保守的路径";
+
+            case 3 -> "[思维模式: 平衡]\n" +
+                "你的思维应当兼顾效率与质量：\n" +
+                "- 在规范和灵活性之间找到平衡点\n" +
+                "- 优先使用经过验证的方案，但不排斥合理的新思路\n" +
+                "- 权衡开发速度和代码质量，找到最优平衡\n" +
+                "- 适度创新，但要确保变更可控\n" +
+                "- 遇到问题时，综合考虑多种方案的优劣";
+
+            case 4 -> "[思维模式: 创新]\n" +
+                "你的思维应当鼓励创意和探索：\n" +
+                "- 主动探索更优雅、更高效的实现方式\n" +
+                "- 不拘泥于既有模式，敢于提出新方案\n" +
+                "- 在保证功能正确的前提下，尝试创新的架构和设计\n" +
+                "- 接受适度风险以换取更好的解决方案\n" +
+                "- 善于借鉴其他领域的优秀实践";
+
+            case 5 -> "[思维模式: 突破]\n" +
+                "你的思维应当大胆突破常规：\n" +
+                "- 跳出固有框架，用全新的视角审视问题\n" +
+                "- 追求极致的创意和设计，不满足于平庸的方案\n" +
+                "- 敢于挑战既有架构，提出颠覆性的改进\n" +
+                "- 在安全边界内大胆实验，追求最优解\n" +
+                "- 将创新放在首位，用创意驱动实现";
+
+            default -> getThinkingModeInstruction(3);
+        };
+    }
     
     public enum AgentStatus {
         IDLE, WORKING, WAITING, ERROR, STOPPED
@@ -175,6 +293,9 @@ public class AgentDefinition {
     public String getRuntimeId() { return runtimeId; }
     public void setRuntimeId(String runtimeId) { this.runtimeId = runtimeId; }
 
+    public Long getAssignedTokenId() { return assignedTokenId; }
+    public void setAssignedTokenId(Long assignedTokenId) { this.assignedTokenId = assignedTokenId; }
+
     /**
      * 获取运行时 ID
      * 如果 runtimeId 未设置，自动生成: projectId:role
@@ -189,6 +310,11 @@ public class AgentDefinition {
     public int getReasoningDepth() { return reasoningDepth; }
     public void setReasoningDepth(int reasoningDepth) {
         this.reasoningDepth = Math.max(1, Math.min(5, reasoningDepth));
+    }
+
+    public int getThinkingMode() { return thinkingMode; }
+    public void setThinkingMode(int thinkingMode) {
+        this.thinkingMode = Math.max(1, Math.min(5, thinkingMode));
     }
 
     // ===== 自定义标签相关 =====
@@ -348,8 +474,10 @@ public class AgentDefinition {
         public Builder parent(boolean parent) { def.parent = parent; return this; }
         public Builder parentId(String parentId) { def.parentId = parentId; return this; }
         public Builder reasoningDepth(int reasoningDepth) { def.reasoningDepth = reasoningDepth; return this; }
+        public Builder thinkingMode(int thinkingMode) { def.thinkingMode = thinkingMode; return this; }
         public Builder projectId(String projectId) { def.projectId = projectId; return this; }
         public Builder runtimeId(String runtimeId) { def.runtimeId = runtimeId; return this; }
+        public Builder assignedTokenId(Long assignedTokenId) { def.assignedTokenId = assignedTokenId; return this; }
 
         public Builder tag(String key, String value) { def.tags.put(key, value); return this; }
         public Builder tags(Map<String, String> tags) { def.tags.putAll(tags); return this; }

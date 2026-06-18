@@ -53,6 +53,94 @@
       </el-form>
     </el-card>
 
+    <!-- 飞书 AI 助手绑定 -->
+    <el-card class="mt-4">
+      <template #header>
+        <span>飞书 AI 助手</span>
+      </template>
+      <div class="feishu-bind-section">
+        <p class="bind-desc">绑定飞书账号后，可在飞书中直接与 AI 助手对话</p>
+        <!-- 已绑定状态 -->
+        <div v-if="feishuBound" class="bind-status-bound">
+          <el-alert type="success" :closable="false" show-icon>
+            <template #title>
+              <span>已绑定飞书账号</span>
+            </template>
+            <template #default>
+              <span>绑定时间：{{ feishuBindTime || '未知' }}</span>
+            </template>
+          </el-alert>
+          <el-button type="danger" size="small" @click="handleUnbindFeishu" style="margin-top: 8px;">
+            解绑
+          </el-button>
+        </div>
+        <!-- 未绑定状态 -->
+        <div v-else>
+          <div v-if="feishuBindCode" class="bind-code-display">
+            <el-alert type="success" :closable="false" show-icon>
+              <template #title>
+                <span>绑定验证码：<strong class="code-text">{{ feishuBindCode }}</strong></span>
+              </template>
+              <template #default>
+                <span>在飞书中发送「绑定 {{ feishuBindCode }}」即可完成绑定（30分钟内有效）</span>
+              </template>
+            </el-alert>
+          </div>
+          <el-button type="primary" @click="handleGenerateBindCode" :loading="generatingCode">
+            <el-icon><Link /></el-icon> 生成绑定验证码
+          </el-button>
+        </div>
+      </div>
+    </el-card>
+
+    <!-- 飞书对话记录 -->
+    <el-card class="mt-4" v-if="feishuBound">
+      <template #header>
+        <div class="card-header">
+          <span>飞书对话记录</span>
+          <el-button size="small" @click="loadFeishuSessions" :loading="loadingFeishuSessions">
+            <el-icon><Refresh /></el-icon> 刷新
+          </el-button>
+        </div>
+      </template>
+      <div v-if="feishuSessions.length === 0" class="empty-feishu">
+        <el-empty description="暂无飞书对话记录" :image-size="60" />
+      </div>
+      <div v-else class="feishu-sessions">
+        <div v-for="session in feishuSessions" :key="session.id" class="feishu-session-item">
+          <div class="session-header" @click="toggleFeishuSession(session.id)">
+            <div class="session-info">
+              <el-icon><ChatDotRound /></el-icon>
+              <span class="session-title">{{ session.title }}</span>
+              <el-tag size="small" type="info">{{ session.messageCount || 0 }} 条消息</el-tag>
+            </div>
+            <div class="session-actions">
+              <el-button size="small" type="warning" text @click.stop="handleClearFeishuSession(session.id)">
+                清空上下文
+              </el-button>
+              <el-icon :class="{ 'rotate-180': expandedSessions.includes(session.id) }">
+                <ArrowDown />
+              </el-icon>
+            </div>
+          </div>
+          <div v-if="expandedSessions.includes(session.id)" class="session-messages">
+            <div v-if="loadingMessages[session.id]" class="loading-messages">
+              <el-skeleton :rows="3" animated />
+            </div>
+            <div v-else class="message-list">
+              <div v-for="msg in (feishuMessages[session.id] || [])" :key="msg.id"
+                   :class="['message-item', msg.role]">
+                <div class="message-role">{{ msg.role === 'user' ? '👤 我' : '🤖 AI' }}</div>
+                <div v-if="msg.role === 'assistant'" class="message-content markdown-body" v-html="renderMarkdown(msg.content)"></div>
+                <div v-else class="message-content">{{ msg.content }}</div>
+                <div class="message-time">{{ formatTime(msg.createdAt) }}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </el-card>
+
     <!-- 修改密码入口 -->
     <el-card class="mt-4">
       <template #header>
@@ -83,9 +171,21 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
-import { authApi } from '@/api'
+import { authApi, feishuApi, chatSessionApi } from '@/api'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Refresh, ChatDotRound, ArrowDown } from '@element-plus/icons-vue'
 import EmailChangeDialog from '@/components/EmailChangeDialog.vue'
+import { marked } from 'marked'
+
+/** 渲染 Markdown 内容 */
+const renderMarkdown = (content) => {
+  if (!content) return ''
+  try {
+    return marked(content, { breaks: true, gfm: true })
+  } catch (e) {
+    return content
+  }
+}
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -101,6 +201,19 @@ const originalEmail = ref('')
 
 // 邮箱换绑验证码弹窗
 const showEmailChangeDialog = ref(false)
+
+// 飞书绑定
+const feishuBindCode = ref('')
+const feishuBound = ref(false)
+const feishuBindTime = ref('')
+const generatingCode = ref(false)
+
+// 飞书对话记录
+const feishuSessions = ref([])
+const feishuMessages = ref({})
+const expandedSessions = ref([])
+const loadingFeishuSessions = ref(false)
+const loadingMessages = ref({})
 
 /** 表单数据 */
 const form = ref({
@@ -242,6 +355,129 @@ const handleEmailChangeSuccess = async () => {
   ElMessage.success('邮箱更换成功')
 }
 
+/** 生成飞书绑定验证码 */
+const handleGenerateBindCode = async () => {
+  generatingCode.value = true
+  try {
+    const res = await feishuApi.generateBindCode()
+    if (res.success) {
+      feishuBindCode.value = res.code
+      ElMessage.success('验证码已生成')
+    } else {
+      ElMessage.error(res.message || '生成失败')
+    }
+  } catch (e) {
+    ElMessage.error('生成验证码失败')
+  } finally {
+    generatingCode.value = false
+  }
+}
+
+/** 加载飞书绑定状态 */
+const loadFeishuBindStatus = async () => {
+  try {
+    const res = await feishuApi.getBindStatus()
+    if (res.success && res.bound) {
+      feishuBound.value = true
+      feishuBindTime.value = res.bindTime || ''
+    } else {
+      feishuBound.value = false
+    }
+  } catch (e) {
+    // 忽略加载失败
+  }
+}
+
+/** 解绑飞书 */
+const handleUnbindFeishu = async () => {
+  try {
+    await ElMessageBox.confirm('确定要解绑飞书账号吗？解绑后将无法在飞书中使用 AI 助手。', '确认解绑', {
+      confirmButtonText: '解绑',
+      cancelButtonText: '取消',
+      type: 'warning'
+    })
+    const res = await feishuApi.unbind()
+    if (res.success) {
+      feishuBound.value = false
+      feishuBindCode.value = ''
+      ElMessage.success('已解绑')
+    } else {
+      ElMessage.error(res.message || '解绑失败')
+    }
+  } catch (e) {
+    // 用户取消
+  }
+}
+
+/** 加载飞书会话列表 */
+const loadFeishuSessions = async () => {
+  loadingFeishuSessions.value = true
+  try {
+    const res = await chatSessionApi.getFeishuSessions()
+    feishuSessions.value = res || []
+  } catch (e) {
+    console.error('加载飞书会话失败', e)
+  } finally {
+    loadingFeishuSessions.value = false
+  }
+}
+
+/** 展开/折叠飞书会话 */
+const toggleFeishuSession = async (sessionId) => {
+  const idx = expandedSessions.value.indexOf(sessionId)
+  if (idx >= 0) {
+    expandedSessions.value.splice(idx, 1)
+    return
+  }
+  expandedSessions.value.push(sessionId)
+  // 加载消息
+  if (!feishuMessages.value[sessionId]) {
+    loadingMessages.value[sessionId] = true
+    try {
+      const res = await chatSessionApi.getFeishuSession(sessionId)
+      feishuMessages.value[sessionId] = res?.messages || []
+    } catch (e) {
+      console.error('加载飞书消息失败', e)
+      feishuMessages.value[sessionId] = []
+    } finally {
+      loadingMessages.value[sessionId] = false
+    }
+  }
+}
+
+/** 清空飞书会话上下文 */
+const handleClearFeishuSession = async (sessionId) => {
+  try {
+    await ElMessageBox.confirm('确定要清空该飞书对话的上下文吗？清空后 AI 将忘记之前的对话历史。', '清空上下文', {
+      confirmButtonText: '清空',
+      cancelButtonText: '取消',
+      type: 'warning'
+    })
+    const res = await chatSessionApi.clearFeishuSession(sessionId)
+    if (res.success) {
+      feishuMessages.value[sessionId] = []
+      ElMessage.success('上下文已清空')
+      loadFeishuSessions()
+    } else {
+      ElMessage.error(res.message || '清空失败')
+    }
+  } catch (e) {
+    // 用户取消
+  }
+}
+
+/** 格式化时间 */
+const formatTime = (time) => {
+  if (!time) return ''
+  const d = new Date(time)
+  const now = new Date()
+  const diff = now - d
+  if (diff < 60000) return '刚刚'
+  if (diff < 3600000) return `${Math.floor(diff / 60000)}分钟前`
+  if (diff < 86400000) return `${Math.floor(diff / 3600000)}小时前`
+  return d.toLocaleString('zh-CN')
+}
+
 onMounted(async () => {
   // 先从后端刷新用户数据，确保显示最新信息（如审批通过后的邮箱）
   try {
@@ -250,6 +486,11 @@ onMounted(async () => {
     // 忽略刷新失败，使用缓存数据
   }
   loadUserInfo()
+  loadFeishuBindStatus().then(() => {
+    if (feishuBound.value) {
+      loadFeishuSessions()
+    }
+  })
 })
 </script>
 
@@ -269,6 +510,138 @@ onMounted(async () => {
 
 .mt-4 {
   margin-top: 16px;
+}
+
+.feishu-bind-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.bind-desc {
+  color: #606266;
+  font-size: 14px;
+  margin: 0;
+}
+
+.bind-code-display {
+  margin: 8px 0;
+}
+
+.code-text {
+  font-size: 18px;
+  letter-spacing: 3px;
+  color: #409eff;
+}
+
+/* 飞书对话记录 */
+.empty-feishu {
+  padding: 20px 0;
+}
+
+.feishu-sessions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.feishu-session-item {
+  border: 1px solid #e4e7ed;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.session-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  cursor: pointer;
+  background: #fafafa;
+  transition: background 0.2s;
+}
+
+.session-header:hover {
+  background: #f0f2f5;
+}
+
+.session-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.session-title {
+  font-weight: 500;
+  color: #303133;
+}
+
+.session-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rotate-180 {
+  transform: rotate(180deg);
+}
+
+.session-messages {
+  border-top: 1px solid #e4e7ed;
+  padding: 16px;
+  max-height: 500px;
+  overflow-y: auto;
+}
+
+.loading-messages {
+  padding: 16px;
+}
+
+.message-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.message-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px;
+  border-radius: 8px;
+  max-width: 85%;
+}
+
+.message-item.user {
+  align-self: flex-end;
+  background: #ecf5ff;
+  border: 1px solid #b3d8ff;
+}
+
+.message-item.assistant {
+  align-self: flex-start;
+  background: #f4f4f5;
+  border: 1px solid #e9e9eb;
+}
+
+.message-role {
+  font-size: 12px;
+  color: #909399;
+  font-weight: 500;
+}
+
+.message-content {
+  font-size: 14px;
+  color: #303133;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.message-time {
+  font-size: 11px;
+  color: #c0c4cc;
+  align-self: flex-end;
 }
 
 /* 手机端 */
@@ -308,6 +681,27 @@ onMounted(async () => {
 
   :deep(.el-form-item__content) {
     margin-left: 0 !important;
+  }
+
+  /* Markdown 渲染样式 */
+  .markdown-body {
+    font-size: 14px;
+    line-height: 1.6;
+    word-wrap: break-word;
+
+    p { margin: 0 0 8px 0; }
+    h1, h2, h3, h4, h5, h6 { margin: 12px 0 8px 0; font-weight: 600; }
+    ul, ol { padding-left: 20px; margin: 4px 0; }
+    li { margin: 2px 0; }
+    code { background: #f5f7fa; padding: 2px 6px; border-radius: 3px; font-size: 13px; }
+    pre { background: #f5f7fa; padding: 12px; border-radius: 4px; overflow-x: auto; }
+    pre code { background: none; padding: 0; }
+    blockquote { border-left: 4px solid #dcdfe6; padding-left: 12px; color: #909399; margin: 8px 0; }
+    table { border-collapse: collapse; width: 100%; margin: 8px 0; }
+    th, td { border: 1px solid #ebeef5; padding: 8px 12px; text-align: left; }
+    th { background: #f5f7fa; }
+    a { color: #409eff; text-decoration: none; }
+    img { max-width: 100%; }
   }
 }
 </style>

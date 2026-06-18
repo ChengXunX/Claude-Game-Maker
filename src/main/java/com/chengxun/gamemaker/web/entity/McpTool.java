@@ -42,6 +42,14 @@ public class McpTool {
     @Column(columnDefinition = "TEXT")
     private String inputSchema;
 
+    /** 默认参数（JSON 格式，调用时自动注入，Agent 可覆盖） */
+    @Column(columnDefinition = "TEXT")
+    private String defaultParams;
+
+    /** 参数提示（JSON 格式，为 AI 提供每个参数的填写指导和示例） */
+    @Column(columnDefinition = "TEXT")
+    private String paramHints;
+
     /** 工具分类 */
     @Column(length = 50)
     private String category;
@@ -94,6 +102,12 @@ public class McpTool {
 
     public String getInputSchema() { return inputSchema; }
     public void setInputSchema(String inputSchema) { this.inputSchema = inputSchema; }
+
+    public String getDefaultParams() { return defaultParams; }
+    public void setDefaultParams(String defaultParams) { this.defaultParams = defaultParams; }
+
+    public String getParamHints() { return paramHints; }
+    public void setParamHints(String paramHints) { this.paramHints = paramHints; }
 
     public String getCategory() { return category; }
     public void setCategory(String category) { this.category = category; }

@@ -560,6 +560,26 @@ public class GameRuntimeVerifier {
             result.suggestions = extractStringArray(json, "suggestions");
             result.success = true;
 
+            // overallScore 兜底：如果 AI 未返回 overallScore，则从各维度分数计算平均值
+            if (result.overallScore == 0) {
+                int[] dims = {result.runnableScore, result.playableScore,
+                    result.completenessScore, result.uiuxScore, result.codeQualityScore};
+                int nonZeroCount = 0;
+                int sum = 0;
+                for (int d : dims) {
+                    if (d > 0) { sum += d; nonZeroCount++; }
+                }
+                if (nonZeroCount > 0) {
+                    result.overallScore = sum / nonZeroCount;
+                    log.info("AI 未返回 overallScore，从 {} 个维度计算平均分: {}", nonZeroCount, result.overallScore);
+                }
+            }
+
+            // 日志：记录解析结果，便于排查 0 分问题
+            log.info("质量分析解析结果: runnable={}, playable={}, completeness={}, uiux={}, codeQuality={}, overall={}",
+                result.runnableScore, result.playableScore, result.completenessScore,
+                result.uiuxScore, result.codeQualityScore, result.overallScore);
+
         } catch (Exception e) {
             log.warn("解析 AI 分析结果失败: {}", e.getMessage());
             result.success = true; // 仍然标记为成功，返回原始响应

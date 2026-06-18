@@ -9,7 +9,7 @@ import java.util.Set;
 
 @Entity
 @Table(name = "roles")
-@JsonIgnoreProperties(ignoreUnknown = true)
+@JsonIgnoreProperties(ignoreUnknown = true, value = {"hibernateLazyInitializer", "handler"})
 public class Role {
 
     @Id

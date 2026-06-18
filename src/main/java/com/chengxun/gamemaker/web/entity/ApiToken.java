@@ -53,12 +53,6 @@ public class ApiToken {
     @Column(name = "priority")
     private Integer priority = 10;
 
-    @Column(name = "assigned_agent_id", length = 50)
-    private String assignedAgentId;
-
-    @Column(name = "assigned_agent_name", length = 100)
-    private String assignedAgentName;
-
     @Column(name = "usage_count")
     private Long usageCount = 0L;
 
@@ -97,10 +91,75 @@ public class ApiToken {
         SHARED          // 共享（兼容旧数据）
     }
 
+    /**
+     * 配额类型枚举
+     * 控制 Token 的使用量限制方式
+     */
+    public enum QuotaType {
+        UNLIMITED,      // 无限制（默认）
+        TOTAL,          // 总量配额（如月度总量，用完即止）
+        SLIDING_WINDOW  // 滑动窗口（如火山引擎 5 小时窗口，窗口内限额，窗口过后自动恢复）
+    }
+
+    /**
+     * 提供商类型枚举
+     * 标识 Token 对应的 AI 服务提供商类型
+     */
+    public enum ProviderType {
+        ANTHROPIC,              // Anthropic Claude（默认）
+        OPENAI_COMPATIBLE,      // OpenAI 兼容格式（DeepSeek/MiniMax/智谱等）
+        SUNO,                   // Suno 音乐生成
+        ELEVENLABS,             // ElevenLabs 音效生成
+        DALL_E,                 // DALL-E 图片生成
+        STABILITY,              // Stability AI (Stable Diffusion)
+        ZHIPU_IMAGE,            // 智谱图片生成
+        CUSTOM_RESOURCE         // 自定义资源 API
+    }
+
+    /**
+     * 资源类型枚举
+     * 标识 Token 生成的内容类型
+     */
+    public enum ResourceType {
+        TEXT,           // 文本/代码（默认，用于代码类 Agent）
+        AUDIO,          // 音频（音乐、音效）
+        IMAGE,          // 图片（精灵、UI 素材）
+        MULTIMODAL      // 多模态（文本+图片）
+    }
+
     /** Token 用途，默认 AGENT */
     @Enumerated(EnumType.STRING)
     @Column(name = "purpose", length = 20)
     private TokenPurpose purpose = TokenPurpose.AGENT;
+
+    /** 提供商类型，默认 ANTHROPIC */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "provider_type", length = 30)
+    private ProviderType providerType = ProviderType.ANTHROPIC;
+
+    /** 资源类型，默认 TEXT */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "resource_type", length = 20)
+    private ResourceType resourceType = ResourceType.TEXT;
+
+    // ===== 配额管理 =====
+
+    /** 配额类型：无限制 / 总量 / 滑动窗口 */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "quota_type", length = 20)
+    private QuotaType quotaType = QuotaType.UNLIMITED;
+
+    /** 配额总量（token 数），0 表示不限 */
+    @Column(name = "quota_total")
+    private Long quotaTotal = 0L;
+
+    /** 滑动窗口时长（秒），如 5 小时 = 18000 */
+    @Column(name = "window_seconds")
+    private Integer windowSeconds = 0;
+
+    /** 最大并发 Agent 数，0 表示不限 */
+    @Column(name = "max_concurrent_agents")
+    private Integer maxConcurrentAgents = 0;
 
     @PreUpdate
     public void preUpdate() {
@@ -150,12 +209,6 @@ public class ApiToken {
     public Integer getPriority() { return priority; }
     public void setPriority(Integer priority) { this.priority = priority; }
 
-    public String getAssignedAgentId() { return assignedAgentId; }
-    public void setAssignedAgentId(String assignedAgentId) { this.assignedAgentId = assignedAgentId; }
-
-    public String getAssignedAgentName() { return assignedAgentName; }
-    public void setAssignedAgentName(String assignedAgentName) { this.assignedAgentName = assignedAgentName; }
-
     public Long getUsageCount() { return usageCount; }
     public void setUsageCount(Long usageCount) { this.usageCount = usageCount; }
 
@@ -183,26 +236,80 @@ public class ApiToken {
     public TokenPurpose getPurpose() { return purpose; }
     public void setPurpose(TokenPurpose purpose) { this.purpose = purpose; }
 
+    public QuotaType getQuotaType() { return quotaType; }
+    public void setQuotaType(QuotaType quotaType) { this.quotaType = quotaType; }
+
+    public Long getQuotaTotal() { return quotaTotal; }
+    public void setQuotaTotal(Long quotaTotal) { this.quotaTotal = quotaTotal; }
+
+    public Integer getWindowSeconds() { return windowSeconds; }
+    public void setWindowSeconds(Integer windowSeconds) { this.windowSeconds = windowSeconds; }
+
+    public Integer getMaxConcurrentAgents() { return maxConcurrentAgents; }
+    public void setMaxConcurrentAgents(Integer maxConcurrentAgents) { this.maxConcurrentAgents = maxConcurrentAgents; }
+
+    public ProviderType getProviderType() { return providerType; }
+    public void setProviderType(ProviderType providerType) { this.providerType = providerType; }
+
+    public ResourceType getResourceType() { return resourceType; }
+    public void setResourceType(ResourceType resourceType) { this.resourceType = resourceType; }
+
     public boolean isActive() { return status == TokenStatus.ACTIVE; }
-    public boolean isAssigned() { return assignedAgentId != null && !assignedAgentId.isEmpty(); }
+    /** 是否有 Agent 在使用（池化模式：基于使用量判断） */
+    public boolean isInUse() { return usageCount != null && usageCount > 0; }
 
     /**
      * 检查此 Token 是否适用于指定的 Agent 角色
+     *
+     * 匹配规则：
+     * 1. 如果 agentTags 为空，视为通用 Token
+     * 2. 如果 agentTags 包含该角色，匹配
+     * 3. 如果以上都不匹配，检查 resourceType 与角色的兼容性
      *
      * @param agentRole Agent 角色
      * @return true 如果适用于该角色
      */
     public boolean isSuitableForRole(String agentRole) {
-        if (agentTags == null || agentTags.isEmpty()) {
-            return true; // 没有标签限制，适用于所有角色
-        }
-        String[] tags = agentTags.split(",");
-        for (String tag : tags) {
-            if (tag.trim().equalsIgnoreCase(agentRole)) {
-                return true;
+        // 1. agentTags 匹配（显式指定的角色）
+        if (agentTags != null && !agentTags.isEmpty()) {
+            String[] tags = agentTags.split(",");
+            for (String tag : tags) {
+                if (tag.trim().equalsIgnoreCase(agentRole)) {
+                    return true;
+                }
             }
+            // 有 agentTags 但不包含此角色，不匹配
+            return false;
         }
-        return false;
+
+        // 2. agentTags 为空，根据 resourceType 判断兼容性
+        if (resourceType == null || resourceType == ResourceType.TEXT) {
+            // TEXT Token 适用于所有代码类角色
+            return isCodeAgentRole(agentRole);
+        }
+        if (resourceType == ResourceType.AUDIO) {
+            return "audio-dev".equals(agentRole);
+        }
+        if (resourceType == ResourceType.IMAGE) {
+            return "tech-artist".equals(agentRole) || "ui-dev".equals(agentRole);
+        }
+        // MULTIMODAL 适用于所有角色
+        return true;
+    }
+
+    /**
+     * 判断是否为代码类 Agent 角色（使用 TEXT Token）
+     */
+    private boolean isCodeAgentRole(String role) {
+        return switch (role) {
+            case "server-dev", "client-dev", "git-commit", "system-planner",
+                 "numerical-planner", "tester", "security-expert", "data-analyst",
+                 "devops", "performance-engineer", "ai-engineer", "narrative-planner",
+                 "level-design", "localization", "product-manager",
+                 "producer", "verifier", "multi-agent", "ui-dev",
+                 "system-optimizer", "game-designer" -> true;
+            default -> false;
+        };
     }
 
     public String getMaskedApiKey() {

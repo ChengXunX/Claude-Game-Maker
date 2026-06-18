@@ -51,6 +51,13 @@ public class ProjectAgentConfig {
     @Column(name = "performance_weights", length = 300)
     private String performanceWeights;
 
+    /** 思维模式 1-5，控制AI的思维风格和约束程度
+     *  1=高度严谨 2=严谨 3=平衡 4=创新 5=突破
+     *  null表示使用角色默认值
+     */
+    @Column(name = "thinking_mode")
+    private Integer thinkingMode;
+
     /** 项目特定上下文（JSON格式，存储项目相关信息） */
     @Column(name = "project_context", columnDefinition = "TEXT")
     private String projectContext;
@@ -107,6 +114,9 @@ public class ProjectAgentConfig {
 
     public String getPerformanceWeights() { return performanceWeights; }
     public void setPerformanceWeights(String performanceWeights) { this.performanceWeights = performanceWeights; }
+
+    public Integer getThinkingMode() { return thinkingMode; }
+    public void setThinkingMode(Integer thinkingMode) { this.thinkingMode = thinkingMode; }
 
     public String getProjectContext() { return projectContext; }
     public void setProjectContext(String projectContext) { this.projectContext = projectContext; }
