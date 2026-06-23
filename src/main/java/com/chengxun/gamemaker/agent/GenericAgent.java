@@ -11,6 +11,8 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * 通用 Agent 实现
@@ -34,11 +36,21 @@ public class GenericAgent extends BaseAgent {
     /** 游戏运行时验证服务（延迟注入） */
     private com.chengxun.gamemaker.service.GameRuntimeVerifier gameRuntimeVerifier;
 
+    /** 目标服务（延迟注入），用于更新里程碑任务状态 */
+    private com.chengxun.gamemaker.service.GoalService goalService;
+
     /**
      * 设置游戏运行时验证服务
      */
     public void setGameRuntimeVerifier(com.chengxun.gamemaker.service.GameRuntimeVerifier gameRuntimeVerifier) {
         this.gameRuntimeVerifier = gameRuntimeVerifier;
+    }
+
+    /**
+     * 设置目标服务
+     */
+    public void setGoalService(com.chengxun.gamemaker.service.GoalService goalService) {
+        this.goalService = goalService;
     }
 
     /** 上次角色特有工作执行时间 */
@@ -227,19 +239,44 @@ public class GenericAgent extends BaseAgent {
         // 通知相关 Agent
         notifyTaskCompleted(task, result);
 
+        // 【修复】更新里程碑中的任务状态并通知制作人
+        updateMilestoneTaskStatus(task, result);
+
         // 汇报进度
         String summary = result != null && result.length() > 100 ? result.substring(0, 100) + "..." : result;
         reportProgress(task.getId(), "已完成: " + summary);
 
         // 记录任务完成日志
         logTask("TASK_COMPLETED", String.format("任务完成: %s，耗时 %ds", task.getTitle(), totalAiTime / 1000), task.getId());
+
+        // 【优化】任务完成后，立即检查队列中是否有下一个待处理任务
+        // 避免等待AgentScheduler下次调度（最长5分钟延迟）
+        List<TaskAssignment> nextTasks = tasks.stream()
+            .filter(t -> t.getStatus() == TaskAssignment.TaskStatus.PENDING)
+            .sorted((a, b) -> {
+                TaskAssignment.TaskPriority pa = b.getPriority();
+                TaskAssignment.TaskPriority pb = a.getPriority();
+                if (pa == null && pb == null) return 0;
+                if (pa == null) return 1;
+                if (pb == null) return -1;
+                return pa.compareTo(pb);
+            })
+            .toList();
+        if (!nextTasks.isEmpty()) {
+            log.info("Agent [{}] 任务完成，立即开始下一个任务: {}", getName(), nextTasks.get(0).getTitle());
+            workOnTask(nextTasks.get(0));
+        }
     }
 
     /**
      * 判断是否为游戏开发类角色（需要运行时验证）
+     * 所有开发类角色都需要验证，确保产出的游戏能正常运行
      */
     private boolean isGameDevRole(String role) {
-        return "client-dev".equals(role) || "ui-dev".equals(role);
+        return "client-dev".equals(role)
+            || "ui-dev".equals(role)
+            || "server-dev".equals(role)
+            || "tester".equals(role);
     }
 
     /**
@@ -287,6 +324,57 @@ public class GenericAgent extends BaseAgent {
     }
 
     /**
+     * 更新里程碑中的任务状态并通知制作人
+     * 当 Agent 完成任务后调用，确保里程碑进度同步更新
+     *
+     * @param task 已完成的任务
+     * @param result 任务结果
+     */
+    private void updateMilestoneTaskStatus(TaskAssignment task, String result) {
+        try {
+            String projectId = currentProject != null ? currentProject.getId() : null;
+            if (projectId == null || goalService == null) {
+                log.debug("无法更新里程碑任务状态: projectId={}, goalService={}", projectId, goalService != null);
+                return;
+            }
+
+            // 查找任务所属的里程碑
+            String milestoneId = goalService.findMilestoneIdByTaskId(projectId, task.getId());
+            if (milestoneId == null) {
+                log.debug("任务 {} 不在任何里程碑中，跳过里程碑状态更新", task.getId());
+                return;
+            }
+
+            // 更新任务状态
+            goalService.updateTaskStatus(projectId, milestoneId, task.getId(),
+                com.chengxun.gamemaker.model.GameProject.MilestoneStatus.COMPLETED, result);
+            log.info("里程碑任务状态已更新: taskId={}, milestoneId={}", task.getId(), milestoneId);
+
+            // 通知制作人任务完成
+            String producerId = projectId + ":producer";
+            Agent producer = agentManagerRef != null ? agentManagerRef.getAgent(producerId) : null;
+            if (producer != null && producer.isAlive()) {
+                String notifyContent = String.format(
+                    "## 任务完成通知\n\n" +
+                    "**执行者**: %s (%s)\n" +
+                    "**任务ID**: %s\n" +
+                    "**任务标题**: %s\n" +
+                    "**里程碑**: %s\n\n" +
+                    "**完成结果**:\n%s",
+                    getName(), getRole(), task.getId(), task.getTitle(),
+                    milestoneId,
+                    result != null && result.length() > 500 ? result.substring(0, 500) + "..." : result
+                );
+                AgentMessage notifyMsg = AgentMessage.createTask(getId(), producerId, notifyContent);
+                producer.receiveMessage(notifyMsg);
+                log.info("已通知制作人任务完成: agent={}, taskId={}", getId(), task.getId());
+            }
+        } catch (Exception e) {
+            log.warn("更新里程碑任务状态失败: taskId={}", task.getId(), e);
+        }
+    }
+
+    /**
      * 构建任务 prompt
      * 注入角色知识、项目上下文、工作规范、相关经验、协作上下文
      *
@@ -319,6 +407,18 @@ public class GenericAgent extends BaseAgent {
             String projectRules = projectManager.loadProjectRules(currentProject.getId());
             if (projectRules != null) {
                 sb.append("## 项目规范\n\n").append(truncate(projectRules, MAX_KNOWLEDGE_INJECT_LENGTH)).append("\n\n");
+            }
+
+            // 【新增】加载游戏设计文档（GDD）
+            String gdd = loadGDD();
+            if (gdd != null && !gdd.isEmpty()) {
+                sb.append("## 游戏设计文档\n\n").append(truncate(gdd, 3000)).append("\n\n");
+            }
+
+            // 【新增】加载当前里程碑的技术方案
+            String techSpec = loadCurrentMilestoneTechSpec();
+            if (techSpec != null && !techSpec.isEmpty()) {
+                sb.append("## 技术方案\n\n").append(truncate(techSpec, 1500)).append("\n\n");
             }
         }
 
@@ -438,13 +538,21 @@ public class GenericAgent extends BaseAgent {
     /**
      * 处理任务消息
      * 将消息内容作为新任务加入队列
+     * 如果消息中包含里程碑任务ID（"任务ID:"），则使用该ID以确保任务状态能正确同步
      */
     private void handleTaskMessage(AgentMessage message) {
         log.info("Agent [{}] received task from {}: {}", getName(), message.getFromAgentId(),
             message.getContent().length() > 80 ? message.getContent().substring(0, 80) + "..." : message.getContent());
 
+        // 从消息中提取里程碑任务ID（格式：任务ID: xxx）
+        String milestoneTaskId = extractMilestoneTaskId(message.getContent());
+        String taskId = milestoneTaskId != null ? milestoneTaskId : "task-" + UUID.randomUUID().toString();
+        if (milestoneTaskId != null) {
+            log.info("从任务消息中提取到里程碑任务ID: {}", milestoneTaskId);
+        }
+
         TaskAssignment task = TaskAssignment.builder()
-            .id("task-" + UUID.randomUUID().toString())
+            .id(taskId)
             .assignerId(message.getFromAgentId())
             .assigneeId(getId())
             .title(extractTaskTitle(message.getContent()))
@@ -606,6 +714,33 @@ public class GenericAgent extends BaseAgent {
     }
 
     /**
+     * 从任务消息中提取里程碑任务ID
+     * 支持格式："任务ID: xxx" 或 "taskId=xxx"
+     *
+     * @param content 任务消息内容
+     * @return 里程碑任务ID，未找到返回null
+     */
+    private String extractMilestoneTaskId(String content) {
+        if (content == null || content.isEmpty()) return null;
+
+        // 匹配 "任务ID: " 后面的UUID
+        Pattern p1 = Pattern.compile("任务ID[:：]\\s*([a-f0-9\\-]{36})");
+        Matcher m1 = p1.matcher(content);
+        if (m1.find()) {
+            return m1.group(1);
+        }
+
+        // 匹配 "taskId=" 后面的UUID（completeTask提示中的格式）
+        Pattern p2 = Pattern.compile("taskId=([a-f0-9\\-]{36})");
+        Matcher m2 = p2.matcher(content);
+        if (m2.find()) {
+            return m2.group(1);
+        }
+
+        return null;
+    }
+
+    /**
      * 保存任务经验
      */
     private void saveTaskExperience(TaskAssignment task, String result) {
@@ -625,5 +760,91 @@ public class GenericAgent extends BaseAgent {
         agentContext.addWorkingMemory("last_task_id", task.getId());
         agentContext.addWorkingMemory("last_task_result",
             result.length() > 200 ? result.substring(0, 200) + "..." : result);
+    }
+
+    // ===== GDD 和技术方案加载 =====
+
+    /**
+     * 加载游戏设计文档（GDD）
+     * 优先从 docs/GDD.md 文件加载，如果不存在则从项目描述构建简易 GDD
+     *
+     * @return GDD 内容，不存在返回 null
+     */
+    private String loadGDD() {
+        if (currentProject == null || currentProject.getWorkDir() == null) return null;
+
+        // 尝试从 docs/GDD.md 加载
+        java.io.File gddFile = new java.io.File(currentProject.getWorkDir(), "docs/GDD.md");
+        if (gddFile.exists()) {
+            try {
+                return java.nio.file.Files.readString(gddFile.toPath());
+            } catch (Exception e) {
+                log.debug("加载 GDD 失败: {}", e.getMessage());
+            }
+        }
+
+        // 尝试从项目描述构建简易 GDD
+        if (currentProject.getDescription() != null && !currentProject.getDescription().isEmpty()) {
+            return "## 游戏概述\n\n" + currentProject.getDescription()
+                + "\n\n## 项目目标\n\n"
+                + (currentProject.getGoal() != null ? currentProject.getGoal() : "未设置");
+        }
+
+        return null;
+    }
+
+    /**
+     * 加载当前里程碑的技术方案
+     * 从里程碑描述中提取 TECH_STACK、FILE_STRUCTURE、KEY_CLASSES 信息
+     *
+     * @return 技术方案内容，不存在返回 null
+     */
+    private String loadCurrentMilestoneTechSpec() {
+        if (currentProject == null || goalService == null) return null;
+
+        String projectId = currentProject.getId();
+        if (projectId == null) return null;
+
+        // 查找当前 IN_PROGRESS 的里程碑
+        java.util.List<com.chengxun.gamemaker.model.GameProject.GoalMilestone> milestones =
+            goalService.getMilestones(projectId);
+        if (milestones == null || milestones.isEmpty()) return null;
+
+        com.chengxun.gamemaker.model.GameProject.GoalMilestone current = milestones.stream()
+            .filter(m -> m.getStatus() == com.chengxun.gamemaker.model.GameProject.MilestoneStatus.IN_PROGRESS)
+            .findFirst()
+            .orElse(null);
+
+        if (current == null) return null;
+
+        StringBuilder spec = new StringBuilder();
+
+        // 从里程碑描述中提取技术方案
+        String desc = current.getDescription();
+        if (desc != null) {
+            // 提取 TECH_STACK
+            int techIdx = desc.indexOf("TECH_STACK:");
+            if (techIdx >= 0) {
+                int end = desc.indexOf("\n", techIdx);
+                spec.append("技术栈: ").append(desc.substring(techIdx + 11, end > 0 ? end : desc.length()).trim()).append("\n");
+            }
+            // 提取 FILE_STRUCTURE
+            int fileIdx = desc.indexOf("FILE_STRUCTURE:");
+            if (fileIdx >= 0) {
+                int end = desc.indexOf("KEY_CLASSES:", fileIdx);
+                if (end < 0) end = desc.indexOf("TASKS:", fileIdx);
+                if (end < 0) end = desc.length();
+                spec.append("文件结构:\n").append(desc.substring(fileIdx + 15, end).trim()).append("\n");
+            }
+            // 提取 KEY_CLASSES
+            int classIdx = desc.indexOf("KEY_CLASSES:");
+            if (classIdx >= 0) {
+                int end = desc.indexOf("TASKS:", classIdx);
+                if (end < 0) end = desc.length();
+                spec.append("关键类:\n").append(desc.substring(classIdx + 11, end).trim()).append("\n");
+            }
+        }
+
+        return spec.length() > 0 ? spec.toString() : null;
     }
 }

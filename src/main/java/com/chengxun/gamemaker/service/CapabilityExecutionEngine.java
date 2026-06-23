@@ -10,6 +10,7 @@ import com.chengxun.gamemaker.manager.SkillManager;
 import com.chengxun.gamemaker.model.AgentMessage;
 import com.chengxun.gamemaker.model.GameProject;
 import com.chengxun.gamemaker.model.Skill;
+import com.chengxun.gamemaker.model.TaskAssignment;
 import com.chengxun.gamemaker.model.TaskTemplate;
 import com.chengxun.gamemaker.web.entity.AgentCapability;
 import com.chengxun.gamemaker.web.entity.CapabilityInvocationLog;
@@ -20,6 +21,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Service;
 
 import java.util.stream.Collectors;
@@ -95,6 +97,10 @@ public class CapabilityExecutionEngine {
     @Autowired(required = false)
     private McpService mcpService;
 
+    /** Spring应用上下文，用于动态获取Bean */
+    @Autowired
+    private ApplicationContext applicationContext;
+
     /**
      * 能力执行器注册表
      * key: capabilityName
@@ -129,6 +135,22 @@ public class CapabilityExecutionEngine {
      */
     public void setApprovalService(ApprovalService approvalService) {
         this.approvalService = approvalService;
+    }
+
+    /**
+     * 从Spring容器中获取Bean
+     * 用于在执行器lambda中动态获取依赖的Service
+     *
+     * @param clazz Bean类型
+     * @return Bean实例，不存在时返回null
+     */
+    private <T> T getBean(Class<T> clazz) {
+        try {
+            return applicationContext.getBean(clazz);
+        } catch (Exception e) {
+            log.debug("Bean not found: {}", clazz.getSimpleName());
+            return null;
+        }
     }
 
     // ===== 核心执行方法 =====
@@ -549,16 +571,41 @@ public class CapabilityExecutionEngine {
                 content.length() > 50 ? content.substring(0, 50) : content);
 
             // 注入任务交接上下文（设计意图、技术约束、历史经验）
-            String enrichedContent = content;
+            StringBuilder enrichedContent = new StringBuilder(content);
+            String projectId = agent instanceof BaseAgent ba && ba.getCurrentProject() != null
+                ? ba.getCurrentProject().getId() : null;
+            String targetRole = target.contains(":") ? target.split(":")[1] : target;
+
+            // 确保 target 包含项目前缀（如 "client-dev" -> "project-xxx:client-dev"）
+            String resolvedTarget = target;
+            if (!target.contains(":")) {
+                if (projectId != null) {
+                    resolvedTarget = projectId + ":" + target;
+                }
+            }
+
+            // 自动查找该角色的第一个未完成里程碑任务并注入ID
+            if (goalService != null && projectId != null) {
+                TaskMatchResult matchResult = findBestMatchingTask(projectId, targetRole, null);
+                if (matchResult != null) {
+                    // 去重检查：如果目标 Agent 正在处理同一个里程碑任务，跳过发送
+                    Agent targetAgent = agentManager.getAgent(resolvedTarget);
+                    if (targetAgent != null && targetAgent.isBusy()) {
+                        log.debug("目标 Agent {} 正在忙碌，跳过重复任务分配: taskId={}", target, matchResult.taskId);
+                        return CapabilityResult.success("任务已发送给 " + target + " (跳过：Agent忙碌)");
+                    }
+
+                    enrichedContent.append("\n\n里程碑ID: ").append(matchResult.milestoneId);
+                    enrichedContent.append("\n任务ID: ").append(matchResult.taskId);
+                    enrichedContent.append("\n\n## 重要提示\n完成任务后请调用 completeTask 能力，传入以下参数：taskId=")
+                        .append(matchResult.taskId).append(", milestoneId=").append(matchResult.milestoneId);
+                    log.info("为任务自动关联里程碑任务: target={}, taskId={}, milestoneId={}",
+                        target, matchResult.taskId, matchResult.milestoneId);
+                }
+            }
+
             if (knowledgeEvolutionService != null || projectBoard != null) {
                 try {
-                    String projectId = agent instanceof BaseAgent ba && ba.getCurrentProject() != null
-                        ? ba.getCurrentProject().getId() : null;
-                    String targetRole = target.contains(":") ? target.split(":")[1] : target;
-
-                    StringBuilder handoff = new StringBuilder();
-                    handoff.append(content);
-
                     // 从 ProjectBoard 获取相关上下文
                     if (projectBoard != null && projectId != null) {
                         ProjectBoard.BoardData board = projectBoard.getBoard(projectId);
@@ -566,41 +613,30 @@ public class CapabilityExecutionEngine {
                             // 当前版本目标
                             String currentGoal = (String) board.sharedContext.get("current_goal");
                             if (currentGoal != null && !currentGoal.isEmpty()) {
-                                handoff.append("\n\n## 版本目标\n").append(currentGoal);
+                                enrichedContent.append("\n\n## 版本目标\n").append(currentGoal);
                             }
                             // 验收标准
                             String criteria = (String) board.sharedContext.get("verification_criteria");
                             if (criteria != null && !criteria.isEmpty()) {
-                                handoff.append("\n\n## 验收标准\n").append(criteria);
+                                enrichedContent.append("\n\n## 验收标准\n").append(criteria);
                             }
                             // 活跃阻塞项
                             List<ProjectBoard.Blocker> blockers = board.blockers.stream()
                                 .filter(b -> !b.resolved).toList();
                             if (!blockers.isEmpty()) {
-                                handoff.append("\n\n## ⚠️ 当前阻塞项\n");
+                                enrichedContent.append("\n\n## ⚠️ 当前阻塞项\n");
                                 for (ProjectBoard.Blocker b : blockers) {
-                                    handoff.append(String.format("- [%s] %s\n", b.severity, b.description));
+                                    enrichedContent.append(String.format("- [%s] %s\n", b.severity, b.description));
                                 }
                             }
                         }
                     }
-
-                    enrichedContent = handoff.toString();
                 } catch (Exception e) {
                     log.debug("Failed to enrich task context: {}", e.getMessage());
                 }
             }
 
-            // 确保 target 包含项目前缀（如 "client-dev" -> "project-xxx:client-dev"）
-            String resolvedTarget = target;
-            if (!target.contains(":")) {
-                String pid = agent instanceof BaseAgent ba && ba.getCurrentProject() != null
-                    ? ba.getCurrentProject().getId() : null;
-                if (pid != null) {
-                    resolvedTarget = pid + ":" + target;
-                }
-            }
-            AgentMessage taskMsg = AgentMessage.createTask(agent.getId(), resolvedTarget, enrichedContent);
+            AgentMessage taskMsg = AgentMessage.createTask(agent.getId(), resolvedTarget, enrichedContent.toString());
             agent.sendMessage(taskMsg);
             return CapabilityResult.success("任务已发送给 " + target);
         });
@@ -1888,6 +1924,87 @@ public class CapabilityExecutionEngine {
             return CapabilityResult.success(result);
         });
 
+        // ===== 新增：执行测试 =====
+        executors.put("executeTest", (agent, params) -> {
+            String testType = getParam(params, "testType", "functional");
+            String testTarget = getParam(params, "testTarget", "");
+            String testCases = getParam(params, "testCases", "");
+
+            String projectId = agent instanceof BaseAgent ba && ba.getCurrentProject() != null
+                ? ba.getCurrentProject().getId() : null;
+            String projectName = "未知项目";
+            String workDir = "";
+            if (projectId != null) {
+                GameProject project = projectManager.getProject(projectId);
+                if (project != null) {
+                    projectName = project.getName();
+                    workDir = project.getWorkDir() != null ? project.getWorkDir() : "";
+                }
+            }
+
+            String testPrompt = String.format(
+                "请为项目 [%s] 执行测试。\n\n" +
+                "测试类型：%s\n" +
+                "测试目标：%s\n" +
+                "测试用例：%s\n" +
+                "项目目录：%s\n\n" +
+                "请执行以下操作：\n" +
+                "1. 检查项目代码是否可构建\n" +
+                "2. 运行相关测试\n" +
+                "3. 记录测试结果\n" +
+                "4. 汇报测试通过率和发现的问题",
+                projectName, testType, testTarget, testCases, workDir
+            );
+
+            String result = agent.sendMessage(testPrompt);
+
+            // 通知管理员
+            sendNotificationToAdmin(agent, "TEST_EXECUTED",
+                String.format("项目 [%s] 测试已执行: %s", projectName, testType));
+
+            return CapabilityResult.success(result);
+        });
+
+        // ===== 新增：运行自动化测试 =====
+        executors.put("runAutomatedTest", (agent, params) -> {
+            String testSuite = getParam(params, "testSuite", "all");
+            String environment = getParam(params, "environment", "local");
+
+            String projectId = agent instanceof BaseAgent ba && ba.getCurrentProject() != null
+                ? ba.getCurrentProject().getId() : null;
+            String projectName = "未知项目";
+            String workDir = "";
+            if (projectId != null) {
+                GameProject project = projectManager.getProject(projectId);
+                if (project != null) {
+                    projectName = project.getName();
+                    workDir = project.getWorkDir() != null ? project.getWorkDir() : "";
+                }
+            }
+
+            String autoTestPrompt = String.format(
+                "请为项目 [%s] 运行自动化测试。\n\n" +
+                "测试套件：%s\n" +
+                "测试环境：%s\n" +
+                "项目目录：%s\n\n" +
+                "请执行以下操作：\n" +
+                "1. 检查测试框架配置\n" +
+                "2. 运行自动化测试套件\n" +
+                "3. 收集测试结果和覆盖率\n" +
+                "4. 生成测试报告\n" +
+                "5. 汇报通过率、失败用例和覆盖率",
+                projectName, testSuite, environment, workDir
+            );
+
+            String result = agent.sendMessage(autoTestPrompt);
+
+            // 通知管理员
+            sendNotificationToAdmin(agent, "AUTOMATED_TEST_EXECUTED",
+                String.format("项目 [%s] 自动化测试已执行: %s", projectName, testSuite));
+
+            return CapabilityResult.success(result);
+        });
+
         // ===== 新增：管理缺陷列表 =====
         executors.put("manageBugList", (agent, params) -> {
             String action = getParam(params, "action", "list");
@@ -3107,13 +3224,65 @@ public class CapabilityExecutionEngine {
         });
 
         // ===== 任务执行能力 =====
+        // 当 Agent 调用此能力时，立即执行任务并返回结果
         executors.put("executeTask", (agent, params) -> {
             String taskDescription = getParam(params, "taskDescription", "");
+            String taskTitle = getParam(params, "taskTitle",
+                taskDescription.length() > 50 ? taskDescription.substring(0, 50) : taskDescription);
+            String milestoneId = getParam(params, "milestoneId", "");
+            String taskId = getParam(params, "taskId", UUID.randomUUID().toString());
+
             if (taskDescription.isEmpty()) {
                 return CapabilityResult.failed("缺少必填参数: taskDescription");
             }
-            // executeTask 是一个声明性能力，实际执行由 Agent 的工作流处理
-            // 这里返回成功，让 Agent 继续执行后续步骤
+
+            // 立即执行任务
+            if (agent instanceof BaseAgent baseAgent) {
+                log.info("执行任务: agent={}, taskId={}, title={}", agent.getId(), taskId, taskTitle);
+
+                // 调用 AI 执行任务
+                String result = baseAgent.sendMessage(taskDescription);
+
+                // 更新里程碑中的任务状态
+                String projectId = baseAgent.getCurrentProject() != null ? baseAgent.getCurrentProject().getId() : null;
+                if (projectId != null && goalService != null) {
+                    // 查找任务所属的里程碑
+                    String targetMilestoneId = milestoneId;
+                    if (targetMilestoneId.isEmpty()) {
+                        targetMilestoneId = goalService.findMilestoneIdByTaskId(projectId, taskId);
+                    }
+
+                    if (targetMilestoneId != null && !targetMilestoneId.isEmpty()) {
+                        // 更新任务状态为完成
+                        goalService.updateTaskStatus(projectId, targetMilestoneId, taskId,
+                            GameProject.MilestoneStatus.COMPLETED, result);
+                        log.info("任务状态已更新为 COMPLETED: taskId={}, milestoneId={}", taskId, targetMilestoneId);
+                    }
+                }
+
+                // 通知制作人任务完成
+                if (agentManager != null && projectId != null) {
+                    String producerId = projectId + ":producer";
+                    Agent producer = agentManager.getAgent(producerId);
+                    if (producer != null && producer.isAlive()) {
+                        String notifyContent = String.format(
+                            "## 任务完成通知\n\n" +
+                            "**执行者**: %s (%s)\n" +
+                            "**任务ID**: %s\n" +
+                            "**任务标题**: %s\n\n" +
+                            "**完成结果**:\n%s",
+                            agent.getId(), agent.getRole(), taskId, taskTitle,
+                            result != null && result.length() > 500 ? result.substring(0, 500) + "..." : result
+                        );
+                        AgentMessage notifyMsg = AgentMessage.createTask(agent.getId(), producerId, notifyContent);
+                        producer.receiveMessage(notifyMsg);
+                        log.info("已通知制作人任务完成: agent={}, taskId={}", agent.getId(), taskId);
+                    }
+                }
+
+                return CapabilityResult.success("任务已完成: " + taskTitle);
+            }
+
             return CapabilityResult.success("任务已接收: " + taskDescription);
         });
 
@@ -3141,6 +3310,17 @@ public class CapabilityExecutionEngine {
                     // 如果没有提供 milestoneId，尝试从任务 ID 查找
                     if (milestoneId.isEmpty()) {
                         milestoneId = goalService.findMilestoneIdByTaskId(projectId, taskId);
+                    }
+
+                    // 精确匹配失败时，尝试智能匹配：查找该Agent负责的第一个未完成任务
+                    if (milestoneId == null || milestoneId.isEmpty()) {
+                        String agentRole = agent instanceof BaseAgent ba ? ba.getRole() : null;
+                        var matchResult = findBestMatchingTask(projectId, agentRole, taskId);
+                        if (matchResult != null) {
+                            milestoneId = matchResult.milestoneId;
+                            taskId = matchResult.taskId;
+                            log.info("智能匹配到里程碑任务: taskId={}, milestoneId={}", taskId, milestoneId);
+                        }
                     }
 
                     if (milestoneId != null && !milestoneId.isEmpty()) {
@@ -3178,6 +3358,89 @@ public class CapabilityExecutionEngine {
             } catch (Exception e) {
                 log.error("完成任务失败: taskId={}", taskId, e);
                 return CapabilityResult.failed("完成任务失败: " + e.getMessage());
+            }
+        });
+
+        // ===== 游戏验证相关能力（G6新增） =====
+
+        // 验证游戏：对游戏项目执行完整验证（结构+构建+运行+质量）
+        executors.put("verifyGame", (agent, params) -> {
+            String projectDir = getParam(params, "projectDir", "");
+            if (projectDir.isEmpty() && agent instanceof BaseAgent ba && ba.getCurrentProject() != null) {
+                projectDir = ba.getCurrentProject().getWorkDir();
+            }
+            if (projectDir.isEmpty()) {
+                return CapabilityResult.failed("项目目录未指定");
+            }
+            try {
+                GameRuntimeVerifier verifier = getBean(GameRuntimeVerifier.class);
+                if (verifier == null) return CapabilityResult.failed("验证服务不可用");
+
+                GameRuntimeVerifier.FullVerifyResult result = verifier.verifyFull(projectDir, null, null);
+                StringBuilder summary = new StringBuilder();
+                summary.append(String.format("综合评分: %d/100, 是否通过: %s\n", result.getOverallScore(), result.isOverallPassed() ? "是" : "否"));
+                if (result.getStructuralResult() != null) summary.append(String.format("结构验证: %s\n", result.getStructuralResult().isSuccess() ? "通过" : "失败"));
+                if (result.getBuildResult() != null) summary.append(String.format("构建验证: %s (%s)\n", result.getBuildResult().isSuccess() ? "通过" : "失败", result.getBuildResult().getBuildType()));
+                if (result.getRuntimeResult() != null) summary.append(String.format("运行验证: %s\n", result.getRuntimeResult().isSuccess() ? "通过" : "失败"));
+                if (result.getQualityResult() != null && result.getQualityResult().isSuccess()) {
+                    summary.append(String.format("质量评分: %d/100", result.getQualityResult().getOverallScore()));
+                }
+                return CapabilityResult.success(summary.toString());
+            } catch (Exception e) {
+                return CapabilityResult.failed("验证异常: " + e.getMessage());
+            }
+        });
+
+        // 获取验证报告：获取项目最近一次验证的详细报告
+        executors.put("getVerifyReport", (agent, params) -> {
+            String projectId = getParam(params, "projectId", "");
+            if (projectId.isEmpty() && agent instanceof BaseAgent ba && ba.getCurrentProject() != null) {
+                projectId = ba.getCurrentProject().getId();
+            }
+            if (projectId.isEmpty()) return CapabilityResult.failed("项目ID未指定");
+            try {
+                // 查询最近的验证记录
+                return CapabilityResult.success("请查看前端验证面板获取详细报告");
+            } catch (Exception e) {
+                return CapabilityResult.failed("获取报告失败: " + e.getMessage());
+            }
+        });
+
+        // 检测运行时错误
+        executors.put("detectRuntimeErrors", (agent, params) -> {
+            String projectDir = getParam(params, "projectDir", "");
+            if (projectDir.isEmpty() && agent instanceof BaseAgent ba && ba.getCurrentProject() != null) {
+                projectDir = ba.getCurrentProject().getWorkDir();
+            }
+            if (projectDir.isEmpty()) return CapabilityResult.failed("项目目录未指定");
+            try {
+                RuntimeErrorDetector detector = getBean(RuntimeErrorDetector.class);
+                if (detector == null) return CapabilityResult.failed("错误检测服务不可用");
+
+                BuildStrategyRegistry registry = getBean(BuildStrategyRegistry.class);
+                if (registry == null) return CapabilityResult.failed("构建策略服务不可用");
+
+                // 启动游戏并检测错误
+                int port = 18150;
+                BuildStrategyRegistry.GameProcess gp = registry.startGame(projectDir, port);
+                try {
+                    Thread.sleep(5000); // 等待5秒让游戏启动
+                    List<String> resourceErrors = detector.detectResourceErrors(port);
+                    StringBuilder result = new StringBuilder();
+                    if (resourceErrors.isEmpty()) {
+                        result.append("未检测到资源加载错误");
+                    } else {
+                        result.append("检测到 ").append(resourceErrors.size()).append(" 个资源错误:\n");
+                        for (String err : resourceErrors) {
+                            result.append("- ").append(err).append("\n");
+                        }
+                    }
+                    return CapabilityResult.success(result.toString());
+                } finally {
+                    gp.stop();
+                }
+            } catch (Exception e) {
+                return CapabilityResult.failed("检测异常: " + e.getMessage());
             }
         });
 
@@ -3723,5 +3986,51 @@ public class CapabilityExecutionEngine {
             case "版本管理", "git-commit", "gitcommit", "git" -> "git-commit";
             default -> null;
         };
+    }
+
+    /**
+     * 智能匹配任务：当精确匹配失败时，查找该角色负责的第一个未完成任务
+     *
+     * @param projectId 项目ID
+     * @param agentRole Agent角色
+     * @param requestedTaskId 请求的任务ID（用于日志）
+     * @return 匹配结果（milestoneId + taskId），未找到返回null
+     */
+    private TaskMatchResult findBestMatchingTask(String projectId, String agentRole, String requestedTaskId) {
+        if (goalService == null || projectId == null) return null;
+
+        GameProject project = goalService.getGoalInfo(projectId);
+        if (project == null || project.getMilestones() == null) return null;
+
+        // 遍历所有里程碑，查找该角色负责的第一个PENDING或IN_PROGRESS任务
+        for (GameProject.GoalMilestone milestone : project.getMilestones()) {
+            if (milestone.getTasks() == null) continue;
+            for (GameProject.MilestoneTask task : milestone.getTasks()) {
+                // 匹配角色
+                boolean roleMatch = agentRole == null || agentRole.isEmpty()
+                    || agentRole.equals(task.getAssignedRole())
+                    || "multi-agent".equals(task.getAssignedRole());
+                // 匹配状态
+                boolean statusMatch = task.getStatus() == GameProject.MilestoneStatus.PENDING
+                    || task.getStatus() == GameProject.MilestoneStatus.IN_PROGRESS;
+
+                if (roleMatch && statusMatch) {
+                    log.info("智能匹配任务: requestedId={}, matchedId={}, milestone={}, task={}",
+                        requestedTaskId, task.getId(), milestone.getTitle(), task.getTitle());
+                    return new TaskMatchResult(milestone.getId(), task.getId());
+                }
+            }
+        }
+        return null;
+    }
+
+    /** 任务匹配结果 */
+    private static class TaskMatchResult {
+        final String milestoneId;
+        final String taskId;
+        TaskMatchResult(String milestoneId, String taskId) {
+            this.milestoneId = milestoneId;
+            this.taskId = taskId;
+        }
     }
 }

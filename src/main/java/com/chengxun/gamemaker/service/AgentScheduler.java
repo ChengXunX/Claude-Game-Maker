@@ -839,9 +839,11 @@ public class AgentScheduler {
             if (!agent.isAlive()) continue;
 
             try {
-                // 只有待处理消息或忙碌时才驱动，避免无意义的重复 AI 调用
+                // 有待处理消息、忙碌、或有待执行任务时驱动
                 int pendingCount = agent.getPendingMessages().size();
-                if (pendingCount > 0 || agent.isBusy()) {
+                boolean hasPendingTasks = agent instanceof com.chengxun.gamemaker.agent.BaseAgent ba
+                    && ba.hasPendingTasks();
+                if (pendingCount > 0 || agent.isBusy() || hasPendingTasks) {
                     driveAgentWork(agent);
                     processed++;
                 }

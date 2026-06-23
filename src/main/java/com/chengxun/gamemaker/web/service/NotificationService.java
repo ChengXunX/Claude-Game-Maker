@@ -505,11 +505,38 @@ public class NotificationService {
         }
 
         // 飞书（全局，不按用户偏好）
+        // 【根因修复】模板不存在时降级为纯文本卡片发送，不再静默吞掉异常
         try {
             if (feishuService.isEnabled()) {
-                Map<String, String> rendered = templateService.renderTemplate(templateCode + "_FEISHU", variables);
-                if (!rendered.isEmpty() && rendered.get("content") != null && !rendered.get("content").isEmpty()) {
-                    String feishuSubject = rendered.getOrDefault("subject", "通知");
+                String feishuSubject = null;
+                String feishuContent = null;
+                boolean usedTemplate = false;
+
+                // 尝试使用模板渲染
+                try {
+                    Map<String, String> rendered = templateService.renderTemplate(templateCode + "_FEISHU", variables);
+                    if (!rendered.isEmpty() && rendered.get("content") != null && !rendered.get("content").isEmpty()) {
+                        feishuSubject = rendered.getOrDefault("subject", null);
+                        feishuContent = rendered.get("content");
+                        usedTemplate = true;
+                    }
+                } catch (Exception te) {
+                    log.info("飞书模板 {} 不存在，降级为纯文本发送: {}", templateCode + "_FEISHU", te.getMessage());
+                }
+
+                // 模板不存在或渲染失败时，使用变量中的 title/content 降级发送
+                if (!usedTemplate) {
+                    feishuSubject = variables.getOrDefault("title", "制作人通知");
+                    String rawContent = variables.getOrDefault("content", "");
+                    // 清理内容，去掉过长的技术细节
+                    if (rawContent.length() > 500) {
+                        rawContent = rawContent.substring(0, 500) + "...";
+                    }
+                    feishuContent = String.format("**%s**\n\n---\n\n%s", feishuSubject, rawContent);
+                    log.info("飞书降级发送: templateCode={}, subject={}", templateCode, feishuSubject);
+                }
+
+                if (feishuContent != null && !feishuContent.isEmpty()) {
                     String feishuColor = resolveCardColor(type);
                     // 审批相关模板使用带按钮的卡片
                     if (isApprovalTemplate(templateCode)) {
@@ -522,21 +549,21 @@ public class NotificationService {
                             // 有 requestId 时使用正式审批卡片（带签名验证）
                             feishuService.sendApprovalCard(
                                 feishuService.getDefaultChatId(), feishuSubject,
-                                rendered.get("content"), requestId);
+                                feishuContent, requestId);
                         } else {
                             // 无 requestId 时使用普通带按钮卡片
                             String actionId = variables.getOrDefault("actionId", templateCode);
                             feishuService.sendCardMessageWithApprovalButtons(
                                 feishuService.getDefaultChatId(), feishuSubject, feishuColor,
-                                rendered.get("content"), actionId);
+                                feishuContent, actionId);
                         }
                     } else {
-                        feishuService.sendCardMessage(feishuService.getDefaultChatId(), feishuSubject, feishuColor, rendered.get("content"));
+                        feishuService.sendCardMessage(feishuService.getDefaultChatId(), feishuSubject, feishuColor, feishuContent);
                     }
                 }
             }
         } catch (Exception e) {
-            log.debug("Feishu notification failed: {}", e.getMessage());
+            log.warn("飞书通知发送失败: templateCode={}, error={}", templateCode, e.getMessage());
         }
 
         // 钉钉（全局，不按用户偏好）

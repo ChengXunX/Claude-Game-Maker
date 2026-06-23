@@ -612,7 +612,15 @@ export const gameVerifyApi = {
   // 批量获取验证状态
   batchStatus: (projectIds) => api.post('/game-verify/batch-status', projectIds),
   // 清除验证缓存
-  clearCache: (projectId) => api.delete(`/game-verify/${projectId}/cache`)
+  clearCache: (projectId) => api.delete(`/game-verify/${projectId}/cache`),
+  // 触发完整验证（结构+构建+运行+质量）
+  triggerVerify: (projectId, projectDir) => api.post(`/game-verify/projects/${projectId}/verify`, null, { params: { projectDir } }),
+  // 获取最近验证结果
+  getLatestVerify: (projectId) => api.get(`/game-verify/projects/${projectId}/verify/latest`),
+  // 启动游戏预览
+  startPreview: (projectId, projectDir, port) => api.post(`/game-verify/projects/${projectId}/preview/start`, null, { params: { projectDir, port } }),
+  // 停止游戏预览
+  stopPreview: (projectId) => api.post(`/game-verify/projects/${projectId}/preview/stop`)
 }
 
 // ===== 项目Agent配置 API =====
@@ -749,3 +757,4 @@ export const multiTurnApi = {
   getStats: (projectId) => api.get(`/multi-turn/stats/${projectId}`),
   getHistory: (projectId) => api.get(`/multi-turn/history/${projectId}`)
 }
+

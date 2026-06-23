@@ -177,11 +177,12 @@ class GameProjectTest {
     @Test
     void projectStatus_hasExpectedValues() {
         ProjectStatus[] values = ProjectStatus.values();
-        assertEquals(5, values.length);
+        assertEquals(6, values.length);
         assertNotNull(ProjectStatus.CREATED);
         assertNotNull(ProjectStatus.ACTIVE);
         assertNotNull(ProjectStatus.PAUSED);
         assertNotNull(ProjectStatus.COMPLETED);
         assertNotNull(ProjectStatus.ARCHIVED);
+        assertNotNull(ProjectStatus.DELIVERED);
     }
 }

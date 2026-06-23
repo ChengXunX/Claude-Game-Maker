@@ -585,6 +585,23 @@ ${content}
 '定期验证失败飞书通知', TRUE, TRUE);
 
 INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_GOAL_DECOMPOSITION_START_FEISHU', '飞书目标分解开始', 'FEISHU', 'SYSTEM', '🎯 里程碑任务已分解并分配',
+'**🎯 里程碑任务已分解并分配**
+
+---
+
+**项目**: ${projectName}
+
+${content}
+
+---
+
+⏰ ${time}
+
+🔗 [查看项目详情](${domain}/projects)',
+'目标分解开始飞书通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
 ('DISMISSAL_REQUEST_FEISHU', '飞书解雇审批请求', 'FEISHU', 'SYSTEM', '🔔 解雇审批请求',
 '**🔔 解雇审批请求**
 

@@ -1663,6 +1663,38 @@ public class AiToolRegistry {
 
         // 185. 重新加载配置
         registerTool(new AiTool("reload_config", "重新加载系统配置", Map.of(), "PERM_admin:manage"));
+
+        // ===== 游戏验证相关工具（G6新增） =====
+
+        // 186. 验证游戏：对游戏项目执行完整验证（结构+构建+运行+质量）
+        Map<String, ParameterDef> verifyGameParams = new HashMap<>();
+        verifyGameParams.put("projectDir", new ParameterDef("string", "项目目录路径（可选，默认使用当前项目工作目录）", false));
+        registerTool(new AiTool(
+            "verify_game",
+            "对游戏项目执行完整验证（结构+构建+运行+质量分析）",
+            verifyGameParams,
+            null
+        ));
+
+        // 187. 获取验证报告：获取项目最近一次验证的详细报告
+        Map<String, ParameterDef> verifyReportParams = new HashMap<>();
+        verifyReportParams.put("projectId", new ParameterDef("string", "项目ID（可选，默认使用当前项目）", false));
+        registerTool(new AiTool(
+            "get_verify_report",
+            "获取项目最近一次验证的详细报告",
+            verifyReportParams,
+            null
+        ));
+
+        // 188. 检测运行时错误
+        Map<String, ParameterDef> detectErrorsParams = new HashMap<>();
+        detectErrorsParams.put("projectDir", new ParameterDef("string", "项目目录路径（可选，默认使用当前项目工作目录）", false));
+        registerTool(new AiTool(
+            "detect_runtime_errors",
+            "检测游戏运行时的错误和警告",
+            detectErrorsParams,
+            null
+        ));
     }
 
     /**

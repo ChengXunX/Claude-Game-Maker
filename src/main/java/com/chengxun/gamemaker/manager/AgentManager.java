@@ -382,6 +382,13 @@ public class AgentManager {
             }
         }
 
+        // 注入目标服务（用于 GenericAgent 更新里程碑任务状态）
+        if (goalService != null) {
+            if (agent instanceof GenericAgent genericAgent) {
+                genericAgent.setGoalService(goalService);
+            }
+        }
+
         // 注入游戏设计审查服务
         if (gameDesignReviewService != null) {
             if (agent instanceof VerificationAgent verificationAgent) {

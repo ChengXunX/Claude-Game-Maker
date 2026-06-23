@@ -1271,3 +1271,71 @@ CREATE TABLE IF NOT EXISTS agent_mcp_bindings (
 CREATE INDEX IF NOT EXISTS idx_amb_agent ON agent_mcp_bindings(agent_role, project_id);
 CREATE INDEX IF NOT EXISTS idx_amb_server ON agent_mcp_bindings(server_id);
 CREATE INDEX IF NOT EXISTS idx_amb_tool ON agent_mcp_bindings(tool_id);
+
+-- ============================================
+-- 游戏验证记录表
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS game_verify_records (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    project_id VARCHAR(36) NOT NULL,
+    milestone_id VARCHAR(36),
+    verify_type VARCHAR(20) NOT NULL,
+    overall_score INT DEFAULT 0,
+    structural_passed BOOLEAN DEFAULT FALSE,
+    build_passed BOOLEAN DEFAULT FALSE,
+    build_type VARCHAR(20),
+    build_duration_ms BIGINT DEFAULT 0,
+    build_output TEXT,
+    runtime_passed BOOLEAN DEFAULT FALSE,
+    runtime_port INT,
+    runtime_duration_ms BIGINT DEFAULT 0,
+    runtime_output TEXT,
+    console_errors TEXT,
+    resource_errors TEXT,
+    quality_score INT DEFAULT 0,
+    runnable_score INT DEFAULT 0,
+    playable_score INT DEFAULT 0,
+    completeness_score INT DEFAULT 0,
+    uiux_score INT DEFAULT 0,
+    code_quality_score INT DEFAULT 0,
+    quality_summary TEXT,
+    quality_issues TEXT,
+    quality_suggestions TEXT,
+    raw_ai_response TEXT,
+    overall_passed BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_gvr_project ON game_verify_records(project_id);
+CREATE INDEX IF NOT EXISTS idx_gvr_milestone ON game_verify_records(milestone_id);
+CREATE INDEX IF NOT EXISTS idx_gvr_created ON game_verify_records(created_at);
+
+-- ============================================
+-- 运行时错误记录表
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS runtime_errors (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    project_id VARCHAR(36) NOT NULL,
+    verify_record_id BIGINT,
+    error_type VARCHAR(20) NOT NULL,
+    error_message TEXT NOT NULL,
+    line_number INT,
+    file_path VARCHAR(500),
+    auto_fixed BOOLEAN DEFAULT FALSE,
+    fix_task_id VARCHAR(36),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_re_project ON runtime_errors(project_id);
+CREATE INDEX IF NOT EXISTS idx_re_type ON runtime_errors(error_type);
+CREATE INDEX IF NOT EXISTS idx_re_created ON runtime_errors(created_at);
+
+-- ============================================
+-- game_projects 表新增字段
+-- ============================================
+
+ALTER TABLE game_projects ADD COLUMN IF NOT EXISTS tech_stack VARCHAR(100);
+ALTER TABLE game_projects ADD COLUMN IF NOT EXISTS game_template VARCHAR(50);
+ALTER TABLE game_projects ADD COLUMN IF NOT EXISTS last_verify_score INT;
+ALTER TABLE game_projects ADD COLUMN IF NOT EXISTS last_verify_time TIMESTAMP;
+ALTER TABLE game_projects ADD COLUMN IF NOT EXISTS gdd_version INT DEFAULT 0;

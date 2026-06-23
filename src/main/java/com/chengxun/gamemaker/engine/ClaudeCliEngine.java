@@ -434,7 +434,16 @@ public class ClaudeCliEngine {
             
             stderrThread.join(10000);
 
-            int exitCode = processInfo.process.waitFor();
+            // 【修复】添加超时机制，防止进程无限期卡住
+            // 超时时间：30分钟（复杂任务可能需要较长时间）
+            boolean finished = processInfo.process.waitFor(30, java.util.concurrent.TimeUnit.MINUTES);
+            if (!finished) {
+                log.error("Claude CLI process timeout for agent {} after 30 minutes, destroying process", agentId);
+                processInfo.destroy();
+                return "Error: Claude CLI process timeout after 30 minutes";
+            }
+
+            int exitCode = processInfo.process.exitValue();
             String result = output.toString().trim();
             String stderr = stderrOutput.toString().trim();
 
@@ -573,7 +582,16 @@ public class ClaudeCliEngine {
 
             stderrThread.join(10000);
 
-            int exitCode = processInfo.process.waitFor();
+            // 【修复】添加超时机制，防止进程无限期卡住
+            // 超时时间：30分钟（复杂任务可能需要较长时间）
+            boolean finished = processInfo.process.waitFor(30, java.util.concurrent.TimeUnit.MINUTES);
+            if (!finished) {
+                log.error("Claude CLI process timeout for agent {} after 30 minutes, destroying process", agentId);
+                processInfo.destroy();
+                return new AiCallResult("Error: Claude CLI process timeout after 30 minutes", 0, 0, System.currentTimeMillis() - startTime, false);
+            }
+
+            int exitCode = processInfo.process.exitValue();
             long duration = System.currentTimeMillis() - startTime;
             String result = output.toString().trim();
             String stderr = stderrOutput.toString().trim();

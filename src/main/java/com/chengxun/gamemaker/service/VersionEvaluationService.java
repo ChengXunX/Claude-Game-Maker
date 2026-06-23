@@ -383,6 +383,10 @@ public class VersionEvaluationService {
 
         if (totalTasks > 0) {
             evaluation.efficiencyScore = (int) (completedTasks * 100 / totalTasks);
+        } else {
+            // 无任务时，根据里程碑状态给默认分
+            evaluation.efficiencyScore = milestone.getStatus() == GameProject.MilestoneStatus.COMPLETED ? 70 : 30;
+            log.info("里程碑 [{}] 无任务，使用默认效率分: {}", milestone.getTitle(), evaluation.efficiencyScore);
         }
 
         // 质量评分：基于 Agent 质量评分的平均值
@@ -391,10 +395,14 @@ public class VersionEvaluationService {
                 .mapToInt(AgentEvaluation::getQualityScore)
                 .sum();
             evaluation.qualityScore = totalQuality / evaluation.getAgentEvaluations().size();
+        } else {
+            // 无Agent评估时，根据里程碑完成状态给默认分
+            evaluation.qualityScore = milestone.getStatus() == GameProject.MilestoneStatus.COMPLETED ? 60 : 40;
+            log.info("里程碑 [{}] 无Agent评估数据，使用默认质量分: {}", milestone.getTitle(), evaluation.qualityScore);
         }
 
-        // 综合评分
-        evaluation.overallScore = (evaluation.efficiencyScore * 4 + evaluation.qualityScore * 6) / 10;
+        // 综合评分：确保最低分不为0
+        evaluation.overallScore = Math.max(1, (evaluation.efficiencyScore * 4 + evaluation.qualityScore * 6) / 10);
     }
 
     /**

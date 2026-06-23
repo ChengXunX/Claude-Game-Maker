@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>射击游戏</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="game-container">
+        <h1 class="game-title">太空射击游戏</h1>
+        <canvas id="gameCanvas"></canvas>
+        <div class="instructions">
+            <p>操作说明：方向键/WASD 移动 | 自动射击</p>
+            <p>目标：消灭尽可能多的敌人，获得高分！</p>
+        </div>
+    </div>
+
+    <!-- 游戏脚本 -->
+    <script src="js/config.js"></script>
+    <script src="js/bullet.js"></script>
+    <script src="js/enemy.js"></script>
+    <script src="js/player.js"></script>
+    <script src="js/game.js"></script>
+
+    <!-- 启动游戏 -->
+    <script>
+        // 等待DOM加载完成后启动游戏
+        document.addEventListener('DOMContentLoaded', () => {
+            const game = new Game();
+            game.start();
+        });
+    </script>
+</body>
+</html>

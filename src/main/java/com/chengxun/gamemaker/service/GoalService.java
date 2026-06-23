@@ -651,6 +651,15 @@ public class GoalService {
 
         milestone.setProgress(Math.min(100, progress));
 
+        // 脏数据修复：如果里程碑是 COMPLETED 但有未完成任务，回退为 IN_PROGRESS
+        if (milestone.getStatus() == GameProject.MilestoneStatus.COMPLETED) {
+            if (completedCount < milestone.getTasks().size()) {
+                milestone.setStatus(GameProject.MilestoneStatus.IN_PROGRESS);
+                log.warn("里程碑 [{}] 状态不一致：标记COMPLETED但有{}个未完成任务，已回退为IN_PROGRESS",
+                    milestone.getTitle(), milestone.getTasks().size() - completedCount);
+            }
+        }
+
         // 自动标记里程碑完成：所有任务完成 OR 进度达到 100%
         if (milestone.getStatus() != GameProject.MilestoneStatus.COMPLETED) {
             if (completedCount == milestone.getTasks().size() && completedCount > 0) {

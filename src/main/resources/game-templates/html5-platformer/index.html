@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>平台跳跃游戏</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="game-container">
+        <h1 class="game-title">平台跳跃游戏</h1>
+        <canvas id="gameCanvas"></canvas>
+        <div class="instructions">
+            <p>操作说明：← → 移动 | ↑/空格 跳跃 | R 重新开始</p>
+            <p>目标：收集所有金币即可通关！</p>
+        </div>
+    </div>
+
+    <!-- 游戏脚本 -->
+    <script src="js/config.js"></script>
+    <script src="js/player.js"></script>
+    <script src="js/level.js"></script>
+    <script src="js/game.js"></script>
+
+    <!-- 启动游戏 -->
+    <script>
+        // 等待DOM加载完成后启动游戏
+        document.addEventListener('DOMContentLoaded', () => {
+            const game = new Game();
+            game.start();
+        });
+    </script>
+</body>
+</html>

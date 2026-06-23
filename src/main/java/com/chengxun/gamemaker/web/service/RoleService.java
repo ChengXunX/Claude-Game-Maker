@@ -74,6 +74,11 @@ public class RoleService {
     // 终端权限
     public static final String PERM_TERMINAL_USE = "terminal:use";
 
+    // 游戏验证权限
+    public static final String PERM_GAME_VERIFY = "game:verify";
+    public static final String PERM_GAME_PREVIEW = "game:preview";
+    public static final String PERM_GAME_VERIFY_VIEW = "game:verify:view";
+
     public static final String PERM_ALL = "*";
 
     // 所有可用权限
@@ -118,7 +123,11 @@ public class RoleService {
         // AI 助手权限
         PERM_AI_USE,
         // 终端权限
-        PERM_TERMINAL_USE
+        PERM_TERMINAL_USE,
+        // 游戏验证权限
+        PERM_GAME_VERIFY,
+        PERM_GAME_PREVIEW,
+        PERM_GAME_VERIFY_VIEW
     );
 
     // 权限描述
@@ -165,6 +174,10 @@ public class RoleService {
             case PERM_AI_USE -> "使用 AI 助手";
             // 终端权限
             case PERM_TERMINAL_USE -> "使用系统终端";
+            // 游戏验证权限
+            case PERM_GAME_VERIFY -> "触发游戏验证";
+            case PERM_GAME_PREVIEW -> "启动游戏预览";
+            case PERM_GAME_VERIFY_VIEW -> "查看验证结果";
             case PERM_ALL -> "所有权限";
             default -> permission;
         };
@@ -226,7 +239,10 @@ public class RoleService {
                 // 代码审查权限
                 PERM_CODE_REVIEW,
                 // AI 助手权限
-                PERM_AI_USE
+                PERM_AI_USE,
+                // 游戏验证权限
+                PERM_GAME_VERIFY,
+                PERM_GAME_VERIFY_VIEW
             )));
 
         // 运维工程师 - 管理流水线和监控

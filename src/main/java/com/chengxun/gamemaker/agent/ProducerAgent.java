@@ -91,6 +91,10 @@ public class ProducerAgent extends BaseAgent {
     @Autowired(required = false)
     private com.chengxun.gamemaker.service.ProjectDiscussionService projectDiscussionService;
 
+    /** Claude AI 服务（延迟注入）—— 用于代码进度评估等 AI 分析 */
+    @Autowired(required = false)
+    private com.chengxun.gamemaker.web.service.ClaudeAiService claudeAiService;
+
     /** 项目成员仓库（延迟注入）—— 用于查询项目所有者 */
     @Autowired(required = false)
     private com.chengxun.gamemaker.web.repository.ProjectMemberRepository projectMemberRepository;
@@ -191,6 +195,14 @@ public class ProducerAgent extends BaseAgent {
 
     /** 工作周期计数器，用于定期触发绩效检查等操作 */
     private long workCycleCount = 0;
+
+    /** 【根因修复】上次定期验证的时间戳，防止验证循环无限创建改进任务 */
+    private long lastPeriodicVerifyTimestamp = 0;
+
+    /** 【根因修复】是否已完成启动时的代码进度评估（只执行一次） */
+    private boolean initialCodeAssessmentDone = false;
+    /** 定期验证冷却时间：30 分钟（同一项目短时间内不会重复验证） */
+    private static final long PERIODIC_VERIFY_COOLDOWN_MS = 30 * 60 * 1000;
 
     /** 已发送的任务 ID 集合，防止重复发送同一任务 */
     private final java.util.Set<String> sentTaskIds = java.util.concurrent.ConcurrentHashMap.newKeySet();
@@ -403,6 +415,20 @@ public class ProducerAgent extends BaseAgent {
             if (fresh != null) currentProject = fresh;
         }
 
+        // 【根因修复】启动时一次性评估已有代码进度
+        // 解决重启后里程碑进度全部显示0%的问题
+        if (!initialCodeAssessmentDone && currentProject != null
+            && currentProject.getMilestones() != null && !currentProject.getMilestones().isEmpty()) {
+            boolean hasAllZeroProgress = currentProject.getMilestones().stream()
+                .allMatch(m -> m.getProgress() == 0 && m.getStatus() != GameProject.MilestoneStatus.COMPLETED);
+            if (hasAllZeroProgress) {
+                log.info("检测到所有里程碑进度为0%，执行代码进度评估...");
+                assessExistingCodeProgress(currentProject.getMilestones());
+                projectManager.saveProjectConfig(currentProject);
+            }
+            initialCodeAssessmentDone = true;
+        }
+
         // 更新看板状态
         updateBoardStatus("WORKING", "统筹项目");
 
@@ -483,13 +509,26 @@ public class ProducerAgent extends BaseAgent {
 
         // 检查项目目标是否在审查中，检查版本迭代
         if (currentProject.getGoalStatus() == GameProject.GoalStatus.REVIEW) {
-            log.info("项目目标审查中，检查版本迭代...");
+            // 【根因修复】检测状态不一致：REVIEW 但原始里程碑未全部完成
+            // 这是改进里程碑误触发 REVIEW 导致的，需要重置为 IN_PROGRESS
+            boolean hasIncompleteOriginal = currentProject.getMilestones().stream()
+                .filter(m -> m.getTitle() == null || !m.getTitle().startsWith("改进:"))
+                .anyMatch(m -> m.getStatus() != GameProject.MilestoneStatus.COMPLETED);
+            if (hasIncompleteOriginal) {
+                log.warn("检测到 REVIEW 状态但原始里程碑未全部完成，重置为 IN_PROGRESS");
+                currentProject.setGoalStatus(GameProject.GoalStatus.IN_PROGRESS);
+                projectManager.saveProjectConfig(currentProject);
+                logInfo("GOAL_REVIEW_RESET", "审查状态异常（改进里程碑误触发），已重置为进行中");
+                // 不 return，继续执行后续工作
+            } else {
+                log.info("项目目标审查中，检查版本迭代...");
+            }
             if (versionIterationService != null) {
                 String projectId = getProjectId();
                 int iterationResult = versionIterationService.checkVersionIteration(projectId);
                 if (iterationResult == 1) {
-                    // 版本迭代：已创建新版本，继续工作
-                    currentProject = getCurrentProject();
+                    // 版本迭代：已创建新版本，重新加载项目数据
+                    currentProject = projectManager.getProject(projectId);
                     log.info("版本迭代触发：REVIEW 状态下自动进入下一版本 {}", currentProject.getVersion());
                     logInfo("VERSION_UPGRADE", "版本已升级到 " + currentProject.getVersion() + "，继续迭代开发");
                     sendNotificationToAdmin("VERSION_ITERATION_STARTED",
@@ -557,13 +596,24 @@ public class ProducerAgent extends BaseAgent {
                 decomposeReason = "里程碑列表为空，需要重新规划";
                 log.info("检测到里程碑列表为空，触发目标分解");
             } else {
-                // 检测无任务的里程碑
-                boolean hasMilestonesWithoutTasks = currentProject.getMilestones().stream()
-                    .anyMatch(m -> m.getTasks() == null || m.getTasks().isEmpty());
-                if (hasMilestonesWithoutTasks) {
+                // 【修复】检测占位里程碑（版本迭代后创建的临时里程碑）
+                boolean hasPlaceholder = currentProject.getMilestones().stream()
+                    .anyMatch(m -> m.getTitle() != null && m.getTitle().contains("版本规划中"));
+                if (hasPlaceholder) {
                     needDecompose = true;
-                    decomposeReason = "版本 " + currentProject.getVersion() + " 里程碑缺少任务，重新规划";
-                    log.info("检测到无任务的里程碑（{} 个），触发目标重新分解", currentProject.getMilestones().size());
+                    decomposeReason = "版本 " + currentProject.getVersion() + " 检测到占位里程碑，需要重新规划";
+                    log.info("检测到占位里程碑，触发目标重新分解");
+                }
+
+                // 检测无任务的里程碑
+                if (!needDecompose) {
+                    boolean hasMilestonesWithoutTasks = currentProject.getMilestones().stream()
+                        .anyMatch(m -> m.getTasks() == null || m.getTasks().isEmpty());
+                    if (hasMilestonesWithoutTasks) {
+                        needDecompose = true;
+                        decomposeReason = "版本 " + currentProject.getVersion() + " 里程碑缺少任务，重新规划";
+                        log.info("检测到无任务的里程碑（{} 个），触发目标重新分解", currentProject.getMilestones().size());
+                    }
                 }
             }
 
@@ -1001,41 +1051,35 @@ public class ProducerAgent extends BaseAgent {
         String role = milestone.getAssignedAgentRole();
 
         // 【重要】优先使用能力系统进行验证
+        // 【根因修复】能力系统失败时，不直接返回，而是用 AI 验证做二次确认
+        // 原来能力系统失败就直接 return，导致 AI 验证永远执行不到
         if (capabilityExecutionEngine != null && capabilityRegistry != null) {
             log.info("里程碑 [{}] 使用能力系统进行验证", milestone.getTitle());
 
-            // 构建验证参数
             Map<String, Object> verifyParams = new HashMap<>();
             verifyParams.put("criteria", criteria);
             verifyParams.put("projectRoot", currentProject.getWorkDir());
             verifyParams.put("reportContent", reportContent);
 
-            // 查找该角色的验证能力
             List<AgentCapability> verificationCaps = capabilityRegistry.getCapabilitiesByCategory("verification");
             if (verificationCaps != null && !verificationCaps.isEmpty()) {
-                // 过滤出当前角色的能力
                 List<AgentCapability> roleCaps = verificationCaps.stream()
                     .filter(cap -> role.equals(cap.getAgentRole()))
                     .collect(Collectors.toList());
 
                 if (!roleCaps.isEmpty()) {
-                    // 使用第一个可用的验证能力
                     AgentCapability verifyCap = roleCaps.get(0);
                     log.info("使用能力 [{}] 进行验证", verifyCap.getCapabilityName());
 
-                    // 创建能力调用
                     CapabilityCall verifyCall = new CapabilityCall(verifyCap.getCapabilityName(), verifyParams, "里程碑验证");
-
-                    // 执行验证能力
                     CapabilityResult result = capabilityExecutionEngine.executeCall(this, verifyCall);
 
                     if (result.isSuccess()) {
                         String resultData = result.getData() != null ? result.getData().toString() : "验证通过";
                         return VerificationResult.success("能力系统验证通过: " + resultData);
-                    } else if (result.isFailed()) {
-                        String error = result.getError() != null ? result.getError() : "验证失败";
-                        return VerificationResult.failure("能力系统验证失败: " + error, criteria);
                     }
+                    // 【根因修复】能力系统失败时不直接返回，继续走 AI 验证
+                    log.info("能力系统验证未通过，继续 AI 验证作为二次确认");
                 }
             }
 
@@ -1046,13 +1090,22 @@ public class ProducerAgent extends BaseAgent {
             if (result.isSuccess()) {
                 String resultData = result.getData() != null ? result.getData().toString() : "验证通过";
                 return VerificationResult.success("通用能力验证通过: " + resultData);
-            } else if (result.isFailed()) {
-                String error = result.getError() != null ? result.getError() : "验证失败";
-                return VerificationResult.failure("通用能力验证失败: " + error, criteria);
             }
+            // 【根因修复】通用能力失败也不直接返回，继续走 AI 验证
+            log.info("通用能力验证未通过，继续 AI 验证作为二次确认");
         }
 
-        // 【兼容】如果没有能力系统或能力系统不可用，使用硬编码验证逻辑
+        // 【根因修复】优先使用 AI 验证，解决关键词匹配无法验证自然语言标准的问题
+        if (claudeAiService != null && !criteria.isEmpty()) {
+            log.info("里程碑 [{}] 使用 AI 验证（{}条标准）", milestone.getTitle(), criteria.size());
+            VerificationResult aiResult = verifyWithAi(milestone, criteria, reportContent);
+            if (aiResult != null) {
+                return aiResult;
+            }
+            log.warn("AI 验证失败，降级到关键词匹配验证");
+        }
+
+        // 【兼容】AI 不可用时，使用硬编码验证逻辑
         log.info("里程碑 [{}] 使用默认验证逻辑", milestone.getTitle());
 
         List<String> passedCriteria = new ArrayList<>();
@@ -1800,6 +1853,144 @@ public class ProducerAgent extends BaseAgent {
         currentProject.setProjectOverview(overview.toString());
         currentProject.setRunning(previewUrl != null);
         projectManager.saveProjectConfig(currentProject);
+    }
+
+    /**
+     * 【根因修复】使用 AI 验证里程碑完成情况
+     * 解决关键词匹配无法验证自然语言标准（如"界面美观"、"交互流畅"）的问题
+     *
+     * 工作原理：
+     * 1. 收集验证标准、Agent 报告、项目代码样本
+     * 2. 发送给 AI，让它逐条评估每个标准是否满足
+     * 3. AI 返回每条标准的通过/未通过 + 原因
+     * 4. 通过 >= 60% 的标准即为验证通过
+     *
+     * @param milestone 里程碑
+     * @param criteria 验证标准列表
+     * @param reportContent Agent 的完成报告
+     * @return 验证结果，AI 不可用时返回 null 降级到关键词匹配
+     */
+    private VerificationResult verifyWithAi(GameProject.GoalMilestone milestone,
+                                             List<String> criteria, String reportContent) {
+        try {
+            // 收集项目代码样本（限制大小）
+            String codeSample = "";
+            if (currentProject.getWorkDir() != null) {
+                java.io.File projectDir = new java.io.File(currentProject.getWorkDir());
+                if (projectDir.exists()) {
+                    codeSample = collectCodeSampleForAssessment(projectDir);
+                }
+            }
+
+            // 构建 AI prompt
+            StringBuilder prompt = new StringBuilder();
+            prompt.append("你是一个严格的代码审查专家。请验证以下里程碑是否真正完成。\n\n");
+            prompt.append(String.format("## 里程碑: %s\n\n", milestone.getTitle()));
+            prompt.append(String.format("## Agent 完成报告\n%s\n\n", reportContent.length() > 3000 ?
+                reportContent.substring(0, 3000) + "..." : reportContent));
+            if (!codeSample.isEmpty()) {
+                prompt.append(String.format("## 项目代码样本\n%s\n\n", codeSample.length() > 5000 ?
+                    codeSample.substring(0, 5000) + "..." : codeSample));
+            }
+            prompt.append("## 验证标准\n");
+            for (int i = 0; i < criteria.size(); i++) {
+                prompt.append(String.format("%d. %s\n", i + 1, criteria.get(i)));
+            }
+            prompt.append("\n## 评估要求\n");
+            prompt.append("逐条评估每个标准是否满足。评估时考虑：\n");
+            prompt.append("1. 报告中是否描述了具体的实现内容\n");
+            prompt.append("2. 代码中是否有相关的实现\n");
+            prompt.append("3. 不要求100%完美，有基本实现即可认为通过\n\n");
+            prompt.append("只输出 JSON 数组，不要输出其他内容：\n");
+            prompt.append("[{\"criterion\": \"标准内容\", \"passed\": true, \"reason\": \"简要原因\"}]\n");
+
+            String aiResponse = claudeAiService.sendMessage(prompt.toString());
+            if (aiResponse == null || aiResponse.isEmpty()) return null;
+
+            // 解析 AI 响应
+            String json = aiResponse;
+            int jsonStart = aiResponse.indexOf("[");
+            int jsonEnd = aiResponse.lastIndexOf("]");
+            if (jsonStart >= 0 && jsonEnd > jsonStart) {
+                json = aiResponse.substring(jsonStart, jsonEnd + 1);
+            }
+
+            List<String> passedList = new ArrayList<>();
+            List<String> failedList = new ArrayList<>();
+
+            // 逐条解析结果
+            for (int i = 0; i < criteria.size(); i++) {
+                String criterion = criteria.get(i);
+                // 在 JSON 中查找该标准的结果
+                boolean passed = false;
+                String reason = "";
+
+                // 查找 "passed": true/false
+                int criterionIdx = json.indexOf(criterion);
+                if (criterionIdx < 0) {
+                    // 模糊匹配：取前15个字符
+                    String prefix = criterion.length() > 15 ? criterion.substring(0, 15) : criterion;
+                    criterionIdx = json.indexOf(prefix);
+                }
+
+                if (criterionIdx >= 0) {
+                    String after = json.substring(criterionIdx, Math.min(json.length(), criterionIdx + 300));
+                    // 检查 passed 字段
+                    if (after.contains("\"passed\"") && (after.contains("true") || after.contains(": true"))) {
+                        passed = true;
+                    }
+                    // 提取 reason
+                    java.util.regex.Matcher reasonMatcher = java.util.regex.Pattern
+                        .compile("\"reason\"\\s*:\\s*\"([^\"]*?)\"").matcher(after);
+                    if (reasonMatcher.find()) {
+                        reason = reasonMatcher.group(1);
+                    }
+                } else {
+                    // 如果找不到该标准，按序号查找第 i 个结果
+                    String marker = "\"passed\"";
+                    int searchFrom = 0;
+                    for (int j = 0; j <= i; j++) {
+                        int idx = json.indexOf(marker, searchFrom);
+                        if (idx < 0) break;
+                        if (j == i) {
+                            String after = json.substring(idx, Math.min(json.length(), idx + 30));
+                            passed = after.contains("true");
+                            break;
+                        }
+                        searchFrom = idx + marker.length();
+                    }
+                }
+
+                if (passed) {
+                    passedList.add("✓ " + criterion + (reason.isEmpty() ? "" : " (" + reason + ")"));
+                } else {
+                    failedList.add("✗ " + criterion + (reason.isEmpty() ? "" : " (" + reason + ")"));
+                }
+            }
+
+            // 构建结果
+            int passRate = criteria.isEmpty() ? 100 : (passedList.size() * 100 / criteria.size());
+            StringBuilder details = new StringBuilder();
+            details.append(String.format("AI 验证: 通过 %d/%d 条标准（%d%%）\n",
+                passedList.size(), criteria.size(), passRate));
+            if (!failedList.isEmpty()) {
+                details.append("未通过:\n");
+                failedList.forEach(f -> details.append("  ").append(f).append("\n"));
+            }
+
+            log.info("AI 验证结果: milestone={}, passed={}/{}", milestone.getTitle(), passedList.size(), criteria.size());
+
+            // 通过 >= 60% 的标准即为验证通过（允许部分标准不完美）
+            if (passRate >= 60) {
+                return VerificationResult.success(details.toString());
+            } else {
+                return VerificationResult.failure(details.toString(), failedList);
+            }
+
+        } catch (Exception e) {
+            log.warn("AI 验证异常，降级到关键词匹配: {}", e.getMessage());
+            return null;
+        }
     }
 
     /**
@@ -2636,12 +2827,23 @@ public class ProducerAgent extends BaseAgent {
             if (targetAgent == null) {
                 String assignedRole = milestone.getAssignedAgentRole();
                 if (assignedRole == null || assignedRole.isEmpty()) {
-                    log.warn("里程碑 [{}] 未分配负责角色，跳过招聘", milestone.getTitle());
+                    // 自动分配角色为 multi-agent（多角色协作）
+                    log.info("里程碑 [{}] 未分配负责角色，自动分配为 multi-agent", milestone.getTitle());
+                    milestone.setAssignedAgentRole("multi-agent");
+                    projectManager.saveProjectConfig(currentProject);
+                    // 重新获取 targetAgent
+                    targetAgentId = projectId + ":multi-agent";
+                    targetAgent = agentManager.getAgent(targetAgentId);
+                    if (targetAgent == null) {
+                        log.warn("里程碑 [{}] 自动分配 multi-agent 后仍无对应 Agent，跳过", milestone.getTitle());
+                        continue;
+                    }
+                    // 分配成功，继续后续检查
+                } else {
+                    log.info("里程碑 [{}] 负责角色 {} 无对应 Agent，发起招聘", milestone.getTitle(), assignedRole);
+                    requestRecruitApproval(assignedRole, milestone.getTitle());
                     continue;
                 }
-                log.info("里程碑 [{}] 负责角色 {} 无对应 Agent，发起招聘", milestone.getTitle(), assignedRole);
-                requestRecruitApproval(assignedRole, milestone.getTitle());
-                continue;
             }
 
             // 3. 检查任务超时（任何进度都检查）
@@ -2870,7 +3072,23 @@ public class ProducerAgent extends BaseAgent {
         List<GameProject.GoalMilestone> milestones = goalService.getMilestones(projectId);
         if (milestones == null || milestones.isEmpty()) return;
 
-        boolean allCompleted = milestones.stream()
+        // 【修复】排除占位里程碑（标题包含"版本规划中"的里程碑）
+        boolean hasPlaceholder = milestones.stream()
+            .anyMatch(m -> m.getTitle() != null && m.getTitle().contains("版本规划中"));
+        if (hasPlaceholder) {
+            log.debug("检测到占位里程碑，跳过目标完成检查");
+            return;
+        }
+
+        // 【根因修复】排除改进里程碑（标题以"改进:"开头）
+        // 改进里程碑完成后不应触发 REVIEW，否则原始里程碑还是 IN_PROGRESS 时系统就卡死在审查中
+        List<GameProject.GoalMilestone> originalMilestones = milestones.stream()
+            .filter(m -> m.getTitle() == null || !m.getTitle().startsWith("改进:"))
+            .collect(Collectors.toList());
+
+        if (originalMilestones.isEmpty()) return;
+
+        boolean allCompleted = originalMilestones.stream()
             .allMatch(m -> m.getStatus() == GameProject.MilestoneStatus.COMPLETED);
 
         if (allCompleted) {
@@ -3836,6 +4054,15 @@ public class ProducerAgent extends BaseAgent {
         String projectId = getProjectId();
         if (projectId == null || currentProject == null) return;
 
+        // 【根因修复】冷却检查：避免短时间内重复验证同一项目并无限创建改进任务
+        long now = System.currentTimeMillis();
+        if (now - lastPeriodicVerifyTimestamp < PERIODIC_VERIFY_COOLDOWN_MS) {
+            log.debug("定期验证冷却中，跳过（剩余 {} 分钟）",
+                (PERIODIC_VERIFY_COOLDOWN_MS - (now - lastPeriodicVerifyTimestamp)) / 60000);
+            return;
+        }
+        lastPeriodicVerifyTimestamp = now;
+
         String projectDir = currentProject.getWorkDir();
         if (projectDir == null || projectDir.isEmpty()) return;
 
@@ -4039,8 +4266,58 @@ public class ProducerAgent extends BaseAgent {
     /**
      * 判断是否应该启动工作流
      * 制作人自主决策：只要有可执行里程碑就尝试启动工作流
+     * 但要避免重复启动：如果里程碑已经有完成或运行中的工作流，不再启动
      */
     private boolean shouldStartWorkflow(GameProject.GoalMilestone milestone) {
+        String projectId = getProjectId();
+        if (projectId == null || workflowEngine == null) return false;
+
+        // 检查里程碑是否已经有运行中的工作流
+        String runningInstanceId = findRunningWorkflowForMilestone(projectId, milestone.getId());
+        if (runningInstanceId != null) {
+            log.debug("里程碑 [{}] 已有运行中的工作流 {}，跳过启动", milestone.getTitle(), runningInstanceId);
+            return false;
+        }
+
+        // 检查里程碑是否已经有完成或失败的工作流
+        List<WorkflowEngine.WorkflowInstance> instances = workflowEngine.getInstancesByProject(projectId);
+        long recentWorkflowCount = 0;
+        for (WorkflowEngine.WorkflowInstance instance : instances) {
+            Map<String, String> params = instance.getParameters();
+            if (params == null || !milestone.getId().equals(params.get("milestoneId"))) {
+                continue;
+            }
+
+            // 统计该里程碑的近期工作流数量
+            recentWorkflowCount++;
+
+            if (instance.getStatus() == WorkflowEngine.WorkflowStatus.COMPLETED) {
+                // 里程碑已有完成的工作流，检查任务是否都已完成
+                boolean allTasksCompleted = milestone.getTasks() != null &&
+                    milestone.getTasks().stream()
+                        .allMatch(t -> t.getStatus() == GameProject.MilestoneStatus.COMPLETED);
+                if (allTasksCompleted) {
+                    log.debug("里程碑 [{}] 已有完成的工作流且所有任务已完成，跳过启动", milestone.getTitle());
+                    return false;
+                }
+                // 任务未全部完成，允许重新启动工作流
+                log.info("里程碑 [{}] 已有完成的工作流但任务未全部完成，允许重新启动", milestone.getTitle());
+                return true;
+            }
+
+            if (instance.getStatus() == WorkflowEngine.WorkflowStatus.FAILED) {
+                // 检查是否需要重试
+                if (recentWorkflowCount >= 3) {
+                    // 已经尝试过多次，不再启动
+                    log.warn("里程碑 [{}] 已尝试 {} 次工作流，跳过启动", milestone.getTitle(), recentWorkflowCount);
+                    return false;
+                }
+                // 允许重新启动（可能是系统重启导致的失败）
+                log.info("里程碑 [{}] 有失败的工作流 {}，允许重新启动", milestone.getTitle(), instance.getId());
+                return true;
+            }
+        }
+
         // 制作人自主决策：默认使用工作流来驱动里程碑执行
         return true;
     }
@@ -4818,6 +5095,26 @@ public class ProducerAgent extends BaseAgent {
             return;
         }
 
+        // 【根因修复】限制最大改进迭代次数：同一里程碑最多改进 1 次，超过则升级到管理员
+        // 原来是 2 次（6次失败），但改进里程碑也会被质量门禁触发，实际循环次数翻倍
+        int maxImprovementAttempts = 1;
+        if (failedMilestone.getVerificationFailCount() > 3 + maxImprovementAttempts * 3) {
+            log.warn("里程碑 [{}] 已失败 {} 次，超过最大改进次数，停止循环并升级",
+                failedMilestone.getTitle(), failedMilestone.getVerificationFailCount());
+            failedMilestone.setStatus(GameProject.MilestoneStatus.BLOCKED);
+            failedMilestone.setVerificationResult("超过最大改进次数，需要人工介入");
+            projectManager.saveProjectConfig(currentProject);
+            sendNotificationToAdmin("MILESTONE_STUCK",
+                String.format("【里程碑卡住 - 需要人工介入】\n\n项目: %s\n里程碑: %s\n失败次数: %d\n\n" +
+                    "系统已尝试自动改进但未能解决，可能是：\n" +
+                    "1. AI 生成的代码质量无法达到要求\n" +
+                    "2. 验证标准过于严格\n" +
+                    "3. 需要更换开发方案\n\n" +
+                    "建议：调整验证标准或手动指导 Agent 开发方向。",
+                    currentProject.getName(), failedMilestone.getTitle(), failedMilestone.getVerificationFailCount()));
+            return;
+        }
+
         // 记录已触发
         markQualityIterationTriggered(projectId, failedMilestone.getId());
 
@@ -4829,27 +5126,34 @@ public class ProducerAgent extends BaseAgent {
         failedMilestone.setVerificationResult("多次验证失败，已触发改进迭代: " + verificationResult.details);
         projectManager.saveProjectConfig(currentProject);
 
-        // 构建改进里程碑的描述
-        String improvementDesc = String.format(
-            "## 改进任务\n\n" +
-            "原始里程碑 [%s] 已连续验证失败%d次，需要针对性改进。\n\n" +
-            "### 失败原因\n%s\n\n" +
-            "### 改进要求\n" +
-            "1. 分析失败原因，找到根本问题\n" +
-            "2. 修复所有验证失败的检查项\n" +
-            "3. 确保代码可构建、可运行\n" +
-            "4. 改进完成后汇报，需通过所有验证标准",
-            failedMilestone.getTitle(),
-            failedMilestone.getVerificationFailCount(),
-            verificationResult.details
-        );
+        // 【根因修复】构建改进里程碑描述 — 包含具体失败上下文
+        StringBuilder descBuilder = new StringBuilder();
+        descBuilder.append(String.format("## 改进任务\n\n原始里程碑 [%s] 已连续验证失败%d次。\n\n",
+            failedMilestone.getTitle(), failedMilestone.getVerificationFailCount()));
+        descBuilder.append("### 失败原因\n").append(verificationResult.details).append("\n\n");
+        if (verificationResult.failedCriteria != null && !verificationResult.failedCriteria.isEmpty()) {
+            descBuilder.append("### 未通过的验证标准\n");
+            for (String c : verificationResult.failedCriteria) {
+                descBuilder.append("- ").append(c).append("\n");
+            }
+            descBuilder.append("\n");
+        }
+        descBuilder.append("### 改进要求\n");
+        descBuilder.append("1. 仔细阅读上述失败原因，针对性修复\n");
+        descBuilder.append("2. 确保代码无语法错误、可构建、可运行\n");
+        descBuilder.append("3. 改进完成后汇报实际修改内容（不要只说'已修复'）\n");
+        String improvementDesc = descBuilder.toString();
 
-        // 构建验证标准：复用原里程碑的验证标准
+        // 构建验证标准：复用原里程碑的验证标准 + AI 质量阈值
         List<String> criteria = new ArrayList<>(failedMilestone.getVerificationCriteria());
         if (criteria.isEmpty()) {
             criteria.add("代码无语法错误");
             criteria.add("项目可正常构建");
             criteria.add("核心功能可运行");
+        }
+        // 【根因修复】加入 AI 质量评分阈值作为验证标准
+        if (!criteria.stream().anyMatch(c -> c.contains("质量评分") || c.contains("AI"))) {
+            criteria.add("AI 质量评分 >= 40 分");
         }
 
         // 确定负责角色：如果原里程碑没有角色或角色无效，使用 server-dev 作为默认
@@ -4884,7 +5188,7 @@ public class ProducerAgent extends BaseAgent {
             improvementTitle, assignedRole));
 
         sendNotificationToAdmin("QUALITY_ITERATION",
-            String.format("【质量改进迭代】\n\n项目: %s\n原里程碑: %s\n失败次数: %d\n\n已自动创建改进任务并分配给 %s，系统将继续迭代直到质量达标。",
+            String.format("【质量改进迭代】\n\n项目: %s\n原里程碑: %s\n失败次数: %d\n\n已自动创建改进任务并分配给 %s。若再次失败将升级到管理员。",
                 currentProject.getName(), failedMilestone.getTitle(), failedMilestone.getVerificationFailCount(), assignedRole));
     }
 
@@ -4902,20 +5206,23 @@ public class ProducerAgent extends BaseAgent {
             return;
         }
 
-        // 构建改进任务消息
-        String taskContent = String.format(
-            "【紧急改进任务】\n\n" +
-            "里程碑 [%s] 验证失败%d次，需要你立即进行改进。\n\n" +
-            "### 失败原因\n%s\n\n" +
-            "### 改进要求\n" +
-            "1. 仔细分析失败原因\n" +
-            "2. 修复所有问题\n" +
-            "3. 确保代码可构建、可运行\n" +
-            "4. 完成后汇报结果",
-            failedMilestone.getTitle(),
-            failedMilestone.getVerificationFailCount(),
-            verificationResult.details
-        );
+        // 【根因修复】构建改进任务消息 — 携带具体失败上下文
+        StringBuilder taskBuilder = new StringBuilder();
+        taskBuilder.append(String.format("【紧急改进任务】\n\n里程碑 [%s] 验证失败%d次。\n\n",
+            failedMilestone.getTitle(), failedMilestone.getVerificationFailCount()));
+        taskBuilder.append("### 失败原因\n").append(verificationResult.details).append("\n\n");
+        if (verificationResult.failedCriteria != null && !verificationResult.failedCriteria.isEmpty()) {
+            taskBuilder.append("### 未通过的标准\n");
+            for (String c : verificationResult.failedCriteria) {
+                taskBuilder.append("- ").append(c).append("\n");
+            }
+            taskBuilder.append("\n");
+        }
+        taskBuilder.append("### 改进要求\n");
+        taskBuilder.append("1. 针对上述失败原因逐项修复\n");
+        taskBuilder.append("2. 确保代码无语法错误、可构建、可运行\n");
+        taskBuilder.append("3. 完成后汇报：具体修改了哪些文件、修复了什么问题\n");
+        String taskContent = taskBuilder.toString();
 
         // 发送任务消息
         AgentMessage taskMsg = AgentMessage.createTask(
@@ -4981,6 +5288,10 @@ public class ProducerAgent extends BaseAgent {
      * 质量门禁检查
      * 在里程碑完成后检查项目是否可正常运行，不达标则触发改进迭代
      *
+     * 【根因修复】原来只调用 verify()（结构检查，几乎永远通过），现在增加 analyzeQuality()（AI质量评分）
+     * 结构检查失败 → 直接不通过
+     * 结构检查通过但质量评分 < 40 → 触发改进迭代
+     *
      * @param milestone 已完成的里程碑
      * @return true 如果质量门禁通过，false 如果需要改进
      */
@@ -4988,28 +5299,67 @@ public class ProducerAgent extends BaseAgent {
         String projectId = getProjectId();
         if (projectId == null) return true;
 
-        // 使用 GameRuntimeVerifier 检查项目是否可运行
-        if (gameRuntimeVerifier != null && currentProject != null) {
+        // 【根因修复】改进里程碑不再触发质量迭代，避免双触发导致无限循环
+        // 改进里程碑的验证已经通过 verifyMilestoneCompletion() 完成
+        if (milestone.getTitle() != null && milestone.getTitle().startsWith("改进:")) {
+            log.info("改进里程碑 [{}] 跳过质量门禁（避免循环触发）", milestone.getTitle());
+            return true;
+        }
+
+        if (gameRuntimeVerifier == null || currentProject == null) return true;
+
+        try {
+            String projectDir = currentProject.getWorkDir();
+            if (projectDir == null || projectDir.isEmpty()) return true;
+
+            // 1. 结构验证：项目是否有源代码文件
+            var structResult = gameRuntimeVerifier.verify(projectDir);
+            if (structResult != null && !structResult.isSuccess()) {
+                String error = structResult.getError() != null ? structResult.getError() : "未知问题";
+                logWarn("QUALITY_GATE_FAILED",
+                    String.format("里程碑 [%s] 质量门禁-结构验证未通过: %s", milestone.getTitle(), error), null);
+
+                VerificationResult fakeResult = VerificationResult.failure(
+                    "质量门禁未通过（结构验证）: " + error,
+                    List.of("项目可正常构建和运行")
+                );
+                triggerQualityIteration(milestone, fakeResult);
+                return false;
+            }
+
+            // 2. 【根因修复】AI 质量分析：真正检查项目质量，不只是文件是否存在
             try {
-                String projectDir = currentProject.getWorkDir();
-                if (projectDir != null) {
-                    var result = gameRuntimeVerifier.verify(projectDir);
-                    if (result != null && !result.isSuccess()) {
-                        String error = result.getError() != null ? result.getError() : "未知问题";
-                        logWarn("QUALITY_GATE_FAILED",
-                            String.format("里程碑 [%s] 质量门禁未通过: %s", milestone.getTitle(), error), null);
+                var qualityResult = gameRuntimeVerifier.analyzeQuality(
+                    projectDir, currentProject.getName(), currentProject.getGoal());
+                if (qualityResult != null && qualityResult.isSuccess()) {
+                    int overallScore = qualityResult.getOverallScore();
+                    log.info("质量门禁-AI评分: milestone={}, score={}", milestone.getTitle(), overallScore);
+
+                    // 质量评分 < 60 触发改进迭代
+                    if (overallScore > 0 && overallScore < 60) {
+                        logWarn("QUALITY_GATE_LOW_SCORE",
+                            String.format("里程碑 [%s] 质量门禁-AI评分过低: %d/100", milestone.getTitle(), overallScore), null);
+
+                        StringBuilder details = new StringBuilder();
+                        details.append(String.format("AI质量评分: %d/100\n", overallScore));
+                        if (qualityResult.getIssues() != null && !qualityResult.getIssues().isEmpty()) {
+                            details.append("问题:\n");
+                            qualityResult.getIssues().forEach(issue -> details.append("- ").append(issue).append("\n"));
+                        }
 
                         VerificationResult fakeResult = VerificationResult.failure(
-                            "质量门禁未通过: " + error,
-                            List.of("项目可正常构建和运行")
+                            details.toString(),
+                            List.of("项目质量评分需达到60分以上")
                         );
                         triggerQualityIteration(milestone, fakeResult);
                         return false;
                     }
                 }
             } catch (Exception e) {
-                log.debug("质量门禁检查异常: {}", e.getMessage());
+                log.warn("质量门禁-AI分析异常（不影响通过）: {}", e.getMessage());
             }
+        } catch (Exception e) {
+            log.warn("质量门禁检查异常: {}", e.getMessage());
         }
 
         return true;
@@ -5383,6 +5733,42 @@ public class ProducerAgent extends BaseAgent {
         String projectId = getProjectId();
         if (projectId == null || goalService == null) return;
 
+        // 【修复】彻底清理旧里程碑，避免重复：
+        // 1. 占位里程碑（标题包含"版本规划中"）
+        // 2. 无任务的里程碑（任务为空或null）
+        // 3. 全部PENDING状态的里程碑（可能是版本迭代后残留）
+        // 4. 去重：同名里程碑只保留任务最多的
+        boolean needClear = false;
+        int oldCount = currentProject.getMilestones().size();
+
+        boolean hasPlaceholder = currentProject.getMilestones().stream()
+            .anyMatch(m -> m.getTitle() != null && m.getTitle().contains("版本规划中"));
+        boolean hasEmptyTasks = currentProject.getMilestones().stream()
+            .anyMatch(m -> m.getTasks() == null || m.getTasks().isEmpty());
+        boolean allPending = !currentProject.getMilestones().isEmpty() &&
+            currentProject.getMilestones().stream()
+                .allMatch(m -> m.getStatus() == GameProject.MilestoneStatus.PENDING);
+
+        // 检查是否有重复标题的里程碑
+        boolean hasDuplicates = false;
+        Set<String> titles = new HashSet<>();
+        for (GameProject.GoalMilestone m : currentProject.getMilestones()) {
+            if (m.getTitle() != null && !titles.add(m.getTitle())) {
+                hasDuplicates = true;
+                break;
+            }
+        }
+
+        if (hasPlaceholder || hasEmptyTasks || allPending || hasDuplicates) {
+            needClear = true;
+        }
+
+        if (needClear) {
+            currentProject.getMilestones().clear();
+            log.info("目标分解：已清除 {} 个旧里程碑（占位:{}, 空任务:{}, 全PENDING:{}, 重复:{}）",
+                oldCount, hasPlaceholder, hasEmptyTasks, allPending, hasDuplicates);
+        }
+
         // 标记为分解中（记录开始时间，用于超时判断）
         currentProject.setGoalStatus(GameProject.GoalStatus.DECOMPOSING);
         currentProject.setGoalDecomposeStartedAt(System.currentTimeMillis());
@@ -5437,11 +5823,19 @@ public class ProducerAgent extends BaseAgent {
             "2. **所有角色协作**完成（策划、开发、美术、测试）\n" +
             "3. 基于上一个迭代的反馈进行改进\n\n" +
             "## 输出格式\n\n" +
-            "每个里程碑代表一个迭代周期，格式如下：\n" +
+            "每个里程碑代表一个迭代周期，包含以下信息：\n\n" +
+            "### 里程碑定义\n" +
             "MILESTONE: 顺序号 | 标题 | 描述 | 依赖序号 | 验证标准\n\n" +
+            "### 技术方案（每个里程碑必须包含）\n" +
+            "TECH_STACK: 推荐的技术栈（语言+框架+关键库）\n" +
+            "FILE_STRUCTURE: 文件结构（每行一个文件，格式：文件名 -- 用途说明）\n" +
+            "KEY_CLASSES: 关键类/模块设计（格式：类名: 核心职责, 主要方法列表）\n\n" +
+            "### 任务分解（每个里程碑必须包含）\n" +
+            "TASK: 顺序号 | 标题 | 负责角色 | 描述\n\n" +
             "注意：\n" +
-            "- 不需要指定单一角色，因为每个迭代都需要多角色协作\n" +
-            "- 验证标准必须是**可自动化验证**的具体指标（如：接口返回200、页面可渲染、测试通过率>80%%）\n" +
+            "- 每个任务应能在 5-10 分钟的 AI 调用内完成\n" +
+            "- 每个任务有明确的输入（依赖）和输出（产出）\n" +
+            "- 验证标准必须是**可自动化验证**的具体指标（如：页面可访问、文件存在、功能可操作）\n" +
             "- 每个里程碑的验证标准至少包含3个可检查项\n" +
             "- **重要**：资源生成任务（图片、音频等）必须包含在里程碑中，使用 MCP 工具生成\n\n" +
             "## 迭代分解原则\n\n" +
@@ -5464,6 +5858,27 @@ public class ProducerAgent extends BaseAgent {
             "- 用序号表示依赖关系，0表示无依赖\n\n" +
             "## 示例（三消游戏）\n\n" +
             "MILESTONE: 1 | 核心玩法原型 | 实现基本的三消消除机制，可以在浏览器中玩 | 0 | 8x8棋盘可渲染;交换相邻方块可触发消除;相同方块3个以上连成一线会消除;消除后方块会下落;有基本的分数显示\n" +
+            "TECH_STACK: JavaScript + HTML5 Canvas (无框架，纯原生)\n" +
+            "FILE_STRUCTURE:\n" +
+            "  index.html -- 入口页面，包含 Canvas 元素\n" +
+            "  js/game.js -- 游戏主循环（Game类）\n" +
+            "  js/board.js -- 棋盘逻辑（Board类）\n" +
+            "  js/renderer.js -- Canvas渲染器（Renderer类）\n" +
+            "  js/input.js -- 输入处理（InputHandler类）\n" +
+            "  js/config.js -- 游戏配置常量\n" +
+            "  css/style.css -- 页面样式\n" +
+            "KEY_CLASSES:\n" +
+            "  Game: 游戏主控制器, constructor()/update(dt)/render()/loop(timestamp)\n" +
+            "  Board: 棋盘数据和逻辑, constructor(rows,cols)/swap()/findMatches()/eliminate()/drop()\n" +
+            "  Renderer: Canvas渲染, constructor(canvas)/drawBoard()/drawBlock()/drawScore()\n" +
+            "  InputHandler: 输入处理, constructor(canvas)/onMouseDown()/onMouseUp()/getGridPos()\n" +
+            "TASKS:\n" +
+            "  TASK: 1.1 | 创建项目骨架 | ui-dev | 创建 index.html、css/style.css、js/config.js\n" +
+            "  TASK: 1.2 | 实现棋盘数据结构 | server-dev | 创建 js/board.js，实现 Board 类\n" +
+            "  TASK: 1.3 | 实现渲染引擎 | client-dev | 创建 js/renderer.js，绘制棋盘和方块\n" +
+            "  TASK: 1.4 | 实现输入处理 | client-dev | 创建 js/input.js，鼠标点击和交换\n" +
+            "  TASK: 1.5 | 实现游戏主循环 | client-dev | 创建 js/game.js，串联所有组件\n" +
+            "  TASK: 1.6 | 添加分数系统 | server-dev | 实现分数计算和显示\n" +
             "MILESTONE: 2 | 关卡系统 | 添加关卡选择和进度管理 | 1 | 有关卡选择界面;至少5个关卡;每个关卡有目标分数;通关后可进入下一关;有返回按钮\n" +
             "MILESTONE: 3 | 道具系统 | 添加道具和特殊方块 | 2 | 有至少3种道具;道具可使用;特殊方块可生成;道具效果正确\n" +
             "MILESTONE: 4 | UI美化 | 美化界面和动画效果 | 3 | 界面美观;消除动画流畅;音效适配;整体视觉协调\n" +
@@ -5534,9 +5949,86 @@ public class ProducerAgent extends BaseAgent {
         Map<Integer, List<Integer>> orderToDependencyOrders = new java.util.HashMap<>();
 
         // 第一遍：创建所有里程碑（不设置依赖）
+        // 同时解析 TECH_STACK、FILE_STRUCTURE、KEY_CLASSES、TASKS
+        GameProject.GoalMilestone currentMilestone = null;
+        StringBuilder currentTechStack = new StringBuilder();
+        StringBuilder currentFileStructure = new StringBuilder();
+        StringBuilder currentKeyClasses = new StringBuilder();
+        boolean inTechSection = false; // 是否在技术方案区域（FILE_STRUCTURE/KEY_CLASSES）
+
         for (String line : lines) {
             line = line.trim();
             if (line.isEmpty()) continue;
+
+            // 解析 TECH_STACK
+            if (line.toUpperCase().startsWith("TECH_STACK:")) {
+                String tech = line.substring("TECH_STACK:".length()).trim();
+                currentTechStack.setLength(0);
+                currentTechStack.append(tech);
+                inTechSection = false;
+                continue;
+            }
+
+            // 解析 FILE_STRUCTURE（多行）
+            if (line.toUpperCase().startsWith("FILE_STRUCTURE:")) {
+                currentFileStructure.setLength(0);
+                currentFileStructure.append(line.substring("FILE_STRUCTURE:".length()).trim());
+                inTechSection = true;
+                continue;
+            }
+
+            // 解析 KEY_CLASSES（多行）
+            if (line.toUpperCase().startsWith("KEY_CLASSES:")) {
+                currentKeyClasses.setLength(0);
+                currentKeyClasses.append(line.substring("KEY_CLASSES:".length()).trim());
+                inTechSection = true;
+                continue;
+            }
+
+            // 解析 TASKS
+            if (line.toUpperCase().startsWith("TASK:")) {
+                inTechSection = false;
+                if (currentMilestone != null) {
+                    String taskContent = line.substring("TASK:".length()).trim();
+                    String[] taskParts = taskContent.split("[|，,]+");
+                    if (taskParts.length >= 2) {
+                        String taskTitle = taskParts.length > 1 ? taskParts[1].trim() : taskParts[0].trim();
+                        String taskRole = taskParts.length > 2 ? taskParts[2].trim() : null;
+                        String taskDesc = taskParts.length > 3 ? taskParts[3].trim() : taskTitle;
+                        String normalizedRole = taskRole != null ? normalizeRole(taskRole) : null;
+                        goalService.addTask(projectId, currentMilestone.getId(), taskTitle, taskDesc, normalizedRole, "MEDIUM");
+                        log.info("Parsed task: {} for milestone [{}]", taskTitle, currentMilestone.getTitle());
+                    }
+                }
+                continue;
+            }
+
+            // 多行内容追加（FILE_STRUCTURE 和 KEY_CLASSES 的后续行）
+            if (inTechSection && (line.startsWith(" ") || line.startsWith("  ") || line.startsWith("- "))) {
+                String content = line.trim();
+                if (currentKeyClasses.length() > 0) {
+                    currentKeyClasses.append("\n").append(content);
+                } else if (currentFileStructure.length() > 0) {
+                    currentFileStructure.append("\n").append(content);
+                }
+                continue;
+            }
+            inTechSection = false;
+
+            // 将技术方案保存到上一个里程碑
+            if (currentMilestone != null && currentTechStack.length() > 0) {
+                String techSpec = "TECH_STACK: " + currentTechStack.toString();
+                if (currentFileStructure.length() > 0) {
+                    techSpec += "\nFILE_STRUCTURE:\n" + currentFileStructure.toString();
+                }
+                if (currentKeyClasses.length() > 0) {
+                    techSpec += "\nKEY_CLASSES:\n" + currentKeyClasses.toString();
+                }
+                currentMilestone.setDescription(currentMilestone.getDescription() + "\n\n" + techSpec);
+                currentTechStack.setLength(0);
+                currentFileStructure.setLength(0);
+                currentKeyClasses.setLength(0);
+            }
 
             // 兼容多种格式：MILESTONE:、Milestone:、里程碑：
             String marker = null;
@@ -5629,6 +6121,7 @@ public class ProducerAgent extends BaseAgent {
                 milestone.setVerificationCriteria(criteria);
                 orderToMilestone.put(order, milestone);
                 orderToDependencyOrders.put(order, depOrders);
+                currentMilestone = milestone; // 跟踪当前里程碑，用于关联 TECH_STACK/TASKS
 
                 milestoneCount++;
                 log.info("Parsed milestone {}: {} ({})", order, title, role);
@@ -5636,6 +6129,18 @@ public class ProducerAgent extends BaseAgent {
             } catch (Exception e) {
                 log.warn("Failed to parse milestone line: {} - {}", line, e.getMessage());
             }
+        }
+
+        // 保存最后一个里程碑的技术方案
+        if (currentMilestone != null && currentTechStack.length() > 0) {
+            String techSpec = "TECH_STACK: " + currentTechStack.toString();
+            if (currentFileStructure.length() > 0) {
+                techSpec += "\nFILE_STRUCTURE:\n" + currentFileStructure.toString();
+            }
+            if (currentKeyClasses.length() > 0) {
+                techSpec += "\nKEY_CLASSES:\n" + currentKeyClasses.toString();
+            }
+            currentMilestone.setDescription(currentMilestone.getDescription() + "\n\n" + techSpec);
         }
 
         // 第二遍：将序号依赖转换为里程碑 ID
@@ -5802,8 +6307,28 @@ public class ProducerAgent extends BaseAgent {
         // 【优化1】为任务匹配能力模板，注入能力 prompt
         enrichTasksWithCapabilities(milestones);
 
+        // 【修复】分析已有代码，为已实现的任务设置合理初始进度
+        // 解决版本迭代后里程碑进度从零开始的问题
+        assessExistingCodeProgress(milestones);
+
         // 将分解的任务发送给对应的 Agent
         sendDecomposedTasksToAgents(milestones);
+
+        // 【新增】发送飞书通知：里程碑任务已分解并分配
+        try {
+            StringBuilder notifyContent = new StringBuilder();
+            notifyContent.append(String.format("项目 [%s] 里程碑任务已分解并分配\n\n", currentProject.getName()));
+            for (GameProject.GoalMilestone milestone : milestones) {
+                if (milestone.getTasks() == null || milestone.getTasks().isEmpty()) continue;
+                long completedCount = milestone.getTasks().stream()
+                    .filter(t -> t.getStatus() == GameProject.MilestoneStatus.COMPLETED).count();
+                notifyContent.append(String.format("- **%s**: %d 个任务 (完成 %d)\n",
+                    milestone.getTitle(), milestone.getTasks().size(), completedCount));
+            }
+            sendNotificationToAdmin("GOAL_DECOMPOSITION_START", notifyContent.toString());
+        } catch (Exception e) {
+            log.debug("发送任务分解通知失败: {}", e.getMessage());
+        }
     }
 
     /**
@@ -5859,7 +6384,9 @@ public class ProducerAgent extends BaseAgent {
                 // 构建任务内容
                 StringBuilder taskContentBuilder = new StringBuilder();
                 taskContentBuilder.append("[里程碑任务]\n\n");
+                taskContentBuilder.append("里程碑ID: ").append(milestone.getId()).append("\n");
                 taskContentBuilder.append("里程碑: ").append(milestone.getTitle()).append("\n");
+                taskContentBuilder.append("任务ID: ").append(task.getId()).append("\n");
                 taskContentBuilder.append("任务: ").append(task.getTitle()).append("\n");
                 taskContentBuilder.append("角色: ").append(task.getAssignedRole()).append("\n");
                 taskContentBuilder.append("优先级: ").append(task.getPriority() != null ? task.getPriority() : "MEDIUM").append("\n\n");
@@ -5867,6 +6394,7 @@ public class ProducerAgent extends BaseAgent {
                 taskContentBuilder.append("## 输入要求\n").append(task.getInputRequirements() != null ? task.getInputRequirements() : "无").append("\n\n");
                 taskContentBuilder.append("## 输出交付物\n").append(task.getOutputDeliverables() != null ? task.getOutputDeliverables() : "无").append("\n\n");
                 taskContentBuilder.append("## 验收标准\n").append(task.getAcceptanceCriteria() != null ? String.join("; ", task.getAcceptanceCriteria()) : "无");
+                taskContentBuilder.append("\n\n## 重要提示\n完成任务后请调用 completeTask 能力，传入以下参数：taskId=").append(task.getId()).append(", milestoneId=").append(milestone.getId());
 
                 // 资源类任务提示：引导 Agent 使用 MCP 工具或内置能力生成资源
                 if (isResourceAgentRole(task.getAssignedRole())) {
@@ -5976,6 +6504,473 @@ public class ProducerAgent extends BaseAgent {
             }
         }
         return matchCount >= 1;
+    }
+
+    /**
+     * 分析已有代码，为已实现的任务设置合理初始进度
+     * 解决版本迭代后里程碑进度从零开始的问题
+     *
+     * 【根因修复】使用 AI 分析代替关键词匹配：
+     * 1. 收集项目代码样本和目录结构
+     * 2. 将所有 PENDING 任务 + 代码样本一次性发给 AI
+     * 3. AI 返回每个任务的完成度评估（0-100）
+     * 4. 根据评估结果设置任务状态
+     *
+     * @param milestones 里程碑列表
+     */
+    private void assessExistingCodeProgress(Collection<GameProject.GoalMilestone> milestones) {
+        if (currentProject == null || currentProject.getWorkDir() == null) {
+            log.debug("项目工作目录未设置，跳过代码分析");
+            return;
+        }
+        if (claudeAiService == null) {
+            log.warn("ClaudeAiService 不可用，跳过 AI 代码进度评估");
+            return;
+        }
+
+        String workDir = currentProject.getWorkDir();
+        java.io.File projectDir = new java.io.File(workDir);
+        if (!projectDir.exists() || !projectDir.isDirectory()) {
+            log.debug("项目目录不存在: {}", workDir);
+            return;
+        }
+
+        // 统计项目代码概况
+        CodeProfile profile = analyzeCodeProfile(projectDir);
+        log.info("项目代码概况: {} 个源文件, {} 行代码, {} 个资源文件",
+            profile.sourceFileCount, profile.totalLines, profile.assetFileCount);
+
+        // 如果项目代码量很少（新项目），不需要调整进度
+        if (profile.sourceFileCount < 5) {
+            log.info("项目代码量较少（{} 个源文件），跳过进度调整", profile.sourceFileCount);
+            return;
+        }
+
+        // 收集所有 PENDING 任务
+        List<GameProject.MilestoneTask> pendingTasks = new ArrayList<>();
+        List<String> taskIds = new ArrayList<>();
+        for (GameProject.GoalMilestone milestone : milestones) {
+            if (milestone.getTasks() == null) continue;
+            for (GameProject.MilestoneTask task : milestone.getTasks()) {
+                if (task.getStatus() == GameProject.MilestoneStatus.PENDING) {
+                    pendingTasks.add(task);
+                    taskIds.add(task.getTitle());
+                }
+            }
+        }
+
+        if (pendingTasks.isEmpty()) {
+            log.info("没有 PENDING 状态的任务，跳过进度评估");
+            return;
+        }
+
+        // 收集代码样本（限制大小，避免 prompt 过长）
+        String codeSample = collectCodeSampleForAssessment(projectDir);
+        String structureInfo = collectStructureSummary(projectDir, profile);
+
+        // 构建 AI prompt
+        String prompt = buildAssessmentPrompt(pendingTasks, structureInfo, codeSample);
+
+        try {
+            log.info("调用 AI 评估 {} 个任务的代码完成度...", pendingTasks.size());
+            String aiResponse = claudeAiService.sendMessage(prompt);
+
+            // 解析 AI 响应
+            Map<String, Integer> taskScores = parseAssessmentResult(aiResponse, pendingTasks);
+
+            // 应用评估结果
+            int adjustedCount = 0;
+            for (GameProject.GoalMilestone milestone : milestones) {
+                if (milestone.getTasks() == null) continue;
+
+                for (GameProject.MilestoneTask task : milestone.getTasks()) {
+                    if (task.getStatus() != GameProject.MilestoneStatus.PENDING) continue;
+
+                    Integer score = taskScores.get(task.getTitle());
+                    if (score != null && score >= 40) {
+                        task.setStatus(GameProject.MilestoneStatus.IN_PROGRESS);
+                        task.setStartedAt(java.time.LocalDateTime.now());
+                        log.info("任务 [{}] AI评估完成度{}%，标记为进行中", task.getTitle(), score);
+                        adjustedCount++;
+                    }
+                }
+
+                updateMilestoneProgress(milestone);
+            }
+
+            if (adjustedCount > 0) {
+                log.info("AI 评估完成，已调整 {} 个任务的初始状态", adjustedCount);
+            }
+        } catch (Exception e) {
+            log.warn("AI 代码进度评估失败: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * 收集代码样本用于 AI 评估
+     * 取每个源代码文件的前 50 行，总长度限制 8000 字符
+     */
+    private String collectCodeSampleForAssessment(java.io.File dir) {
+        StringBuilder sample = new StringBuilder();
+        Set<String> sourceExts = Set.of(".java", ".js", ".ts", ".jsx", ".tsx", ".vue", ".py", ".go", ".html", ".css");
+        List<java.io.File> sourceFiles = new ArrayList<>();
+        findSourceFilesRecursive(dir, sourceExts, 0, 4, sourceFiles);
+
+        for (java.io.File file : sourceFiles) {
+            if (sample.length() > 8000) break;
+            try {
+                String content = java.nio.file.Files.readString(file.toPath());
+                String[] lines = content.split("\n");
+                int lineCount = Math.min(lines.length, 50);
+                StringBuilder fileContent = new StringBuilder();
+                for (int i = 0; i < lineCount; i++) {
+                    fileContent.append(lines[i]).append("\n");
+                }
+                String relativePath = dir.toPath().relativize(file.toPath()).toString();
+                sample.append("### ").append(relativePath).append("\n```\n").append(fileContent).append("```\n\n");
+            } catch (Exception e) {
+                // 忽略读取失败的文件
+            }
+        }
+        return sample.toString();
+    }
+
+    /**
+     * 递归查找源代码文件
+     */
+    private void findSourceFilesRecursive(java.io.File dir, Set<String> extensions, int depth, int maxDepth, List<java.io.File> result) {
+        if (depth > maxDepth) return;
+        java.io.File[] files = dir.listFiles();
+        if (files == null) return;
+        for (java.io.File file : files) {
+            if (file.isDirectory()) {
+                String name = file.getName().toLowerCase();
+                if (name.equals("node_modules") || name.equals(".git") || name.equals("target")
+                    || name.equals("build") || name.equals("dist") || name.equals(".idea")) continue;
+                findSourceFilesRecursive(file, extensions, depth + 1, maxDepth, result);
+            } else {
+                String name = file.getName().toLowerCase();
+                for (String ext : extensions) {
+                    if (name.endsWith(ext)) { result.add(file); break; }
+                }
+            }
+        }
+    }
+
+    /**
+     * 构建项目结构摘要
+     */
+    private String collectStructureSummary(java.io.File dir, CodeProfile profile) {
+        StringBuilder info = new StringBuilder();
+        info.append("项目目录: ").append(dir.getAbsolutePath()).append("\n");
+        info.append("源文件数: ").append(profile.sourceFileCount).append("\n");
+        info.append("代码行数: ").append(profile.totalLines).append("\n");
+        info.append("资源文件: ").append(profile.assetFileCount).append("\n");
+        info.append("文件类型分布: ");
+        profile.fileTypeCount.entrySet().stream()
+            .sorted((a, b) -> b.getValue() - a.getValue())
+            .limit(10)
+            .forEach(e -> info.append(e.getKey()).append("(").append(e.getValue()).append(") "));
+        info.append("\n");
+
+        // 列出一级目录
+        java.io.File[] files = dir.listFiles();
+        if (files != null) {
+            info.append("一级目录: ");
+            for (java.io.File file : files) {
+                if (file.isDirectory() && !file.getName().startsWith(".")) {
+                    info.append(file.getName()).append(" ");
+                }
+            }
+            info.append("\n");
+        }
+        return info.toString();
+    }
+
+    /**
+     * 构建 AI 评估 prompt
+     */
+    private String buildAssessmentPrompt(List<GameProject.MilestoneTask> tasks, String structureInfo, String codeSample) {
+        StringBuilder prompt = new StringBuilder();
+        prompt.append("你是一个游戏项目代码分析师。请分析以下已有代码，评估每个任务的完成度。\n\n");
+        prompt.append("## 项目结构\n").append(structureInfo).append("\n\n");
+        prompt.append("## 代码样本\n").append(codeSample).append("\n\n");
+        prompt.append("## 待评估任务\n");
+        for (int i = 0; i < tasks.size(); i++) {
+            GameProject.MilestoneTask task = tasks.get(i);
+            prompt.append(String.format("TASK_%d: 【%s】%s\n", i + 1, task.getTitle(),
+                task.getDescription() != null ? task.getDescription() : ""));
+        }
+        prompt.append("\n## 评估要求\n");
+        prompt.append("根据代码样本，判断每个任务是否已有实现或部分实现。评估标准：\n");
+        prompt.append("- 80-100: 代码已基本实现，只需微调\n");
+        prompt.append("- 50-79: 代码有部分实现，需要补充完善\n");
+        prompt.append("- 20-49: 代码有框架或基础，但核心逻辑未完成\n");
+        prompt.append("- 0-19: 几乎没有相关代码，需要从零开始\n\n");
+        prompt.append("【重要】只输出 JSON 数组，不要输出任何其他文字、解释或 markdown 标记。\n");
+        prompt.append("格式要求：每个元素包含 task（任务标题，必须与上面 TASK_N: 后的【】内容完全一致）和 score（0-100整数）。\n");
+        prompt.append("示例输出：\n");
+        prompt.append("[{\"task\": \"任务标题\", \"score\": 65}]\n");
+        return prompt.toString();
+    }
+
+    /**
+     * 解析 AI 评估结果
+     * 使用多层降级策略确保解析成功：
+     * 1. 标准 JSON 数组解析（task/score 或 name/completion 等变体）
+     * 2. 逐个任务名搜索 + 附近数字提取
+     * 3. 全文数字提取兜底
+     */
+    private Map<String, Integer> parseAssessmentResult(String aiResponse, List<GameProject.MilestoneTask> tasks) {
+        Map<String, Integer> result = new HashMap<>();
+        if (aiResponse == null || aiResponse.isEmpty()) return result;
+
+        try {
+            // 提取 JSON 数组区域
+            String json = aiResponse;
+            int jsonStart = aiResponse.indexOf("[");
+            int jsonEnd = aiResponse.lastIndexOf("]");
+            if (jsonStart >= 0 && jsonEnd > jsonStart) {
+                json = aiResponse.substring(jsonStart, jsonEnd + 1);
+            }
+
+            // === 策略1：标准格式 {"task": "...", "score": N} ===
+            // 支持 task/name/title 作为任务名，score/completion/value/percent 作为分数
+            java.util.regex.Pattern pattern = java.util.regex.Pattern
+                .compile("\"(?:task|name|title)\"\\s*:\\s*\"([^\"]+)\"\\s*,\\s*\"(?:score|completion|value|percent)\"\\s*:\\s*(\\d+)");
+            java.util.regex.Matcher matcher = pattern.matcher(json);
+            while (matcher.find()) {
+                String taskName = matcher.group(1);
+                int score = Integer.parseInt(matcher.group(2));
+                result.put(taskName, clampScore(score));
+            }
+
+            // === 策略2：反序格式 {"score": N, "task": "..."} ===
+            if (result.isEmpty()) {
+                java.util.regex.Pattern reversePattern = java.util.regex.Pattern
+                    .compile("\"(?:score|completion|value|percent)\"\\s*:\\s*(\\d+)\\s*,\\s*\"(?:task|name|title)\"\\s*:\\s*\"([^\"]+)\"");
+                java.util.regex.Matcher reverseMatcher = reversePattern.matcher(json);
+                while (reverseMatcher.find()) {
+                    int score = Integer.parseInt(reverseMatcher.group(1));
+                    String taskName = reverseMatcher.group(2);
+                    result.put(taskName, clampScore(score));
+                }
+            }
+
+            // === 策略3：逐个任务名搜索 + 附近数字提取 ===
+            if (result.isEmpty()) {
+                for (GameProject.MilestoneTask task : tasks) {
+                    String title = task.getTitle();
+                    // 在整个响应中查找任务名（模糊匹配：包含关系）
+                    int idx = findTaskIndex(aiResponse, title);
+                    if (idx >= 0) {
+                        // 取任务名前后 200 字符范围，提取最近的数字
+                        int start = Math.max(0, idx - 80);
+                        int end = Math.min(aiResponse.length(), idx + title.length() + 200);
+                        String context = aiResponse.substring(start, end);
+                        // 提取所有数字，取第一个在 0-100 范围内的
+                        java.util.regex.Matcher numMatcher = java.util.regex.Pattern
+                            .compile("(\\d{1,3})").matcher(context);
+                        while (numMatcher.find()) {
+                            int val = Integer.parseInt(numMatcher.group(1));
+                            if (val >= 0 && val <= 100) {
+                                result.put(title, clampScore(val));
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // === 策略4：匹配任务序号 TASK_N: ... score ===
+            if (result.isEmpty()) {
+                for (int i = 0; i < tasks.size(); i++) {
+                    String marker = "TASK_" + (i + 1);
+                    int idx = aiResponse.indexOf(marker);
+                    if (idx < 0) continue;
+                    String after = aiResponse.substring(idx, Math.min(aiResponse.length(), idx + 300));
+                    java.util.regex.Matcher numMatcher = java.util.regex.Pattern
+                        .compile("(\\d{1,3})").matcher(after);
+                    while (numMatcher.find()) {
+                        int val = Integer.parseInt(numMatcher.group(1));
+                        if (val >= 0 && val <= 100) {
+                            result.put(tasks.get(i).getTitle(), clampScore(val));
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // 补全缺失的任务（未解析到的任务默认 0 分 → 保持 PENDING）
+            for (GameProject.MilestoneTask task : tasks) {
+                result.putIfAbsent(task.getTitle(), 0);
+            }
+
+            log.info("AI 评估结果解析: {}/{} 个任务有评分",
+                result.values().stream().filter(v -> v > 0).count(), tasks.size());
+        } catch (Exception e) {
+            log.warn("解析 AI 评估结果异常，使用默认值: {}", e.getMessage());
+            // 解析完全失败时，所有任务默认 0 分（保持 PENDING）
+            for (GameProject.MilestoneTask task : tasks) {
+                result.putIfAbsent(task.getTitle(), 0);
+            }
+        }
+
+        return result;
+    }
+
+    /**
+     * 在文本中模糊查找任务名（支持部分匹配）
+     */
+    private int findTaskIndex(String text, String taskTitle) {
+        // 精确匹配
+        int idx = text.indexOf(taskTitle);
+        if (idx >= 0) return idx;
+        // 去括号后匹配（AI 可能去掉【】）
+        String cleaned = taskTitle.replaceAll("[【】\\[\\]]", "");
+        idx = text.indexOf(cleaned);
+        if (idx >= 0) return idx;
+        // 前缀匹配（取前 10 个字符）
+        if (cleaned.length() > 10) {
+            String prefix = cleaned.substring(0, 10);
+            idx = text.indexOf(prefix);
+        }
+        return idx;
+    }
+
+    /**
+     * 限制分数在 0-100 范围内
+     */
+    private int clampScore(int score) {
+        return Math.max(0, Math.min(100, score));
+    }
+
+    /**
+     * 代码概况统计
+     */
+    private static class CodeProfile {
+        int sourceFileCount;    // 源代码文件数
+        int totalLines;         // 总代码行数
+        int assetFileCount;     // 资源文件数
+        int configFileCount;    // 配置文件数
+        Set<String> sourceDirs; // 源代码目录
+        Map<String, Integer> fileTypeCount; // 文件类型统计
+
+        CodeProfile() {
+            this.sourceDirs = new HashSet<>();
+            this.fileTypeCount = new HashMap<>();
+        }
+    }
+
+    /**
+     * 分析项目代码概况
+     *
+     * @param projectDir 项目目录
+     * @return 代码概况
+     */
+    private CodeProfile analyzeCodeProfile(java.io.File projectDir) {
+        CodeProfile profile = new CodeProfile();
+
+        // 源代码文件扩展名
+        Set<String> sourceExts = Set.of(".java", ".js", ".ts", ".jsx", ".tsx", ".vue", ".py", ".go", ".rs", ".c", ".cpp", ".h");
+        // 资源文件扩展名
+        Set<String> assetExts = Set.of(".png", ".jpg", ".jpeg", ".gif", ".svg", ".mp3", ".wav", ".ogg", ".mp4", ".webm");
+        // 配置文件扩展名
+        Set<String> configExts = Set.of(".json", ".yaml", ".yml", ".xml", ".properties", ".toml", ".ini", ".env");
+
+        // 递归扫描目录（限制深度避免性能问题）
+        scanDirectory(projectDir, profile, sourceExts, assetExts, configExts, 0, 5);
+
+        return profile;
+    }
+
+    /**
+     * 递归扫描目录
+     */
+    private void scanDirectory(java.io.File dir, CodeProfile profile,
+                                Set<String> sourceExts, Set<String> assetExts, Set<String> configExts,
+                                int depth, int maxDepth) {
+        if (depth > maxDepth) return;
+
+        java.io.File[] files = dir.listFiles();
+        if (files == null) return;
+
+        for (java.io.File file : files) {
+            if (file.isDirectory()) {
+                // 跳过常见的非源码目录
+                String dirName = file.getName().toLowerCase();
+                if (dirName.equals("node_modules") || dirName.equals(".git") ||
+                    dirName.equals("target") || dirName.equals("build") ||
+                    dirName.equals("dist") || dirName.equals(".idea") ||
+                    dirName.equals("vendor") || dirName.equals("__pycache__")) {
+                    continue;
+                }
+                scanDirectory(file, profile, sourceExts, assetExts, configExts, depth + 1, maxDepth);
+            } else {
+                String name = file.getName().toLowerCase();
+                String ext = getExtension(name);
+
+                // 统计文件类型
+                profile.fileTypeCount.merge(ext, 1, Integer::sum);
+
+                if (sourceExts.contains(ext)) {
+                    profile.sourceFileCount++;
+                    profile.sourceDirs.add(dir.getAbsolutePath());
+                    // 统计代码行数（简单统计，避免读取大文件）
+                    if (file.length() < 1_000_000) { // 小于 1MB
+                        try {
+                            long lines = java.nio.file.Files.lines(file.toPath()).count();
+                            profile.totalLines += (int) Math.min(lines, Integer.MAX_VALUE);
+                        } catch (Exception e) {
+                            // 忽略读取错误
+                        }
+                    }
+                } else if (assetExts.contains(ext)) {
+                    profile.assetFileCount++;
+                } else if (configExts.contains(ext)) {
+                    profile.configFileCount++;
+                }
+            }
+        }
+    }
+
+    /**
+     * 获取文件扩展名
+     */
+    private String getExtension(String filename) {
+        int lastDot = filename.lastIndexOf('.');
+        return lastDot >= 0 ? filename.substring(lastDot) : "";
+    }
+
+    /**
+     * 更新里程碑进度
+     * 基于任务完成情况计算里程碑整体进度
+     *
+     * @param milestone 里程碑
+     */
+    private void updateMilestoneProgress(GameProject.GoalMilestone milestone) {
+        if (milestone.getTasks() == null || milestone.getTasks().isEmpty()) {
+            return;
+        }
+
+        int totalTasks = milestone.getTasks().size();
+        long completedTasks = milestone.getTasks().stream()
+            .filter(t -> t.getStatus() == GameProject.MilestoneStatus.COMPLETED)
+            .count();
+        long inProgressTasks = milestone.getTasks().stream()
+            .filter(t -> t.getStatus() == GameProject.MilestoneStatus.IN_PROGRESS)
+            .count();
+
+        // 进度计算：完成的任务占100%，进行中的任务占50%
+        int progress = (int) ((completedTasks * 100 + inProgressTasks * 50) / totalTasks);
+        milestone.setProgress(progress);
+
+        // 如果所有任务都完成，标记里程碑为完成
+        if (completedTasks == totalTasks) {
+            milestone.setStatus(GameProject.MilestoneStatus.COMPLETED);
+        } else if (inProgressTasks > 0 || completedTasks > 0) {
+            milestone.setStatus(GameProject.MilestoneStatus.IN_PROGRESS);
+        }
     }
 
     /**
@@ -7090,10 +8085,6 @@ public class ProducerAgent extends BaseAgent {
         String name = generateAgentName(role);
         String workDir = currentProject.getWorkDir();
 
-        // 暂停流程等待审批
-        String approvalId = "recruit-" + role + "-" + System.currentTimeMillis();
-        pendingApprovalMilestoneId = approvalId;
-
         String requestData = String.format(
             "{\"role\":\"%s\",\"name\":\"%s\",\"workDir\":\"%s\",\"taskDescription\":\"%s\"}",
             role, name, workDir, taskDescription
@@ -7114,6 +8105,10 @@ public class ProducerAgent extends BaseAgent {
                     requestData,
                     description
                 );
+
+                // 暂停流程等待审批 - 使用数据库ID确保回调匹配
+                pendingApprovalMilestoneId = approvalRequest.getId().toString();
+
                 logInfo("RECRUIT_APPROVAL_SENT", "已发起招聘审批请求，ID: " + approvalRequest.getId() + "，角色: " + role);
 
                 // 发送带按钮的飞书审批卡片
@@ -7138,7 +8133,7 @@ public class ProducerAgent extends BaseAgent {
         }
 
         // 保存待审批信息
-        saveExperience("pending_recruit_" + approvalId,
+        saveExperience("pending_recruit_" + role,
             String.format("招聘审批中: %s (%s)，任务: %s", name, role, taskDescription));
     }
 
@@ -7758,7 +8753,7 @@ public class ProducerAgent extends BaseAgent {
                 }
                 notificationService.notifyAdmins(prefKey, "PRODUCER_" + notificationType, variables, type);
             } catch (Exception e) {
-                log.debug("发送管理员通知失败: {}", e.getMessage());
+                log.warn("发送管理员通知失败: type={}, error={}", notificationType, e.getMessage());
             }
         } else if (feishuService != null && feishuService.isEnabled()) {
             // fallback：notificationService 未注入时直接发飞书
@@ -8289,9 +9284,6 @@ public class ProducerAgent extends BaseAgent {
     public void requestCreateAgent(String name, String role, String agentsFile, String workDir) {
         String projectId = getProjectId();
 
-        String approvalId = "create-agent-" + System.currentTimeMillis();
-        pendingApprovalMilestoneId = approvalId;
-
         String requestData = String.format(
             "{\"name\":\"%s\",\"role\":\"%s\",\"agentsFile\":\"%s\",\"workDir\":\"%s\"}",
             name, role, agentsFile != null ? agentsFile : "", workDir
@@ -8312,6 +9304,10 @@ public class ProducerAgent extends BaseAgent {
                     requestData,
                     description
                 );
+
+                // 暂停流程等待审批 - 使用数据库ID确保回调匹配
+                pendingApprovalMilestoneId = approvalRequest.getId().toString();
+
                 logInfo("CREATE_AGENT_APPROVAL_SENT", "已发起创建 Agent 审批请求，ID: " + approvalRequest.getId());
 
                 // 发送带按钮的飞书审批卡片

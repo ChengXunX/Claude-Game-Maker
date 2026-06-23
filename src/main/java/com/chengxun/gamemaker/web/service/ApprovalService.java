@@ -336,8 +336,12 @@ public class ApprovalService {
                 case "DELETE_AGENT", "DISMISS_AGENT" -> executeDeleteAgent(request);
                 case "CHANGE_CONFIG" -> executeChangeConfig(request);
                 case "EMAIL_CHANGE" -> executeEmailChange(request);
-                case "STRATEGIC_DECISION" -> executeStrategicDecisionApproved(request);
+                case "STRATEGIC_DECISION", "ESCALATE_DECISION" -> executeStrategicDecisionApproved(request);
                 case "DELIVERY" -> executeDeliveryApproved(request);
+                case "REQUEST_DECISION", "SET_GOAL", "ADJUST_PLAN" -> {
+                    // 这些类型由 ApprovalCallbackService 处理回调，这里只需记录日志
+                    log.info("审批通过（由回调服务处理）: type={}, id={}", type, request.getId());
+                }
                 default -> log.warn("Unknown request type: {}", type);
             }
         } catch (Exception e) {

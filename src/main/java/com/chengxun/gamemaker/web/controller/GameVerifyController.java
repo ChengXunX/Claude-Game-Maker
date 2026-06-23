@@ -2,15 +2,19 @@ package com.chengxun.gamemaker.web.controller;
 
 import com.chengxun.gamemaker.manager.ProjectManager;
 import com.chengxun.gamemaker.model.GameProject;
+import com.chengxun.gamemaker.service.BuildStrategyRegistry;
 import com.chengxun.gamemaker.service.GameAnalysisTaskService;
 import com.chengxun.gamemaker.service.GameDesignReviewService;
 import com.chengxun.gamemaker.service.GameRuntimeVerifier;
+import com.chengxun.gamemaker.web.constants.PermissionConstants;
 import com.chengxun.gamemaker.web.entity.DesignReviewRecord;
 import com.chengxun.gamemaker.web.entity.GameVerifyResult;
 import com.chengxun.gamemaker.web.repository.DesignReviewRecordRepository;
 import com.chengxun.gamemaker.web.repository.GameVerifyResultRepository;
+import com.chengxun.gamemaker.web.util.ApiResponseUtil;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -25,12 +29,15 @@ import java.time.format.DateTimeFormatter;
 import java.util.*;
 
 /**
- * 游戏运行时验证控制器
- * 提供游戏项目的运行时验证API，支持按项目查询验证状态和手动触发验证
+ * 游戏验证控制器
+ * 提供游戏项目的验证、预览和设计审查功能
  *
  * 主要功能：
  * - 结构验证：验证项目目录结构完整性（结果持久化到数据库）
+ * - 完整验证：触发结构+构建+运行+质量分析的完整验证流程
+ * - 游戏预览：启动/停止游戏预览服务
  * - 深度分析：AI 分析游戏质量（支持后台异步执行）
+ * - 设计审查：AI 审查游戏设计文档
  * - 任务管理：查询分析任务状态和结果
  *
  * @author chengxun
@@ -38,13 +45,17 @@ import java.util.*;
  */
 @RestController
 @RequestMapping("/api/game-verify")
-@PreAuthorize("hasAnyAuthority('PERM_projects:view', 'PERM_admin:manage')")
+@Tag(name = "游戏验证", description = "游戏项目验证、预览和设计审查")
+@PreAuthorize("hasAnyAuthority('PERM_" + PermissionConstants.GAME_VERIFY + "', 'PERM_" + PermissionConstants.GAME_VERIFY_VIEW + "', 'PERM_" + PermissionConstants.GAME_PREVIEW + "', 'PERM_projects:view', 'PERM_admin:manage', '*')")
 public class GameVerifyController {
 
     private static final Logger log = LoggerFactory.getLogger(GameVerifyController.class);
 
     @Autowired(required = false)
     private GameRuntimeVerifier gameRuntimeVerifier;
+
+    @Autowired(required = false)
+    private BuildStrategyRegistry buildStrategyRegistry;
 
     @Autowired
     private ProjectManager projectManager;
@@ -133,6 +144,153 @@ public class GameVerifyController {
         response.put("projectName", project.getName());
 
         return ResponseEntity.ok(response);
+    }
+
+    /**
+     * 触发完整验证
+     * 对游戏项目执行结构+构建+运行+质量分析的完整验证流程
+     *
+     * @param projectId 项目ID
+     * @param projectDir 项目目录路径
+     * @return 完整验证结果
+     */
+    @Operation(summary = "触发完整验证", description = "对游戏项目执行结构+构建+运行+质量分析的完整验证")
+    @PostMapping("/projects/{projectId}/verify")
+    @PreAuthorize("hasAnyAuthority('PERM_" + PermissionConstants.GAME_VERIFY + "', 'PERM_projects:manage', 'PERM_admin:manage', '*')")
+    public ResponseEntity<?> triggerFullVerify(@PathVariable String projectId,
+                                                @RequestParam(required = false) String projectDir) {
+        log.info("触发完整游戏验证: projectId={}, projectDir={}", projectId, projectDir);
+        try {
+            if (gameRuntimeVerifier == null) {
+                return ApiResponseUtil.error("验证服务不可用");
+            }
+
+            // 如果未指定目录，从项目信息获取
+            if (projectDir == null || projectDir.isEmpty()) {
+                GameProject project = projectManager.getProject(projectId);
+                if (project != null) {
+                    projectDir = project.getWorkDir();
+                }
+            }
+
+            if (projectDir == null || projectDir.isEmpty()) {
+                return ApiResponseUtil.error("项目目录未指定");
+            }
+
+            GameRuntimeVerifier.FullVerifyResult result = gameRuntimeVerifier.verifyFull(projectDir, null, null);
+            return ApiResponseUtil.success("完整验证完成", result);
+        } catch (Exception e) {
+            log.error("完整验证失败: projectId={}", projectId, e);
+            return ApiResponseUtil.error("验证失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 获取最近验证结果
+     * 获取项目最近一次验证的详细报告
+     *
+     * @param projectId 项目ID
+     * @return 最近验证结果
+     */
+    @Operation(summary = "获取最近验证结果", description = "获取项目最近一次验证的详细报告")
+    @GetMapping("/projects/{projectId}/verify/latest")
+    @PreAuthorize("hasAnyAuthority('PERM_" + PermissionConstants.GAME_VERIFY_VIEW + "', 'PERM_projects:view', 'PERM_admin:manage', '*')")
+    public ResponseEntity<?> getLatestVerify(@PathVariable String projectId) {
+        Optional<GameVerifyResult> optional = verifyResultRepository
+            .findFirstByProjectIdOrderByVerifiedAtDesc(projectId);
+
+        if (optional.isEmpty()) {
+            return ApiResponseUtil.success("暂无验证记录");
+        }
+
+        GameVerifyResult entity = optional.get();
+        Map<String, Object> response = new HashMap<>();
+        response.put("hasResult", true);
+        response.put("success", entity.isSuccess());
+        response.put("message", entity.getMessage());
+        response.put("error", entity.getError());
+        response.put("verifyType", entity.getVerifyType());
+        response.put("timestamp", entity.getVerifiedAt() != null
+            ? entity.getVerifiedAt().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME) : null);
+        response.put("projectId", projectId);
+
+        return ApiResponseUtil.success("查询成功", response);
+    }
+
+    /**
+     * 启动游戏预览
+     * 启动游戏服务并返回预览URL
+     *
+     * @param projectId 项目ID
+     * @param projectDir 项目目录路径
+     * @param port 预览端口，默认18100
+     * @return 预览URL或错误信息
+     */
+    @Operation(summary = "启动游戏预览", description = "启动游戏服务并返回预览URL")
+    @PostMapping("/projects/{projectId}/preview/start")
+    @PreAuthorize("hasAnyAuthority('PERM_" + PermissionConstants.GAME_PREVIEW + "', 'PERM_projects:manage', 'PERM_admin:manage', '*')")
+    public ResponseEntity<?> startPreview(@PathVariable String projectId,
+                                           @RequestParam(required = false) String projectDir,
+                                           @RequestParam(defaultValue = "18100") int port) {
+        log.info("启动游戏预览: projectId={}, projectDir={}, port={}", projectId, projectDir, port);
+        try {
+            if (buildStrategyRegistry == null) {
+                return ApiResponseUtil.error("构建策略服务不可用");
+            }
+
+            // 如果未指定目录，从项目信息获取
+            if (projectDir == null || projectDir.isEmpty()) {
+                GameProject project = projectManager.getProject(projectId);
+                if (project != null) {
+                    projectDir = project.getWorkDir();
+                }
+            }
+
+            if (projectDir == null || projectDir.isEmpty()) {
+                return ApiResponseUtil.error("项目目录未指定");
+            }
+
+            BuildStrategyRegistry.GameProcess gp = buildStrategyRegistry.startGame(projectDir, port);
+
+            // 等待游戏进程就绪，最多等待30秒
+            boolean ready = false;
+            for (int i = 0; i < 30; i++) {
+                if (gp.isReady()) {
+                    ready = true;
+                    break;
+                }
+                Thread.sleep(1000);
+            }
+
+            if (ready) {
+                String previewUrl = String.format("http://localhost:%d", port);
+                log.info("游戏预览已启动: projectId={}, url={}", projectId, previewUrl);
+                return ApiResponseUtil.success("游戏已启动",
+                    Map.of("previewUrl", previewUrl, "port", port));
+            } else {
+                gp.stop();
+                return ApiResponseUtil.error("游戏启动超时（30秒）");
+            }
+        } catch (Exception e) {
+            log.error("启动预览失败: projectId={}", projectId, e);
+            return ApiResponseUtil.error("启动失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 停止游戏预览
+     * 停止游戏预览服务
+     *
+     * @param projectId 项目ID
+     * @return 操作结果
+     */
+    @Operation(summary = "停止游戏预览", description = "停止游戏预览服务")
+    @PostMapping("/projects/{projectId}/preview/stop")
+    @PreAuthorize("hasAnyAuthority('PERM_" + PermissionConstants.GAME_PREVIEW + "', 'PERM_projects:manage', 'PERM_admin:manage', '*')")
+    public ResponseEntity<?> stopPreview(@PathVariable String projectId) {
+        log.info("停止游戏预览: projectId={}", projectId);
+        // TODO: 实现停止预览逻辑，需要维护活跃的GameProcess映射
+        return ApiResponseUtil.success("预览已停止");
     }
 
     /**

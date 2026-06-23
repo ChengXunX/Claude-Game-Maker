@@ -57,7 +57,7 @@ class RoleServiceTest {
 
             roleService.initDefaultRoles();
 
-            verify(roleRepository, times(6)).save(any(Role.class));
+            verify(roleRepository, times(7)).save(any(Role.class));
 
             // Verify each default role was checked
             verify(roleRepository).existsByName("ADMIN");
@@ -106,6 +106,7 @@ class RoleServiceTest {
             when(roleRepository.existsByName("OPS_ENGINEER")).thenReturn(true);
             when(roleRepository.existsByName("OBSERVER")).thenReturn(true);
             when(roleRepository.existsByName("USER")).thenReturn(true);
+            when(roleRepository.existsByName("READONLY")).thenReturn(true);
             when(roleRepository.save(any(Role.class))).thenAnswer(inv -> inv.getArgument(0));
 
             roleService.initDefaultRoles();
@@ -123,6 +124,9 @@ class RoleServiceTest {
             assertTrue(perms.contains(RoleService.PERM_PIPELINE_VIEW));
             assertTrue(perms.contains(RoleService.PERM_PIPELINE_EXECUTE));
             assertTrue(perms.contains(RoleService.PERM_SKILLS_VIEW));
+            // 游戏验证权限
+            assertTrue(perms.contains(RoleService.PERM_GAME_VERIFY));
+            assertTrue(perms.contains(RoleService.PERM_GAME_VERIFY_VIEW));
             assertFalse(perms.contains(RoleService.PERM_USERS_MANAGE));
         }
     }
@@ -390,9 +394,9 @@ class RoleServiceTest {
     class AllPermissionsTests {
 
         @Test
-        @DisplayName("should contain exactly 27 permissions")
+        @DisplayName("should contain exactly 34 permissions")
         void shouldContain27Permissions() {
-            assertEquals(27, RoleService.ALL_PERMISSIONS.size());
+            assertEquals(34, RoleService.ALL_PERMISSIONS.size());
         }
 
         @Test

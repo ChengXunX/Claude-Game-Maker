@@ -393,6 +393,17 @@ public final class PermissionConstants {
     /** 查看和构建知识图谱 */
     public static final String KNOWLEDGE_GRAPH = "knowledge:graph";
 
+    // ===== 游戏验证相关权限 =====
+
+    /** 触发游戏验证 */
+    public static final String GAME_VERIFY = "game:verify";
+
+    /** 启动游戏预览 */
+    public static final String GAME_PREVIEW = "game:preview";
+
+    /** 查看验证结果 */
+    public static final String GAME_VERIFY_VIEW = "game:verify:view";
+
     // ===== 特殊权限 =====
 
     /** 超级管理员权限（包含所有权限） */
@@ -522,6 +533,9 @@ public final class PermissionConstants {
             case FORK_CREATE -> "创建会话分叉";
             case FORK_MANAGE -> "管理会话分叉";
             case TOOL_PERMISSION_MANAGE -> "管理工具权限";
+            case GAME_VERIFY -> "触发游戏验证";
+            case GAME_PREVIEW -> "启动游戏预览";
+            case GAME_VERIFY_VIEW -> "查看验证结果";
             default -> permission;
         };
     }
@@ -574,6 +588,7 @@ public final class PermissionConstants {
                 case "snapshot" -> "快照管理";
                 case "fork" -> "会话分叉";
                 case "tool" -> "工具权限";
+                case "game" -> "游戏验证";
                 default -> module;
             };
         }

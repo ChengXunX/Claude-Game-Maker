@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>三消游戏</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div id="game-container">
+        <div id="header">
+            <div id="score-display">分数: <span id="score">0</span></div>
+            <div id="level-display">关卡: <span id="level">1</span></div>
+            <button id="restart-btn" class="game-btn">重新开始</button>
+        </div>
+        <canvas id="gameCanvas"></canvas>
+        <div id="message" class="hidden"></div>
+    </div>
+    <script src="js/config.js"></script>
+    <script src="js/board.js"></script>
+    <script src="js/renderer.js"></script>
+    <script src="js/input.js"></script>
+    <script src="js/game.js"></script>
+</body>
+</html>

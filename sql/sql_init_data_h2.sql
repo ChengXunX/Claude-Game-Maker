@@ -910,6 +910,23 @@ ${content}
 '定期验证失败飞书通知', TRUE, TRUE);
 
 INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
+('PRODUCER_GOAL_DECOMPOSITION_START_FEISHU', '飞书目标分解开始', 'FEISHU', 'SYSTEM', '🎯 里程碑任务已分解并分配',
+'**🎯 里程碑任务已分解并分配**
+
+---
+
+**项目**: ${projectName}
+
+${content}
+
+---
+
+⏰ ${time}
+
+🔗 [查看项目详情](${domain}/projects)',
+'目标分解开始飞书通知', TRUE, TRUE);
+
+INSERT INTO notification_templates (template_code, template_name, channel, category, subject, content, description, enabled, system_builtin) VALUES
 ('DISMISSAL_REQUEST_FEISHU', '飞书解雇审批请求', 'FEISHU', 'SYSTEM', '🔔 解雇审批请求',
 '**🔔 解雇审批请求**
 
@@ -1389,6 +1406,48 @@ INSERT INTO agent_capabilities (agent_role, capability_name, display_name, descr
 ('server-dev', 'terminateSubAgent', '终止子代理', '终止运行中的子代理', 'subagent', FALSE, NULL, 102, '{"subAgentId":"string|required"}', 'java', TRUE);
 INSERT INTO agent_capabilities (agent_role, capability_name, display_name, description, category, requires_approval, approval_type, priority, param_schema, execution_type, enabled) VALUES
 ('producer', 'setToolPermissions', '设置工具权限', '设置 Agent 的工具调用权限规则', 'security', FALSE, NULL, 105, '{"agentId":"string|required","permissions":"array|required"}', 'java', TRUE);
+
+-- ============================================
+-- 游戏验证相关能力
+-- ============================================
+
+INSERT INTO agent_capabilities (agent_role, capability_name, display_name, description, category, requires_approval, approval_type, priority, param_schema, execution_type, enabled) VALUES
+('producer', 'verifyGame', '验证游戏', '对游戏项目执行完整验证（结构+构建+运行+质量）', 'verification', FALSE, NULL, 30, '{"projectDir":"string"}', 'java', TRUE);
+
+INSERT INTO agent_capabilities (agent_role, capability_name, display_name, description, category, requires_approval, approval_type, priority, param_schema, execution_type, enabled) VALUES
+('producer', 'getVerifyReport', '获取验证报告', '获取项目最近一次验证的详细报告', 'verification', FALSE, NULL, 31, '{"projectId":"string"}', 'java', TRUE);
+
+INSERT INTO agent_capabilities (agent_role, capability_name, display_name, description, category, requires_approval, approval_type, priority, param_schema, execution_type, enabled) VALUES
+('producer', 'runGamePreview', '启动游戏预览', '启动游戏服务并返回预览URL', 'preview', FALSE, NULL, 40, '{"projectDir":"string","port":"integer"}', 'java', TRUE);
+
+INSERT INTO agent_capabilities (agent_role, capability_name, display_name, description, category, requires_approval, approval_type, priority, param_schema, execution_type, enabled) VALUES
+('producer', 'stopGamePreview', '停止游戏预览', '停止游戏预览服务', 'preview', FALSE, NULL, 41, '{"processId":"string"}', 'java', TRUE);
+
+INSERT INTO agent_capabilities (agent_role, capability_name, display_name, description, category, requires_approval, approval_type, priority, param_schema, execution_type, enabled) VALUES
+('producer', 'detectRuntimeErrors', '检测运行时错误', '检测游戏运行时的错误和警告', 'debugging', FALSE, NULL, 42, '{"projectDir":"string"}', 'java', TRUE);
+
+-- ============================================
+-- 游戏验证相关权限
+-- ============================================
+
+INSERT INTO role_permissions (role_id, permission)
+SELECT id, 'game:verify' FROM roles WHERE name = 'ADMIN';
+INSERT INTO role_permissions (role_id, permission)
+SELECT id, 'game:preview' FROM roles WHERE name = 'ADMIN';
+INSERT INTO role_permissions (role_id, permission)
+SELECT id, 'game:verify:view' FROM roles WHERE name = 'ADMIN';
+
+INSERT INTO role_permissions (role_id, permission)
+SELECT id, 'game:verify' FROM roles WHERE name = 'PROJECT_MANAGER';
+INSERT INTO role_permissions (role_id, permission)
+SELECT id, 'game:preview' FROM roles WHERE name = 'PROJECT_MANAGER';
+INSERT INTO role_permissions (role_id, permission)
+SELECT id, 'game:verify:view' FROM roles WHERE name = 'PROJECT_MANAGER';
+
+INSERT INTO role_permissions (role_id, permission)
+SELECT id, 'game:verify' FROM roles WHERE name = 'DEVELOPER';
+INSERT INTO role_permissions (role_id, permission)
+SELECT id, 'game:verify:view' FROM roles WHERE name = 'DEVELOPER';
 
 -- ============================================
 -- 11. Agent 预设数据（含角色提示词）

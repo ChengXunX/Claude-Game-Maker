@@ -9,6 +9,7 @@ import java.io.File;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 /**
  * 通用项目结构验证服务
@@ -40,6 +41,18 @@ public class GameRuntimeVerifier {
 
     @Autowired(required = false)
     private com.chengxun.gamemaker.web.service.ClaudeAiService aiService;
+
+    /** 构建策略注册中心（延迟注入） */
+    @Autowired(required = false)
+    private BuildStrategyRegistry buildStrategyRegistry;
+
+    /** 运行时错误检测器（延迟注入） */
+    @Autowired(required = false)
+    private RuntimeErrorDetector runtimeErrorDetector;
+
+    /** JSON 序列化工具 */
+    @Autowired
+    private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
     /** 源代码文件扩展名（通用，不限定具体语言） */
     private static final String[] SOURCE_EXTENSIONS = {
@@ -529,6 +542,7 @@ public class GameRuntimeVerifier {
 
     /**
      * 解析 AI 分析结果
+     * 使用 Jackson ObjectMapper 解析 JSON，更健壮
      */
     private QualityAnalysisResult parseAnalysisResult(String aiResponse) {
         if (aiResponse == null || aiResponse.isEmpty()) {
@@ -547,18 +561,37 @@ public class GameRuntimeVerifier {
                 json = aiResponse.substring(jsonStart, jsonEnd + 1);
             }
 
-            // 简单解析 JSON（不依赖外部库）
-            result.runnableScore = extractIntField(json, "runnable");
-            result.playableScore = extractIntField(json, "playable");
-            result.completenessScore = extractIntField(json, "completeness");
-            result.uiuxScore = extractIntField(json, "uiux");
-            result.codeQualityScore = extractIntField(json, "codeQuality");
-            result.overallScore = extractIntField(json, "overallScore");
-            result.summary = extractStringField(json, "summary");
-            result.strengths = extractStringArray(json, "strengths");
-            result.issues = extractStringArray(json, "issues");
-            result.suggestions = extractStringArray(json, "suggestions");
+            // 使用 Jackson ObjectMapper 解析 JSON
+            com.fasterxml.jackson.databind.JsonNode rootNode = objectMapper.readTree(json);
+
+            // 解析各维度分数（支持嵌套对象和直接数值两种格式）
+            result.runnableScore = extractScoreFromNode(rootNode, "runnable");
+            result.playableScore = extractScoreFromNode(rootNode, "playable");
+            result.completenessScore = extractScoreFromNode(rootNode, "completeness");
+            result.uiuxScore = extractScoreFromNode(rootNode, "uiux");
+            result.codeQualityScore = extractScoreFromNode(rootNode, "codeQuality");
+
+            // 解析 overallScore（直接数值）
+            if (rootNode.has("overallScore")) {
+                result.overallScore = rootNode.get("overallScore").asInt(0);
+            }
+
+            // 解析字符串字段
+            if (rootNode.has("summary")) {
+                result.summary = rootNode.get("summary").asText("");
+            }
+
+            // 解析数组字段
+            result.strengths = extractArrayFromNode(rootNode, "strengths");
+            result.issues = extractArrayFromNode(rootNode, "issues");
+            result.suggestions = extractArrayFromNode(rootNode, "suggestions");
+
             result.success = true;
+
+            // 日志：记录原始解析结果
+            log.info("AI 质量分析原始解析: runnable={}, playable={}, completeness={}, uiux={}, codeQuality={}, overall={}",
+                result.runnableScore, result.playableScore, result.completenessScore,
+                result.uiuxScore, result.codeQualityScore, result.overallScore);
 
             // overallScore 兜底：如果 AI 未返回 overallScore，则从各维度分数计算平均值
             if (result.overallScore == 0) {
@@ -572,73 +605,82 @@ public class GameRuntimeVerifier {
                 if (nonZeroCount > 0) {
                     result.overallScore = sum / nonZeroCount;
                     log.info("AI 未返回 overallScore，从 {} 个维度计算平均分: {}", nonZeroCount, result.overallScore);
+                } else {
+                    // 所有维度分数都是 0，说明解析完全失败
+                    log.error("AI 返回的质量分数全部为 0，解析失败。原始响应: {}", aiResponse);
+                    return QualityAnalysisResult.failure("AI 返回的质量分数解析失败，请检查 AI 服务配置");
                 }
             }
 
-            // 日志：记录解析结果，便于排查 0 分问题
-            log.info("质量分析解析结果: runnable={}, playable={}, completeness={}, uiux={}, codeQuality={}, overall={}",
+            // 确保各维度分数不为 0（如果为 0 说明解析失败，使用 overallScore 的值）
+            if (result.runnableScore == 0) result.runnableScore = result.overallScore;
+            if (result.playableScore == 0) result.playableScore = result.overallScore;
+            if (result.completenessScore == 0) result.completenessScore = result.overallScore;
+            if (result.uiuxScore == 0) result.uiuxScore = result.overallScore;
+            if (result.codeQualityScore == 0) result.codeQualityScore = result.overallScore;
+
+            log.info("质量分析最终结果: runnable={}, playable={}, completeness={}, uiux={}, codeQuality={}, overall={}",
                 result.runnableScore, result.playableScore, result.completenessScore,
                 result.uiuxScore, result.codeQualityScore, result.overallScore);
 
         } catch (Exception e) {
-            log.warn("解析 AI 分析结果失败: {}", e.getMessage());
-            result.success = true; // 仍然标记为成功，返回原始响应
-            result.summary = "AI 分析完成，但结果解析失败，请查看原始响应";
+            log.error("解析 AI 分析结果失败: {}, 原始响应: {}", e.getMessage(), aiResponse);
+            return QualityAnalysisResult.failure("AI 分析结果解析失败: " + e.getMessage());
         }
 
         return result;
     }
 
-    private int extractIntField(String json, String fieldName) {
-        try {
-            // 匹配 "fieldName": { "score": 80, ... } 或 "fieldName": 80
-            java.util.regex.Matcher matcher = java.util.regex.Pattern
-                .compile("\"" + fieldName + "\"\\s*:\\s*\\{[^}]*\"score\"\\s*:\\s*(\\d+)")
-                .matcher(json);
-            if (matcher.find()) {
-                return Integer.parseInt(matcher.group(1));
-            }
-            matcher = java.util.regex.Pattern
-                .compile("\"" + fieldName + "\"\\s*:\\s*(\\d+)")
-                .matcher(json);
-            if (matcher.find()) {
-                return Integer.parseInt(matcher.group(1));
-            }
-        } catch (Exception e) { /* ignore */ }
+    /**
+     * 从 JsonNode 中提取分数
+     * 支持两种格式：
+     * 1. "fieldName": { "score": 80, "comment": "..." } （嵌套对象）
+     * 2. "fieldName": 80 （直接数值）
+     */
+    private int extractScoreFromNode(com.fasterxml.jackson.databind.JsonNode rootNode, String fieldName) {
+        if (!rootNode.has(fieldName)) {
+            return 0;
+        }
+
+        com.fasterxml.jackson.databind.JsonNode fieldNode = rootNode.get(fieldName);
+
+        // 格式1: 嵌套对象 { "score": 80, "comment": "..." }
+        if (fieldNode.isObject() && fieldNode.has("score")) {
+            return fieldNode.get("score").asInt(0);
+        }
+
+        // 格式2: 直接数值
+        if (fieldNode.isNumber()) {
+            return fieldNode.asInt(0);
+        }
+
         return 0;
     }
 
-    private String extractStringField(String json, String fieldName) {
-        try {
-            java.util.regex.Matcher matcher = java.util.regex.Pattern
-                .compile("\"" + fieldName + "\"\\s*:\\s*\"([^\"]*?)\"")
-                .matcher(json);
-            if (matcher.find()) {
-                return matcher.group(1);
-            }
-        } catch (Exception e) { /* ignore */ }
-        return "";
-    }
-
-    private List<String> extractStringArray(String json, String fieldName) {
+    /**
+     * 从 JsonNode 中提取字符串数组
+     */
+    private List<String> extractArrayFromNode(com.fasterxml.jackson.databind.JsonNode rootNode, String fieldName) {
         List<String> result = new ArrayList<>();
-        try {
-            java.util.regex.Matcher matcher = java.util.regex.Pattern
-                .compile("\"" + fieldName + "\"\\s*:\\s*\\[([^\\]]*?)\\]")
-                .matcher(json);
-            if (matcher.find()) {
-                String arrayContent = matcher.group(1);
-                java.util.regex.Matcher itemMatcher = java.util.regex.Pattern
-                    .compile("\"([^\"]*?)\"")
-                    .matcher(arrayContent);
-                while (itemMatcher.find()) {
-                    result.add(itemMatcher.group(1));
+        if (!rootNode.has(fieldName)) {
+            return result;
+        }
+
+        com.fasterxml.jackson.databind.JsonNode arrayNode = rootNode.get(fieldName);
+        if (arrayNode.isArray()) {
+            for (com.fasterxml.jackson.databind.JsonNode item : arrayNode) {
+                if (item.isTextual()) {
+                    result.add(item.asText());
                 }
             }
-        } catch (Exception e) { /* ignore */ }
+        }
+
         return result;
     }
 
+    /**
+     * 从 JSON 字符串中提取整数字段
+     * 支持两种格式：
     /**
      * 游戏质量分析结果
      */
@@ -693,5 +735,315 @@ public class GameRuntimeVerifier {
         public void setIssues(List<String> issues) { this.issues = issues; }
         public void setSuggestions(List<String> suggestions) { this.suggestions = suggestions; }
         public void setRawResponse(String rawResponse) { this.rawResponse = rawResponse; }
+    }
+
+    // ===== 运行验证（新增） =====
+
+    /**
+     * 执行构建验证
+     * 使用 BuildStrategyRegistry 自动检测项目类型并执行构建
+     *
+     * @param projectDir 项目目录
+     * @return 构建结果
+     */
+    public BuildResult verifyBuild(String projectDir) {
+        if (buildStrategyRegistry == null) {
+            log.debug("BuildStrategyRegistry 未注入，跳过构建验证");
+            return BuildResult.success("构建策略注册中心不可用，跳过构建验证", 0, new ArrayList<>());
+        }
+        if (projectDir == null || projectDir.isEmpty()) {
+            return BuildResult.failure("项目目录为空", "unknown", 0);
+        }
+        return buildStrategyRegistry.build(projectDir);
+    }
+
+    /**
+     * 执行运行验证
+     * 启动游戏服务，检查是否能正常运行，检测运行时错误
+     *
+     * @param projectDir 项目目录
+     * @return 运行验证结果
+     */
+    public RuntimeVerifyResult verifyRuntime(String projectDir) {
+        if (buildStrategyRegistry == null) {
+            log.debug("BuildStrategyRegistry 未注入，跳过运行验证");
+            return RuntimeVerifyResult.success(null, List.of(), List.of());
+        }
+        if (projectDir == null || projectDir.isEmpty()) {
+            return RuntimeVerifyResult.failure("项目目录为空", null);
+        }
+
+        int port = findAvailablePort();
+        Process gameProcess = null;
+
+        try {
+            // 启动游戏
+            BuildStrategyRegistry.GameProcess gp = buildStrategyRegistry.startGame(projectDir, port);
+            gameProcess = gp.getProcess();
+
+            // 等待就绪（最多 30 秒）
+            boolean ready = waitForReady(gp, 30);
+
+            if (!ready) {
+                String output = collectProcessOutput(gameProcess);
+                return RuntimeVerifyResult.failure("游戏启动超时（30秒）", output);
+            }
+
+            // HTTP 检查
+            HttpStatusCheck httpCheck = checkHttpStatus(port);
+
+            // 收集控制台错误
+            List<String> consoleErrors = new ArrayList<>();
+            if (runtimeErrorDetector != null) {
+                String output = collectProcessOutput(gameProcess);
+                List<RuntimeErrorDetector.RuntimeError> errors = runtimeErrorDetector.detectFromOutput(output);
+                consoleErrors = errors.stream()
+                    .map(e -> String.format("[%s] %s (行%d)", e.getType().getDescription(), e.getMessage(), e.getLineNumber()))
+                    .collect(Collectors.toList());
+            }
+
+            // 收集资源错误
+            List<String> resourceErrors = runtimeErrorDetector != null
+                ? runtimeErrorDetector.detectResourceErrors(port)
+                : List.of();
+
+            boolean passed = httpCheck.isSuccess() && consoleErrors.isEmpty();
+
+            return passed
+                ? RuntimeVerifyResult.success(httpCheck, consoleErrors, resourceErrors)
+                : RuntimeVerifyResult.failure(
+                    "运行验证失败: HTTP=" + httpCheck.getStatusCode()
+                        + ", 控制台错误=" + consoleErrors.size(),
+                    collectProcessOutput(gameProcess));
+
+        } catch (Exception e) {
+            return RuntimeVerifyResult.failure("运行验证异常: " + e.getMessage(), null);
+        } finally {
+            // 确保停止游戏进程
+            if (gameProcess != null) {
+                gameProcess.descendants().forEach(ProcessHandle::destroy);
+                gameProcess.destroy();
+            }
+        }
+    }
+
+    /**
+     * 执行完整验证（结构 + 构建 + 运行 + AI 质量分析）
+     *
+     * @param projectDir 项目目录
+     * @param projectName 项目名称（可选）
+     * @param projectGoal 项目目标（可选）
+     * @return 完整验证结果
+     */
+    public FullVerifyResult verifyFull(String projectDir, String projectName, String projectGoal) {
+        FullVerifyResult result = new FullVerifyResult();
+
+        // 1. 结构验证
+        result.setStructuralResult(verify(projectDir));
+
+        // 2. 构建验证
+        result.setBuildResult(verifyBuild(projectDir));
+
+        // 3. 运行验证（仅当构建通过时）
+        if (result.getBuildResult() != null && result.getBuildResult().isSuccess()) {
+            result.setRuntimeResult(verifyRuntime(projectDir));
+        }
+
+        // 4. AI 质量分析（仅当结构验证通过时）
+        if (result.getStructuralResult() != null && result.getStructuralResult().isSuccess()) {
+            result.setQualityResult(analyzeQuality(projectDir, projectName, projectGoal));
+        }
+
+        // 5. 综合评分
+        result.calculateOverallScore();
+
+        return result;
+    }
+
+    /**
+     * 查找可用端口（18100-18199 范围）
+     *
+     * @return 可用端口号
+     */
+    private int findAvailablePort() {
+        for (int port = 18100; port < 18200; port++) {
+            try (var socket = new java.net.ServerSocket(port)) {
+                return port;
+            } catch (Exception e) {
+                // 端口被占用，尝试下一个
+            }
+        }
+        return 18100; // 兜底
+    }
+
+    /**
+     * 等待游戏服务就绪
+     *
+     * @param gp 游戏进程包装
+     * @param timeoutSeconds 超时秒数
+     * @return 是否就绪
+     */
+    private boolean waitForReady(BuildStrategyRegistry.GameProcess gp, int timeoutSeconds) {
+        long deadline = System.currentTimeMillis() + timeoutSeconds * 1000L;
+        while (System.currentTimeMillis() < deadline) {
+            if (gp.isReady()) return true;
+            try { Thread.sleep(1000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); break; }
+        }
+        return false;
+    }
+
+    /**
+     * HTTP 状态检查
+     *
+     * @param port 端口号
+     * @return HTTP 状态检查结果
+     */
+    private HttpStatusCheck checkHttpStatus(int port) {
+        try {
+            var url = new java.net.URL("http://localhost:" + port);
+            var conn = (java.net.HttpURLConnection) url.openConnection();
+            conn.setConnectTimeout(5000);
+            conn.setReadTimeout(5000);
+            int code = conn.getResponseCode();
+            conn.disconnect();
+            return new HttpStatusCheck(code, code == 200);
+        } catch (Exception e) {
+            return new HttpStatusCheck(0, false);
+        }
+    }
+
+    /**
+     * 收集进程输出（最后 100 行）
+     *
+     * @param process 进程
+     * @return 进程输出文本
+     */
+    private String collectProcessOutput(Process process) {
+        if (process == null) return "";
+        try {
+            byte[] bytes = process.getInputStream().readAllBytes();
+            String output = new String(bytes);
+            String[] lines = output.split("\n");
+            if (lines.length <= 100) return output;
+            StringBuilder sb = new StringBuilder();
+            for (int i = lines.length - 100; i < lines.length; i++) {
+                sb.append(lines[i]).append("\n");
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    // ===== 运行验证结果类 =====
+
+    /**
+     * 运行验证结果
+     */
+    public static class RuntimeVerifyResult {
+        private final boolean success;
+        private final HttpStatusCheck httpCheck;
+        private final List<String> consoleErrors;
+        private final List<String> resourceErrors;
+        private final String error;
+        private final String processOutput;
+
+        private RuntimeVerifyResult(boolean success, HttpStatusCheck httpCheck,
+                                     List<String> consoleErrors, List<String> resourceErrors,
+                                     String error, String processOutput) {
+            this.success = success;
+            this.httpCheck = httpCheck;
+            this.consoleErrors = consoleErrors != null ? consoleErrors : new ArrayList<>();
+            this.resourceErrors = resourceErrors != null ? resourceErrors : new ArrayList<>();
+            this.error = error;
+            this.processOutput = processOutput;
+        }
+
+        public static RuntimeVerifyResult success(HttpStatusCheck httpCheck,
+                                                    List<String> consoleErrors,
+                                                    List<String> resourceErrors) {
+            return new RuntimeVerifyResult(true, httpCheck, consoleErrors, resourceErrors, null, null);
+        }
+
+        public static RuntimeVerifyResult failure(String error, String processOutput) {
+            return new RuntimeVerifyResult(false, null, null, null, error, processOutput);
+        }
+
+        public boolean isSuccess() { return success; }
+        public HttpStatusCheck getHttpCheck() { return httpCheck; }
+        public List<String> getConsoleErrors() { return consoleErrors; }
+        public List<String> getResourceErrors() { return resourceErrors; }
+        public String getError() { return error; }
+        public String getProcessOutput() { return processOutput; }
+    }
+
+    /**
+     * HTTP 状态检查结果
+     */
+    public static class HttpStatusCheck {
+        private final int statusCode;
+        private final boolean success;
+
+        public HttpStatusCheck(int statusCode, boolean success) {
+            this.statusCode = statusCode;
+            this.success = success;
+        }
+
+        public int getStatusCode() { return statusCode; }
+        public boolean isSuccess() { return success; }
+    }
+
+    /**
+     * 完整验证结果（结构 + 构建 + 运行 + AI 质量）
+     */
+    public static class FullVerifyResult {
+        private VerifyResult structuralResult;
+        private BuildResult buildResult;
+        private RuntimeVerifyResult runtimeResult;
+        private QualityAnalysisResult qualityResult;
+        private int overallScore;
+        private boolean overallPassed;
+
+        /**
+         * 计算综合评分
+         * 权重：结构 10%, 构建 20%, 运行 30%, AI质量 40%
+         */
+        public void calculateOverallScore() {
+            int score = 0;
+            int weight = 0;
+
+            if (structuralResult != null) {
+                score += (structuralResult.isSuccess() ? 100 : 0) * 10;
+                weight += 10;
+            }
+            if (buildResult != null) {
+                score += (buildResult.isSuccess() ? 100 : 0) * 20;
+                weight += 20;
+            }
+            if (runtimeResult != null) {
+                score += (runtimeResult.isSuccess() ? 100 : 0) * 30;
+                weight += 30;
+            }
+            if (qualityResult != null && qualityResult.isSuccess()) {
+                score += qualityResult.getOverallScore() * 40;
+                weight += 40;
+            }
+
+            overallScore = weight > 0 ? score / weight : 0;
+            overallPassed = overallScore >= 60
+                && (structuralResult == null || structuralResult.isSuccess())
+                && (buildResult == null || buildResult.isSuccess());
+        }
+
+        public VerifyResult getStructuralResult() { return structuralResult; }
+        public void setStructuralResult(VerifyResult r) { this.structuralResult = r; }
+        public BuildResult getBuildResult() { return buildResult; }
+        public void setBuildResult(BuildResult r) { this.buildResult = r; }
+        public RuntimeVerifyResult getRuntimeResult() { return runtimeResult; }
+        public void setRuntimeResult(RuntimeVerifyResult r) { this.runtimeResult = r; }
+        public QualityAnalysisResult getQualityResult() { return qualityResult; }
+        public void setQualityResult(QualityAnalysisResult r) { this.qualityResult = r; }
+        public int getOverallScore() { return overallScore; }
+        public boolean isOverallPassed() { return overallPassed; }
     }
 }

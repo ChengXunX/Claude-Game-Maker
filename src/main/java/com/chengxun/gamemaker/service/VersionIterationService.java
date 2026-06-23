@@ -490,7 +490,15 @@ public class VersionIterationService {
         List<GoalMilestone> milestones = project.getMilestones();
         if (milestones.isEmpty()) return false;
 
-        return milestones.stream().allMatch(m -> m.getStatus() == MilestoneStatus.COMPLETED);
+        // 【根因修复】排除改进里程碑（标题以"改进:"开头）
+        // 改进里程碑完成不代表版本完成，否则原始里程碑未完成时系统就卡死在审查中
+        List<GoalMilestone> originalMilestones = milestones.stream()
+            .filter(m -> m.getTitle() == null || !m.getTitle().startsWith("改进:"))
+            .collect(java.util.stream.Collectors.toList());
+
+        if (originalMilestones.isEmpty()) return false;
+
+        return originalMilestones.stream().allMatch(m -> m.getStatus() == MilestoneStatus.COMPLETED);
     }
 
     /**
@@ -1561,7 +1569,9 @@ public class VersionIterationService {
             com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
             com.fasterxml.jackson.databind.JsonNode node = mapper.readTree(response);
 
-            int score = node.has("score") ? node.get("score").asInt() : 7;
+            int score = node.has("score") ? node.get("score").asInt() : 5;
+            // 分数范围限制：1-10
+            score = Math.max(1, Math.min(10, score));
             result.setScore(score);
             result.setPassed(score >= getVersionPassScore());
             result.setDetails(node.has("details") ? node.get("details").asText() : "");
@@ -1579,11 +1589,49 @@ public class VersionIterationService {
                 result.setImprovements(improvements);
             }
         } catch (Exception e) {
-            log.warn("解析评估响应失败: {}", e.getMessage());
-            result.setScore(7);
-            result.setPassed(7 >= getVersionPassScore());
-            result.setDetails("评估解析失败，默认通过");
+            log.warn("解析评估响应失败，使用启发式评估: {}", e.getMessage());
+            // 解析失败时使用启发式评估而非默认通过
+            VersionEvaluationResult heuristic = buildHeuristicEvaluationResult();
+            return heuristic;
         }
+        return result;
+    }
+
+    /**
+     * 启发式评估结果：当AI评估解析失败时使用
+     * 基于实际项目数据计算分数
+     */
+    private VersionEvaluationResult buildHeuristicEvaluationResult() {
+        VersionEvaluationResult result = new VersionEvaluationResult();
+        try {
+            // 获取当前项目
+            if (projectManager != null) {
+                java.util.List<GameProject> projects = projectManager.getAllProjects();
+                if (projects != null && !projects.isEmpty()) {
+                    GameProject project = projects.get(0);
+                    // 使用启发式评估计算分数
+                    String heuristicJson = buildHeuristicEvaluation(project);
+                    // 解析启发式评估结果
+                    com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                    com.fasterxml.jackson.databind.JsonNode node = mapper.readTree(heuristicJson);
+                    int score = node.has("score") ? node.get("score").asInt() : 5;
+                    score = Math.max(1, Math.min(10, score));
+                    result.setScore(score);
+                    result.setPassed(score >= getVersionPassScore());
+                    result.setDetails(node.has("details") ? node.get("details").asText() : "启发式评估");
+                    result.setRecommendation(node.has("recommendation") ? node.get("recommendation").asText() : "");
+                    log.info("AI评估解析失败，使用启发式评估: score={}, passed={}", score, result.isPassed());
+                    return result;
+                }
+            }
+        } catch (Exception e) {
+            log.warn("启发式评估也失败: {}", e.getMessage());
+        }
+        // 最终兜底：返回中性分数
+        result.setScore(5);
+        result.setPassed(false);
+        result.setDetails("评估失败，需要人工确认");
+        result.setRecommendation("建议重新评估或人工确认版本质量");
         return result;
     }
 

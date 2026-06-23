@@ -99,6 +99,13 @@ public abstract class BaseAgent implements Agent {
     protected volatile long sessionTokenCount = 0;
 
     /**
+     * 能力处理重入保护标志
+     * 当 processCapabilityActions 正在执行时设为 true，
+     * 阻止嵌套的 sendMessage 调用再次触发能力处理，避免无限循环
+     */
+    private volatile boolean capabilityProcessingActive = false;
+
+    /**
      * 消息到达回调
      * 当收到新消息时触发，用于事件驱动的即时任务处理
      * 由 AgentManager 在创建 Agent 时设置
@@ -862,7 +869,8 @@ public abstract class BaseAgent implements Agent {
             sessionTokenCount += aiResult.inputTokens + aiResult.outputTokens;
 
             // 解析 Claude 输出中的能力调用（callAiDirect 模式跳过）
-            if (!skipCapabilityProcessing) {
+            // 重入保护：如果当前正在处理能力调用，跳过嵌套的能力处理，避免无限循环
+            if (!skipCapabilityProcessing && !capabilityProcessingActive) {
                 response = processCapabilityActions(response);
             }
 
@@ -981,6 +989,18 @@ public abstract class BaseAgent implements Agent {
 
         // 自动发送任务确认给分配者
         sendTaskConfirmation(task);
+    }
+
+    /**
+     * 检查是否有待执行的任务
+     * 供 AgentScheduler 判断是否需要驱动 Agent 工作
+     *
+     * @return 是否有待执行的 PENDING 或 IN_PROGRESS 任务
+     */
+    public boolean hasPendingTasks() {
+        return tasks.stream().anyMatch(t ->
+            t.getStatus() == TaskAssignment.TaskStatus.PENDING
+            || t.getStatus() == TaskAssignment.TaskStatus.IN_PROGRESS);
     }
 
     /**
@@ -1900,6 +1920,9 @@ public abstract class BaseAgent implements Agent {
             log.info("Parsed {} capability actions from agent {} output",
                 parseResult.getActions().size(), getId());
 
+            // 设置重入保护标志：防止能力执行器内部的 sendMessage 再次触发能力处理
+            capabilityProcessingActive = true;
+
             // 执行能力调用
             List<CapabilityResult> results = capabilityExecutionEngine.executeCalls(this, parseResult.getActions());
 
@@ -1936,6 +1959,9 @@ public abstract class BaseAgent implements Agent {
         } catch (Exception e) {
             log.error("Error processing capability actions for agent {}", getId(), e);
             return response; // 出错时返回原始响应
+        } finally {
+            // 重置重入保护标志
+            capabilityProcessingActive = false;
         }
     }
 

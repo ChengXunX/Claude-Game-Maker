@@ -163,7 +163,12 @@ public class PermissionService {
         // 知识图谱相关
         saveDefinition("PERM_knowledge:graph", "知识图谱", "查看和构建知识图谱", "项目", true, 18);
 
-        log.info("Default permission definitions initialized: 47");
+        // 游戏验证相关
+        saveDefinition("PERM_game:verify", "游戏验证", "触发游戏验证", "游戏", true, 19);
+        saveDefinition("PERM_game:preview", "游戏预览", "启动游戏预览", "游戏", true, 20);
+        saveDefinition("PERM_game:verify:view", "验证结果查看", "查看验证结果", "游戏", true, 21);
+
+        log.info("Default permission definitions initialized: 50");
     }
 
     private void saveDefinition(String key, String name, String description,

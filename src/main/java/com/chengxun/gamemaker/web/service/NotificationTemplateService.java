@@ -908,6 +908,101 @@ public class NotificationTemplateService {
             "⚠️ 团队警告: ${title}",
             "<div style=\"font-family:'Microsoft YaHei',Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><div style=\"background:linear-gradient(135deg,#ff6b6b 0%,#ee5a24 100%);color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;\"><h1 style=\"margin:0;font-size:24px;\">⚠️ 团队警告</h1></div><div style=\"background:#f8f9fa;padding:20px;border:1px solid #e9ecef;border-top:none;border-radius:0 0 10px 10px;\"><div style=\"background:#e8f4fd;padding:12px;border-radius:6px;margin-bottom:15px;border-left:4px solid #2196F3;\"><p style=\"margin:4px 0;font-size:14px;\"><b>项目：</b>${projectName}</p><p style=\"margin:4px 0;font-size:14px;\"><b>创建人：</b>${createdBy}</p><p style=\"margin:4px 0;font-size:14px;\"><b>描述：</b>${projectDescription}</p></div><p>${content}</p><p style=\"color:#666;margin-top:20px;\">时间：${time}</p></div></div>");
 
+        // ===== 补充缺失的飞书通知模板（ProducerAgent 关键活动） =====
+
+        // 目标分解开始（里程碑任务已分解并分配）
+        created += createIfAbsent("PRODUCER_GOAL_DECOMPOSITION_START_FEISHU", "飞书-目标分解开始", Channel.FEISHU, Category.SYSTEM,
+            "🎯 里程碑任务已分解并分配",
+            "**🎯 里程碑任务已分解并分配**\n\n---\n\n**项目**: ${projectName}\n\n${content}\n\n---\n\n⏰ ${time}\n\n🔗 [查看项目详情](${domain}/projects)");
+        // 版本迭代开始
+        created += createIfAbsent("PRODUCER_VERSION_ITERATION_STARTED_FEISHU", "飞书-版本迭代开始", Channel.FEISHU, Category.SYSTEM,
+            "🔄 版本迭代开始: ${title}",
+            "**🔄 版本迭代开始**\n\n---\n\n${content}\n\n---");
+        // 工作流启动
+        created += createIfAbsent("PRODUCER_WORKFLOW_STARTED_FEISHU", "飞书-工作流启动", Channel.FEISHU, Category.SYSTEM,
+            "⚙️ 工作流启动: ${title}",
+            "**⚙️ 工作流启动**\n\n---\n\n${content}\n\n---");
+        // 工作流审批通过
+        created += createIfAbsent("PRODUCER_WORKFLOW_PRODUCER_APPROVED_FEISHU", "飞书-工作流审批通过", Channel.FEISHU, Category.SYSTEM,
+            "✅ 工作流审批通过: ${title}",
+            "**✅ 工作流审批通过**\n\n---\n\n${content}\n\n---");
+        // 质量迭代
+        created += createIfAbsent("PRODUCER_QUALITY_ITERATION_FEISHU", "飞书-质量迭代", Channel.FEISHU, Category.SYSTEM,
+            "🔄 质量迭代: ${title}",
+            "**🔄 质量迭代**\n\n---\n\n${content}\n\n---");
+        // 交付审批
+        created += createIfAbsent("PRODUCER_DELIVERY_APPROVAL_FEISHU", "飞书-交付审批", Channel.FEISHU, Category.SYSTEM,
+            "📦 交付审批: ${title}",
+            "**📦 交付审批**\n\n---\n\n${content}\n\n---");
+        // 交付被拒迭代
+        created += createIfAbsent("PRODUCER_DELIVERY_REJECTED_ITERATION_FEISHU", "飞书-交付被拒迭代", Channel.FEISHU, Category.SYSTEM,
+            "🔄 交付被拒迭代: ${title}",
+            "**🔄 交付被拒迭代**\n\n---\n\n${content}\n\n---");
+        // 版本人员配置问题
+        created += createIfAbsent("PRODUCER_VERSION_STAFFING_ISSUE_FEISHU", "飞书-版本人员配置问题", Channel.FEISHU, Category.SYSTEM,
+            "👥 人员配置问题: ${title}",
+            "**👥 版本人员配置问题**\n\n---\n\n${content}\n\n---");
+        // 版本低绩效
+        created += createIfAbsent("PRODUCER_VERSION_LOW_PERFORMANCE_FEISHU", "飞书-版本低绩效", Channel.FEISHU, Category.SYSTEM,
+            "📉 版本低绩效: ${title}",
+            "**📉 版本低绩效预警**\n\n---\n\n${content}\n\n---");
+        // 项目规则已生成
+        created += createIfAbsent("PRODUCER_PROJECT_RULES_GENERATED_FEISHU", "飞书-项目规则已生成", Channel.FEISHU, Category.SYSTEM,
+            "📜 项目规则已生成: ${title}",
+            "**📜 项目规则已生成**\n\n---\n\n${content}\n\n---");
+        // 团队警告
+        created += createIfAbsent("PRODUCER_TEAM_WARNING_FEISHU", "飞书-团队警告", Channel.FEISHU, Category.SYSTEM,
+            "⚠️ 团队警告: ${title}",
+            "**⚠️ 团队警告**\n\n---\n\n${content}\n\n---");
+        // 团队优化
+        created += createIfAbsent("PRODUCER_TEAM_OPTIMIZATION_FEISHU", "飞书-团队优化", Channel.FEISHU, Category.SYSTEM,
+            "🔧 团队优化: ${title}",
+            "**🔧 团队优化**\n\n---\n\n${content}\n\n---");
+        // Agent状态
+        created += createIfAbsent("PRODUCER_AGENT_STATUS_FEISHU", "飞书-Agent状态", Channel.FEISHU, Category.AGENT,
+            "🤖 Agent状态: ${title}",
+            "**🤖 Agent状态**\n\n---\n\n${content}\n\n---");
+        // Agent评估
+        created += createIfAbsent("PRODUCER_AGENT_EVALUATED_FEISHU", "飞书-Agent评估", Channel.FEISHU, Category.AGENT,
+            "📊 Agent评估: ${title}",
+            "**📊 Agent评估**\n\n---\n\n${content}\n\n---");
+        // 解雇被拒
+        created += createIfAbsent("PRODUCER_DISMISS_REJECTED_FEISHU", "飞书-解雇被拒", Channel.FEISHU, Category.SYSTEM,
+            "❌ 解雇被拒: ${title}",
+            "**❌ 解雇被拒**\n\n---\n\n${content}\n\n---");
+        // 解雇请求已发送
+        created += createIfAbsent("PRODUCER_DISMISS_REQUEST_SENT_FEISHU", "飞书-解雇请求已发送", Channel.FEISHU, Category.SYSTEM,
+            "📤 解雇请求已发送: ${title}",
+            "**📤 解雇请求已发送**\n\n---\n\n${content}\n\n---");
+        // 创建Agent被拒绝
+        created += createIfAbsent("PRODUCER_CREATE_AGENT_REJECTED_FEISHU", "飞书-创建Agent被拒绝", Channel.FEISHU, Category.SYSTEM,
+            "❌ 创建Agent被拒绝: ${title}",
+            "**❌ 创建Agent被拒绝**\n\n---\n\n${content}\n\n---");
+        // 招聘完成
+        created += createIfAbsent("PRODUCER_RECRUIT_COMPLETED_FEISHU", "飞书-招聘完成", Channel.FEISHU, Category.SYSTEM,
+            "✅ 招聘完成: ${title}",
+            "**✅ 招聘完成**\n\n---\n\n${content}\n\n---");
+        // 自动招聘请求
+        created += createIfAbsent("PRODUCER_AUTO_RECRUIT_REQUEST_FEISHU", "飞书-自动招聘请求", Channel.FEISHU, Category.SYSTEM,
+            "🤖 自动招聘请求: ${title}",
+            "**🤖 自动招聘请求**\n\n---\n\n${content}\n\n---");
+        // 定期验证失败
+        created += createIfAbsent("PRODUCER_PERIODIC_VERIFY_FAILED_FEISHU", "飞书-定期验证失败", Channel.FEISHU, Category.SYSTEM,
+            "❌ 定期验证失败: ${title}",
+            "**❌ 定期验证失败**\n\n---\n\n${content}\n\n---");
+        // 需要审批
+        created += createIfAbsent("PRODUCER_APPROVAL_REQUIRED_FEISHU", "飞书-需要审批", Channel.FEISHU, Category.SYSTEM,
+            "📋 需要审批: ${title}",
+            "**📋 需要审批**\n\n---\n\n${content}\n\n---\n\n请及时处理！");
+        // 审批被拒绝
+        created += createIfAbsent("PRODUCER_APPROVAL_REJECTED_FEISHU", "飞书-审批被拒绝", Channel.FEISHU, Category.SYSTEM,
+            "❌ 审批被拒绝: ${title}",
+            "**❌ 审批被拒绝**\n\n---\n\n${content}\n\n---");
+        // 招聘被拒绝
+        created += createIfAbsent("PRODUCER_RECRUIT_REJECTED_FEISHU", "飞书-招聘被拒绝", Channel.FEISHU, Category.SYSTEM,
+            "❌ 招聘被拒绝: ${title}",
+            "**❌ 招聘被拒绝**\n\n---\n\n${content}\n\n---");
+
         if (created > 0) {
             log.info("初始化默认通知模板完成，新增 {} 个模板", created);
         }
