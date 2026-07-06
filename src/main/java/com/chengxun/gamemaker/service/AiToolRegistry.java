@@ -1695,6 +1695,56 @@ public class AiToolRegistry {
             detectErrorsParams,
             null
         ));
+
+        // ===== G8 新增：真实运行+截图验证工具 =====
+
+        // 189. 截图游戏：对运行中的游戏进行多帧截图
+        Map<String, ParameterDef> screenshotGameParams = new HashMap<>();
+        screenshotGameParams.put("projectId", new ParameterDef("string", "项目ID（必填）", true));
+        screenshotGameParams.put("projectDir", new ParameterDef("string", "项目目录绝对路径（必填）", true));
+        screenshotGameParams.put("frameCount", new ParameterDef("number", "截图帧数（1-10，默认3）", false));
+        screenshotGameParams.put("intervalMs", new ParameterDef("number", "帧间隔毫秒（默认1500）", false));
+        registerTool(new AiTool(
+            "screenshot_game",
+            "启动游戏并截取多帧真实运行画面，输出截图文件路径列表（用于真实运行验证）",
+            screenshotGameParams,
+            null
+        ));
+
+        // 190. AI 视觉分析：对截图进行多模态 AI 视觉分析
+        Map<String, ParameterDef> analyzeScreenshotParams = new HashMap<>();
+        analyzeScreenshotParams.put("screenshotPaths", new ParameterDef("array", "截图文件绝对路径列表（必填）", true));
+        analyzeScreenshotParams.put("projectName", new ParameterDef("string", "项目名称（可选）", false));
+        analyzeScreenshotParams.put("projectGoal", new ParameterDef("string", "项目目标（可选）", false));
+        registerTool(new AiTool(
+            "analyze_screenshot",
+            "对游戏截图进行 AI 视觉分析，输出 renderHealth/playable/uiux/visual 四维度评分（0-100）",
+            analyzeScreenshotParams,
+            null
+        ));
+
+        // 191. 截图+视觉分析：一步完成"启动→截图→视觉分析"
+        Map<String, ParameterDef> verifyWithScreenshotParams = new HashMap<>();
+        verifyWithScreenshotParams.put("projectId", new ParameterDef("string", "项目ID（必填）", true));
+        verifyWithScreenshotParams.put("projectDir", new ParameterDef("string", "项目目录绝对路径（必填）", true));
+        verifyWithScreenshotParams.put("projectName", new ParameterDef("string", "项目名称（可选）", false));
+        verifyWithScreenshotParams.put("projectGoal", new ParameterDef("string", "项目目标（可选）", false));
+        registerTool(new AiTool(
+            "verify_game_with_screenshot",
+            "对游戏执行完整验证流程：启动→多帧截图→AI视觉分析→综合评分（结构+构建+运行+视觉+AI质量）",
+            verifyWithScreenshotParams,
+            null
+        ));
+
+        // 192. 获取项目截图：获取最近验证的截图列表
+        registerTool(new AiTool(
+            "get_project_screenshots",
+            "获取项目最近一次验证的真实运行截图列表（含视觉分析评分）",
+            Map.of(
+                "projectId", new ParameterDef("string", "项目ID（必填）", true)
+            ),
+            null
+        ));
     }
 
     /**
@@ -1872,6 +1922,10 @@ public class AiToolRegistry {
 
         sb.append("### 导出 & 通知偏好\n");
         appendToolByNames(sb, userPermissions, "export_data", "get_notification_preferences");
+
+        sb.append("### 真实运行+截图验证（G8 新增）\n");
+        appendToolByNames(sb, userPermissions, "screenshot_game", "analyze_screenshot",
+            "verify_game_with_screenshot", "get_project_screenshots");
 
         return sb.toString();
     }

@@ -1487,6 +1487,19 @@ public class CapabilityInitService {
             "event", false, null, ++priority,
             "{\"milestoneId\":\"string|required\",\"newStatus\":\"string|required\"}");
 
+        // ===== 真实运行+截图验证（G8 新增） =====
+        save(role, "screenshotGame", "截图游戏真实运行画面", "启动游戏进程并截取多帧画面，捕捉游戏实际运行效果",
+            "verification", false, null, ++priority,
+            "{\"projectId\":\"string|required\",\"projectDir\":\"string|required\",\"frameCount\":\"number|default=3\",\"intervalMs\":\"number|default=1500\"}");
+
+        save(role, "analyzeScreenshot", "AI 视觉分析截图", "对游戏截图进行多模态 AI 视觉分析，评估可玩性、UI/UX、视觉缺陷",
+            "verification", false, null, ++priority,
+            "{\"screenshotPaths\":\"array|required\",\"projectName\":\"string\",\"projectGoal\":\"string\"}");
+
+        save(role, "verifyGameWithScreenshot", "运行+截图+视觉分析全流程", "对游戏项目执行完整验证：结构→构建→启动→截图→AI视觉分析→评分",
+            "verification", false, null, ++priority,
+            "{\"projectId\":\"string|required\",\"projectDir\":\"string|required\",\"projectName\":\"string\",\"projectGoal\":\"string\"}");
+
         log.info("Verifier capabilities initialized: {} capabilities", priority);
     }
 

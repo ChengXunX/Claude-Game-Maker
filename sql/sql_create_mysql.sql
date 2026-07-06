@@ -515,9 +515,10 @@ CREATE TABLE IF NOT EXISTS alert_rules (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='告警规则表';
 
 -- 告警记录表
+-- 注意：rule_id 允许 NULL，因为 saveAlert() 用于 Agent 风险预警等不需要规则匹配的场景
 CREATE TABLE IF NOT EXISTS alert_records (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    rule_id BIGINT NOT NULL,
+    rule_id BIGINT NULL COMMENT '关联的告警规则ID，允许NULL用于非规则触发的告警',
     rule_name VARCHAR(100),
     rule_category VARCHAR(50),
     metric_value DECIMAL(20,4),
@@ -539,8 +540,7 @@ CREATE TABLE IF NOT EXISTS alert_records (
     INDEX idx_alert_records_rule_status (rule_id, status),
     INDEX idx_alert_records_created_status (created_at, status),
     INDEX idx_alert_records_category (rule_category),
-    INDEX idx_alert_records_severity (severity_level),
-    FOREIGN KEY (rule_id) REFERENCES alert_rules(id) ON DELETE CASCADE
+    INDEX idx_alert_records_severity (severity_level)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='告警记录表';
 
 -- 性能指标表
@@ -1346,11 +1346,75 @@ CREATE TABLE IF NOT EXISTS game_verify_records (
     quality_suggestions TEXT COMMENT '质量建议(JSON数组)',
     raw_ai_response TEXT COMMENT 'AI原始响应',
     overall_passed BOOLEAN DEFAULT FALSE COMMENT '是否通过',
+    -- G8 新增：真实运行+截图+视觉分析字段
+    screenshots_json TEXT COMMENT '截图文件路径列表(JSON数组)',
+    visual_score INT DEFAULT 0 COMMENT 'AI视觉综合评分(0-100)',
+    render_health_score INT DEFAULT 0 COMMENT '渲染健康度(0-100, 白屏/崩溃会很低)',
+    visual_playable_score INT DEFAULT 0 COMMENT '视觉可玩性(0-100)',
+    visual_uiux_score INT DEFAULT 0 COMMENT '视觉UI/UX(0-100)',
+    visual_summary TEXT COMMENT '视觉分析摘要',
+    visual_issues_json TEXT COMMENT '视觉问题列表(JSON数组)',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     INDEX idx_gvr_project (project_id),
     INDEX idx_gvr_milestone (milestone_id),
     INDEX idx_gvr_created (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='游戏验证记录表';
+
+-- ============================================
+-- 游戏截图记录表（G8 新增）
+-- ============================================
+CREATE TABLE IF NOT EXISTS game_screenshots (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '主键',
+    project_id VARCHAR(36) NOT NULL COMMENT '项目ID',
+    verify_record_id BIGINT COMMENT '关联的验证记录ID',
+    file_path VARCHAR(500) NOT NULL COMMENT '截图文件绝对路径',
+    file_name VARCHAR(255) COMMENT '截图文件名',
+    file_size_kb INT DEFAULT 0 COMMENT '文件大小KB',
+    frame_index INT DEFAULT 0 COMMENT '帧序号（多帧截图时）',
+    captured_at DATETIME NOT NULL COMMENT '截图时间',
+    description VARCHAR(500) COMMENT '截图描述（如"主菜单"）',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    INDEX idx_gs_project (project_id),
+    INDEX idx_gs_verify_record (verify_record_id),
+    INDEX idx_gs_captured (captured_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='游戏截图记录表';
+
+-- ============================================
+-- 游戏验证结果表（QUICK 验证，遗留表，G8 补全+加视觉分析字段）
+-- ============================================
+CREATE TABLE IF NOT EXISTS game_verify_results (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '主键',
+    project_id VARCHAR(36) NOT NULL COMMENT '项目ID',
+    project_name VARCHAR(200) COMMENT '项目名称',
+    success BOOLEAN DEFAULT FALSE COMMENT '验证是否通过',
+    message TEXT COMMENT '验证消息',
+    error TEXT COMMENT '错误信息',
+    warnings_json TEXT COMMENT '警告列表(JSON)',
+    verified_at DATETIME NOT NULL COMMENT '验证时间',
+    verify_type VARCHAR(20) DEFAULT 'QUICK' COMMENT '验证类型: QUICK(快速), DEEP(深度), FULL(完整)',
+    overall_score INT DEFAULT 0 COMMENT '综合评分(0-100)',
+    runnable_score INT DEFAULT 0 COMMENT '可运行性评分',
+    playable_score INT DEFAULT 0 COMMENT '可玩性评分',
+    completeness_score INT DEFAULT 0 COMMENT '完整性评分',
+    uiux_score INT DEFAULT 0 COMMENT 'UI/UX 评分',
+    code_quality_score INT DEFAULT 0 COMMENT '代码质量评分',
+    summary TEXT COMMENT '质量摘要',
+    strengths_json TEXT COMMENT '优点(JSON)',
+    issues_json TEXT COMMENT '问题(JSON)',
+    suggestions_json TEXT COMMENT '建议(JSON)',
+    -- G8 新增：截图和视觉分析
+    screenshots_json TEXT COMMENT '截图文件路径列表(JSON)',
+    render_health_score INT DEFAULT 0 COMMENT '视觉渲染健康度',
+    visual_playable_score INT DEFAULT 0 COMMENT '视觉可玩性',
+    visual_uiux_score INT DEFAULT 0 COMMENT '视觉UI/UX',
+    visual_score INT DEFAULT 0 COMMENT '视觉综合评分',
+    visual_summary TEXT COMMENT '视觉分析摘要',
+    visual_issues_json TEXT COMMENT '视觉问题列表(JSON)',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    INDEX idx_gvr2_project (project_id),
+    INDEX idx_gvr2_type (verify_type),
+    INDEX idx_gvr2_verified (verified_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='游戏验证结果表';
 
 -- ============================================
 -- 运行时错误记录表

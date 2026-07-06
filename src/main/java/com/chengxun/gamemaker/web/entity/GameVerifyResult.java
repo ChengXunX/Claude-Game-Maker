@@ -77,6 +77,32 @@ public class GameVerifyResult {
     @Column(columnDefinition = "TEXT")
     private String suggestionsJson;
 
+    // ===== G8 新增：真实运行+截图验证字段 =====
+
+    /** 截图文件路径列表（JSON 数组） */
+    @Column(columnDefinition = "TEXT")
+    private String screenshotsJson;
+
+    /** 视觉分析 renderHealth 分数 0-100（白屏/崩溃会很低） */
+    private Integer renderHealthScore;
+
+    /** 视觉分析 playable 分数 0-100（从画面是否能看到玩法） */
+    private Integer visualPlayableScore;
+
+    /** 视觉分析 uiux 分数 0-100 */
+    private Integer visualUiuxScore;
+
+    /** 视觉分析 visual 分数 0-100（整体视觉） */
+    private Integer visualScore;
+
+    /** 视觉分析摘要 */
+    @Column(columnDefinition = "TEXT")
+    private String visualSummary;
+
+    /** 视觉问题（JSON 格式） */
+    @Column(columnDefinition = "TEXT")
+    private String visualIssuesJson;
+
     @PrePersist
     protected void onCreate() {
         if (verifiedAt == null) {
@@ -141,4 +167,27 @@ public class GameVerifyResult {
 
     public String getSuggestionsJson() { return suggestionsJson; }
     public void setSuggestionsJson(String suggestionsJson) { this.suggestionsJson = suggestionsJson; }
+
+    // ===== G8 新增字段的 getter/setter =====
+
+    public String getScreenshotsJson() { return screenshotsJson; }
+    public void setScreenshotsJson(String screenshotsJson) { this.screenshotsJson = screenshotsJson; }
+
+    public Integer getRenderHealthScore() { return renderHealthScore; }
+    public void setRenderHealthScore(Integer renderHealthScore) { this.renderHealthScore = renderHealthScore; }
+
+    public Integer getVisualPlayableScore() { return visualPlayableScore; }
+    public void setVisualPlayableScore(Integer visualPlayableScore) { this.visualPlayableScore = visualPlayableScore; }
+
+    public Integer getVisualUiuxScore() { return visualUiuxScore; }
+    public void setVisualUiuxScore(Integer visualUiuxScore) { this.visualUiuxScore = visualUiuxScore; }
+
+    public Integer getVisualScore() { return visualScore; }
+    public void setVisualScore(Integer visualScore) { this.visualScore = visualScore; }
+
+    public String getVisualSummary() { return visualSummary; }
+    public void setVisualSummary(String visualSummary) { this.visualSummary = visualSummary; }
+
+    public String getVisualIssuesJson() { return visualIssuesJson; }
+    public void setVisualIssuesJson(String visualIssuesJson) { this.visualIssuesJson = visualIssuesJson; }
 }

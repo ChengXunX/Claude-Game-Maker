@@ -96,6 +96,10 @@ public class AgentManager {
     @Autowired(required = false)
     private com.chengxun.gamemaker.service.GameDesignReviewService gameDesignReviewService;
 
+    /** G8 新增：截图与视觉分析服务 */
+    @Autowired(required = false)
+    private com.chengxun.gamemaker.service.GameScreenshotService screenshotService;
+
     @Autowired(required = false)
     private com.chengxun.gamemaker.service.KnowledgeEvolutionService knowledgeEvolutionService;
 
@@ -393,6 +397,13 @@ public class AgentManager {
         if (gameDesignReviewService != null) {
             if (agent instanceof VerificationAgent verificationAgent) {
                 verificationAgent.setGameDesignReviewService(gameDesignReviewService);
+            }
+        }
+
+        // G8 新增：注入截图与视觉分析服务到 VerificationAgent
+        if (screenshotService != null) {
+            if (agent instanceof VerificationAgent verificationAgent) {
+                verificationAgent.setScreenshotService(screenshotService);
             }
         }
 

@@ -482,9 +482,10 @@ CREATE INDEX IF NOT EXISTS idx_alert_rules_category ON alert_rules(rule_category
 CREATE INDEX IF NOT EXISTS idx_alert_rules_severity ON alert_rules(severity_level);
 
 -- 告警记录表
+-- 注意：rule_id 允许 NULL，因为 saveAlert() 用于 Agent 风险预警等不需要规则匹配的场景
 CREATE TABLE IF NOT EXISTS alert_records (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    rule_id BIGINT NOT NULL,
+    rule_id BIGINT NULL COMMENT '关联的告警规则ID，允许NULL用于非规则触发的告警',
     rule_name VARCHAR(100),
     rule_category VARCHAR(50),
     metric_value DECIMAL(20,4),
@@ -1304,11 +1305,71 @@ CREATE TABLE IF NOT EXISTS game_verify_records (
     quality_suggestions TEXT,
     raw_ai_response TEXT,
     overall_passed BOOLEAN DEFAULT FALSE,
+    -- G8 新增：真实运行+截图+视觉分析字段
+    screenshots_json TEXT,
+    visual_score INT DEFAULT 0,
+    render_health_score INT DEFAULT 0,
+    visual_playable_score INT DEFAULT 0,
+    visual_uiux_score INT DEFAULT 0,
+    visual_summary TEXT,
+    visual_issues_json TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_gvr_project ON game_verify_records(project_id);
 CREATE INDEX IF NOT EXISTS idx_gvr_milestone ON game_verify_records(milestone_id);
 CREATE INDEX IF NOT EXISTS idx_gvr_created ON game_verify_records(created_at);
+
+-- 游戏截图记录表（G8 新增）
+CREATE TABLE IF NOT EXISTS game_screenshots (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    project_id VARCHAR(36) NOT NULL,
+    verify_record_id BIGINT,
+    file_path VARCHAR(500) NOT NULL,
+    file_name VARCHAR(255),
+    file_size_kb INT DEFAULT 0,
+    frame_index INT DEFAULT 0,
+    captured_at TIMESTAMP NOT NULL,
+    description VARCHAR(500),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_gs_project ON game_screenshots(project_id);
+CREATE INDEX IF NOT EXISTS idx_gs_verify_record ON game_screenshots(verify_record_id);
+CREATE INDEX IF NOT EXISTS idx_gs_captured ON game_screenshots(captured_at);
+
+-- 游戏验证结果表（QUICK 验证，遗留表，G8 补全+加视觉分析字段）
+CREATE TABLE IF NOT EXISTS game_verify_results (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    project_id VARCHAR(36) NOT NULL,
+    project_name VARCHAR(200),
+    success BOOLEAN DEFAULT FALSE,
+    message TEXT,
+    error TEXT,
+    warnings_json TEXT,
+    verified_at TIMESTAMP NOT NULL,
+    verify_type VARCHAR(20) DEFAULT 'QUICK',
+    overall_score INT DEFAULT 0,
+    runnable_score INT DEFAULT 0,
+    playable_score INT DEFAULT 0,
+    completeness_score INT DEFAULT 0,
+    uiux_score INT DEFAULT 0,
+    code_quality_score INT DEFAULT 0,
+    summary TEXT,
+    strengths_json TEXT,
+    issues_json TEXT,
+    suggestions_json TEXT,
+    -- G8 新增
+    screenshots_json TEXT,
+    render_health_score INT DEFAULT 0,
+    visual_playable_score INT DEFAULT 0,
+    visual_uiux_score INT DEFAULT 0,
+    visual_score INT DEFAULT 0,
+    visual_summary TEXT,
+    visual_issues_json TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_gvr2_project ON game_verify_results(project_id);
+CREATE INDEX IF NOT EXISTS idx_gvr2_type ON game_verify_results(verify_type);
+CREATE INDEX IF NOT EXISTS idx_gvr2_verified ON game_verify_results(verified_at);
 
 -- ============================================
 -- 运行时错误记录表

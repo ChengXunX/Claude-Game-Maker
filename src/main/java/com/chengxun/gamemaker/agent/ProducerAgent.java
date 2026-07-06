@@ -5072,6 +5072,8 @@ public class ProducerAgent extends BaseAgent {
      * 当里程碑验证失败 >= 3 次时，自动创建改进任务，而非无限重试
      * 将原里程碑标记为 BLOCKED，创建新的改进里程碑继续推进
      *
+     * 【根因修复】硬上限改成 3 次（原 6 次），防重复间隔延长到 30 分钟（原 5 分钟）
+     *
      * @param failedMilestone 失败的里程碑
      * @param verificationResult 验证结果（包含失败原因）
      */
@@ -5079,13 +5081,13 @@ public class ProducerAgent extends BaseAgent {
         String projectId = getProjectId();
         if (projectId == null || goalService == null) return;
 
-        // 【修复】防重复触发：检查是否已经在最近5分钟内触发过
+        // 【根因修复】防重复触发：检查是否已经在最近 30 分钟内触发过（原 5 分钟太短，会被工作流 COMPLETED 事件反复触发）
         if (isQualityIterationTriggered(projectId, failedMilestone.getId())) {
             log.info("里程碑 [{}] 最近已触发过质量迭代，跳过重复触发", failedMilestone.getTitle());
             return;
         }
 
-        // 【修复】防重复触发：检查是否已经为该里程碑创建了改进里程碑
+        // 【根因修复】防重复触发：检查是否已经为该里程碑创建了改进里程碑
         String improvementTitle = "改进: " + failedMilestone.getTitle();
         boolean alreadyHasImprovement = currentProject.getMilestones().stream()
             .anyMatch(m -> m.getTitle() != null && m.getTitle().equals(improvementTitle)
@@ -5095,23 +5097,27 @@ public class ProducerAgent extends BaseAgent {
             return;
         }
 
-        // 【根因修复】限制最大改进迭代次数：同一里程碑最多改进 1 次，超过则升级到管理员
-        // 原来是 2 次（6次失败），但改进里程碑也会被质量门禁触发，实际循环次数翻倍
-        int maxImprovementAttempts = 1;
-        if (failedMilestone.getVerificationFailCount() > 3 + maxImprovementAttempts * 3) {
-            log.warn("里程碑 [{}] 已失败 {} 次，超过最大改进次数，停止循环并升级",
-                failedMilestone.getTitle(), failedMilestone.getVerificationFailCount());
+        // 【根因修复】硬上限改成 3 次
+        // 原逻辑：verificationFailCount > 3 + 1*3 = 6 才升级，导致"武器系统失败 7 次"这种失控循环
+        // 新逻辑：3 次失败就升级到管理员（不算改进里程碑自身的验证）
+        int maxFailCount = 3;
+        if (failedMilestone.getVerificationFailCount() > maxFailCount) {
+            log.warn("里程碑 [{}] 已失败 {} 次（硬上限 {}），停止自动改进循环并升级到管理员",
+                failedMilestone.getTitle(), failedMilestone.getVerificationFailCount(), maxFailCount);
             failedMilestone.setStatus(GameProject.MilestoneStatus.BLOCKED);
-            failedMilestone.setVerificationResult("超过最大改进次数，需要人工介入");
+            failedMilestone.setVerificationResult("超过最大改进次数（" + maxFailCount + "），需要人工介入");
             projectManager.saveProjectConfig(currentProject);
             sendNotificationToAdmin("MILESTONE_STUCK",
-                String.format("【里程碑卡住 - 需要人工介入】\n\n项目: %s\n里程碑: %s\n失败次数: %d\n\n" +
+                String.format("【里程碑卡住 - 需要人工介入】\n\n项目: %s\n里程碑: %s\n失败次数: %d（硬上限 %d）\n\n" +
                     "系统已尝试自动改进但未能解决，可能是：\n" +
                     "1. AI 生成的代码质量无法达到要求\n" +
                     "2. 验证标准过于严格\n" +
                     "3. 需要更换开发方案\n\n" +
-                    "建议：调整验证标准或手动指导 Agent 开发方向。",
-                    currentProject.getName(), failedMilestone.getTitle(), failedMilestone.getVerificationFailCount()));
+                    "建议：调整验证标准或手动指导 Agent 开发方向。\n\n" +
+                    "【不要回复/批准这个通知】除非你已经确认要重置或修改里程碑标准。",
+                    currentProject.getName(), failedMilestone.getTitle(), failedMilestone.getVerificationFailCount(), maxFailCount));
+            // 【根因修复】升级后标记为"已处理"，避免后续工作流完成事件再次触发
+            markQualityIterationTriggered(projectId, failedMilestone.getId());
             return;
         }
 
@@ -5119,7 +5125,8 @@ public class ProducerAgent extends BaseAgent {
         markQualityIterationTriggered(projectId, failedMilestone.getId());
 
         logInfo("QUALITY_ITERATION_TRIGGERED", String.format(
-            "里程碑 [%s] 验证失败%d次，创建改进里程碑", failedMilestone.getTitle(), failedMilestone.getVerificationFailCount()));
+            "里程碑 [%s] 验证失败%d次（硬上限 %d），创建改进里程碑",
+            failedMilestone.getTitle(), failedMilestone.getVerificationFailCount(), maxFailCount));
 
         // 将原里程碑标记为 BLOCKED（需要改进后才能继续）
         failedMilestone.setStatus(GameProject.MilestoneStatus.BLOCKED);
@@ -5128,8 +5135,8 @@ public class ProducerAgent extends BaseAgent {
 
         // 【根因修复】构建改进里程碑描述 — 包含具体失败上下文
         StringBuilder descBuilder = new StringBuilder();
-        descBuilder.append(String.format("## 改进任务\n\n原始里程碑 [%s] 已连续验证失败%d次。\n\n",
-            failedMilestone.getTitle(), failedMilestone.getVerificationFailCount()));
+        descBuilder.append(String.format("## 改进任务\n\n原始里程碑 [%s] 已连续验证失败%d次（硬上限 %d）。\n\n",
+            failedMilestone.getTitle(), failedMilestone.getVerificationFailCount(), maxFailCount));
         descBuilder.append("### 失败原因\n").append(verificationResult.details).append("\n\n");
         if (verificationResult.failedCriteria != null && !verificationResult.failedCriteria.isEmpty()) {
             descBuilder.append("### 未通过的验证标准\n");
@@ -5142,6 +5149,7 @@ public class ProducerAgent extends BaseAgent {
         descBuilder.append("1. 仔细阅读上述失败原因，针对性修复\n");
         descBuilder.append("2. 确保代码无语法错误、可构建、可运行\n");
         descBuilder.append("3. 改进完成后汇报实际修改内容（不要只说'已修复'）\n");
+        descBuilder.append(String.format("4. 注意：本改进里程碑最多 1 次，如果再失败将升级到管理员\n"));
         String improvementDesc = descBuilder.toString();
 
         // 构建验证标准：复用原里程碑的验证标准 + AI 质量阈值
@@ -5173,7 +5181,7 @@ public class ProducerAgent extends BaseAgent {
             criteria
         );
 
-        // 【修复】改进里程碑不依赖原里程碑（避免死锁），直接设为 IN_PROGRESS
+        // 【根因修复】改进里程碑不依赖原里程碑（避免死锁），直接设为 IN_PROGRESS
         if (improvementMilestone != null) {
             improvementMilestone.setStatus(GameProject.MilestoneStatus.IN_PROGRESS);
             improvementMilestone.setProgress(10);
@@ -5188,8 +5196,8 @@ public class ProducerAgent extends BaseAgent {
             improvementTitle, assignedRole));
 
         sendNotificationToAdmin("QUALITY_ITERATION",
-            String.format("【质量改进迭代】\n\n项目: %s\n原里程碑: %s\n失败次数: %d\n\n已自动创建改进任务并分配给 %s。若再次失败将升级到管理员。",
-                currentProject.getName(), failedMilestone.getTitle(), failedMilestone.getVerificationFailCount(), assignedRole));
+            String.format("【质量改进迭代】\n\n项目: %s\n原里程碑: %s\n失败次数: %d（硬上限 %d）\n\n已自动创建改进任务并分配给 %s。\n【重要】如果本次改进也失败，将直接升级到管理员，不会再自动迭代。",
+                currentProject.getName(), failedMilestone.getTitle(), failedMilestone.getVerificationFailCount(), maxFailCount, assignedRole));
     }
 
     /**
@@ -5288,9 +5296,10 @@ public class ProducerAgent extends BaseAgent {
      * 质量门禁检查
      * 在里程碑完成后检查项目是否可正常运行，不达标则触发改进迭代
      *
-     * 【根因修复】原来只调用 verify()（结构检查，几乎永远通过），现在增加 analyzeQuality()（AI质量评分）
-     * 结构检查失败 → 直接不通过
-     * 结构检查通过但质量评分 < 40 → 触发改进迭代
+     * 【根因修复】
+     * 1. 改进里程碑跳过质量门禁（避免双触发）
+     * 2. AI 分析失败时（isAnalysisFailed）不触发改进迭代，而是记录后人工介入
+     * 3. 验证标准改为 qualityResult.getOverallScore() < 60（不再检查 > 0，因为失败时是 -1）
      *
      * @param milestone 已完成的里程碑
      * @return true 如果质量门禁通过，false 如果需要改进
@@ -5300,7 +5309,6 @@ public class ProducerAgent extends BaseAgent {
         if (projectId == null) return true;
 
         // 【根因修复】改进里程碑不再触发质量迭代，避免双触发导致无限循环
-        // 改进里程碑的验证已经通过 verifyMilestoneCompletion() 完成
         if (milestone.getTitle() != null && milestone.getTitle().startsWith("改进:")) {
             log.info("改进里程碑 [{}] 跳过质量门禁（避免循环触发）", milestone.getTitle());
             return true;
@@ -5327,33 +5335,47 @@ public class ProducerAgent extends BaseAgent {
                 return false;
             }
 
-            // 2. 【根因修复】AI 质量分析：真正检查项目质量，不只是文件是否存在
+            // 2. AI 质量分析：真正检查项目质量，不只是文件是否存在
             try {
                 var qualityResult = gameRuntimeVerifier.analyzeQuality(
                     projectDir, currentProject.getName(), currentProject.getGoal());
-                if (qualityResult != null && qualityResult.isSuccess()) {
-                    int overallScore = qualityResult.getOverallScore();
-                    log.info("质量门禁-AI评分: milestone={}, score={}", milestone.getTitle(), overallScore);
 
-                    // 质量评分 < 60 触发改进迭代
-                    if (overallScore > 0 && overallScore < 60) {
-                        logWarn("QUALITY_GATE_LOW_SCORE",
-                            String.format("里程碑 [%s] 质量门禁-AI评分过低: %d/100", milestone.getTitle(), overallScore), null);
+                // 【根因修复】AI 分析失败时，不再误判为低分
+                // 区分"分析失败"和"真实低分"，让管理员介入而非自动改进
+                if (qualityResult == null || qualityResult.isAnalysisFailed()) {
+                    String reason = qualityResult == null ? "返回 null" :
+                        (qualityResult.getFailureType() + ": " + qualityResult.getError());
+                    log.warn("里程碑 [{}] AI质量分析失败（不是游戏质量问题）: {}，跳过质量门禁等待人工排查",
+                        milestone.getTitle(), reason);
+                    // 【根因修复】分析失败时不返回 false（不触发改进迭代），而是返回 true 让里程碑通过
+                    // 通过 sendNotificationToAdmin 通知管理员（不是游戏质量问题）
+                    sendNotificationToAdmin("QUALITY_ANALYSIS_FAILED",
+                        String.format("【质量分析失败 - 需要人工排查】\n\n项目: %s\n里程碑: %s\n失败原因: %s\n\n【注意】这不是游戏质量问题，是验证工具/AI 服务的问题。\n请检查：\n1. 项目目录是否存在\n2. 代码是否可读\n3. AI 服务是否正常",
+                            currentProject.getName(), milestone.getTitle(), reason));
+                    return true;
+                }
 
-                        StringBuilder details = new StringBuilder();
-                        details.append(String.format("AI质量评分: %d/100\n", overallScore));
-                        if (qualityResult.getIssues() != null && !qualityResult.getIssues().isEmpty()) {
-                            details.append("问题:\n");
-                            qualityResult.getIssues().forEach(issue -> details.append("- ").append(issue).append("\n"));
-                        }
+                int overallScore = qualityResult.getOverallScore();
+                log.info("质量门禁-AI评分: milestone={}, score={}", milestone.getTitle(), overallScore);
 
-                        VerificationResult fakeResult = VerificationResult.failure(
-                            details.toString(),
-                            List.of("项目质量评分需达到60分以上")
-                        );
-                        triggerQualityIteration(milestone, fakeResult);
-                        return false;
+                // 质量评分 < 60 触发改进迭代
+                if (overallScore >= 0 && overallScore < 60) {
+                    logWarn("QUALITY_GATE_LOW_SCORE",
+                        String.format("里程碑 [%s] 质量门禁-AI评分过低: %d/100", milestone.getTitle(), overallScore), null);
+
+                    StringBuilder details = new StringBuilder();
+                    details.append(String.format("AI质量评分: %d/100\n", overallScore));
+                    if (qualityResult.getIssues() != null && !qualityResult.getIssues().isEmpty()) {
+                        details.append("问题:\n");
+                        qualityResult.getIssues().forEach(issue -> details.append("- ").append(issue).append("\n"));
                     }
+
+                    VerificationResult fakeResult = VerificationResult.failure(
+                        details.toString(),
+                        List.of("项目质量评分需达到60分以上")
+                    );
+                    triggerQualityIteration(milestone, fakeResult);
+                    return false;
                 }
             } catch (Exception e) {
                 log.warn("质量门禁-AI分析异常（不影响通过）: {}", e.getMessage());
@@ -8694,16 +8716,18 @@ public class ProducerAgent extends BaseAgent {
     /**
      * 检查是否已经触发过质量迭代（防重复）
      *
+     * 【根因修复】间隔延长到 30 分钟（原 5 分钟），防止工作流 COMPLETED 事件反复触发质量门禁
+     *
      * @param projectId 项目ID
      * @param milestoneId 里程碑ID
-     * @return true 如果最近5分钟内已触发过
+     * @return true 如果最近 30 分钟内已触发过
      */
     private boolean isQualityIterationTriggered(String projectId, String milestoneId) {
         String key = projectId + ":" + milestoneId;
         Long triggeredTime = qualityIterationTriggered.get(key);
         if (triggeredTime == null) return false;
-        // 5分钟内的重复触发视为重复
-        return System.currentTimeMillis() - triggeredTime < 5 * 60 * 1000;
+        // 30分钟内的重复触发视为重复
+        return System.currentTimeMillis() - triggeredTime < 30 * 60 * 1000;
     }
 
     /**

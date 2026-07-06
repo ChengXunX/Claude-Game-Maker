@@ -181,6 +181,12 @@ export const PERMISSIONS = {
   AGENT_VIEW: 'agent:view',
   AGENT_MANAGE: 'agent:manage',
 
+  // 游戏验证（G8 新增视觉验证权限）
+  GAME_VERIFY: 'game:verify',
+  GAME_VERIFY_VIEW: 'game:verify:view',
+  GAME_VISUAL_VIEW: 'game:visual:view',
+  GAME_PREVIEW: 'game:preview',
+
   // 所有权限
   ALL: '*'
 }

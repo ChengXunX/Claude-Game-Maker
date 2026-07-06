@@ -50,6 +50,10 @@ public class GameRuntimeVerifier {
     @Autowired(required = false)
     private RuntimeErrorDetector runtimeErrorDetector;
 
+    /** 截图与视觉分析服务（延迟注入） */
+    @Autowired(required = false)
+    private GameScreenshotService screenshotService;
+
     /** JSON 序列化工具 */
     @Autowired
     private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
@@ -354,18 +358,18 @@ public class GameRuntimeVerifier {
      */
     public QualityAnalysisResult analyzeQuality(String projectDir, String projectName, String projectGoal) {
         if (projectDir == null || projectDir.isEmpty()) {
-            return QualityAnalysisResult.failure("项目目录为空");
+            return QualityAnalysisResult.failure(QualityAnalysisResult.FailureType.PROJECT_DIR_EMPTY, "项目目录为空");
         }
 
         File dir = new File(projectDir);
         if (!dir.exists() || !dir.isDirectory()) {
-            return QualityAnalysisResult.failure("项目目录不存在: " + projectDir);
+            return QualityAnalysisResult.failure(QualityAnalysisResult.FailureType.PROJECT_DIR_MISSING, "项目目录不存在: " + projectDir);
         }
 
         // 1. 收集项目代码样本
         String codeSample = collectCodeSample(dir);
         if (codeSample.isEmpty()) {
-            return QualityAnalysisResult.failure("项目中未找到可分析的代码文件");
+            return QualityAnalysisResult.failure(QualityAnalysisResult.FailureType.NO_CODE_FILES, "项目中未找到可分析的代码文件");
         }
 
         // 2. 收集项目结构信息
@@ -373,7 +377,7 @@ public class GameRuntimeVerifier {
 
         // 3. 使用 AI 分析
         if (aiService == null) {
-            return QualityAnalysisResult.failure("AI 服务不可用，无法进行深度分析");
+            return QualityAnalysisResult.failure(QualityAnalysisResult.FailureType.AI_SERVICE_UNAVAILABLE, "AI 服务不可用，无法进行深度分析");
         }
 
         try {
@@ -384,7 +388,7 @@ public class GameRuntimeVerifier {
             return parseAnalysisResult(aiResponse);
         } catch (Exception e) {
             log.error("AI 深度分析失败: {}", e.getMessage(), e);
-            return QualityAnalysisResult.failure("AI 分析失败: " + e.getMessage());
+            return QualityAnalysisResult.failure(QualityAnalysisResult.FailureType.AI_PARSE_FAILED, "AI 分析失败: " + e.getMessage());
         }
     }
 
@@ -546,7 +550,7 @@ public class GameRuntimeVerifier {
      */
     private QualityAnalysisResult parseAnalysisResult(String aiResponse) {
         if (aiResponse == null || aiResponse.isEmpty()) {
-            return QualityAnalysisResult.failure("AI 未返回分析结果");
+            return QualityAnalysisResult.failure(QualityAnalysisResult.FailureType.AI_RETURNED_EMPTY, "AI 未返回分析结果");
         }
 
         QualityAnalysisResult result = new QualityAnalysisResult();
@@ -594,7 +598,7 @@ public class GameRuntimeVerifier {
                 result.uiuxScore, result.codeQualityScore, result.overallScore);
 
             // overallScore 兜底：如果 AI 未返回 overallScore，则从各维度分数计算平均值
-            if (result.overallScore == 0) {
+            if (result.overallScore <= 0) {
                 int[] dims = {result.runnableScore, result.playableScore,
                     result.completenessScore, result.uiuxScore, result.codeQualityScore};
                 int nonZeroCount = 0;
@@ -606,18 +610,16 @@ public class GameRuntimeVerifier {
                     result.overallScore = sum / nonZeroCount;
                     log.info("AI 未返回 overallScore，从 {} 个维度计算平均分: {}", nonZeroCount, result.overallScore);
                 } else {
-                    // 所有维度分数都是 0，说明解析完全失败
-                    log.error("AI 返回的质量分数全部为 0，解析失败。原始响应: {}", aiResponse);
-                    return QualityAnalysisResult.failure("AI 返回的质量分数解析失败，请检查 AI 服务配置");
+                    // 所有维度分数都是 0 或 -1，说明解析完全失败
+                    log.error("AI 返回的质量分数全部为 0/-1，解析失败。原始响应: {}", aiResponse);
+                    return QualityAnalysisResult.failure(QualityAnalysisResult.FailureType.AI_ALL_ZERO, "AI 返回的质量分数解析失败，请检查 AI 服务配置");
                 }
             }
 
-            // 确保各维度分数不为 0（如果为 0 说明解析失败，使用 overallScore 的值）
-            if (result.runnableScore == 0) result.runnableScore = result.overallScore;
-            if (result.playableScore == 0) result.playableScore = result.overallScore;
-            if (result.completenessScore == 0) result.completenessScore = result.overallScore;
-            if (result.uiuxScore == 0) result.uiuxScore = result.overallScore;
-            if (result.codeQualityScore == 0) result.codeQualityScore = result.overallScore;
+            // 【根因修复】删除"维度分数为 0 时强行填成 overallScore" 的误导性逻辑
+            // 原代码会把"维度未返回"污染成"维度等于总体分"，让 Agent 误以为是真实低分
+            // 现在保持 -1 表示"未评估"，让调用方明确知道哪些维度 AI 没给出分数
+            // 维度为 0 但 overallScore 有效的情况：保留 0（AI 真的评估为 0）
 
             log.info("质量分析最终结果: runnable={}, playable={}, completeness={}, uiux={}, codeQuality={}, overall={}",
                 result.runnableScore, result.playableScore, result.completenessScore,
@@ -625,7 +627,7 @@ public class GameRuntimeVerifier {
 
         } catch (Exception e) {
             log.error("解析 AI 分析结果失败: {}, 原始响应: {}", e.getMessage(), aiResponse);
-            return QualityAnalysisResult.failure("AI 分析结果解析失败: " + e.getMessage());
+            return QualityAnalysisResult.failure(QualityAnalysisResult.FailureType.AI_PARSE_FAILED, "AI 分析结果解析失败: " + e.getMessage());
         }
 
         return result;
@@ -683,16 +685,43 @@ public class GameRuntimeVerifier {
      * 支持两种格式：
     /**
      * 游戏质量分析结果
+     *
+     * 【根因修复】之前 qualityResult.overallScore=0 和 QualityGateService 硬编码 50/0
+     * 导致 Agent 误以为是真实低分，从而反复触发改进迭代死循环。
+     * 现在用 failureType + analysisFailed 两个字段区分：
+     * - success=true:  AI 真实评估出的分数，可信
+     * - success=false: 分析失败，overallScore 是无效值（默认 -1），调用方必须用 isAnalysisFailed() 判断
      */
     public static class QualityAnalysisResult {
+        /**
+         * 失败类型枚举
+         * PROJECT_DIR_EMPTY/MISSING/INVALID - 项目目录问题
+         * NO_CODE_FILES - 找不到代码
+         * AI_SERVICE_UNAVAILABLE - AI 服务不可用
+         * AI_PARSE_FAILED - AI 返回无法解析
+         * AI_RETURNED_EMPTY - AI 返回空
+         * AI_ALL_ZERO - AI 返回全 0
+         */
+        public enum FailureType {
+            NONE,                       // 成功
+            PROJECT_DIR_EMPTY,          // 项目目录为空
+            PROJECT_DIR_MISSING,        // 项目目录不存在
+            NO_CODE_FILES,              // 项目中未找到可分析的代码文件
+            AI_SERVICE_UNAVAILABLE,     // AI 服务不可用
+            AI_RETURNED_EMPTY,          // AI 未返回分析结果
+            AI_PARSE_FAILED,            // AI 分析结果解析失败
+            AI_ALL_ZERO                 // AI 返回的质量分数全部为 0
+        }
+
         private boolean success;
+        private FailureType failureType = FailureType.NONE;
         private String error;
-        private int runnableScore;
-        private int playableScore;
-        private int completenessScore;
-        private int uiuxScore;
-        private int codeQualityScore;
-        private int overallScore;
+        private int runnableScore = -1;     // -1 表示"未评估/失败"
+        private int playableScore = -1;
+        private int completenessScore = -1;
+        private int uiuxScore = -1;
+        private int codeQualityScore = -1;
+        private int overallScore = -1;      // -1 表示"未评估/失败"，不再是误导性的 0
         private String summary;
         private List<String> strengths = new ArrayList<>();
         private List<String> issues = new ArrayList<>();
@@ -700,14 +729,28 @@ public class GameRuntimeVerifier {
         private String rawResponse;
 
         public static QualityAnalysisResult failure(String error) {
+            return failure(FailureType.AI_PARSE_FAILED, error);
+        }
+
+        public static QualityAnalysisResult failure(FailureType type, String error) {
             QualityAnalysisResult r = new QualityAnalysisResult();
             r.success = false;
+            r.failureType = type;
             r.error = error;
+            // overallScore 保持 -1，明确标记"未评估"
             return r;
+        }
+
+        /**
+         * 是否分析失败（区别于"真实低分"）
+         */
+        public boolean isAnalysisFailed() {
+            return !success;
         }
 
         // Getters
         public boolean isSuccess() { return success; }
+        public FailureType getFailureType() { return failureType; }
         public String getError() { return error; }
         public int getRunnableScore() { return runnableScore; }
         public int getPlayableScore() { return playableScore; }
@@ -723,6 +766,7 @@ public class GameRuntimeVerifier {
 
         // Setters (用于从数据库恢复)
         public void setSuccess(boolean success) { this.success = success; }
+        public void setFailureType(FailureType failureType) { this.failureType = failureType; }
         public void setError(String error) { this.error = error; }
         public void setRunnableScore(int runnableScore) { this.runnableScore = runnableScore; }
         public void setPlayableScore(int playableScore) { this.playableScore = playableScore; }
@@ -761,13 +805,16 @@ public class GameRuntimeVerifier {
      * 执行运行验证
      * 启动游戏服务，检查是否能正常运行，检测运行时错误
      *
+     * <p>增强点：启动成功后自动调用 {@link GameScreenshotService} 进行截图（多帧），
+     * 并通过 Claude vision 进行视觉分析，输出 renderHealth/playable/uiux 三个维度分数。</p>
+     *
      * @param projectDir 项目目录
      * @return 运行验证结果
      */
     public RuntimeVerifyResult verifyRuntime(String projectDir) {
         if (buildStrategyRegistry == null) {
             log.debug("BuildStrategyRegistry 未注入，跳过运行验证");
-            return RuntimeVerifyResult.success(null, List.of(), List.of());
+            return RuntimeVerifyResult.success(null, List.of(), List.of(), new ArrayList<>(), null);
         }
         if (projectDir == null || projectDir.isEmpty()) {
             return RuntimeVerifyResult.failure("项目目录为空", null);
@@ -807,10 +854,34 @@ public class GameRuntimeVerifier {
                 ? runtimeErrorDetector.detectResourceErrors(port)
                 : List.of();
 
+            // ===== 真实运行+截图（G8 新增） =====
+            // HTTP 200 之后立刻截图，避免后续清理影响
+            List<String> screenshotPaths = new ArrayList<>();
+            GameScreenshotService.VisualAnalysisResult visualResult = null;
+            if (httpCheck.isSuccess() && screenshotService != null && screenshotService.isChromeAvailable()) {
+                String projectId = extractProjectIdFromDir(projectDir);
+                try {
+                    // 多帧截图：3 帧，间隔 1.5s，捕捉游戏启动后画面变化
+                    screenshotPaths = screenshotService.screenshotMultiFrame(port, projectId, 3, 1500);
+                    log.info("运行验证已截图: projectId={}, count={}", projectId, screenshotPaths.size());
+
+                    // 调用 AI 视觉分析
+                    visualResult = screenshotService.analyzeScreenshots(
+                        screenshotPaths, null, null);
+                } catch (Exception e) {
+                    log.warn("截图/视觉分析失败（不影响运行验证结果）: {}", e.getMessage());
+                }
+            } else if (screenshotService == null) {
+                log.debug("GameScreenshotService 未注入，跳过截图");
+            } else {
+                log.debug("Chrome 不可用或 HTTP 检查失败，跳过截图");
+            }
+
             boolean passed = httpCheck.isSuccess() && consoleErrors.isEmpty();
 
             return passed
-                ? RuntimeVerifyResult.success(httpCheck, consoleErrors, resourceErrors)
+                ? RuntimeVerifyResult.success(httpCheck, consoleErrors, resourceErrors,
+                    screenshotPaths, visualResult)
                 : RuntimeVerifyResult.failure(
                     "运行验证失败: HTTP=" + httpCheck.getStatusCode()
                         + ", 控制台错误=" + consoleErrors.size(),
@@ -825,6 +896,20 @@ public class GameRuntimeVerifier {
                 gameProcess.destroy();
             }
         }
+    }
+
+    /**
+     * 从项目目录路径提取项目 ID（用于截图归档）
+     *
+     * <p>策略：取路径最后一段目录名作为项目 ID。如果无法提取，使用 "unknown"。</p>
+     */
+    private String extractProjectIdFromDir(String projectDir) {
+        if (projectDir == null || projectDir.isEmpty()) return "unknown";
+        String normalized = projectDir.replaceAll("[/\\\\]+$", "");
+        int idx = normalized.lastIndexOf(File.separator);
+        if (idx < 0) idx = normalized.lastIndexOf('/');
+        if (idx < 0) return normalized;
+        return normalized.substring(idx + 1);
     }
 
     /**
@@ -939,42 +1024,72 @@ public class GameRuntimeVerifier {
 
     /**
      * 运行验证结果
+     *
+     * <p>字段说明：</p>
+     * <ul>
+     *   <li>success: 整体是否通过（HTTP 200 + 无控制台错误）</li>
+     *   <li>httpCheck: HTTP 状态检查结果</li>
+     *   <li>consoleErrors: 进程控制台错误列表</li>
+     *   <li>resourceErrors: 资源加载错误列表</li>
+     *   <li>screenshotPaths: 真实运行后的截图文件路径列表（G8 新增）</li>
+     *   <li>visualResult: AI 视觉分析结果（G8 新增）</li>
+     *   <li>error: 失败时的错误信息</li>
+     *   <li>processOutput: 失败时的进程输出</li>
+     * </ul>
      */
     public static class RuntimeVerifyResult {
         private final boolean success;
         private final HttpStatusCheck httpCheck;
         private final List<String> consoleErrors;
         private final List<String> resourceErrors;
+        private final List<String> screenshotPaths;
+        private final GameScreenshotService.VisualAnalysisResult visualResult;
         private final String error;
         private final String processOutput;
 
         private RuntimeVerifyResult(boolean success, HttpStatusCheck httpCheck,
                                      List<String> consoleErrors, List<String> resourceErrors,
+                                     List<String> screenshotPaths,
+                                     GameScreenshotService.VisualAnalysisResult visualResult,
                                      String error, String processOutput) {
             this.success = success;
             this.httpCheck = httpCheck;
             this.consoleErrors = consoleErrors != null ? consoleErrors : new ArrayList<>();
             this.resourceErrors = resourceErrors != null ? resourceErrors : new ArrayList<>();
+            this.screenshotPaths = screenshotPaths != null ? screenshotPaths : new ArrayList<>();
+            this.visualResult = visualResult;
             this.error = error;
             this.processOutput = processOutput;
         }
 
         public static RuntimeVerifyResult success(HttpStatusCheck httpCheck,
                                                     List<String> consoleErrors,
-                                                    List<String> resourceErrors) {
-            return new RuntimeVerifyResult(true, httpCheck, consoleErrors, resourceErrors, null, null);
+                                                    List<String> resourceErrors,
+                                                    List<String> screenshotPaths,
+                                                    GameScreenshotService.VisualAnalysisResult visualResult) {
+            return new RuntimeVerifyResult(true, httpCheck, consoleErrors, resourceErrors,
+                screenshotPaths, visualResult, null, null);
         }
 
         public static RuntimeVerifyResult failure(String error, String processOutput) {
-            return new RuntimeVerifyResult(false, null, null, null, error, processOutput);
+            return new RuntimeVerifyResult(false, null, null, null, new ArrayList<>(), null, error, processOutput);
         }
 
         public boolean isSuccess() { return success; }
         public HttpStatusCheck getHttpCheck() { return httpCheck; }
         public List<String> getConsoleErrors() { return consoleErrors; }
         public List<String> getResourceErrors() { return resourceErrors; }
+        public List<String> getScreenshotPaths() { return screenshotPaths; }
+        public GameScreenshotService.VisualAnalysisResult getVisualResult() { return visualResult; }
         public String getError() { return error; }
         public String getProcessOutput() { return processOutput; }
+
+        /**
+         * 是否有截图
+         */
+        public boolean hasScreenshots() {
+            return screenshotPaths != null && !screenshotPaths.isEmpty();
+        }
     }
 
     /**
@@ -1006,7 +1121,15 @@ public class GameRuntimeVerifier {
 
         /**
          * 计算综合评分
-         * 权重：结构 10%, 构建 20%, 运行 30%, AI质量 40%
+         *
+         * <p>权重（G8 调整后）：</p>
+         * <ul>
+         *   <li>结构验证 10% - 文件存在性、目录组织</li>
+         *   <li>构建验证 15% - 能否成功构建</li>
+         *   <li>运行验证 25% - 能否启动 + 无控制台错误（HTTP 200）</li>
+         *   <li>视觉分析 20% - 真实画面评分（G8 新增，来自 GameScreenshotService）</li>
+         *   <li>AI 质量分析 30% - AI 对代码的多维度评分</li>
+         * </ul>
          */
         public void calculateOverallScore() {
             int score = 0;
@@ -1017,16 +1140,33 @@ public class GameRuntimeVerifier {
                 weight += 10;
             }
             if (buildResult != null) {
-                score += (buildResult.isSuccess() ? 100 : 0) * 20;
-                weight += 20;
+                score += (buildResult.isSuccess() ? 100 : 0) * 15;
+                weight += 15;
             }
             if (runtimeResult != null) {
-                score += (runtimeResult.isSuccess() ? 100 : 0) * 30;
-                weight += 30;
+                // 运行验证通过：25 分基础分
+                score += (runtimeResult.isSuccess() ? 100 : 0) * 25;
+                weight += 25;
+
+                // G8 新增：如果有视觉分析结果，按 visualScore 加权
+                if (runtimeResult.getVisualResult() != null
+                    && runtimeResult.getVisualResult().isSuccess()) {
+                    int visualScore = runtimeResult.getVisualResult().getVisualScore();
+                    score += visualScore * 20;
+                    weight += 20;
+                } else if (runtimeResult.isSuccess() && runtimeResult.hasScreenshots()
+                    && runtimeResult.getVisualResult() != null) {
+                    // 有截图但 AI 分析失败：使用 renderHealth 分数
+                    int renderHealth = runtimeResult.getVisualResult().getRenderHealthScore();
+                    if (renderHealth > 0) {
+                        score += renderHealth * 20;
+                        weight += 20;
+                    }
+                }
             }
             if (qualityResult != null && qualityResult.isSuccess()) {
-                score += qualityResult.getOverallScore() * 40;
-                weight += 40;
+                score += qualityResult.getOverallScore() * 30;
+                weight += 30;
             }
 
             overallScore = weight > 0 ? score / weight : 0;

@@ -83,12 +83,18 @@ public class QualityGateService {
 
     /**
      * 质量检查结果
+     *
+     * 【根因修复】之前 score 在分析失败时被硬编码为 50/0，掩盖了"分析失败"和"真实低分"的区别
+     * 现在加 analysisFailed 字段，失败时 score=-1，调用方必须用 isAnalysisFailed() 判断
+     * 不计入总体分的平均计算
      */
     public static class QualityCheckResult {
         String gateId;
         String gateName;
         boolean passed;
         int score;
+        boolean analysisFailed = false;     // 【根因修复】true 表示"分析失败"而非"低分"
+        String failureReason;                // 失败原因
         List<CheckItemResult> itemResults;
         String summary;
         List<String> recommendations;
@@ -99,6 +105,8 @@ public class QualityGateService {
             this.itemResults = new ArrayList<>();
             this.recommendations = new ArrayList<>();
         }
+
+        public boolean isAnalysisFailed() { return analysisFailed; }
     }
 
     /**
@@ -230,9 +238,18 @@ public class QualityGateService {
         log.info("开始综合质量评估: project={}", projectName);
 
         // 执行各级质量门禁检查
+        int failedGateCount = 0;
         for (QualityGateConfig gateConfig : gateConfigs.values()) {
             QualityCheckResult result = executeGateCheck(gateConfig, projectDir, projectName, projectGoal);
             assessment.gateResults.put(gateConfig.gateId, result);
+
+            // 【根因修复】分析失败的门禁不再当作"低分阻塞项"
+            if (result.isAnalysisFailed()) {
+                failedGateCount++;
+                log.warn("门禁 {} 分析失败：{}（不计入阻塞项，请人工介入）",
+                    gateConfig.name, result.failureReason);
+                continue;
+            }
 
             if (!result.passed && gateConfig.blocking) {
                 assessment.blockers.add(String.format("[%s] %s 未通过 (得分: %d/%d)",
@@ -242,15 +259,22 @@ public class QualityGateService {
             assessment.recommendations.addAll(result.recommendations);
         }
 
-        // 计算综合得分
+        // 计算综合得分（自动跳过分析失败的门禁）
         assessment.overallScore = calculateOverallScore(assessment.gateResults);
+        // 【根因修复】如果所有门禁都分析失败，整体 assessment 也标记为失败
+        if (failedGateCount > 0) {
+            assessment.recommendations.add(String.format(
+                "⚠️ %d 个门禁分析失败（不是游戏质量问题，可能是项目目录/AI服务问题），请人工排查",
+                failedGateCount));
+        }
+
         assessment.passed = assessment.blockers.isEmpty() && assessment.overallScore >= 60;
 
         // 确定质量等级
         assessment.qualityLevel = determineQualityLevel(assessment.overallScore);
 
-        log.info("质量评估完成: project={}, score={}, level={}, passed={}",
-            projectName, assessment.overallScore, assessment.qualityLevel, assessment.passed);
+        log.info("质量评估完成: project={}, score={}, level={}, passed={}, failedGates={}",
+            projectName, assessment.overallScore, assessment.qualityLevel, assessment.passed, failedGateCount);
 
         // 保存评估结果到数据库
         saveAssessment(projectId, projectName, assessment);
@@ -310,7 +334,8 @@ public class QualityGateService {
 
             Map<String, String> variables = new HashMap<>();
             variables.put("projectName", projectName);
-            variables.put("score", String.valueOf(assessment.overallScore));
+            // 【根因修复】-1 表示"分析失败"，不要显示成"得分 -1"
+            variables.put("score", assessment.overallScore < 0 ? "N/A（分析失败）" : String.valueOf(assessment.overallScore));
             variables.put("status", status);
             variables.put("level", level);
             variables.put("blockerCount", String.valueOf(assessment.blockers.size()));
@@ -395,8 +420,11 @@ public class QualityGateService {
      */
     private void executeBasicCheck(QualityCheckResult result, String projectDir) {
         if (runtimeVerifier == null) {
-            result.score = 0;
-            result.summary = "验证服务不可用";
+            // 【根因修复】不再硬编码 0；标记为分析失败，让调用方正确处理
+            result.score = -1;
+            result.analysisFailed = true;
+            result.failureReason = "验证服务不可用";
+            result.summary = "⚠️ 分析失败：验证服务不可用（这不是游戏质量评分）";
             return;
         }
 
@@ -435,25 +463,39 @@ public class QualityGateService {
                 result.score = qualityResult.getOverallScore();
                 result.summary = qualityResult.getSummary();
 
-                result.itemResults.add(new CheckItemResult("可运行性", qualityResult.getRunnableScore() >= 60,
-                    qualityResult.getRunnableScore(), "运行能力评估"));
-
-                result.itemResults.add(new CheckItemResult("可玩性", qualityResult.getPlayableScore() >= 60,
-                    qualityResult.getPlayableScore(), "核心玩法评估"));
-
-                result.itemResults.add(new CheckItemResult("完整性", qualityResult.getCompletenessScore() >= 60,
-                    qualityResult.getCompletenessScore(), "功能完整性评估"));
+                // 维度分数：-1 表示 AI 未给出该维度分数（不计入 CheckItem）
+                if (qualityResult.getRunnableScore() >= 0) {
+                    result.itemResults.add(new CheckItemResult("可运行性", qualityResult.getRunnableScore() >= 60,
+                        qualityResult.getRunnableScore(), "运行能力评估"));
+                }
+                if (qualityResult.getPlayableScore() >= 0) {
+                    result.itemResults.add(new CheckItemResult("可玩性", qualityResult.getPlayableScore() >= 60,
+                        qualityResult.getPlayableScore(), "核心玩法评估"));
+                }
+                if (qualityResult.getCompletenessScore() >= 0) {
+                    result.itemResults.add(new CheckItemResult("完整性", qualityResult.getCompletenessScore() >= 60,
+                        qualityResult.getCompletenessScore(), "功能完整性评估"));
+                }
 
                 if (qualityResult.getOverallScore() < 70) {
                     result.recommendations.addAll(qualityResult.getSuggestions());
                 }
             } else {
-                result.score = 50;
-                result.summary = "功能分析失败: " + qualityResult.getError();
+                // 【根因修复】不再硬编码 50；标记为分析失败
+                result.score = -1;
+                result.analysisFailed = true;
+                result.failureReason = qualityResult.getError();
+                result.summary = String.format("⚠️ 分析失败：%s（这不是游戏质量评分，请检查项目目录/AI服务）",
+                    qualityResult.getError());
+                log.warn("L2 功能检查失败：failureType={}, error={}",
+                    qualityResult.getFailureType(), qualityResult.getError());
             }
         } else {
-            result.score = 50;
-            result.summary = "功能检查服务不可用";
+            // 【根因修复】不再硬编码 50；标记为分析失败
+            result.score = -1;
+            result.analysisFailed = true;
+            result.failureReason = "功能检查服务不可用";
+            result.summary = "⚠️ 分析失败：功能检查服务不可用（这不是游戏质量评分）";
         }
     }
 
@@ -489,9 +531,12 @@ public class QualityGateService {
 
     /**
      * 计算综合得分
+     *
+     * 【根因修复】跳过 analysisFailed 的门禁（它们的 score=-1 会严重污染平均分）
+     * 如果所有门禁都失败，返回 -1 让调用方知道这是"全部失败"而非"零分"
      */
     private int calculateOverallScore(Map<String, QualityCheckResult> gateResults) {
-        if (gateResults.isEmpty()) return 0;
+        if (gateResults.isEmpty()) return -1;
 
         // 加权平均：L1(20%), L2(35%), L3(15%), L4(20%), L5(10%)
         Map<String, Double> weights = Map.of(
@@ -506,18 +551,29 @@ public class QualityGateService {
         double totalWeight = 0;
 
         for (Map.Entry<String, QualityCheckResult> entry : gateResults.entrySet()) {
+            QualityCheckResult gateResult = entry.getValue();
+            // 跳过分析失败的门禁，避免 -1 污染加权平均
+            if (gateResult.isAnalysisFailed() || gateResult.score < 0) {
+                continue;
+            }
             double weight = weights.getOrDefault(entry.getKey(), 0.1);
-            weightedSum += entry.getValue().score * weight;
+            weightedSum += gateResult.score * weight;
             totalWeight += weight;
         }
 
-        return totalWeight > 0 ? (int) (weightedSum / totalWeight) : 0;
+        if (totalWeight == 0) {
+            // 所有门禁都失败，返回 -1 表示"无法评估"
+            return -1;
+        }
+        return (int) (weightedSum / totalWeight);
     }
 
     /**
      * 确定质量等级
      */
     private QualityLevel determineQualityLevel(int score) {
+        // 【根因修复】-1 表示"分析失败"，无法判定等级
+        if (score < 0) return QualityLevel.CRITICAL;
         if (score >= 90) return QualityLevel.EXCELLENT;
         if (score >= 75) return QualityLevel.GOOD;
         if (score >= 60) return QualityLevel.ACCEPTABLE;

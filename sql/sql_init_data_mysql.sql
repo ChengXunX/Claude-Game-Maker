@@ -1320,17 +1320,21 @@ INSERT IGNORE INTO permission_definitions (permission_key, name, description, ca
 INSERT IGNORE INTO permission_definitions (permission_key, name, description, category, enabled, `system`, sort_order) VALUES
 ('PERM_game:verify:view', '验证结果查看', '查看验证结果', '游戏', 1, 1, 92);
 
+-- G8 新增：游戏视觉验证权限
+INSERT IGNORE INTO permission_definitions (permission_key, name, description, category, enabled, `system`, sort_order) VALUES
+('PERM_game:visual:view', '游戏视觉验证', '查看游戏截图和视觉分析结果', '游戏', 1, 1, 93);
+
 -- admin 角色分配所有权限
 INSERT IGNORE INTO role_permissions (role_id, permission) VALUES
-(1, 'game:verify'), (1, 'game:preview'), (1, 'game:verify:view');
+(1, 'game:verify'), (1, 'game:preview'), (1, 'game:verify:view'), (1, 'game:visual:view');
 
 -- developer 角色分配验证和查看权限
 INSERT IGNORE INTO role_permissions (role_id, permission) VALUES
-(3, 'game:verify'), (3, 'game:verify:view');
+(3, 'game:verify'), (3, 'game:verify:view'), (3, 'game:visual:view');
 
 -- PROJECT_MANAGER 角色分配验证和预览权限
 INSERT IGNORE INTO role_permissions (role_id, permission) VALUES
-(2, 'game:verify'), (2, 'game:preview'), (2, 'game:verify:view');
+(2, 'game:verify'), (2, 'game:preview'), (2, 'game:verify:view'), (2, 'game:visual:view');
 
 -- ============================================
 -- MySQL 初始化数据完成

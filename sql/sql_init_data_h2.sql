@@ -1436,6 +1436,9 @@ INSERT INTO role_permissions (role_id, permission)
 SELECT id, 'game:preview' FROM roles WHERE name = 'ADMIN';
 INSERT INTO role_permissions (role_id, permission)
 SELECT id, 'game:verify:view' FROM roles WHERE name = 'ADMIN';
+-- G8 新增
+INSERT INTO role_permissions (role_id, permission)
+SELECT id, 'game:visual:view' FROM roles WHERE name = 'ADMIN';
 
 INSERT INTO role_permissions (role_id, permission)
 SELECT id, 'game:verify' FROM roles WHERE name = 'PROJECT_MANAGER';
@@ -1443,11 +1446,17 @@ INSERT INTO role_permissions (role_id, permission)
 SELECT id, 'game:preview' FROM roles WHERE name = 'PROJECT_MANAGER';
 INSERT INTO role_permissions (role_id, permission)
 SELECT id, 'game:verify:view' FROM roles WHERE name = 'PROJECT_MANAGER';
+-- G8 新增
+INSERT INTO role_permissions (role_id, permission)
+SELECT id, 'game:visual:view' FROM roles WHERE name = 'PROJECT_MANAGER';
 
 INSERT INTO role_permissions (role_id, permission)
 SELECT id, 'game:verify' FROM roles WHERE name = 'DEVELOPER';
 INSERT INTO role_permissions (role_id, permission)
 SELECT id, 'game:verify:view' FROM roles WHERE name = 'DEVELOPER';
+-- G8 新增
+INSERT INTO role_permissions (role_id, permission)
+SELECT id, 'game:visual:view' FROM roles WHERE name = 'DEVELOPER';
 
 -- ============================================
 -- 11. Agent 预设数据（含角色提示词）

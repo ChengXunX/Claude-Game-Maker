@@ -620,7 +620,18 @@ export const gameVerifyApi = {
   // 启动游戏预览
   startPreview: (projectId, projectDir, port) => api.post(`/game-verify/projects/${projectId}/preview/start`, null, { params: { projectDir, port } }),
   // 停止游戏预览
-  stopPreview: (projectId) => api.post(`/game-verify/projects/${projectId}/preview/stop`)
+  stopPreview: (projectId) => api.post(`/game-verify/projects/${projectId}/preview/stop`),
+  // ===== G8 新增：真实运行+截图验证 API =====
+  // 获取项目截图列表（含视觉分析评分）
+  getScreenshots: (projectId) => api.get(`/game-verify/projects/${projectId}/screenshots`),
+  // 查看单张截图（返回图片二进制）
+  viewScreenshot: (path) => api.get(`/game-verify/screenshots/view`, { params: { path }, responseType: 'blob' }),
+  // 截图游戏（一键启动+截图）
+  screenshotGame: (params) => api.post('/game-verify/screenshot', params, { timeout: 120000 }),
+  // AI 视觉分析截图
+  analyzeScreenshot: (params) => api.post('/game-verify/analyze-screenshot', params, { timeout: 120000 }),
+  // 完整验证（运行+截图+视觉分析）
+  verifyWithScreenshot: (params) => api.post('/game-verify/verify-with-screenshot', params, { timeout: 180000 })
 }
 
 // ===== 项目Agent配置 API =====

@@ -324,7 +324,7 @@ CREATE TABLE IF NOT EXISTS `agent_presets` (
 /*!50503 SET character_set_client = utf8mb4 */;
 CREATE TABLE IF NOT EXISTS `alert_records` (
   `id` bigint NOT NULL AUTO_INCREMENT,
-  `rule_id` bigint NOT NULL,
+  `rule_id` bigint NULL COMMENT '关联的告警规则ID，允许NULL用于非规则触发的告警',
   `agent_id` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `agent_name` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `project_id` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
@@ -1793,7 +1793,12 @@ INSERT IGNORE INTO `system_constants` (`id`, `constant_key`, `display_name`, `de
 (40,'context.compact-token-threshold','Token压缩触发阈值','会话累计Token超过此值时自动触发上下文压缩','80000','80000','int','performance','tokens',10000,500000,0,1,'2026-06-11 12:00:00','2026-06-11 12:00:00'),
 (41,'agent.token-alert-per-call','单次调用Token告警阈值','单次AI调用Token超过此值时记录告警日志','10000','10000','int','agent','tokens',1000,500000,0,1,'2026-06-11 12:00:00','2026-06-11 12:00:00'),
 (42,'context.recovery-max-length','上下文恢复最大长度','上下文恢复Prompt最大字符数，超出部分截断','3000','3000','int','performance','字符',500,10000,0,1,'2026-06-11 12:00:00','2026-06-11 12:00:00'),
-(43,'context.collaboration-max-length','协作上下文最大长度','注入到Agent Prompt中的协作上下文最大字符数','2000','2000','int','performance','字符',500,5000,0,1,'2026-06-11 12:00:00','2026-06-11 12:00:00');
+(43,'context.collaboration-max-length','协作上下文最大长度','注入到Agent Prompt中的协作上下文最大字符数','2000','2000','int','performance','字符',500,5000,0,1,'2026-06-11 12:00:00','2026-06-11 12:00:00'),
+-- V49: 质量评分失败分离 + 硬上限（2026-07-06）
+(44,'quality.iteration.max-fail-count','质量改进硬上限','同一里程碑验证失败超过此值时停止自动改进，升级到管理员','3','3','int','quality','次',1,10,1,'2026-07-06 00:00:00','2026-07-06 00:00:00'),
+(45,'quality.iteration.cooldown-minutes','质量改进冷却时间','同一里程碑两次自动改进迭代之间的最小间隔','30','30','int','quality','分钟',5,1440,1,'2026-07-06 00:00:00','2026-07-06 00:00:00'),
+(46,'quality.score.analysis-failed-marker','分析失败标记分数','当 AI/工具分析失败时使用的标记分数（区分失败与低分）','-1','-1','int','quality','分',-1,-1,1,'2026-07-06 00:00:00','2026-07-06 00:00:00'),
+(47,'quality.gate.low-score-threshold','质量门禁低分阈值','AI 质量评分低于此值时触发改进迭代','60','60','int','quality','分',0,100,1,'2026-07-06 00:00:00','2026-07-06 00:00:00');
 
 -- 表: notification_templates
 INSERT IGNORE INTO `notification_templates` (`id`, `template_code`, `template_name`, `channel`, `category`, `subject`, `content`, `description`, `enabled`, `system_builtin`, `created_at`, `updated_at`) VALUES (1,'TASK_FEISHU','任务飞书模板','FEISHU','TASK','任务通知','**任务通知**\n\n任务：${taskTitle}\n状态：${content}\n时间：${time}','用于发送任务相关飞书通知',1,1,'2026-06-04 18:38:31','2026-06-04 18:38:31'),(2,'TASK_SYSTEM','任务站内通知模板','SYSTEM','TASK','任务通知：${taskTitle}','任务状态：${content}','用于发送任务站内通知',1,1,'2026-06-04 18:38:31','2026-06-04 18:38:31'),(3,'AGENT_FEISHU','Agent飞书模板','FEISHU','AGENT','Agent通知','**Agent通知**\n\nAgent：${agentName}\n内容：${content}\n时间：${time}','用于发送Agent相关飞书通知',1,1,'2026-06-04 18:38:31','2026-06-04 18:38:31'),(4,'AGENT_SYSTEM','Agent站内通知模板','SYSTEM','AGENT','Agent通知：${agentName}','通知内容：${content}','用于发送Agent站内通知',1,1,'2026-06-04 18:38:31','2026-06-04 18:38:31'),(5,'RECOVERY_FEISHU','恢复通知飞书模板','FEISHU','ALERT','告警恢复','**告警恢复**\n\n规则：${ruleName}\n当前值：${triggerValue}\n时间：${time}','用于发送告警恢复飞书通知',1,1,'2026-06-04 18:38:31','2026-06-04 18:38:31'),(6,'RECOVERY_DINGTALK','恢复通知钉钉模板','DINGTALK','ALERT','告警恢复','### 告警恢复\n\n**规则名称**：${ruleName}\n**当前值**：${triggerValue}\n**恢复时间**：${time}\n\n告警已恢复，系统运行正常。','用于发送告警恢复钉钉通知',1,1,'2026-06-04 18:38:31','2026-06-04 18:38:31'),(7,'TASK_DINGTALK','任务钉钉模板','DINGTALK','TASK','任务通知','### 任务通知\n\n**任务标题**：${taskTitle}\n**任务状态**：${content}\n**通知时间**：${time}','用于发送任务钉钉通知',1,1,'2026-06-04 18:38:31','2026-06-04 18:38:31'),(8,'AGENT_DINGTALK','Agent钉钉模板','DINGTALK','AGENT','Agent通知','### Agent通知\n\n**Agent名称**：${agentName}\n**通知内容**：${content}\n**通知时间**：${time}','用于发送Agent钉钉通知',1,1,'2026-06-04 18:38:31','2026-06-04 18:38:31'),(9,'ALERT_SYSTEM','站内告警通知','SYSTEM','ALERT','[${priorityDesc}] 告警: ${ruleName}','监控告警已触发\n\n规则：${ruleName}\n级别：${priorityDesc}\n当前值：${triggerValue}\n阈值：${thresholdValue}\n时间：${time}',NULL,1,1,'2026-06-06 12:31:00','2026-06-06 12:31:00'),(10,'ALERT_EMAIL','邮件告警通知','EMAIL','ALERT','[${priorityDesc}] 告警: ${ruleName}','<h2>监控告警通知</h2><p><b>规则：</b>${ruleName}</p><p><b>级别：</b>${priorityDesc}</p><p><b>当前值：</b>${triggerValue}</p><p><b>阈值：</b>${thresholdValue}</p><p><b>时间：</b>${time}</p>',NULL,1,1,'2026-06-06 12:31:00','2026-06-06 12:31:00'),(11,'ALERT_FEISHU','飞书告警通知','FEISHU','ALERT','[${priorityDesc}] 告警: ${ruleName}','**监控告警通知**\n\n- 规则：${ruleName}\n- 级别：${priorityDesc}\n- 当前值：${triggerValue}\n- 阈值：${thresholdValue}\n- 时间：${time}',NULL,1,1,'2026-06-06 12:31:00','2026-06-06 12:31:00'),(12,'ALERT_DINGTALK','钉钉告警通知','DINGTALK','ALERT','[${priorityDesc}] 告警: ${ruleName}','### 监控告警通知\n\n- 规则：${ruleName}\n- 级别：${priorityDesc}\n- 当前值：${triggerValue}\n- 阈值：${thresholdValue}\n- 时间：${time}',NULL,1,1,'2026-06-06 12:31:00','2026-06-06 12:31:00'),(13,'RECOVERY_SYSTEM','站内告警恢复','SYSTEM','ALERT','告警恢复: ${ruleName}','告警已恢复\n\n规则：${ruleName}\n当前值：${triggerValue}\n时间：${time}',NULL,1,1,'2026-06-06 12:31:00','2026-06-06 12:31:00'),(14,'RECOVERY_EMAIL','邮件告警恢复','EMAIL','ALERT','告警恢复: ${ruleName}','<h2>告警恢复通知</h2><p><b>规则：</b>${ruleName}</p><p><b>当前值：</b>${triggerValue}</p><p><b>时间：</b>${time}</p>',NULL,1,1,'2026-06-06 12:31:00','2026-06-06 12:31:00'),(15,'TASK_EMAIL','邮件任务通知','EMAIL','TASK','任务通知: ${taskTitle}','<h2>任务通知</h2><p><b>任务：</b>${taskTitle}</p><p><b>结果：</b>${taskResult}</p><p><b>时间：</b>${time}</p>',NULL,1,1,'2026-06-06 12:31:00','2026-06-06 12:31:00'),(16,'AGENT_EMAIL','邮件Agent通知','EMAIL','AGENT','Agent通知: ${agentName}','<h2>Agent通知</h2><p><b>Agent：</b>${agentName}</p><p>${content}</p><p><b>时间：</b>${time}</p>',NULL,1,1,'2026-06-06 12:31:00','2026-06-06 12:31:00'),(17,'APPROVAL_SYSTEM','站内审批通知','SYSTEM','SYSTEM','审批通知: ${title}','${content}\n时间：${time}',NULL,1,1,'2026-06-06 12:31:00','2026-06-06 12:31:00'),(18,'APPROVAL_EMAIL','邮件审批通知','EMAIL','SYSTEM','审批通知: ${title}','<h2>审批通知</h2><p>${content}</p><p><b>时间：</b>${time}</p>',NULL,1,1,'2026-06-06 12:31:00','2026-06-06 12:31:00'),(19,'PERMISSION_SYSTEM','站内权限通知','SYSTEM','SYSTEM','权限通知: ${title}','${content}\n时间：${time}',NULL,1,1,'2026-06-06 12:31:00','2026-06-06 12:31:00'),(20,'PERMISSION_EMAIL','邮件权限通知','EMAIL','SYSTEM','权限通知: ${title}','<h2>权限通知</h2><p>${content}</p><p><b>时间：</b>${time}</p>',NULL,1,1,'2026-06-06 12:31:00','2026-06-06 12:31:00'),(21,'SYSTEM_MAINTENANCE_SYSTEM','站内系统维护','SYSTEM','SYSTEM','系统维护: ${title}','${content}\n时间：${time}',NULL,1,1,'2026-06-06 12:31:00','2026-06-06 12:31:00'),(22,'SYSTEM_MAINTENANCE_EMAIL','邮件系统维护','EMAIL','SYSTEM','系统维护: ${title}','<h2>系统维护通知</h2><p>${content}</p><p><b>时间：</b>${time}</p>',NULL,1,1,'2026-06-06 12:31:00','2026-06-06 12:31:00'),(23,'TOKEN_EXHAUSTED_SYSTEM','站内Token耗尽','SYSTEM','SYSTEM','Token 耗尽警告','API Token 配额不足，请及时补充。\n时间：${time}',NULL,1,1,'2026-06-06 12:31:00','2026-06-06 12:31:00'),(24,'TOKEN_EXHAUSTED_EMAIL','邮件Token耗尽','EMAIL','SYSTEM','Token 耗尽警告','<h2>Token 耗尽警告</h2><p>API Token 配额不足，请及时补充。</p><p><b>时间：</b>${time}</p>',NULL,1,1,'2026-06-06 12:31:00','2026-06-06 12:31:00'),(25,'PROJECT_SYSTEM','站内项目通知','SYSTEM','SYSTEM','项目通知: ${projectName}','${content}\n项目：${projectName}\n时间：${time}',NULL,1,1,'2026-06-06 12:31:00','2026-06-06 12:31:00'),(26,'PROJECT_EMAIL','邮件项目通知','EMAIL','SYSTEM','项目通知: ${projectName}','<h2>项目通知</h2><p><b>项目：</b>${projectName}</p><p>${content}</p><p><b>时间：</b>${time}</p>',NULL,1,1,'2026-06-06 12:31:00','2026-06-06 12:31:00'),
@@ -1997,4 +2002,104 @@ CREATE TABLE IF NOT EXISTS `project_discussion_messages` (
     PRIMARY KEY (`id`),
     KEY `idx_pdm_discussion` (`discussion_id`),
     KEY `idx_pdm_created` (`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ===== G8: 游戏截图与视觉分析（同步 V48） =====
+
+-- 游戏验证记录表
+CREATE TABLE IF NOT EXISTS `game_verify_records` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `project_id` VARCHAR(36) NOT NULL,
+    `milestone_id` VARCHAR(36),
+    `verify_type` VARCHAR(20) NOT NULL,
+    `overall_score` INT DEFAULT 0,
+    `structural_passed` TINYINT(1) DEFAULT 0,
+    `build_passed` TINYINT(1) DEFAULT 0,
+    `build_type` VARCHAR(20),
+    `build_duration_ms` BIGINT DEFAULT 0,
+    `build_output` TEXT,
+    `runtime_passed` TINYINT(1) DEFAULT 0,
+    `runtime_port` INT,
+    `runtime_duration_ms` BIGINT DEFAULT 0,
+    `runtime_output` TEXT,
+    `console_errors` TEXT,
+    `resource_errors` TEXT,
+    `quality_score` INT DEFAULT 0,
+    `runnable_score` INT DEFAULT 0,
+    `playable_score` INT DEFAULT 0,
+    `completeness_score` INT DEFAULT 0,
+    `uiux_score` INT DEFAULT 0,
+    `code_quality_score` INT DEFAULT 0,
+    `quality_summary` TEXT,
+    `quality_issues` TEXT,
+    `quality_suggestions` TEXT,
+    `raw_ai_response` TEXT,
+    `overall_passed` TINYINT(1) DEFAULT 0,
+    -- G8 新增
+    `screenshots_json` TEXT,
+    `visual_score` INT DEFAULT 0,
+    `render_health_score` INT DEFAULT 0,
+    `visual_playable_score` INT DEFAULT 0,
+    `visual_uiux_score` INT DEFAULT 0,
+    `visual_summary` TEXT,
+    `visual_issues_json` TEXT,
+    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_gvr_project` (`project_id`),
+    KEY `idx_gvr_milestone` (`milestone_id`),
+    KEY `idx_gvr_created` (`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 游戏截图记录表
+CREATE TABLE IF NOT EXISTS `game_screenshots` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `project_id` VARCHAR(36) NOT NULL,
+    `verify_record_id` BIGINT,
+    `file_path` VARCHAR(500) NOT NULL,
+    `file_name` VARCHAR(255),
+    `file_size_kb` INT DEFAULT 0,
+    `frame_index` INT DEFAULT 0,
+    `captured_at` TIMESTAMP NOT NULL,
+    `description` VARCHAR(500),
+    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_gs_project` (`project_id`),
+    KEY `idx_gs_verify_record` (`verify_record_id`),
+    KEY `idx_gs_captured` (`captured_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 游戏验证结果表（QUICK 验证，遗留表）
+CREATE TABLE IF NOT EXISTS `game_verify_results` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `project_id` VARCHAR(36) NOT NULL,
+    `project_name` VARCHAR(200),
+    `success` TINYINT(1) DEFAULT 0,
+    `message` TEXT,
+    `error` TEXT,
+    `warnings_json` TEXT,
+    `verified_at` TIMESTAMP NOT NULL,
+    `verify_type` VARCHAR(20) DEFAULT 'QUICK',
+    `overall_score` INT DEFAULT 0,
+    `runnable_score` INT DEFAULT 0,
+    `playable_score` INT DEFAULT 0,
+    `completeness_score` INT DEFAULT 0,
+    `uiux_score` INT DEFAULT 0,
+    `code_quality_score` INT DEFAULT 0,
+    `summary` TEXT,
+    `strengths_json` TEXT,
+    `issues_json` TEXT,
+    `suggestions_json` TEXT,
+    -- G8 新增
+    `screenshots_json` TEXT,
+    `render_health_score` INT DEFAULT 0,
+    `visual_playable_score` INT DEFAULT 0,
+    `visual_uiux_score` INT DEFAULT 0,
+    `visual_score` INT DEFAULT 0,
+    `visual_summary` TEXT,
+    `visual_issues_json` TEXT,
+    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_gvr2_project` (`project_id`),
+    KEY `idx_gvr2_type` (`verify_type`),
+    KEY `idx_gvr2_verified` (`verified_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

@@ -279,13 +279,27 @@ stop_backend
 cd "$PROJECT_DIR"
 
 # 以真实用户运行后端（Claude CLI 禁止 root 使用 --dangerously-skip-permissions）
+#
+# JVM 内存调优（G8 后）：
+# - 堆内存 8g：保持不变，应用对象主要在堆
+# - Metaspace 512m：原 2g 过大，Spring Boot 典型值 256-512m 足够
+# - CodeCache 256m：JIT 编译代码缓存
+# - DirectMemory 512m：Netty 直接缓冲区
+# - G1GC：大堆友好，暂停时间可控
 if [ "$(id -u)" -eq 0 ]; then
     # $SUDO_USER = 执行 sudo 的真实用户；无 sudo 时用当前用户
     DEPLOY_USER="${SUDO_USER:-$(id -un)}"
     nohup su -s /bin/bash "$DEPLOY_USER" -c "
         cd '$PROJECT_DIR' && \
         set -a && source .env && set +a && \
-        java -jar -Xms8g -Xmx8g -XX:MaxMetaspaceSize=2g target/game-maker-1.0-SNAPSHOT.jar \
+        java -jar \
+            -Xms8g -Xmx8g \
+            -XX:MaxMetaspaceSize=512m \
+            -XX:ReservedCodeCacheSize=256m \
+            -XX:MaxDirectMemorySize=512m \
+            -XX:+UseG1GC \
+            -XX:MaxGCPauseMillis=200 \
+            target/game-maker-1.0-SNAPSHOT.jar \
             --spring.profiles.active=prod \
             --server.port=$BACKEND_PORT \
             --server.address=127.0.0.1 \
@@ -295,7 +309,14 @@ else
     set -a
     source .env
     set +a
-    nohup java -jar -Xms8g -Xmx8g -XX:MaxMetaspaceSize=2g target/game-maker-1.0-SNAPSHOT.jar \
+    nohup java -jar \
+        -Xms8g -Xmx8g \
+        -XX:MaxMetaspaceSize=512m \
+        -XX:ReservedCodeCacheSize=256m \
+        -XX:MaxDirectMemorySize=512m \
+        -XX:+UseG1GC \
+        -XX:MaxGCPauseMillis=200 \
+        target/game-maker-1.0-SNAPSHOT.jar \
         --spring.profiles.active=prod \
         --server.port=$BACKEND_PORT \
         --server.address=127.0.0.1 \

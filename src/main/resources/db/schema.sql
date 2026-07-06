@@ -130,9 +130,10 @@ CREATE TABLE IF NOT EXISTS alert_rules (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 告警记录表
+-- 注意：rule_id 允许 NULL，因为 saveAlert() 用于 Agent 风险预警等不需要规则匹配的场景
 CREATE TABLE IF NOT EXISTS alert_records (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    rule_id BIGINT NOT NULL,
+    rule_id BIGINT NULL COMMENT '关联的告警规则ID，允许NULL用于非规则触发的告警',
     agent_id VARCHAR(50),
     agent_name VARCHAR(100),
     project_id VARCHAR(100),
@@ -1208,3 +1209,103 @@ CREATE TABLE IF NOT EXISTS `agent_tool_permissions` (
     PRIMARY KEY (`id`),
     KEY `idx_agent_id` (`agent_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ===== G8: 游戏截图与视觉分析（同步 V48） =====
+
+-- 游戏验证记录表（V46 定义，同步补 G8 视觉分析字段）
+CREATE TABLE IF NOT EXISTS `game_verify_records` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `project_id` VARCHAR(36) NOT NULL,
+    `milestone_id` VARCHAR(36),
+    `verify_type` VARCHAR(20) NOT NULL,
+    `overall_score` INT DEFAULT 0,
+    `structural_passed` TINYINT(1) DEFAULT 0,
+    `build_passed` TINYINT(1) DEFAULT 0,
+    `build_type` VARCHAR(20),
+    `build_duration_ms` BIGINT DEFAULT 0,
+    `build_output` TEXT,
+    `runtime_passed` TINYINT(1) DEFAULT 0,
+    `runtime_port` INT,
+    `runtime_duration_ms` BIGINT DEFAULT 0,
+    `runtime_output` TEXT,
+    `console_errors` TEXT,
+    `resource_errors` TEXT,
+    `quality_score` INT DEFAULT 0,
+    `runnable_score` INT DEFAULT 0,
+    `playable_score` INT DEFAULT 0,
+    `completeness_score` INT DEFAULT 0,
+    `uiux_score` INT DEFAULT 0,
+    `code_quality_score` INT DEFAULT 0,
+    `quality_summary` TEXT,
+    `quality_issues` TEXT,
+    `quality_suggestions` TEXT,
+    `raw_ai_response` TEXT,
+    `overall_passed` TINYINT(1) DEFAULT 0,
+    -- G8 新增
+    `screenshots_json` TEXT COMMENT '截图文件路径列表(JSON)',
+    `visual_score` INT DEFAULT 0 COMMENT 'AI视觉综合评分',
+    `render_health_score` INT DEFAULT 0 COMMENT '渲染健康度',
+    `visual_playable_score` INT DEFAULT 0 COMMENT '视觉可玩性',
+    `visual_uiux_score` INT DEFAULT 0 COMMENT '视觉UI/UX',
+    `visual_summary` TEXT COMMENT '视觉分析摘要',
+    `visual_issues_json` TEXT COMMENT '视觉问题列表(JSON)',
+    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_gvr_project` (`project_id`),
+    KEY `idx_gvr_milestone` (`milestone_id`),
+    KEY `idx_gvr_created` (`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='游戏验证记录表';
+
+-- 游戏截图记录表（G8 新增）
+CREATE TABLE IF NOT EXISTS `game_screenshots` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `project_id` VARCHAR(36) NOT NULL,
+    `verify_record_id` BIGINT,
+    `file_path` VARCHAR(500) NOT NULL,
+    `file_name` VARCHAR(255),
+    `file_size_kb` INT DEFAULT 0,
+    `frame_index` INT DEFAULT 0,
+    `captured_at` TIMESTAMP NOT NULL,
+    `description` VARCHAR(500),
+    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_gs_project` (`project_id`),
+    KEY `idx_gs_verify_record` (`verify_record_id`),
+    KEY `idx_gs_captured` (`captured_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='游戏截图记录表';
+
+-- 游戏验证结果表（QUICK 验证，遗留表，G8 补全）
+CREATE TABLE IF NOT EXISTS `game_verify_results` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `project_id` VARCHAR(36) NOT NULL,
+    `project_name` VARCHAR(200),
+    `success` TINYINT(1) DEFAULT 0,
+    `message` TEXT,
+    `error` TEXT,
+    `warnings_json` TEXT,
+    `verified_at` TIMESTAMP NOT NULL,
+    `verify_type` VARCHAR(20) DEFAULT 'QUICK',
+    `overall_score` INT DEFAULT 0,
+    `runnable_score` INT DEFAULT 0,
+    `playable_score` INT DEFAULT 0,
+    `completeness_score` INT DEFAULT 0,
+    `uiux_score` INT DEFAULT 0,
+    `code_quality_score` INT DEFAULT 0,
+    `summary` TEXT,
+    `strengths_json` TEXT,
+    `issues_json` TEXT,
+    `suggestions_json` TEXT,
+    -- G8 新增
+    `screenshots_json` TEXT,
+    `render_health_score` INT DEFAULT 0,
+    `visual_playable_score` INT DEFAULT 0,
+    `visual_uiux_score` INT DEFAULT 0,
+    `visual_score` INT DEFAULT 0,
+    `visual_summary` TEXT,
+    `visual_issues_json` TEXT,
+    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_gvr2_project` (`project_id`),
+    KEY `idx_gvr2_type` (`verify_type`),
+    KEY `idx_gvr2_verified` (`verified_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='游戏验证结果表';

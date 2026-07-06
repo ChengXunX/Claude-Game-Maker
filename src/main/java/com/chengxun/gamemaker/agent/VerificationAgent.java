@@ -9,6 +9,7 @@ import com.chengxun.gamemaker.web.entity.AgentCapability;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.File;
 import java.time.LocalDateTime;
 import java.util.*;
 
@@ -51,6 +52,9 @@ public class VerificationAgent extends BaseAgent {
 
     /** 游戏设计审查服务 */
     private GameDesignReviewService gameDesignReviewService;
+
+    /** 截图与视觉分析服务（G8 新增） */
+    private GameScreenshotService screenshotService;
 
     /** 事件总线 */
     private EventBus eventBus;
@@ -488,6 +492,13 @@ public class VerificationAgent extends BaseAgent {
         this.gameDesignReviewService = gameDesignReviewService;
     }
 
+    /**
+     * 注入截图与视觉分析服务（G8 新增）
+     */
+    public void setScreenshotService(GameScreenshotService screenshotService) {
+        this.screenshotService = screenshotService;
+    }
+
     public void setEventBus(EventBus eventBus) {
         this.eventBus = eventBus;
     }
@@ -573,7 +584,7 @@ public class VerificationAgent extends BaseAgent {
 
     /**
      * 执行完整验证
-     * 包括结构验证、代码质量检查、设计审查等
+     * 包括结构验证、代码质量检查、设计审查、约束检查、里程碑验证、真实运行+截图
      */
     public void performFullVerification() {
         log.info("开始完整验证: project={}", getProjectId());
@@ -596,15 +607,117 @@ public class VerificationAgent extends BaseAgent {
         // 5. 验证所有里程碑
         verifyAllMilestones();
 
+        // 6. G8 新增：真实运行+截图验证（核心改进点）
+        // 在所有静态验证完成后，对项目做"真跑一遍+视觉确认"
+        verifyRuntimeWithScreenshot();
+
         lastFullVerificationTime = LocalDateTime.now();
 
-        // 6. 发送验证摘要给ProducerAgent
+        // 7. 发送验证摘要给ProducerAgent
         sendVerificationSummaryToProducer();
 
-        // 7. 发送验证通知
+        // 8. 发送验证通知
         sendVerificationNotification();
 
         log.info("完整验证完成: project={}", getProjectId());
+    }
+
+    /**
+     * G8 新增：真实运行+截图验证
+     *
+     * <p>这是从"纸上谈兵"到"眼见为实"的关键升级。流程：</p>
+     * <ol>
+     *   <li>调用 {@link GameRuntimeVerifier#verifyFull} 执行完整验证</li>
+     *   <li>该方法内部会自动：启动游戏进程 → 等待就绪 → 截图多帧 → Claude vision 视觉分析</li>
+     *   <li>将视觉分析结果纳入 verificationResults，供 ProducerAgent 决策参考</li>
+     * </ol>
+     *
+     * <p>触发条件（避免对空目录或无构建配置文件的项目浪费资源）：</p>
+     * <ul>
+     *   <li>项目必须存在 workDir</li>
+     *   <li>工作目录中至少存在一种源码文件</li>
+     * </ul>
+     */
+    private void verifyRuntimeWithScreenshot() {
+        if (currentProject == null) {
+            log.debug("无当前项目，跳过运行+截图验证");
+            return;
+        }
+        String workDir = currentProject.getWorkDir();
+        if (workDir == null || workDir.isEmpty()) {
+            log.debug("项目无 workDir，跳过运行+截图验证");
+            return;
+        }
+        File dir = new File(workDir);
+        if (!dir.exists() || !dir.isDirectory()) {
+            log.debug("项目工作目录不存在: {}", workDir);
+            return;
+        }
+        // 简单判定：至少有 1 个源码文件才跑
+        File[] files = dir.listFiles();
+        if (files == null || files.length == 0) {
+            log.debug("项目目录为空，跳过运行+截图验证");
+            return;
+        }
+
+        log.info("G8 真实运行+截图验证: project={}, workDir={}", getProjectId(), workDir);
+
+        try {
+            long startMs = System.currentTimeMillis();
+            GameRuntimeVerifier.FullVerifyResult result = gameRuntimeVerifier.verifyFull(
+                workDir, currentProject.getName(), currentProject.getGoal());
+            long costMs = System.currentTimeMillis() - startMs;
+
+            // 构造验证消息
+            StringBuilder msg = new StringBuilder();
+            msg.append(String.format("综合评分 %d/100（结构/构建/运行/视觉/AI质量 5 维度），耗时 %dms",
+                result.getOverallScore(), costMs));
+
+            List<String> warnings = new ArrayList<>();
+            if (result.getRuntimeResult() != null) {
+                int screenshotCount = result.getRuntimeResult().getScreenshotPaths().size();
+                msg.append("，截图 ").append(screenshotCount).append(" 帧");
+                if (result.getRuntimeResult().getVisualResult() != null) {
+                    GameScreenshotService.VisualAnalysisResult va = result.getRuntimeResult().getVisualResult();
+                    msg.append(String.format("（renderHealth=%d, playable=%d, uiux=%d, visual=%d）",
+                        va.getRenderHealthScore(), va.getPlayableScore(),
+                        va.getUiuxScore(), va.getVisualScore()));
+                    if (va.getSummary() != null && !va.getSummary().isEmpty()) {
+                        msg.append("\n视觉摘要: ").append(va.getSummary());
+                    }
+                    if (va.getIssues() != null) {
+                        warnings.addAll(va.getIssues());
+                    }
+                }
+            }
+
+            VerificationResult vr = new VerificationResult(
+                "RUNTIME_SCREENSHOT", result.isOverallPassed(), msg.toString(), warnings);
+            verificationResults.put("RUNTIME_SCREENSHOT", vr);
+
+            // 视觉评分过低时主动添加督查问题
+            if (result.getRuntimeResult() != null
+                && result.getRuntimeResult().getVisualResult() != null
+                && result.getRuntimeResult().getVisualResult().isSuccess()) {
+                int visualScore = result.getRuntimeResult().getVisualResult().getVisualScore();
+                if (visualScore < 60 && !vr.isPassed()) {
+                    addSupervisionIssue("QUALITY_ISSUE", "HIGH", getProjectId(),
+                        "视觉验证评分低: " + visualScore + "/100，项目可能存在 UI/UX 缺陷",
+                        "建议查看截图并优化 UI 设计");
+                }
+            }
+
+            log.info("G8 真实运行+截图验证完成: project={}, score={}, passed={}, cost={}ms",
+                getProjectId(), result.getOverallScore(), result.isOverallPassed(), costMs);
+
+        } catch (Exception e) {
+            log.error("G8 真实运行+截图验证失败: {}", e.getMessage(), e);
+            VerificationResult vr = new VerificationResult(
+                "RUNTIME_SCREENSHOT", false,
+                "运行+截图验证异常: " + e.getMessage(),
+                List.of(e.getMessage()));
+            verificationResults.put("RUNTIME_SCREENSHOT", vr);
+        }
     }
 
     /**

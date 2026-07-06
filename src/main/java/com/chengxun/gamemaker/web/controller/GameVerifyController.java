@@ -6,6 +6,7 @@ import com.chengxun.gamemaker.service.BuildStrategyRegistry;
 import com.chengxun.gamemaker.service.GameAnalysisTaskService;
 import com.chengxun.gamemaker.service.GameDesignReviewService;
 import com.chengxun.gamemaker.service.GameRuntimeVerifier;
+import com.chengxun.gamemaker.service.GameScreenshotService;
 import com.chengxun.gamemaker.web.constants.PermissionConstants;
 import com.chengxun.gamemaker.web.entity.DesignReviewRecord;
 import com.chengxun.gamemaker.web.entity.GameVerifyResult;
@@ -26,6 +27,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.io.File;
 import java.util.*;
 
 /**
@@ -46,7 +48,7 @@ import java.util.*;
 @RestController
 @RequestMapping("/api/game-verify")
 @Tag(name = "游戏验证", description = "游戏项目验证、预览和设计审查")
-@PreAuthorize("hasAnyAuthority('PERM_" + PermissionConstants.GAME_VERIFY + "', 'PERM_" + PermissionConstants.GAME_VERIFY_VIEW + "', 'PERM_" + PermissionConstants.GAME_PREVIEW + "', 'PERM_projects:view', 'PERM_admin:manage', '*')")
+@PreAuthorize("hasAnyAuthority('PERM_" + PermissionConstants.GAME_VERIFY + "', 'PERM_" + PermissionConstants.GAME_VERIFY_VIEW + "', 'PERM_" + PermissionConstants.GAME_PREVIEW + "', 'PERM_" + PermissionConstants.GAME_VISUAL_VIEW + "', 'PERM_projects:view', 'PERM_admin:manage', '*')")
 public class GameVerifyController {
 
     private static final Logger log = LoggerFactory.getLogger(GameVerifyController.class);
@@ -74,6 +76,9 @@ public class GameVerifyController {
 
     @Autowired
     private com.chengxun.gamemaker.web.repository.DesignReviewRecordRepository designReviewRecordRepository;
+
+    @Autowired(required = false)
+    private GameScreenshotService screenshotService;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -154,7 +159,7 @@ public class GameVerifyController {
      * @param projectDir 项目目录路径
      * @return 完整验证结果
      */
-    @Operation(summary = "触发完整验证", description = "对游戏项目执行结构+构建+运行+质量分析的完整验证")
+    @Operation(summary = "触发完整验证", description = "对游戏项目执行结构+构建+运行+质量分析的完整验证（G8：包含真实运行+截图+AI视觉分析）")
     @PostMapping("/projects/{projectId}/verify")
     @PreAuthorize("hasAnyAuthority('PERM_" + PermissionConstants.GAME_VERIFY + "', 'PERM_projects:manage', 'PERM_admin:manage', '*')")
     public ResponseEntity<?> triggerFullVerify(@PathVariable String projectId,
@@ -177,12 +182,340 @@ public class GameVerifyController {
                 return ApiResponseUtil.error("项目目录未指定");
             }
 
-            GameRuntimeVerifier.FullVerifyResult result = gameRuntimeVerifier.verifyFull(projectDir, null, null);
+            // 获取项目元数据用于 AI 视觉分析
+            GameProject proj = projectManager.getProject(projectId);
+            String projectName = proj != null ? proj.getName() : null;
+            String projectGoal = proj != null ? proj.getGoal() : null;
+
+            GameRuntimeVerifier.FullVerifyResult result = gameRuntimeVerifier.verifyFull(
+                projectDir, projectName, projectGoal);
+
+            // G8 新增：持久化截图+视觉分析结果
+            try {
+                GameVerifyResult entity = new GameVerifyResult();
+                entity.setProjectId(projectId);
+                entity.setProjectName(projectName);
+                entity.setSuccess(result.isOverallPassed());
+                entity.setMessage("完整验证完成，综合评分: " + result.getOverallScore());
+                entity.setVerifyType("FULL");
+                entity.setVerifiedAt(LocalDateTime.now());
+                entity.setOverallScore(result.getOverallScore());
+
+                if (result.getQualityResult() != null) {
+                    entity.setRunnableScore(result.getQualityResult().getRunnableScore());
+                    entity.setPlayableScore(result.getQualityResult().getPlayableScore());
+                    entity.setCompletenessScore(result.getQualityResult().getCompletenessScore());
+                    entity.setUiuxScore(result.getQualityResult().getUiuxScore());
+                    entity.setCodeQualityScore(result.getQualityResult().getCodeQualityScore());
+                    entity.setSummary(result.getQualityResult().getSummary());
+                    try {
+                        if (result.getQualityResult().getStrengths() != null) {
+                            entity.setStrengthsJson(objectMapper.writeValueAsString(result.getQualityResult().getStrengths()));
+                        }
+                        if (result.getQualityResult().getIssues() != null) {
+                            entity.setIssuesJson(objectMapper.writeValueAsString(result.getQualityResult().getIssues()));
+                        }
+                        if (result.getQualityResult().getSuggestions() != null) {
+                            entity.setSuggestionsJson(objectMapper.writeValueAsString(result.getQualityResult().getSuggestions()));
+                        }
+                    } catch (JsonProcessingException e) {
+                        log.warn("序列化质量分析结果失败: {}", e.getMessage());
+                    }
+                }
+
+                // G8: 持久化截图和视觉分析
+                if (result.getRuntimeResult() != null) {
+                    if (result.getRuntimeResult().hasScreenshots()) {
+                        try {
+                            entity.setScreenshotsJson(objectMapper.writeValueAsString(
+                                result.getRuntimeResult().getScreenshotPaths()));
+                        } catch (JsonProcessingException e) {
+                            log.warn("序列化截图路径失败: {}", e.getMessage());
+                        }
+                    }
+                    if (result.getRuntimeResult().getVisualResult() != null) {
+                        GameScreenshotService.VisualAnalysisResult va = result.getRuntimeResult().getVisualResult();
+                        entity.setRenderHealthScore(va.getRenderHealthScore());
+                        entity.setVisualPlayableScore(va.getPlayableScore());
+                        entity.setVisualUiuxScore(va.getUiuxScore());
+                        entity.setVisualScore(va.getVisualScore());
+                        entity.setVisualSummary(va.getSummary());
+                        try {
+                            if (va.getIssues() != null) {
+                                entity.setVisualIssuesJson(objectMapper.writeValueAsString(va.getIssues()));
+                            }
+                        } catch (JsonProcessingException e) {
+                            log.warn("序列化视觉问题失败: {}", e.getMessage());
+                        }
+                    }
+                }
+
+                verifyResultRepository.save(entity);
+                log.info("完整验证结果已持久化: projectId={}, score={}, passed={}",
+                    projectId, result.getOverallScore(), result.isOverallPassed());
+            } catch (Exception e) {
+                log.warn("持久化验证结果失败（不影响返回）: {}", e.getMessage());
+            }
+
             return ApiResponseUtil.success("完整验证完成", result);
         } catch (Exception e) {
             log.error("完整验证失败: projectId={}", projectId, e);
             return ApiResponseUtil.error("验证失败: " + e.getMessage());
         }
+    }
+
+    /**
+     * 获取项目截图列表（G8 新增）
+     *
+     * <p>从最近一次完整验证结果中提取截图路径，供前端展示。</p>
+     */
+    @Operation(summary = "获取项目截图列表", description = "从最近验证结果中提取真实运行截图路径")
+    @GetMapping("/projects/{projectId}/screenshots")
+    @PreAuthorize("hasAnyAuthority('PERM_" + PermissionConstants.GAME_VERIFY_VIEW + "', 'PERM_projects:view', 'PERM_admin:manage', '*')")
+    public ResponseEntity<?> getProjectScreenshots(@PathVariable String projectId) {
+        Optional<GameVerifyResult> optional = verifyResultRepository
+            .findFirstByProjectIdAndVerifyTypeOrderByVerifiedAtDesc(projectId, "FULL");
+
+        if (optional.isEmpty()) {
+            return ApiResponseUtil.success("暂无验证结果", Map.of("hasScreenshots", false));
+        }
+
+        GameVerifyResult entity = optional.get();
+        List<String> screenshots = parseJsonList(entity.getScreenshotsJson());
+
+        Map<String, Object> response = new HashMap<>();
+        response.put("hasScreenshots", !screenshots.isEmpty());
+        response.put("screenshots", screenshots);
+        response.put("visualScore", entity.getVisualScore());
+        response.put("renderHealthScore", entity.getRenderHealthScore());
+        response.put("visualPlayableScore", entity.getVisualPlayableScore());
+        response.put("visualUiuxScore", entity.getVisualUiuxScore());
+        response.put("visualSummary", entity.getVisualSummary());
+        response.put("visualIssues", parseJsonList(entity.getVisualIssuesJson()));
+        response.put("verifiedAt", entity.getVerifiedAt() != null
+            ? entity.getVerifiedAt().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME) : null);
+
+        return ApiResponseUtil.success("查询成功", response);
+    }
+
+    /**
+     * 提供静态截图文件访问（G8 新增）
+     *
+     * <p>将文件系统中的截图通过 HTTP 提供给前端浏览器查看。</p>
+     */
+    @Operation(summary = "查看截图", description = "返回截图文件（图片）")
+    @GetMapping("/screenshots/view")
+    @PreAuthorize("hasAnyAuthority('PERM_" + PermissionConstants.GAME_VISUAL_VIEW + "', 'PERM_" + PermissionConstants.GAME_VERIFY_VIEW + "', 'PERM_projects:view', 'PERM_admin:manage', '*')")
+    public ResponseEntity<?> viewScreenshot(@RequestParam String path) {
+        if (path == null || path.isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "path 参数必填"));
+        }
+
+        File file = new File(path);
+        // 安全检查：防止路径穿越
+        try {
+            String canonical = file.getCanonicalPath();
+            String baseCanonical = new File("/home/chengxun/chengxun_game_maker/data/game-screenshots").getCanonicalPath();
+            if (!canonical.startsWith(baseCanonical)) {
+                return ResponseEntity.badRequest().body(Map.of("error", "非法路径"));
+            }
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("error", "路径解析失败"));
+        }
+
+        if (!file.exists() || !file.isFile()) {
+            return ResponseEntity.notFound().build();
+        }
+
+        try {
+            byte[] bytes = java.nio.file.Files.readAllBytes(file.toPath());
+            return ResponseEntity.ok()
+                .contentType(org.springframework.http.MediaType.IMAGE_PNG)
+                .body(bytes);
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError()
+                .body(Map.of("error", "读取失败: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * 截图游戏：对运行中的游戏进行多帧截图（G8 新增，AI 工具 screenshot_game 后端）
+     *
+     * <p>流程：启动游戏 → 等待就绪 → 截取 N 帧 → 返回截图路径列表</p>
+     */
+    @Operation(summary = "截图游戏真实运行画面", description = "启动游戏进程并截取多帧画面，输出截图文件路径列表")
+    @PostMapping("/screenshot")
+    @PreAuthorize("hasAnyAuthority('PERM_" + PermissionConstants.GAME_VERIFY + "', 'PERM_projects:manage', 'PERM_admin:manage', '*')")
+    public ResponseEntity<?> screenshotGame(@RequestBody Map<String, Object> body) {
+        log.info("截图游戏请求: {}", body);
+        try {
+            String projectId = (String) body.get("projectId");
+            String projectDir = (String) body.get("projectDir");
+            int frameCount = body.containsKey("frameCount")
+                ? ((Number) body.get("frameCount")).intValue() : 3;
+            int intervalMs = body.containsKey("intervalMs")
+                ? ((Number) body.get("intervalMs")).intValue() : 1500;
+
+            if (projectDir == null || projectDir.isEmpty()) {
+                return ApiResponseUtil.error("projectDir 必填");
+            }
+            if (screenshotService == null) {
+                return ApiResponseUtil.error("截图服务不可用");
+            }
+            if (!screenshotService.isChromeAvailable()) {
+                return ApiResponseUtil.error("Chrome 未安装，请安装 google-chrome-stable");
+            }
+            if (buildStrategyRegistry == null) {
+                return ApiResponseUtil.error("构建策略服务不可用");
+            }
+
+            // 自动分配端口并启动游戏
+            int port = findAvailablePort();
+            BuildStrategyRegistry.GameProcess gp = buildStrategyRegistry.startGame(projectDir, port);
+            try {
+                // 等待就绪
+                boolean ready = false;
+                for (int i = 0; i < 30; i++) {
+                    if (gp.isReady()) { ready = true; break; }
+                    Thread.sleep(1000);
+                }
+                if (!ready) {
+                    gp.stop();
+                    return ApiResponseUtil.error("游戏启动超时（30秒）");
+                }
+
+                // 截图
+                List<String> paths = screenshotService.screenshotMultiFrame(
+                    port, projectId != null ? projectId : "unknown", frameCount, intervalMs);
+
+                Map<String, Object> response = new HashMap<>();
+                response.put("success", true);
+                response.put("screenshots", paths);
+                response.put("frameCount", paths.size());
+                response.put("port", port);
+                response.put("message", "截图成功");
+
+                return ApiResponseUtil.success("截图完成", response);
+            } finally {
+                gp.stop();
+            }
+        } catch (Exception e) {
+            log.error("截图失败: {}", e.getMessage(), e);
+            return ApiResponseUtil.error("截图失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * AI 视觉分析（G8 新增，AI 工具 analyze_screenshot 后端）
+     */
+    @Operation(summary = "AI 视觉分析截图", description = "对游戏截图进行多模态 AI 视觉分析")
+    @PostMapping("/analyze-screenshot")
+    @PreAuthorize("hasAnyAuthority('PERM_" + PermissionConstants.GAME_VERIFY + "', 'PERM_" + PermissionConstants.GAME_VERIFY_VIEW + "', 'PERM_projects:view', 'PERM_admin:manage', '*')")
+    public ResponseEntity<?> analyzeScreenshot(@RequestBody Map<String, Object> body) {
+        try {
+            @SuppressWarnings("unchecked")
+            List<String> screenshotPaths = (List<String>) body.get("screenshotPaths");
+            String projectName = (String) body.get("projectName");
+            String projectGoal = (String) body.get("projectGoal");
+
+            if (screenshotPaths == null || screenshotPaths.isEmpty()) {
+                return ApiResponseUtil.error("screenshotPaths 必填且非空");
+            }
+            if (screenshotService == null) {
+                return ApiResponseUtil.error("截图服务不可用");
+            }
+
+            GameScreenshotService.VisualAnalysisResult result =
+                screenshotService.analyzeScreenshots(screenshotPaths, projectName, projectGoal);
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", result.isSuccess());
+            response.put("error", result.getError());
+            response.put("renderHealth", result.getRenderHealthScore());
+            response.put("playable", result.getPlayableScore());
+            response.put("uiux", result.getUiuxScore());
+            response.put("visual", result.getVisualScore());
+            response.put("summary", result.getSummary());
+            response.put("issues", result.getIssues());
+            response.put("strengths", result.getStrengths());
+            response.put("rawResponse", result.getRawResponse());
+
+            return ApiResponseUtil.success(result.isSuccess() ? "分析完成" : "分析失败", response);
+        } catch (Exception e) {
+            log.error("视觉分析失败: {}", e.getMessage(), e);
+            return ApiResponseUtil.error("分析失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 验证+截图+视觉分析 一体化接口（G8 新增，AI 工具 verify_game_with_screenshot 后端）
+     */
+    @Operation(summary = "运行+截图+视觉分析全流程", description = "一键完成：启动→截图→AI视觉分析→综合评分")
+    @PostMapping("/verify-with-screenshot")
+    @PreAuthorize("hasAnyAuthority('PERM_" + PermissionConstants.GAME_VERIFY + "', 'PERM_projects:manage', 'PERM_admin:manage', '*')")
+    public ResponseEntity<?> verifyWithScreenshot(@RequestBody Map<String, Object> body) {
+        try {
+            String projectId = (String) body.get("projectId");
+            String projectDir = (String) body.get("projectDir");
+            String projectName = (String) body.get("projectName");
+            String projectGoal = (String) body.get("projectGoal");
+
+            if (projectDir == null || projectDir.isEmpty()) {
+                return ApiResponseUtil.error("projectDir 必填");
+            }
+            if (gameRuntimeVerifier == null) {
+                return ApiResponseUtil.error("验证服务不可用");
+            }
+
+            // 直接调用 verifyFull()，它内部已集成截图和视觉分析
+            GameRuntimeVerifier.FullVerifyResult result = gameRuntimeVerifier.verifyFull(
+                projectDir, projectName, projectGoal);
+
+            // 构造包含截图信息的响应
+            Map<String, Object> data = new HashMap<>();
+            data.put("overallScore", result.getOverallScore());
+            data.put("overallPassed", result.isOverallPassed());
+            data.put("structuralPassed", result.getStructuralResult() != null && result.getStructuralResult().isSuccess());
+            data.put("buildPassed", result.getBuildResult() != null && result.getBuildResult().isSuccess());
+            data.put("runtimePassed", result.getRuntimeResult() != null && result.getRuntimeResult().isSuccess());
+
+            if (result.getRuntimeResult() != null) {
+                data.put("screenshots", result.getRuntimeResult().getScreenshotPaths());
+                GameScreenshotService.VisualAnalysisResult va = result.getRuntimeResult().getVisualResult();
+                if (va != null) {
+                    data.put("visualScore", va.getVisualScore());
+                    data.put("renderHealth", va.getRenderHealthScore());
+                    data.put("playable", va.getPlayableScore());
+                    data.put("uiux", va.getUiuxScore());
+                    data.put("visualSummary", va.getSummary());
+                    data.put("visualIssues", va.getIssues());
+                }
+            }
+
+            if (result.getQualityResult() != null) {
+                data.put("qualityScore", result.getQualityResult().getOverallScore());
+                data.put("qualitySummary", result.getQualityResult().getSummary());
+            }
+
+            return ApiResponseUtil.success("验证+截图+视觉分析完成", data);
+        } catch (Exception e) {
+            log.error("验证+截图失败: {}", e.getMessage(), e);
+            return ApiResponseUtil.error("失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 查找可用端口（18100-18199 范围）
+     */
+    private int findAvailablePort() {
+        for (int port = 18100; port < 18200; port++) {
+            try (var socket = new java.net.ServerSocket(port)) {
+                return port;
+            } catch (Exception e) {
+                // 端口被占用，尝试下一个
+            }
+        }
+        return 18100; // 兜底
     }
 
     /**

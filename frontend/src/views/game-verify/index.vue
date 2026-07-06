@@ -140,6 +140,25 @@
             <span v-else class="text-muted">-</span>
           </template>
         </el-table-column>
+        <!-- G8 新增：视觉验证（截图） -->
+        <el-table-column label="视觉验证" width="160">
+          <template #default="{ row }">
+            <template v-if="screenshotResults[row.id] && screenshotResults[row.id].hasScreenshots">
+              <el-tag
+                :type="getVisualScoreTagType(screenshotResults[row.id].visualScore)"
+                size="small"
+                class="clickable-tag"
+                @click="showScreenshots(row.id)"
+              >
+                {{ screenshotResults[row.id].visualScore || '-' }}分 · {{ screenshotResults[row.id].screenshots.length }}张
+              </el-tag>
+            </template>
+            <template v-else-if="screenshotLoading[row.id]">
+              <el-tag type="warning" size="small">截图中...</el-tag>
+            </template>
+            <span v-else class="text-muted">-</span>
+          </template>
+        </el-table-column>
         <el-table-column label="运行状态" width="140">
           <template #default="{ row }">
             <div v-if="row.running" class="running-status">
@@ -193,6 +212,15 @@
               @click="showAnalysisHistory(row.id)"
             >
               历史
+            </el-button>
+            <!-- G8 新增：截图+视觉分析按钮 -->
+            <el-button
+              type="primary"
+              size="small"
+              :loading="screenshotLoading[row.id]"
+              @click="handleScreenshot(row)"
+            >
+              真实运行+截图
             </el-button>
           </template>
         </el-table-column>
@@ -404,13 +432,83 @@
         </div>
       </template>
     </el-dialog>
+
+    <!-- G8 新增：截图查看对话框 -->
+    <el-dialog v-model="screenshotDialogVisible" title="游戏真实运行截图" width="900px">
+      <template v-if="selectedScreenshot">
+        <div class="screenshot-meta">
+          <el-descriptions :column="3" border size="small">
+            <el-descriptions-item label="视觉综合分">
+              <el-tag :type="getVisualScoreTagType(selectedScreenshot.visualScore)">
+                {{ selectedScreenshot.visualScore || '-' }} 分
+              </el-tag>
+            </el-descriptions-item>
+            <el-descriptions-item label="渲染健康度">
+              <el-tag :type="getVisualScoreTagType(selectedScreenshot.renderHealthScore)">
+                {{ selectedScreenshot.renderHealthScore || '-' }} 分
+              </el-tag>
+            </el-descriptions-item>
+            <el-descriptions-item label="可玩性视觉">
+              <el-tag :type="getVisualScoreTagType(selectedScreenshot.visualPlayableScore)">
+                {{ selectedScreenshot.visualPlayableScore || '-' }} 分
+              </el-tag>
+            </el-descriptions-item>
+            <el-descriptions-item label="UI/UX 视觉">
+              <el-tag :type="getVisualScoreTagType(selectedScreenshot.visualUiuxScore)">
+                {{ selectedScreenshot.visualUiuxScore || '-' }} 分
+              </el-tag>
+            </el-descriptions-item>
+            <el-descriptions-item label="截图数">{{ selectedScreenshot.screenshots.length }} 张</el-descriptions-item>
+            <el-descriptions-item label="验证时间">
+              {{ formatTime(selectedScreenshot.verifiedAt) }}
+            </el-descriptions-item>
+          </el-descriptions>
+
+          <div v-if="selectedScreenshot.visualSummary" class="visual-summary">
+            <h4>AI 视觉摘要</h4>
+            <p>{{ selectedScreenshot.visualSummary }}</p>
+          </div>
+
+          <div v-if="selectedScreenshot.visualIssues && selectedScreenshot.visualIssues.length > 0" class="visual-issues">
+            <h4>视觉问题</h4>
+            <ul>
+              <li v-for="(issue, idx) in selectedScreenshot.visualIssues" :key="idx">
+                <el-icon><WarningFilled /></el-icon> {{ issue }}
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <el-divider>截图</el-divider>
+
+        <div class="screenshot-gallery">
+          <div v-for="(path, idx) in selectedScreenshot.screenshots" :key="idx" class="screenshot-item">
+            <div class="screenshot-frame">第 {{ idx + 1 }} 帧</div>
+            <el-image
+              :src="getScreenshotUrl(path)"
+              fit="contain"
+              :preview-src-list="selectedScreenshot.screenshots.map(p => getScreenshotUrl(p))"
+              :initial-index="idx"
+              style="width: 100%; max-height: 400px;"
+            >
+              <template #error>
+                <div class="image-error">
+                  <el-icon><Picture /></el-icon>
+                  <span>加载失败</span>
+                </div>
+              </template>
+            </el-image>
+          </div>
+        </div>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Refresh, CircleCheck, CircleClose, WarningFilled, QuestionFilled, Loading, Promotion } from '@element-plus/icons-vue'
+import { Refresh, CircleCheck, CircleClose, WarningFilled, QuestionFilled, Loading, Promotion, Picture } from '@element-plus/icons-vue'
 import { gameVerifyApi, projectApi } from '@/api'
 
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
@@ -444,6 +542,78 @@ const designReviewResult = ref(null)
 const designReviewLoading = ref(false)
 const designReviewing = reactive({})
 const designReviewResults = reactive({})
+
+// ===== G8 新增：截图与视觉验证 =====
+const screenshotDialogVisible = ref(false)
+const selectedScreenshot = ref(null)
+const screenshotLoading = reactive({})
+const screenshotResults = reactive({})
+
+// 视觉评分对应的标签类型
+const getVisualScoreTagType = (score) => {
+  if (score == null || score === 0) return 'info'
+  if (score >= 80) return 'success'
+  if (score >= 60) return 'warning'
+  return 'danger'
+}
+
+// 构造截图访问 URL（带 token，图片用后端接口）
+const getScreenshotUrl = (path) => {
+  // 走后端 /api/game-verify/screenshots/view?path=xxx，二进制流
+  return `/api/game-verify/screenshots/view?path=${encodeURIComponent(path)}`
+}
+
+// 加载项目截图结果（不触发现场，只查询最近一次）
+const loadProjectScreenshots = async (projectId) => {
+  try {
+    const res = await gameVerifyApi.getScreenshots(projectId)
+    const data = res.data || res
+    if (data && data.hasScreenshots) {
+      screenshotResults[projectId] = data
+    }
+  } catch (e) {
+    console.warn('加载项目截图失败:', projectId, e)
+  }
+}
+
+// 一键真实运行+截图
+const handleScreenshot = async (project) => {
+  if (!project.workDir) {
+    ElMessage.warning('该项目未设置工作目录')
+    return
+  }
+  screenshotLoading[project.id] = true
+  try {
+    const res = await gameVerifyApi.verifyWithScreenshot({
+      projectId: project.id,
+      projectDir: project.workDir,
+      projectName: project.name,
+      projectGoal: project.goal
+    })
+    const data = res.data || res
+    if (data.success !== false) {
+      // 重新加载该项目的截图列表
+      await loadProjectScreenshots(project.id)
+      ElMessage.success(`真实运行+截图完成，综合评分 ${data.overallScore || '-'}`)
+      // 自动打开截图查看
+      if (screenshotResults[project.id]) {
+        showScreenshots(project.id)
+      }
+    } else {
+      ElMessage.error(data.error || '截图失败')
+    }
+  } catch (e) {
+    ElMessage.error('真实运行+截图失败: ' + (e.response?.data?.message || e.message))
+  } finally {
+    screenshotLoading[project.id] = false
+  }
+}
+
+// 显示截图对话框
+const showScreenshots = (projectId) => {
+  selectedScreenshot.value = screenshotResults[projectId]
+  screenshotDialogVisible.value = true
+}
 
 // 检查项目是否正在分析中
 const isAnalyzing = (projectId) => {
@@ -505,6 +675,8 @@ const loadProjects = async () => {
               analysisResults[project.id] = taskData.result
             }
           }
+          // G8 新增：加载每个项目的最近截图
+          await loadProjectScreenshots(project.id)
         } catch (e) {
           // 查询失败不影响页面
         }
@@ -855,6 +1027,89 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+/* ===== G8 截图画廊样式 ===== */
+.screenshot-meta {
+  margin-bottom: 16px;
+}
+
+.visual-summary {
+  margin-top: 16px;
+  padding: 12px;
+  background: #f5f7fa;
+  border-radius: 4px;
+}
+
+.visual-summary h4 {
+  margin: 0 0 8px 0;
+  font-size: 14px;
+  color: #303133;
+}
+
+.visual-summary p {
+  margin: 0;
+  color: #606266;
+  line-height: 1.6;
+}
+
+.visual-issues {
+  margin-top: 12px;
+  padding: 12px;
+  background: #fef0f0;
+  border-radius: 4px;
+  border-left: 3px solid #f56c6c;
+}
+
+.visual-issues h4 {
+  margin: 0 0 8px 0;
+  font-size: 14px;
+  color: #f56c6c;
+}
+
+.visual-issues ul {
+  margin: 0;
+  padding-left: 20px;
+  color: #606266;
+}
+
+.visual-issues li {
+  margin: 4px 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.screenshot-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+  gap: 16px;
+  margin-top: 12px;
+}
+
+.screenshot-item {
+  border: 1px solid #ebeef5;
+  border-radius: 4px;
+  overflow: hidden;
+  background: #fafbfc;
+}
+
+.screenshot-frame {
+  padding: 6px 12px;
+  background: #409eff;
+  color: white;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.image-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 200px;
+  color: #909399;
+  gap: 8px;
+}
+
 .game-verify-page {
   padding: 20px;
 }

@@ -404,6 +404,9 @@ public final class PermissionConstants {
     /** 查看验证结果 */
     public static final String GAME_VERIFY_VIEW = "game:verify:view";
 
+    /** G8 新增：查看游戏视觉验证（截图、视觉分析） */
+    public static final String GAME_VISUAL_VIEW = "game:visual:view";
+
     // ===== 特殊权限 =====
 
     /** 超级管理员权限（包含所有权限） */
@@ -536,6 +539,7 @@ public final class PermissionConstants {
             case GAME_VERIFY -> "触发游戏验证";
             case GAME_PREVIEW -> "启动游戏预览";
             case GAME_VERIFY_VIEW -> "查看验证结果";
+            case GAME_VISUAL_VIEW -> "查看游戏视觉验证";
             default -> permission;
         };
     }
