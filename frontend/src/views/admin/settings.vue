@@ -31,6 +31,10 @@
               <el-input v-model="basicForm.contactValue" placeholder="https://example.com/qr-code.png" />
               <div class="form-tip">点击后将以弹窗形式展示图片（如微信二维码）</div>
             </el-form-item>
+            <el-form-item label="ICP备案号">
+              <el-input v-model="basicForm.icpFilingNumber" placeholder="陕ICP备2026014383号" />
+              <div class="form-tip">显示在网站底部的ICP备案号，留空则不显示。点击可跳转至工信部备案查询系统</div>
+            </el-form-item>
             <el-form-item>
               <el-button type="primary" @click="saveBasic" :loading="saving">保存</el-button>
             </el-form-item>
@@ -231,7 +235,8 @@ const apiKeySet = ref(false)
 const basicForm = ref({
   systemName: 'ChengXun Game Maker',
   contactType: 'link',
-  contactValue: ''
+  contactValue: '',
+  icpFilingNumber: ''
 })
 
 /** 安全设置表单 */
@@ -444,6 +449,10 @@ const saveBasic = async () => {
       { configKey: 'system.contact.type', configValue: basicForm.value.contactType },
       { configKey: 'system.contact.link', configValue: basicForm.value.contactValue }
     ])
+    // ICP备案号存储在 system_constants 表中，需单独保存
+    await api.post('/constants/api/update', { key: 'site.icp-filing-number', value: basicForm.value.icpFilingNumber })
+    // 同时同步系统名称到 system_constants，供登录页等公开页面使用
+    await api.post('/constants/api/update', { key: 'site.name', value: basicForm.value.systemName })
     ElMessage.success('基本设置已保存')
   } catch (error) {
     ElMessage.error('保存失败')
@@ -599,6 +608,17 @@ const loadSettings = async () => {
       }
     } catch (e) {
       // 邮件配置加载失败不影响其他设置
+    }
+
+    // 加载ICP备案号（存储在 system_constants 表中）
+    try {
+      const icpData = await api.get('/constants/api/all')
+      if (icpData && Array.isArray(icpData)) {
+        const icp = icpData.find(c => c.constantKey === 'site.icp-filing-number')
+        if (icp) basicForm.value.icpFilingNumber = icp.value || ''
+      }
+    } catch (e) {
+      // ICP备案号加载失败不影响其他设置
     }
 
     const configs = await configApi.getAll()

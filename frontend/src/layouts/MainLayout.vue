@@ -147,6 +147,13 @@
           </transition>
         </router-view>
       </el-main>
+
+      <!-- 底部ICP备案信息 -->
+      <el-footer v-if="icpFilingNumber" class="footer" height="40px">
+        <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer" class="icp-link">
+          {{ icpFilingNumber }}
+        </a>
+      </el-footer>
     </el-container>
   </el-container>
 </template>
@@ -168,7 +175,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox, ElMessage } from 'element-plus'
 import { useUserStore } from '@/stores/user'
 import { useThemeStore } from '@/stores/theme'
-import { notificationApi } from '@/api'
+import { notificationApi, publicApi } from '@/api'
 import ThemeToggle from '@/components/ThemeToggle.vue'
 
 const route = useRoute()
@@ -178,7 +185,18 @@ const themeStore = useThemeStore()
 
 const isCollapse = ref(false)
 const notificationCount = ref(0)
+const icpFilingNumber = ref('')
 let notificationTimer = null
+
+/** 加载ICP备案号 */
+const loadIcpFilingNumber = async () => {
+  try {
+    const data = await publicApi.getConstant('site.icp-filing-number')
+    icpFilingNumber.value = data?.value || ''
+  } catch (error) {
+    console.error('加载ICP备案号失败:', error)
+  }
+}
 
 /** 加载未读通知数量 */
 const loadNotificationCount = async () => {
@@ -386,6 +404,9 @@ onMounted(async () => {
     }
   }
 
+  // 加载ICP备案号（无需登录）
+  loadIcpFilingNumber()
+
   // 加载通知数量
   if (userStore.isLoggedIn) {
     loadNotificationCount()
@@ -556,5 +577,31 @@ html.dark .main {
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
+}
+
+/* 底部ICP备案 */
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #fff;
+  border-top: 1px solid #e8e8e8;
+  transition: background-color 0.3s;
+}
+
+html.dark .footer {
+  background: #1d1e1f;
+  border-top-color: #333;
+}
+
+.icp-link {
+  color: #999;
+  font-size: 12px;
+  text-decoration: none;
+  transition: color 0.3s;
+}
+
+.icp-link:hover {
+  color: #1890ff;
 }
 </style>

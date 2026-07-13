@@ -702,4 +702,22 @@ public final class SystemConstants {
         defaultValue = "merge", valueType = "string", group = "fork"
     )
     public static final String FORK_DEFAULT_STRATEGY = "fork.default-strategy";
+
+    // ===== 网站相关 =====
+
+    @SystemConstantDef(
+        key = "site.name",
+        name = "系统名称",
+        description = "网站系统名称，显示在登录页版权信息等位置",
+        defaultValue = "ChengXun Game Maker", valueType = "string", group = "site"
+    )
+    public static final String SITE_NAME = "site.name";
+
+    @SystemConstantDef(
+        key = "site.icp-filing-number",
+        name = "ICP备案号",
+        description = "网站底部展示的ICP备案号，可点击跳转至工信部备案查询系统。为空则不显示",
+        defaultValue = "陕ICP备2026014383号", valueType = "string", group = "site"
+    )
+    public static final String SITE_ICP_FILING_NUMBER = "site.icp-filing-number";
 }

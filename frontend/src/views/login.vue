@@ -62,6 +62,17 @@
       </div>
     </div>
 
+    <!-- 版权和备案信息 -->
+    <div class="copyright-footer">
+      <span>©{{ currentYear }} {{ systemName }} 版权所有</span>
+      <template v-if="icpFilingNumber">
+        <span class="copyright-divider">|</span>
+        <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer" class="icp-link">
+          {{ icpFilingNumber }}
+        </a>
+      </template>
+    </div>
+
     <!-- 设备验证对话框 -->
     <el-dialog
       v-model="showDeviceVerify"
@@ -129,12 +140,12 @@
 </template>
 
 <script setup>
-import { ref, reactive } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { User, Lock } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
-import api from '@/api'
+import api, { publicApi } from '@/api'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -147,6 +158,22 @@ const loginForm = reactive({
   password: '',
   remember: false
 })
+
+// 网站公开信息（版权和备案）
+const systemName = ref('ChengXun Game Maker')
+const icpFilingNumber = ref('')
+const currentYear = new Date().getFullYear()
+
+/** 加载网站公开信息 */
+const loadSiteInfo = async () => {
+  try {
+    const data = await publicApi.getSiteInfo()
+    if (data.systemName) systemName.value = data.systemName
+    if (data.icpFilingNumber) icpFilingNumber.value = data.icpFilingNumber
+  } catch (error) {
+    console.error('加载网站信息失败:', error)
+  }
+}
 
 // 联系管理员
 const showContactImage = ref(false)
@@ -316,6 +343,10 @@ const cancelDeviceVerify = () => {
   verifyCode.value = ''
   ElMessage.info('已取消验证，请重新登录')
 }
+
+onMounted(() => {
+  loadSiteInfo()
+})
 </script>
 
 <style scoped>
@@ -418,6 +449,35 @@ const cancelDeviceVerify = () => {
   }
 }
 
+/* 版权和备案信息 */
+.copyright-footer {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  text-align: center;
+  padding: 16px 20px;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 13px;
+  z-index: 1;
+}
+
+.copyright-divider {
+  margin: 0 8px;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.icp-link {
+  color: rgba(255, 255, 255, 0.7);
+  text-decoration: none;
+  transition: color 0.3s;
+}
+
+.icp-link:hover {
+  color: #fff;
+  text-decoration: underline;
+}
+
 /* 小手机端 */
 @media (max-width: 374px) {
   .login-card {
@@ -430,6 +490,11 @@ const cancelDeviceVerify = () => {
 
   .login-header h1 {
     font-size: 18px;
+  }
+
+  .copyright-footer {
+    font-size: 11px;
+    padding: 12px 16px;
   }
 }
 </style>

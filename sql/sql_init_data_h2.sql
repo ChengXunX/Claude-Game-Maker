@@ -3237,6 +3237,14 @@ INSERT INTO system_constants (constant_key, name, description, default_value, va
 SELECT 'mcp.discovery-timeout-ms', 'MCP发现超时', 'MCP工具发现超时时间', '10000', 'long', 'mcp', '毫秒', 1000, 60000, FALSE
 WHERE NOT EXISTS (SELECT 1 FROM system_constants WHERE constant_key = 'mcp.discovery-timeout-ms');
 
+INSERT INTO system_constants (constant_key, name, description, default_value, value_type, group_name, unit, min_value, max_value, require_restart)
+SELECT 'site.name', '系统名称', '网站系统名称，显示在登录页版权信息等位置', 'ChengXun Game Maker', 'string', 'site', '', NULL, NULL, FALSE
+WHERE NOT EXISTS (SELECT 1 FROM system_constants WHERE constant_key = 'site.name');
+
+INSERT INTO system_constants (constant_key, name, description, default_value, value_type, group_name, unit, min_value, max_value, require_restart)
+SELECT 'site.icp-filing-number', 'ICP备案号', '网站底部展示的ICP备案号，可点击跳转至工信部备案查询系统。为空则不显示', '陕ICP备2026014383号', 'string', 'site', '', NULL, NULL, FALSE
+WHERE NOT EXISTS (SELECT 1 FROM system_constants WHERE constant_key = 'site.icp-filing-number');
+
 -- ============================================
 -- 补充知识库数据
 -- ============================================

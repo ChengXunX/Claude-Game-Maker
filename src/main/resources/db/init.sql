@@ -1938,7 +1938,9 @@ INSERT IGNORE INTO `system_constants` (`id`, `constant_key`, `display_name`, `de
 (62,'context.budgeted-injection','预算注入开关','是否启用预算上下文注入','true','true','boolean','context','',NULL,NULL,0,1,'2026-06-11 18:00:00','2026-06-11 18:00:00'),
 (63,'context.total-token-budget','上下文总Token预算','预算注入的总Token数','8000','8000','int','context','tokens',2000,50000,0,1,'2026-06-11 18:00:00','2026-06-11 18:00:00'),
 (64,'fork.max-per-agent','最大分叉数','每个Agent最多同时存在的分叉数','5','5','int','fork','个',1,20,0,1,'2026-06-11 18:00:00','2026-06-11 18:00:00'),
-(65,'fork.default-strategy','默认合并策略','分叉合并时的默认策略','merge','merge','string','fork','',NULL,NULL,0,1,'2026-06-11 18:00:00','2026-06-11 18:00:00');
+(65,'fork.default-strategy','默认合并策略','分叉合并时的默认策略','merge','merge','string','fork','',NULL,NULL,0,1,'2026-06-11 18:00:00','2026-06-11 18:00:00'),
+(66,'site.name','系统名称','网站系统名称，显示在登录页版权信息等位置','ChengXun Game Maker','ChengXun Game Maker','string','site','',NULL,NULL,0,1,'2026-06-11 18:00:00','2026-06-11 18:00:00'),
+(67,'site.icp-filing-number','ICP备案号','网站底部展示的ICP备案号，可点击跳转至工信部备案查询系统。为空则不显示','陕ICP备2026014383号','陕ICP备2026014383号','string','site','',NULL,NULL,0,1,'2026-06-11 18:00:00','2026-06-11 18:00:00');
 
 -- ===== MiMo V2: 快照和分叉表 =====
 

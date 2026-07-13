@@ -2615,6 +2615,11 @@ INSERT IGNORE INTO system_constants (constant_key, display_name, description, va
 ('version.min-iterations', '最小迭代次数', '项目最少版本迭代次数，不可低于此数', '1', '1', 'int', 'version', '次', 1, 50, FALSE),
 ('version.iteration-strategy', '迭代策略', '版本迭代策略：incremental（增量迭代）、full（全量迭代）、adaptive（自适应迭代）', 'adaptive', 'adaptive', 'string', 'version', '', NULL, NULL, FALSE);
 
+-- 网站相关常量
+INSERT IGNORE INTO system_constants (constant_key, display_name, description, value, default_value, value_type, group_name, unit, min_value, max_value, require_restart) VALUES
+('site.name', '系统名称', '网站系统名称，显示在登录页版权信息等位置', 'ChengXun Game Maker', 'ChengXun Game Maker', 'string', 'site', '', NULL, NULL, FALSE),
+('site.icp-filing-number', 'ICP备案号', '网站底部展示的ICP备案号，可点击跳转至工信部备案查询系统。为空则不显示', '陕ICP备2026014383号', '陕ICP备2026014383号', 'string', 'site', '', NULL, NULL, FALSE);
+
 -- ============================================
 -- 版本评估维度配置
 -- ============================================

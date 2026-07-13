@@ -79,6 +79,14 @@ api.interceptors.response.use(
 
 export default api
 
+// ===== 公开 API（无需登录）=====
+export const publicApi = {
+  /** 获取系统常量值（如ICP备案号） */
+  getConstant: (key) => api.get(`/public/constants/${key}`),
+  /** 获取网站公开信息（系统名称、ICP备案号等） */
+  getSiteInfo: () => api.get('/public/site-info')
+}
+
 // API接口定义
 // 注意：baseURL已经是'/api'，所以这里不需要再加'/api'前缀
 export const authApi = {
